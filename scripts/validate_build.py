@@ -200,16 +200,25 @@ def check_dictionary(path: Path) -> dict:
     rc5 = check_rc5_p4_protocol(d)
     if str(d.get('config',{}).get('INVENTURE_RC7_ADC_SNAPSHOT_ABI')) not in ('1','1.0'):
         raise ValueError('RC7 MCU dictionary missing ADC snapshot ABI')
-    if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'P01-P17-RC7.1-ZERO3':
+    if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'P01-P17-RC8.0-LOCAL':
         raise ValueError('RC7 MCU dictionary wrong application release')
     forced=d.get('config',{}).get('INVENTURE_P4_FORCED_BAUD')
     if str(forced) not in ('0','1000000','2000000'):
         raise ValueError('RC7 MCU dictionary wrong forced baud')
     new_config = {'INVENTURE_LOCAL_OLED_ABI': 1,
-                  'INVENTURE_MCU_RELEASE': 'P01-P17-RC7.1-ZERO3'}
+                  'INVENTURE_LOCAL_OLED_RECOVERY_ABI':1,
+                  'INVENTURE_LOCAL_OLED_BUFFER_BYTES':128,
+                  'INVENTURE_LOCAL_COOLING_ABI':1,
+                  'INVENTURE_LOCAL_COOLING_ON_C':50,
+                  'INVENTURE_LOCAL_COOLING_OFF_C':45,
+                  'INVENTURE_MCU_RELEASE': 'P01-P17-RC8.0-LOCAL'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
+    if 'inventure_cooling_query' not in d.get('commands',{}):
+        raise ValueError('Missing RC8 cooling diagnostic command')
+    if 'inventure_cooling_state clock=%u mode=%c reason=%c valid=%c mask=%c max_temp=%hi native_owner=%c adc_failures=%u gpio_updates=%u' not in d.get('responses',{}):
+        raise ValueError('Missing RC8 cooling response schema')
     if 'inventure_local_oled_query' not in d.get('commands', {}):
         raise ValueError('Missing local OLED diagnostic command')
     if 'inventure_local_oled_status state=%c boot_revision=%c baud=%u' not in d.get('responses', {}):

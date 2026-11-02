@@ -110,7 +110,10 @@ class InventureOLED:
     def _shutdown(self,*args):
         self.shutdown_latched=True;self.connected=False
         self.recover_at=None;self.recovery_reason='Klipper shutdown'
-        self.recovery_state='shutdown';self.stream.stop('Klipper shutdown; MCU RESET held LOW')
+        local_recovery=int(self.mcu.get_constants().get('INVENTURE_LOCAL_OLED_RECOVERY_ABI',0))==1
+        self.recovery_state='shutdown';self.stream.stop(
+            'Klipper shutdown; MCU local status requested' if local_recovery else
+            'Klipper shutdown; MCU RESET held LOW')
         self.reactor.update_timer(self.timer,self.reactor.NEVER)
         # Nonblocking best effort only. The MCU has its own local shutdown hook
         # and watchdog; correctness does not depend on this packet arriving.
@@ -448,7 +451,9 @@ class InventureOLED:
                 'recover_at':self.recover_at,'ignored_acks':self.stream.ignored_acks,
                 'mcu_state':dict(self.wire_state),'mcu_state_age':None if self.state_received is None else max(0.,now-self.state_received),
                 'rejected_state_reports':self.state_rejected,'shutdown_latched':self.shutdown_latched,
-                'shutdown_policy':'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED',
+                'shutdown_policy':('MCU_LOCAL_STATUS_NO_ACTUATOR_RESTART'
+                    if int(self.mcu.get_constants().get('INVENTURE_LOCAL_OLED_RECOVERY_ABI',0))==1
+                    else 'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED'),
                 'blank_confirmed':bool(self.wire_state.get('configured') and self.wire_state.get('reset')==0
                     and self.wire_state.get('active')==0 and self.state_received is not None and now-self.state_received<=.75),
                 'page':self.page,'selection':self.selection,'oem_menu':self.oem_menu.status() if self.oem_menu is not None else None,'events':list(self.events),

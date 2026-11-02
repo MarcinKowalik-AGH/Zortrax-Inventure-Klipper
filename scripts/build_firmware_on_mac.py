@@ -14,6 +14,9 @@ KIT=Path(__file__).resolve().parents[1]
 BASE=KIT/'baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip'
 HIST=KIT/'baseline/expected_hashes.json'
 MAP={
+    'src/stm32/adc.c': KIT/'mcu/adc.c',
+    'src/stm32/inventure_v9.h': KIT/'mcu/inventure_v9.h',
+    'src/stm32/inventure_cooling.inc': KIT/'mcu/inventure_cooling.inc',
     'src/generic/serial_irq.c': KIT/'mcu/serial_irq.c',
     'src/stm32/inventure_fans.inc': KIT/'mcu/inventure_fans.inc',
     'src/stm32/inventure_board.c': KIT/'mcu/inventure_board.c',
@@ -127,7 +130,7 @@ def apply_rc7(root: Path,original:dict,expected:dict):
     config=(KIT/'config/inventure_v9.defconfig').read_bytes()
     (root/'.config').write_bytes(config)
     shutil.copy2(KIT/'baseline/p0_module_contracts_RC7.json',root/'config/p0_module_contracts.json')
-    original['version']='P01_P17_RC7_1_OEM_UI_ZERO3'
+    original['version']='P01_P17_RC8_0_LOCAL_SERVICES'
     original['release_kind']='LOCAL_OFFLINE_PATCH_UNFLASHED'
     original['patched_sha256'].update(changed)
     original['release_kit_sha256']=sha(HIST.read_bytes())
@@ -175,7 +178,7 @@ def main():
         run([make,'clean',*opts],root)
         run([make,f'-j{a.jobs}',*opts],root)
         stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-        output=KIT/'dist'/f'RC7_1_{stamp}_{os.getpid()}_BAUD{a.baud}'
+        output=KIT/'dist'/f'RC8_0_{stamp}_{os.getpid()}_BAUD{a.baud}'
         report=validate(root,output)
         for marker in ('INVENTURE_TX_RING_ABI','INVENTURE_OLED_REPLAY_ABI','INVENTURE_FAN_BATCH_ABI','INVENTURE_OLED_SPI_BURST_ABI', 'INVENTURE_P4_BOOT_JOURNAL_ABI', 'INVENTURE_LOCAL_OLED_ABI','INVENTURE_MCU_RELEASE','INVENTURE_RC7_ADC_SNAPSHOT_ABI','INVENTURE_P4_FORCED_BAUD','inventure_local_oled_query'):
             if marker not in (root/'out/klipper.dict').read_text():raise ValueError(f'Firmware lacks RC7 marker: {marker}')
@@ -186,13 +189,13 @@ def main():
         # all vector, ABI, dictionary and image integrity checks. It contains
         # the new IVB, NEVER the old RC2 binary or vendor InventureUpdate.bin.
         ivb=output/'INVENTUR.IVB'
-        note=('INVENTURE RC7.1 application update for custom InventureBoot 1.4/1.5/1.6-RC2.\n'
+        note=('INVENTURE RC8.0 application update for custom InventureBoot 1.4/1.5/1.6-RC2.\n'
               'STILL NOT HARDWARE QUALIFIED. Use only after complete Flash/NVM backup.\n'
               'Extract INVENTUR.IVB to FAT32 SD root. Do not rename to InventureUpdate.bin.\n')
         (output/'README_SD_FLASH.txt').write_text(note)
         digest=sha(ivb.read_bytes())
         (output/'SHA256SUMS').write_text(digest+'  INVENTUR.IVB\n')
-        sdzip=output/'INVENTURE_RC7_1_SD_BOOT16.zip'
+        sdzip=output/'INVENTURE_RC8_0_SD_BOOT16.zip'
         with zipfile.ZipFile(sdzip,'w',zipfile.ZIP_DEFLATED) as z:
             for file in ('INVENTUR.IVB','README_SD_FLASH.txt','SHA256SUMS'):
                 z.write(output/file,arcname=file)

@@ -37,7 +37,7 @@ def check(folder:Path)->dict:
     if report.get('status')!='BUILD_VALIDATED_NOT_HARDWARE_TESTED':raise ValueError('Unexpected build status')
     return {'status':'PASS_BUILT_IMAGE_OFFLINE_NOT_HARDWARE_TESTED','folder':str(folder),
         'ivb_bytes':len(ivb),'ivb_sha256':dig,'build_cfg_baud':wanted,
-        'MCU_release':'P01-P17-RC7.1-ZERO3',
+        'MCU_release':'P01-P17-RC8.0-LOCAL',
         'reset_vector':elf['reset_vector'], 'application_base':hex(0x08010000),
         'dict_checks':len(dict_report),'no_hardware_test':True,'not_flashed':True}
 

@@ -1,3 +1,10 @@
+# Inventure RC8.0 — bieżąca instalacja
+
+Aktualne chłodzenie lokalne i odzyskiwanie ekranu wymagają nowej aplikacji MCU
+oraz pasującego hosta. Użyj [pełnej instrukcji RC8](MCU_RC8_LOCAL_SERVICES_PL.md).
+
+Poniższa instrukcja RC7.4 jest historyczną aktualizacją samego interfejsu OLED.
+
 # Inventure RC7.4 OLED FAST — build i instalacja
 
 **Aktualizacja samego OLED na działającym RC7.2/RC7.3:** użyj

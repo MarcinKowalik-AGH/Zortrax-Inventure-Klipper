@@ -1,0 +1,101 @@
+{
+  "release": "P01-P17-RC8.0-LOCAL",
+  "base_commit": "e370d5899b68a48274179349428285cb59d5bfdd",
+  "source_overlay_count": 29,
+  "unit_tests": 592,
+  "public_source_passed": 591,
+  "mcu": {
+    "src/stm32/inventure_board.c": {
+      "old_sha256": "14c8e42e98ffcd9c9607cb0c22dbd8ab28c2f324dcf676cbb77f4795b8e1e0a6",
+      "new_sha256": "380131750e6032d894a68c04657195a113fe1dc4f12e36b3e0be0049a75877c9",
+      "kit_mcu_present": true
+    },
+    "src/stm32/inventure_fans.inc": {
+      "old_sha256": "84395fb7541d7d863354fc2ffd336932284802f91e50643b6f9635c28235903b",
+      "new_sha256": "3618fab385c66c1705b900c4fa2b60168c70858cffc826d23114aa69ff9ffef3",
+      "kit_mcu_present": true
+    },
+    "src/stm32/inventure_panel.c": {
+      "old_sha256": "4cdd2c7c3549a848d950fb0aef0affc0d4eb596509bad6662d7f35e3ad0ae861",
+      "new_sha256": "3503241db96b68512db64642aef31981d22a8822878fcb88ebb6a25f65202a79",
+      "kit_mcu_present": true
+    },
+    "src/stm32/inventure_oled_local.inc": {
+      "old_sha256": "ab84cc81e82410cb3cc43b1408e1beda83e349576a5b90c74c832a8543a9c5b9",
+      "new_sha256": "4153481436550dbee412347446cb6096b9aa6c6afdf1db3afb8189cdcf0eddc4",
+      "kit_mcu_present": true
+    },
+    "src/stm32/adc.c": {
+      "old_sha256": "b0b0546eafd1d4e1b84d29cbc3fc89adf32101d2dda97a152fe2ab95cca3b07d",
+      "new_sha256": "c6087b6cc351209ec0bb6050eb9d42e8a4e986f25dfabc966fd86abff20e7656",
+      "kit_mcu_present": false
+    },
+    "src/stm32/inventure_v9.h": {
+      "old_sha256": "5122cba2751b58debd6f282e1e21efbe6b761698d2171dc683d7ad8e9040956a",
+      "new_sha256": "f78c689255ccc75743e8251b0d995922f75fed4cfc16cad851c2b42f9f91a013",
+      "kit_mcu_present": false
+    },
+    "src/stm32/inventure_cooling.inc": {
+      "old_sha256": null,
+      "new_sha256": "8de17f20ee5e9a5ff129fa1dac0e9ba4d851fc798f52f95150c97cb706a9e17d",
+      "kit_mcu_present": false
+    }
+  },
+  "host": {
+    "klippy/extras/inventure_mcu.py": {
+      "old_sha256": "fc1db6ccb4a41335dafe925b83e28f7ba4deb9ffb096f26eed0246d9be2ada47",
+      "new_sha256": "5b86b2935e9e8fea26184b25679766a0fe813be7ada6e1cd76f11474b8789c73"
+    }
+  },
+  "files": {
+    "scripts/build_firmware_on_mac.py": {
+      "old_sha256": "1b334834ee7b02b1b783ff06e151ad021296c57652273052f8c6e8662d3262f6",
+      "new_sha256": "0f2e4ffb5009e023221da995939a136724d395a7bbfb3e0429abf68eccc6b85f"
+    },
+    "scripts/verify_release.py": {
+      "old_sha256": "f405615cb44f1e0cadf4d98679f46057861b88451d891cccaf6d1d9cd39a874a",
+      "new_sha256": "9d49fd3beba722e9fe01a6bc4b05d60b747985e6903a7a4c9d126e810e9ee640"
+    },
+    "scripts/validate_build.py": {
+      "old_sha256": "39e526bf528ceb708c1608607e66557ccaa843564289986c06278d91d6024184",
+      "new_sha256": "27650bb2acf259a9950589ff235f33e25695d6ac9b03465eb165fff61e96ac8e"
+    },
+    "scripts/verify_built_ivb.py": {
+      "old_sha256": "fc52ea0cfc37ec95ee5fb133d06e76b339c4e4769c9ba0894965fc022065aef5",
+      "new_sha256": "0e431947ea9c50ce9178f8cf88b2faa498a0ae769fc63048242dd14845c7551f"
+    },
+    "zero3/stage_pinned_host.py": {
+      "old_sha256": "b203e9ed658feea27c02b73e2ccabeaf322bebe6d71e6860d155c9558ae15034",
+      "new_sha256": "f1b975b7bbceaeec03eb3fc0e256bd814d2a97a50efa334dd0957aab185b4f80"
+    }
+  },
+  "contracts": {
+    "baseline/expected_hashes.json": "04ebf83d64ca77131b15d7471d6a281861e977bae2d7b57c134efc2091357d64",
+    "baseline/p0_module_contracts_RC7.json": "e338af283c631fab9344a0f4fc8940a092a0369889ea70bd3d635a6b9a51d58e",
+    "regression_tests/config/p0_module_contracts.json": "e338af283c631fab9344a0f4fc8940a092a0369889ea70bd3d635a6b9a51d58e"
+  },
+  "host_compat": {
+    "klippy/extras/inventure_oem_menu.py": [
+      "53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0",
+      "e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949"
+    ],
+    "klippy/extras/inventure_oled.py": [
+      "207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f",
+      "90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d",
+      "cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008",
+      "e86a81f6a632353a47ae339ba92021e00a7e308a209abad16452172d29583cd5"
+    ],
+    "klippy/extras/inventure_oled_render.py": [
+      "327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767",
+      "34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab"
+    ],
+    "klippy/extras/inventure_oled_transport.py": [
+      "2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf",
+      "c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6"
+    ],
+    "klippy/extras/inventure_mcu.py": [
+      "5b86b2935e9e8fea26184b25679766a0fe813be7ada6e1cd76f11474b8789c73",
+      "fc1db6ccb4a41335dafe925b83e28f7ba4deb9ffb096f26eed0246d9be2ada47"
+    ]
+  }
+}

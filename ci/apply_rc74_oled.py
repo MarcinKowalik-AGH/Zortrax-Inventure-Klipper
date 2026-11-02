@@ -38,8 +38,20 @@ def apply(kit,repo=REPO):
     # The readable MCU and serial overlays must remain exactly the same code
     # built from the snapshot plus the existing two audited GNU ARM fixes.
     for folder in ('mcu','host_core'):
+        rc8_path=repo/'ci/rc8_manifest.json'
+        rc8=json.loads(rc8_path.read_text())['mcu'] if rc8_path.exists() else {}
         for source in (repo/folder).iterdir():
             if source.is_file() and source.suffix in ('.c','.h','.inc','.py'):
+                record=rc8.get('src/stm32/'+source.name) if folder=='mcu' else None
+                if record:
+                    if sha(source.read_bytes())!=record['new_sha256']:
+                        raise ValueError('Unknown RC8 readable MCU: '+source.name)
+                    previous=kit/folder/source.name
+                    if record['kit_mcu_present'] and sha(previous.read_bytes())!=record['old_sha256']:
+                        raise ValueError('Unknown RC8 baseline MCU: '+source.name)
+                    if not record['kit_mcu_present'] and previous.exists():
+                        raise ValueError('Unexpected new overlay already exists: '+source.name)
+                    continue
                 if source.read_bytes()!=(kit/folder/source.name).read_bytes():
                     raise ValueError('Readable/build overlay mismatch: '+str(source))
     writes={};hashes=json.loads((kit/'baseline/expected_hashes.json').read_text())

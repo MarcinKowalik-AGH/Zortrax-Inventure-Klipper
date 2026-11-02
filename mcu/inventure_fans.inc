@@ -8,6 +8,7 @@ static volatile uint32_t fan_edges[4], fan_window_edges[4], fan_normalized[4];
 static volatile uint32_t fan_bad[6], fan_peak[6], fan_sequence, fan_window_clock;
 static uint16_t fan_sample_ticks, fan_detector_ticks;
 static uint8_t fan_window_mixed, fan_window_duty[4];
+static volatile uint8_t cool_mask=0x3d;
 
 static int fan_index(void *r, uint32_t bit) {
     if (r==GPIOB && bit==BIT(15)) return 0;
@@ -25,7 +26,7 @@ void inventure_fan_observe(void *r, uint32_t bit, uint32_t on, uint32_t cycle) {
     if(i<0) return;
     uint8_t value= !cycle || on>=cycle ? (on ? 255:0) :
         ((uint64_t)on*255+cycle/2)/cycle;
-    if(!inventure_is_armed()) value=i==1 ? 0:255;
+    if(!inventure_is_armed())value=(cool_mask&BIT(i))?255:0;
     fan_set_duty(i,value);
 }
 static void fan_gpio_observe(void *r,uint32_t bit,uint32_t value) {
@@ -49,8 +50,11 @@ static void fan_evaluate(void) {
     if(fan_fault_mask & 0x0d) trip(5);
 }
 static void fan_sample(uint8_t rising,uint32_t now) {
-    for(unsigned i=0;i<4;i++)
-        if((rising & fan_high) & BIT(i)) fan_edges[i]++;
+    uint8_t observed=rising & fan_high & 15u;
+    while(observed) {
+        unsigned i=__builtin_ctz((unsigned)observed);
+        fan_edges[i]++;observed&=observed-1u;
+    }
     if(++fan_sample_ticks>=20000) {
         fan_sample_ticks=0;
         for(unsigned i=0;i<4;i++) {

@@ -8,7 +8,7 @@
   "host": {
     "klippy/extras/inventure_oled.py": {
       "old_sha256": "90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d",
-      "new_sha256": "207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f"
+      "new_sha256": "cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008"
     },
     "klippy/extras/inventure_oled_render.py": {
       "old_sha256": "34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab",

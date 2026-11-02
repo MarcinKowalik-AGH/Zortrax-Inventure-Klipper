@@ -88,6 +88,9 @@ jobs:
       - name: Integrate hash-pinned RC7.4 OLED host and regression contracts
         run: python ci/apply_rc74_oled.py kit
 
+      - name: Integrate RC8 F207 local cooling and OLED recovery
+        run: python ci/apply_rc8_mcu.py kit
+
       - name: Install deterministic Python test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -117,13 +120,14 @@ jobs:
           from pathlib import Path
           r=json.loads(Path('kit/VALIDATION_REPRODUCIBLE_RC7.json').read_text())
           assert r['status']=='PASS_OFFLINE_ONLY'
-          assert r['source_overlay_count']==26
-          assert r['unit_tests']==588
-          assert r['public_source_passed']==587
+          assert r['source_overlay_count']==29
+          assert r['unit_tests']==592
+          assert r['public_source_passed']==591
           assert r['private_oem_reference_skipped']==1
           assert r['acceptance_tests']==28
           assert r['host_release']=='RC7.4-OLED-FAST'
-          print('PUBLIC_TESTS_587_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
+          assert r['mcu_release']=='P01-P17-RC8.0-LOCAL'
+          print('PUBLIC_TESTS_591_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
 
       - name: Verify host installer and source integration
@@ -137,7 +141,7 @@ jobs:
           python scripts/build_firmware_on_mac.py --doctor
           python scripts/build_firmware_on_mac.py --jobs 4 --baud 250000
           find dist -name 'INVENTUR.IVB' -type f -print
-          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC7_1_*')
+          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC8_0_*')
           test "${#folders[@]}" -eq 1
           python scripts/verify_built_ivb.py "${folders[0]}" | tee "$RUNNER_TEMP/verify_built_ivb.json"
           echo "BUILT_FOLDER=${folders[0]}" >> "$GITHUB_ENV"
@@ -146,15 +150,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
-          cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
-          cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
+          mkdir -p release/MCU release/HOST/scripts release/HOST/baseline release/FLUIDD release/REPORTS
+          cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC8_0_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
+          cp -a kit/host kit/host_core kit/zero3 release/HOST/
+          cp kit/scripts/install_host.py release/HOST/scripts/
+          cp kit/baseline/expected_hashes.json release/HOST/baseline/
           cp scripts/install_oled_rc74.py release/HOST/
           cp config/OLED_FAST_RC7_4.cfg release/HOST/
           cp docs/OLED_RC7_4_AUDIT_PL.md release/HOST/
+          cp docs/MCU_RC8_LOCAL_SERVICES_PL.md release/HOST/
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
           cp kit/HOST_RELEASE_RC7_4.json release/REPORTS/
+          cp kit/MCU_RELEASE_RC8.json release/REPORTS/
           cp kit/LATEST_RC7_FULL_REGRESSION.log release/REPORTS/
           cp kit/LATEST_RC7_1_ACCEPTANCE.log release/REPORTS/
           cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
@@ -168,7 +176,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc7_4-oled-fast-stm32f207-gnu-arm-${{ github.sha }}
+          name: inventure-rc8_0-local-cooling-oled-stm32f207-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

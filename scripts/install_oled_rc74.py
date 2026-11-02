@@ -15,7 +15,7 @@ PAYLOAD=(HERE/'host') if (HERE/'host').is_dir() else HERE.parent/'host'
 FILES={'inventure_oem_menu.py': ('e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949',
                            '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0'),
  'inventure_oled.py': ('90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d',
-                       '207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f'),
+                       'cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008'),
  'inventure_oled_render.py': ('34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab',
                               '327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767'),
  'inventure_oled_transport.py': ('2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf',
@@ -23,6 +23,7 @@ FILES={'inventure_oem_menu.py': ('e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e93
 INTERMEDIATE={'inventure_oem_menu.py': '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0',
  'inventure_oled.py': 'e86a81f6a632353a47ae339ba92021e00a7e308a209abad16452172d29583cd5',
  'inventure_oled_render.py': '327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767'}
+RC74_ORIGINAL={'inventure_oled.py': '207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f'}
 SHA=lambda b:hashlib.sha256(b).hexdigest()
 HEADER=re.compile(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$')
 ENTRY=re.compile(r'^(\s*)([A-Za-z0-9_]+)(\s*:\s*)([^#;\r\n]*)(.*)$')
@@ -95,7 +96,7 @@ def make_plan(klipper:Path,cfg:Path):
         if SHA(src.read_bytes())!=new:raise ValueError('Unexpected patch SHA: '+name)
         target=unique_path(extras/name)
         current=SHA(target.read_bytes())
-        if current not in (old,new,INTERMEDIATE.get(name)):
+        if current not in (old,new,INTERMEDIATE.get(name),RC74_ORIGINAL.get(name)):
             raise ValueError('REFUSED unknown existing SHA '+name+': '+current)
         result.append(dict(name=name,path=str(target),current=current,new=new,action='same' if current==new else 'update'))
     unique_path(cfg)

@@ -1,0 +1,1 @@
+These are deliberately small test doubles for selected Klipper APIs and STM32 registers. They are NOT the real CMSIS headers, a full Klipper checkout, an MCU emulator, or a hardware simulator. Passing these tests checks C syntax/selected logic only; it does not prove successful upstream linkage, peripheral timing, current, temperature, or physical safety.

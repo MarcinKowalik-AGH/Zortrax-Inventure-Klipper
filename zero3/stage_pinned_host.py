@@ -18,17 +18,17 @@ def main():
         raise ValueError('Cannot stage into system directories')
     if dest.exists():raise ValueError('Destination already exists. NEVER overwrite live Klipper: '+str(dest))
     expected=json.loads(HIST.read_text())
-    print('RC7.1 staging preflight: pinned source SHA-256 and 26 overlays will be checked.')
+    print('RC8.0 staging preflight: pinned source SHA-256 and 29 overlays will be checked.')
     if not a.apply:
         print('DRY_RUN. Destination does not exist:',dest)
         return
     dest.parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='.inventure-rc7_1-stage-',dir=dest.parent) as tmp:
+    with tempfile.TemporaryDirectory(prefix='.inventure-rc8_0-stage-',dir=dest.parent) as tmp:
         tmpdir=Path(tmp)
         src,orig=extract_pinned(tmpdir,expected)
         overlays=apply_rc7(src,orig,expected)
-        if len(overlays)!=26:raise ValueError('Expected 26 overlay modules, got '+str(len(overlays)))
-        (src/'RC7_1_STAGED_NOT_CONFIGURED.json').write_text(json.dumps({
+        if len(overlays)!=29:raise ValueError('Expected 29 overlay modules, got '+str(len(overlays)))
+        (src/'RC8_0_STAGED_NOT_CONFIGURED.json').write_text(json.dumps({
             'status':'STAGED_NOT_CONFIGURED','target':'Orange Pi Zero 3 / Linux ARM64',
             'pin':'STM32F207 V9; NOT M300','patches':overlays,'count':len(overlays),
             'no_service_changes':True,'no_printer_cfg':True,

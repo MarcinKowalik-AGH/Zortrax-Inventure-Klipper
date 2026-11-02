@@ -18,7 +18,9 @@ DECL_CONSTANT("INVENTURE_OLED_REPLAY_ABI", 1);
 // RC4 retains OLED_ABI2, but identifies the verified contiguous SPI burst.
 DECL_CONSTANT("INVENTURE_OLED_SPI_BURST_ABI", 1);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_ABI", 1);
-DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "P01-P17-RC7.1-ZERO3");
+DECL_CONSTANT("INVENTURE_LOCAL_OLED_RECOVERY_ABI", 1);
+DECL_CONSTANT("INVENTURE_LOCAL_OLED_BUFFER_BYTES",128);
+DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "P01-P17-RC8.0-LOCAL");
 
 static const uint8_t input_pins[16] = {
     GPIO('B',11), GPIO('C',15), GPIO('E',12), GPIO('C',14),
@@ -94,12 +96,14 @@ static void oled_raw_blank(void) {
 void inventure_panel_shutdown(void) {
     local_oled_cancel();
     oled_latched=1;oled_fault=3;oled_raw_blank();
+    local_oled_request(3);
 }
 DECL_SHUTDOWN(inventure_panel_shutdown);
 void inventure_oled_watchdog(void) {
     irqstatus_t flag=irq_save();
     if(oled_active && (int32_t)(timer_read_time()-oled_deadline)>=0) {
         oled_fault=1;oled_raw_blank();
+        local_oled_request(2);
     }
     irq_restore(flag);
 }
@@ -153,7 +157,8 @@ void command_inventure_oled_begin(uint32_t *args) {
         result = oled_active && args[2]==oled_last_token &&
                  oled_last_kind==1 ? oled_last_result : 1;
     } else {
-        // Irreversible local->host ownership transition for this app boot.
+        // A NEW generation may take over a local waiting screen. Global
+        // shutdown remains latched and cannot be cleared by BEGIN.
         local_oled_cancel();
         oled_raw_blank();
         oled_generation_hi=args[0];oled_generation_lo=args[1];oled_last_token=args[2];
@@ -223,7 +228,7 @@ void command_inventure_oled_stop(uint32_t *args) {
     (void)args;irqstatus_t flag=irq_save();
     local_oled_cancel();
     if(!oled_latched)oled_fault=2;
-    oled_raw_blank();irq_restore(flag);
+    oled_raw_blank();local_oled_request(oled_latched?3:1);irq_restore(flag);
 }
 DECL_COMMAND_FLAGS(command_inventure_oled_stop,HF_IN_SHUTDOWN,"inventure_oled_stop");
 void command_inventure_oled_query(uint32_t *args) {
