@@ -44,6 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cat source/parts/part*.bin > "$SOURCE_ARCHIVE"
           cd source
           sha256sum -c SHA256SUMS
           cd ..
