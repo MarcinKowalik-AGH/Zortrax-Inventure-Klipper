@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/build-arm-inventure.yml'
       - 'source/**'
+      - 'ci/**'
       - 'mcu/**'
       - 'host/**'
       - 'host_core/**'
@@ -43,8 +44,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Reassemble verified ZIP from git blobs; no external/private download.
-          cat source/parts/part*.bin > "$SOURCE_ARCHIVE"
           cd source
           sha256sum -c SHA256SUMS
           cd ..
@@ -62,6 +61,9 @@ jobs:
                   assert item.filename != 'regression_tests/evidence/oem_reference/application_r0323.bin'
           print('PUBLIC_SOURCE_CRC_AND_NO_FULL_OEM_FIRMWARE_PASS')
           PYCI
+
+      - name: Apply verified RC7.2 GNU ARM macro fix
+        run: python ci/apply_gnu_ctr_fix.py kit
 
       - name: Install deterministic Python test dependencies
         run: |

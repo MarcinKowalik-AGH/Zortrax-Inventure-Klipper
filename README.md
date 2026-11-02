@@ -23,3 +23,12 @@ This is **not** a stock Zortrax firmware or a physical-hardware qualification.
 **Hardware limitations:** software tests cannot verify thermistor wiring, heater watchdogs under power, CoreXY directions, Z contact, material motion, stepping waveform, OLED pixels or 1–2 Mbaud UART on a physical Zero 3. Do not enable actuator/heater qualification solely on a green CI result.
 
 Derived from project release RC7.1 (2026-11-02); `RC7.2` denotes the **GitHub GNU ARM publication/build packaging**, not newly verified printer behavior. The firmware still identifies the RC7.1 ABI and release.
+
+### GNU ARM follow-up (02.11.2026)
+
+First GitHub Actions attempt passed public regression but GCC correctly
+rejected a duplicate `DECL_CTR` identifier produced by `__LINE__` in
+`inventure_oled_local.inc` versus `inventure_panel.c`. The CI now applies
+`ci/apply_gnu_ctr_fix.py`: a small, hash-pinned source-only `#line`
+change, before tests and build. MCU protocol and safety logic are unchanged.
+The original 3.3 MB source snapshot remains hash-verified and immutable.

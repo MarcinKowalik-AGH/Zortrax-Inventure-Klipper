@@ -1,3 +1,4 @@
+#line 1000 "inventure_oled_local.inc"
 /* RC6: autonomous, pre-host SSD1322 start page on V9.
  * Zero motion/heater writes. Only the OLED pins and SPI2 are touched.
  * Runs a bounded amount of work per Klipper task iteration; no HAL delay.
