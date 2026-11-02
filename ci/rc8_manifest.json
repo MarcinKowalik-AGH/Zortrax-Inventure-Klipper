@@ -7,7 +7,7 @@
   "mcu": {
     "src/stm32/inventure_board.c": {
       "old_sha256": "14c8e42e98ffcd9c9607cb0c22dbd8ab28c2f324dcf676cbb77f4795b8e1e0a6",
-      "new_sha256": "380131750e6032d894a68c04657195a113fe1dc4f12e36b3e0be0049a75877c9",
+      "new_sha256": "0161c66302e0f979f08b75f527e36df5e66d0ccd8fc4b377aba0478549f37322",
       "kit_mcu_present": true
     },
     "src/stm32/inventure_fans.inc": {
@@ -62,7 +62,7 @@
     },
     "scripts/verify_built_ivb.py": {
       "old_sha256": "fc52ea0cfc37ec95ee5fb133d06e76b339c4e4769c9ba0894965fc022065aef5",
-      "new_sha256": "0e431947ea9c50ce9178f8cf88b2faa498a0ae769fc63048242dd14845c7551f"
+      "new_sha256": "54f1204a1d37cffe2369b1b24a8dd60342e65375eefc78802deaf5859c5f7dea"
     },
     "zero3/stage_pinned_host.py": {
       "old_sha256": "b203e9ed658feea27c02b73e2ccabeaf322bebe6d71e6860d155c9558ae15034",

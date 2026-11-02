@@ -100,8 +100,9 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
      * fan classification or heater/resource branches for these four pins. */
     if((r==GPIOA && (bit==BIT(6) || bit==BIT(7))) ||
        (r==GPIOB && (bit==BIT(8) || bit==BIT(9)))) {
-        if(r==GPIOB && bit==BIT(9))transport_gpio(r,bit,value);
-        return inventure_is_armed()?!!value:0;
+        uint32_t effective=inventure_is_armed()?!!value:0;
+        if(r==GPIOB && bit==BIT(9))transport_gpio(r,bit,effective);
+        return effective;
     }
     transport_gpio(r,bit,value);
     uint8_t allow = inventure_is_armed();

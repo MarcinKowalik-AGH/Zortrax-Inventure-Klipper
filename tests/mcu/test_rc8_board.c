@@ -278,6 +278,7 @@ int main(void) {
     }
     armed=0;assert(inventure_filter_gpio(GPIOA,BIT(6),1)==0);
     assert(inventure_filter_gpio(GPIOB,BIT(9),1)==0);
+    assert(!transport_e_high); // transport tracks the PHYSICAL gated STEP
     /* Full independent hotend ADC oracle, including both hysteresis states. */
     fault=0;mock_now=MS(1000);raw[0]=raw[1]=155;
     for(unsigned sensor=0;sensor<2;sensor++)for(unsigned prior=0;prior<2;prior++)
