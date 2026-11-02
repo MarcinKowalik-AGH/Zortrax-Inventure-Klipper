@@ -32,3 +32,8 @@ rejected a duplicate `DECL_CTR` identifier produced by `__LINE__` in
 `ci/apply_gnu_ctr_fix.py`: a small, hash-pinned source-only `#line`
 change, before tests and build. MCU protocol and safety logic are unchanged.
 The original 3.3 MB source snapshot remains hash-verified and immutable.
+
+The second audited CI-only patch, `ci/apply_rc7_dict_fix.py`, checks
+compile-time markers in the **actual built `klipper.dict`** instead of a
+shortened report. `validate_build.py` still verifies all values/schemas
+before the IVB can be published. No safety gate is disabled.

@@ -178,7 +178,7 @@ def main():
         output=KIT/'dist'/f'RC7_1_{stamp}_{os.getpid()}_BAUD{a.baud}'
         report=validate(root,output)
         for marker in ('INVENTURE_TX_RING_ABI','INVENTURE_OLED_REPLAY_ABI','INVENTURE_FAN_BATCH_ABI','INVENTURE_OLED_SPI_BURST_ABI', 'INVENTURE_P4_BOOT_JOURNAL_ABI', 'INVENTURE_LOCAL_OLED_ABI','INVENTURE_MCU_RELEASE','INVENTURE_RC7_ADC_SNAPSHOT_ABI','INVENTURE_P4_FORCED_BAUD','inventure_local_oled_query'):
-            if marker not in json.dumps(report['dictionary']):raise ValueError(f'Firmware lacks RC7 marker: {marker}')
+            if marker not in (root/'out/klipper.dict').read_text():raise ValueError(f'Firmware lacks RC7 marker: {marker}')
         # Check after pack, and only then leave image in dist.
         (output/'TOOLCHAIN_RC7.json').write_text(json.dumps(env,indent=2)+'\n')
         (output/'RELEASE_RC7.json').write_text(json.dumps({'status':'COMPILED_NOT_HARDWARE_QUALIFIED','source_hashes':changed,'reference_zip_sha256':sha(BASE.read_bytes()),'physical_tests':False,'baud_requested':a.baud},indent=2)+'\n')

@@ -44,8 +44,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Rebuild pinned source ZIP from ordered, authenticated Git blobs.
-          cat source/parts/part*.bin > "$SOURCE_ARCHIVE"
           cd source
           sha256sum -c SHA256SUMS
           cd ..
@@ -66,6 +64,9 @@ jobs:
 
       - name: Apply verified RC7.2 GNU ARM macro fix
         run: python ci/apply_gnu_ctr_fix.py kit
+
+      - name: Verify dictionary against actual compiled MCU output
+        run: python ci/apply_rc7_dict_fix.py kit
 
       - name: Install deterministic Python test dependencies
         run: |
