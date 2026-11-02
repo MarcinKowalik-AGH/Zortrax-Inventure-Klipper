@@ -130,9 +130,10 @@ jobs:
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
           cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
           (cd release/MCU && sha256sum -c SHA256SUMS)
-          (cd release && find . -type f -print0 | sort -z | xargs -0 sha256sum) > release/SHA256_ALL_FILES.txt
           echo 'No flash, USB or serial connection was attempted.' > release/README_NOT_HARDWARE_TESTED.txt
           echo 'User needs to install a matching host and validate hardware before enabling movement/heating.' >> release/README_NOT_HARDWARE_TESTED.txt
+          (cd release && find . -type f ! -name 'SHA256_ALL_FILES.txt' -print0 | sort -z | xargs -0 sha256sum) > release/SHA256_ALL_FILES.txt
+          (cd release && sha256sum -c SHA256_ALL_FILES.txt)
           ls -lah release/MCU
 
       - name: Save verified downloadable GitHub artifact
