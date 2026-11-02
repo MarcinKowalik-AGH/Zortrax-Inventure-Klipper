@@ -1,6 +1,19 @@
 name: Build Inventure STM32F207 GNU ARM
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-arm-inventure.yml'
+      - 'source/**'
+      - 'ci/**'
+      - 'mcu/**'
+      - 'host/**'
+      - 'host_core/**'
+      - 'fluidd/**'
+      - 'zero3/**'
+      - 'config/**'
+      - 'tests/**'
+      - 'scripts/**'
   push:
     branches: [main]
     paths:
@@ -12,6 +25,9 @@ on:
       - 'host_core/**'
       - 'fluidd/**'
       - 'zero3/**'
+      - 'config/**'
+      - 'tests/**'
+      - 'scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -69,6 +85,9 @@ jobs:
       - name: Verify dictionary against actual compiled MCU output
         run: python ci/apply_rc7_dict_fix.py kit
 
+      - name: Integrate hash-pinned RC7.4 OLED host and regression contracts
+        run: python ci/apply_rc74_oled.py kit
+
       - name: Install deterministic Python test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -99,12 +118,16 @@ jobs:
           r=json.loads(Path('kit/VALIDATION_REPRODUCIBLE_RC7.json').read_text())
           assert r['status']=='PASS_OFFLINE_ONLY'
           assert r['source_overlay_count']==26
-          assert r['unit_tests']==567
-          assert r['public_source_passed']==566
+          assert r['unit_tests']==588
+          assert r['public_source_passed']==587
           assert r['private_oem_reference_skipped']==1
           assert r['acceptance_tests']==28
-          print('PUBLIC_TESTS_566_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
+          assert r['host_release']=='RC7.4-OLED-FAST'
+          print('PUBLIC_TESTS_587_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
+
+      - name: Verify host installer and source integration
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Fresh complete ARM build and image validation
         shell: bash
@@ -126,8 +149,14 @@ jobs:
           mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
           cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
           cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
+          cp scripts/install_oled_rc74.py release/HOST/
+          cp config/OLED_FAST_RC7_4.cfg release/HOST/
+          cp docs/OLED_RC7_4_AUDIT_PL.md release/HOST/
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
+          cp kit/HOST_RELEASE_RC7_4.json release/REPORTS/
+          cp kit/LATEST_RC7_FULL_REGRESSION.log release/REPORTS/
+          cp kit/LATEST_RC7_1_ACCEPTANCE.log release/REPORTS/
           cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
           (cd release/MCU && sha256sum -c SHA256SUMS)
           echo 'No flash, USB or serial connection was attempted.' > release/README_NOT_HARDWARE_TESTED.txt
@@ -139,7 +168,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc7_2-stm32f207-gnu-arm-${{ github.sha }}
+          name: inventure-rc7_4-oled-fast-stm32f207-gnu-arm-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

@@ -105,34 +105,63 @@ class Frame:
         return True
 
     def oem_menu(self,view,assets=None):
-        """V9 4-row pinned-Back menu with original OEM glyphs and 50x50 icons.
+        """Native r0323 five-row layout (y=0,12,24,36,48), entire display.
 
-        It is strictly a renderer; action dispatch belongs to separate safe
-        navigation module, preserving the sole OLED/SPI ownership in P07.
+        Like the M300 Klipper UI: no fixed Zortrax title or underline. Back is
+        a normal selectable row, pinned during scrolling. A static category
+        icon is rendered on submenu pages; the root doesn't redraw a 50x50
+        sprite on every navigation detent. Action dispatch stays host-owned.
         """
         atlas=assets or get_oem_assets()
         self.raw[:]=b'\x00'*RAW_LEN
-        self.oem_text(4,1,'ZORTRAX INVENTURE',atlas,right=253)
-        for x in range(4,198):self.pixel(x,12,5)
-        labels=list(view['labels']);sel=max(0,min(view['selected'],len(labels)-1))
-        count=len(labels)
-        if count<=4:visible=list(range(count))
-        elif labels[0] in ('Back','Powrót'):
-            first=max(1,min(int(view.get('window',1)),max(1,count-3)))
-            visible=[0]+list(range(first,min(first+3,count)))
+        labels=list(view['labels'])
+        if not labels:return self
+        sel=max(0,min(view['selected'],len(labels)-1))
+        has_back=labels[0] in ('Back','Powrót')
+        visible_count=4 if has_back else 5
+        if len(labels)<=5:
+            visible=list(range(len(labels)))
+        elif has_back:
+            first=max(1,min(int(view.get('window',1)),max(1,len(labels)-visible_count)))
+            visible=[0]+list(range(first,min(first+visible_count,len(labels))))
         else:
-            first=max(0,min(int(view.get('window',0)),max(0,count-4)))
-            visible=list(range(first,min(first+4,count)))
+            first=max(0,min(int(view.get('window',0)),max(0,len(labels)-visible_count)))
+            visible=list(range(first,min(first+visible_count,len(labels))))
+        right=193 if view.get('icon') else 253
         for row,index in enumerate(visible):
-            y=14+row*12
-            self.oem_text(19,y,labels[index],atlas,right=193)
+            y=row*12
+            self.oem_text(19,y,labels[index],atlas,right=right)
             if index==sel:
+                # Nine-pixel stock marker; Back points left, all other rows
+                # point right. Marker never overlaps text or the next row.
                 for dy in range(-4,5):
-                    self.pixel(8+4-abs(dy),y+5+dy,15)
-        if view.get('icon'):self.oem_icon(view['icon'],atlas)
-        # Non-interactive footer marker for unqualified commands.
+                    yy=y+5+dy
+                    xx=(8+abs(dy)) if index==0 and has_back else (12-abs(dy))
+                    self.pixel(xx,yy,15)
         if view.get('notice'):
-            self.oem_text(4,51,view['notice'],atlas,right=194)
+            # Preserve all five selectable rows: notice is in icon column.
+            self.oem_text(203,14,'INFO',atlas,right=255)
+            self.oem_text(203,30,'NO ACT',atlas,right=255)
+        elif view.get('icon'):
+            self.oem_icon(view['icon'],atlas)
+        return self
+
+    def klipper_status(self, status, assets=None):
+        """M300-like Klipper home (EN); OK opens the full-height OEM menu.
+
+        Do not mislabel unqualified native board ADC samples as actual
+        extruder/bed temperatures; the test-only printer uses kinematics none.
+        """
+        atlas=assets or get_oem_assets()
+        self.raw[:]=b'\x00'*RAW_LEN
+        self.oem_text(4,0,'KLIPPER',atlas,right=252)
+        healthy=bool(status.get('connected') and not status.get('fault'))
+        self.oem_text(4,12,'MCU: Ready' if healthy else 'MCU: Check status',atlas,right=252)
+        rel=str(status.get('mcu_release') or 'unknown')
+        self.oem_text(4,24,rel.replace('P01-P17-',''),atlas,right=252)
+        baud=status.get('p4_boot',{}).get('baud')
+        self.oem_text(4,36,'P4: '+str(baud if baud is not None else '---'),atlas,right=252)
+        self.oem_text(4,48,'OK: Open menu',atlas,right=252)
         return self
 
     def header(self, title=TITLE):

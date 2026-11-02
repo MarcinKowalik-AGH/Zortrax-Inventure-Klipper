@@ -115,11 +115,11 @@ def main():
                      cwd=KIT/'regression_tests',capture_output=True,text=True,timeout=120)
     log=p.stdout+p.stderr
     (KIT/'LATEST_RC7_FULL_REGRESSION.log').write_text(log)
-    if (p.returncode or 'Ran 567 tests' not in log or
+    if (p.returncode or 'Ran 588 tests' not in log or
             not log.rstrip().endswith('OK (skipped=1)') or
             'FAILED (' in log):
         raise RuntimeError('RC7 regression failure: '+log[-4000:])
-    items.append('P01_P17_RC7_unit_mock_566_PASS_1_OEM_FLASH_COMPARISON_SKIPPED_PUBLIC_CI')
+    items.append('P01_P17_RC7_unit_mock_587_PASS_1_OEM_FLASH_COMPARISON_SKIPPED_PUBLIC_CI')
     # Independent test of 29 default Fluidd macros and 19 explicit opt-in
     # procedures, MCU version/epoch and Zero3 staging contracts.
     p=subprocess.run([sys.executable,'-m','unittest','discover','-s',str(KIT/'tests/acceptance'),'-p','test_*.py'],
@@ -134,14 +134,14 @@ def main():
     # for a new source build; every build still links and verifies its own ELF.
     if (KIT/'dist').exists():
         items.append('Existing local dist retained; new BUILD requires fresh link and dictionary')
-    report={'release':'P01_P17_RC7_1_BOOT16_ZERO3_FLUIDD','status':'PASS_OFFLINE_ONLY',
+    report={'release':'P01_P17_RC7_1_BOOT16_ZERO3_FLUIDD','status':'PASS_OFFLINE_ONLY','host_release':'RC7.4-OLED-FAST',
       'p4_journal':'r1/r2/1.5-HW2 + authenticated 1.6-RC2 r3; eight read-compatible baud codes, separate bootwait records, last valid baud, fallback 250000',
       'runtime_uart': [19200,57600,115200,250000,500000,750000,1000000,2000000],
       'optional_compiled_uart': [1000000,2000000],
       'high_baud_journal_mapping_verified':True,
       'boot_v16_sha256':'577d1780fec0d423af54662da2580139d438b1757ff7ba68712fa73143a665ec',
       'source_overlay_count':26,'macos_arm_link_verified':False,
-      'unit_tests':567,'public_source_passed':566,'private_oem_reference_skipped':1,'acceptance_tests':28,'total_offline_python_tests':595,'fluidd_diagnostic_macros':29,'fluidd_optin_action_macros':19,
+      'unit_tests':588,'public_source_passed':587,'private_oem_reference_skipped':1,'acceptance_tests':28,'total_offline_python_tests':616,'fluidd_diagnostic_macros':29,'fluidd_optin_action_macros':19,
       'arm_helper_object':arm=='P4_USART6_AND_RC7_LOCAL_OLED_ARM_EABI_OBJECTS_PASS',
       'gnu_arm_full_link':False,'verified_new_ivb':False,
       'hardware_test':False,'safe_to_flash_as_precompiled':False,'zero3_runtime_test':False,

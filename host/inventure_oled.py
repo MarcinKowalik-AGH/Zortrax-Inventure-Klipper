@@ -19,9 +19,14 @@ class InventureOLED:
         self.speed=config.getint('spi_speed',2000000,minval=500000,maxval=2000000)
         self.oem_ui_enabled=config.getboolean('oem_menu',False)
         self.oem_menu=OEMMenu(config.get('oem_language','pl')) if self.oem_ui_enabled else None
+        self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
+        if self.oem_start_screen not in ('klipper','menu'):
+            raise config.error('oem_start_screen must be klipper or menu')
+        self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
+        self._oem_render_cache=None
         self.interval=config.getfloat('chunk_interval',.002,minval=.002,maxval=.050)
         self.stream=OledStream(config.getfloat('ack_timeout',1.,minval=.1,maxval=10.),
-            config.getfloat('refresh_interval',.5,minval=.2,maxval=10.))
+            config.getfloat('refresh_interval',.2,minval=.2,maxval=10.))
         self.page='home';self.selection=0;self.message=None
         self.last_buttons=0;self.pressed_at={};self.repeat_at={}
         self.power_fired=False;self.connected=False;self.render_at=0.
@@ -29,6 +34,7 @@ class InventureOLED:
         # Button actions bypass periodic refresh throttling, but are coalesced
         # if a previous frame is still in flight.
         self._user_refresh_pending=False
+        self._rendered_frames=0;self._render_cache_hits=0
         # New host instances use a new 63-bit starting generation; recoveries
         # increment it. Tokens never wrap or reset within this stream.
         self.stream.generation=secrets.randbits(63)
@@ -83,6 +89,7 @@ class InventureOLED:
     def _ready(self):
         if self.shutdown_latched:return
         self.connected=True;now=self.reactor.monotonic()
+        self._oem_render_cache=None
         self._render(now);self._start(now,'initial_start')
         self.reactor.update_timer(self.timer,self.reactor.NOW)
 
@@ -186,7 +193,8 @@ class InventureOLED:
                 self._lose(now,'OLED command unavailable: '+str(exc))
             self.next_query=now+.25
         self._held_keys(now)
-        if now>=self.render_at:self._render(now);self.render_at=now+.25
+        if now>=self.render_at:
+            self._render(now);self.render_at=now+self.stream.refresh_interval
         if self.recovery_state=='backoff' and now>=self.recover_at:
             # Don't burn through retries while the underlying MCU is absent.
             if self._base_live(now) and self._wire_live(now,False):
@@ -222,7 +230,22 @@ class InventureOLED:
                                 frames=self.stream.generation_frames)
                 if self.confirmed_since is not None and now-self.confirmed_since>=self.stable_time:
                     self.retries=0
-        return now+self.interval
+        return self._next_tick(now)
+
+    def _next_tick(self,now):
+        # Keep 2 ms pacing during transfers and held keys. An unchanged screen
+        # needs only service/render deadlines, not 500 reactor calls per second.
+        busy=self.stream.enabled and (self.stream.operations is not None or
+            self.stream.pending is not None or self.stream.latest!=self.stream.previous)
+        if busy or self.pressed_at:return now+self.interval
+        due=min(now+.050,self.next_query,self.render_at)
+        if self.recovery_state=='backoff' and self.recover_at is not None:
+            due=min(due,self.recover_at)
+        return max(now+self.interval,due)
+
+    def _wake(self):
+        if self.connected and not self.shutdown_latched:
+            self.reactor.update_timer(self.timer,self.reactor.NOW)
 
     def _cal(self):return self.printer.lookup_object('inventure_calibration',None)
     def _rows(self,now):
@@ -267,16 +290,43 @@ class InventureOLED:
                               ('Author: Marcin Kowalik',None),('OLED: LAB test mode',None)]
 
     def _render(self,now):
-        frame=Frame()
+        # The RC7.2 static OEM screen was recomposed every .25s even when
+        # unchanged; that wasted Orange Pi reactor time. Cache by UI generation.
         cal=self._cal()
         cal_status=cal.get_status(now) if cal else {}
-        if cal_status.get('state') in ('preparing_t0','measuring_t0','preparing_t1','measuring_t1'):
+        measuring=cal_status.get('state') in (
+            'preparing_t0','measuring_t0','preparing_t1','measuring_t1')
+        snapshot=None
+        menu_view=None
+        klipper_status=None
+        if self.oem_menu is not None and not measuring and not self.message:
+            if self.oem_display_mode=='status':
+                klipper_status=self.board.get_status(now)
+                boot=klipper_status.get('p4_boot',{})
+                snapshot=('status',klipper_status.get('connected'),
+                          klipper_status.get('fault'),
+                          klipper_status.get('mcu_release'),boot.get('baud'))
+            else:
+                menu_view=self.oem_menu.view()
+                snapshot=('menu',menu_view['page'],menu_view['generation'],
+                          menu_view['selected'],menu_view['window'],
+                          menu_view.get('icon'),menu_view.get('notice'))
+            if snapshot==self._oem_render_cache:
+                self._render_cache_hits+=1
+                self._user_refresh_pending=False
+                return
+        frame=Frame()
+        if measuring:
             counts=cal_status.get('sample_counts',[0,0])
             frame.progress('Nozzle Z Height',
                            'T0 %d/2  T1 %d/3'%(counts[0],counts[1]),
                            sum(counts)*20)
         elif self.message:
             frame.status(self.message[0],self.message[1])
+        elif klipper_status is not None:
+            frame.klipper_status(klipper_status)
+        elif menu_view is not None:
+            frame.oem_menu(menu_view)
         elif self.oem_menu is not None:
             frame.oem_menu(self.oem_menu.view())
         else:
@@ -284,6 +334,8 @@ class InventureOLED:
             self.selection=max(0,min(self.selection,len(rows)-1))
             frame.menu(title,[r[0] for r in rows],self.selection,self.page!='home')
         self.stream.request(frame.wire_bytes(),urgent=self._user_refresh_pending)
+        self._rendered_frames+=1
+        self._oem_render_cache=snapshot
         self._user_refresh_pending=False
 
     def _script(self,script):
@@ -297,7 +349,11 @@ class InventureOLED:
             self.message=None;self._user_refresh_pending=True;self.render_at=0.
             return
         if self.oem_menu is not None:
-            self.oem_menu.select()
+            if self.oem_display_mode=='status':
+                self.oem_menu.home()
+                self.oem_display_mode='menu'
+            elif self.oem_menu.select()=='exit_to_status':
+                self.oem_display_mode='status'
             self.render_at=0.;self._user_refresh_pending=True
             return
         _,rows=self._rows(now);action=rows[self.selection][1]
@@ -331,18 +387,22 @@ class InventureOLED:
             if released&key:
                 if bit==3 and not self.power_fired:
                     if self.oem_menu is not None:
-                        self.oem_menu.back()
+                        if self.oem_display_mode=='menu':
+                            if not self.oem_menu.back():
+                                self.oem_display_mode='status'
                     else:
                         self.message=None;self.page='home' if self.page in ('home','board','temps','inputs','about') else 'cal';self.selection=0
                     self._user_refresh_pending=True
                 self.pressed_at.pop(bit,None);self.repeat_at.pop(bit,None)
         self.last_buttons=mask;self.render_at=0.
+        self._wake()
 
     def _navigate(self,direction,now):
         self.message=None
         if self.oem_menu is not None:
-            self.oem_menu.move(direction)
-            self.render_at=0.;self._user_refresh_pending=True
+            if self.oem_display_mode=='menu':
+                self.oem_menu.move(direction)
+                self.render_at=0.;self._user_refresh_pending=True
             return
         _,rows=self._rows(now);self.selection=(self.selection+direction)%len(rows)
         self.render_at=0.;self._user_refresh_pending=True
@@ -365,11 +425,15 @@ class InventureOLED:
         self.retries=0;self.recovery_reason='manual_reinit';self._render(now)
         try:self._start(now,'manual_reinit')
         except ValueError as exc:raise gcmd.error(str(exc))
+        self._wake()
     def cmd_text(self,gcmd):
         self.message=(gcmd.get('LINE1','Inventure'),gcmd.get('LINE2',''))
         self.render_at=0.;self._user_refresh_pending=True
+        self._wake()
     def cmd_menu_status(self,gcmd):
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
+        details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
+        details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
         gcmd.respond_info('V9_MENU '+json.dumps(details,sort_keys=True))
     def cmd_status(self,gcmd):gcmd.respond_info('V9_OLED '+json.dumps(self.get_status(self.reactor.monotonic()),sort_keys=True))
     def get_status(self,now):
@@ -393,6 +457,12 @@ class InventureOLED:
                     'attempt_sent':self.stream.sent-self._oled_session_sent,
                     'attempt_acked':self.stream.acked-self._oled_session_acked},
                 'ui_transport':{'full_frames':self.stream.full_frames,
+                    'host_release':'RC7.4-OLED-FAST',
+                    'chunk_interval_s':self.interval,
+                    'refresh_interval_s':self.stream.refresh_interval,
+                    'idle_poll_interval_s':.050,
+                    'rendered_frames':self._rendered_frames,
+                    'render_cache_hits':self._render_cache_hits,
                     'partial_frames':self.stream.partial_frames,
                     'committed_wire_bytes':self.stream.committed_wire_bytes,
                     'last_window':self.stream.last_window,
