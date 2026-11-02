@@ -1,0 +1,138 @@
+name: Build Inventure STM32F207 GNU ARM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-arm-inventure.yml'
+      - 'source/**'
+      - 'mcu/**'
+      - 'host/**'
+      - 'host_core/**'
+      - 'fluidd/**'
+      - 'zero3/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inventure-rc7-gnu-arm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-mcu:
+    name: F207 GNU ARM 14.2 — validate, link and pack IVB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      SOURCE_ARCHIVE: source/INVENTURE_RC7_2_PUBLIC_GNU_ARM_SOURCE.zip
+      TOOLCHAIN_URL: https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Select Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify source snapshot checksum; reject private dumps
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Reassemble verified ZIP from git blobs; no external/private download.
+          cat source/parts/part*.bin > "$SOURCE_ARCHIVE"
+          cd source
+          sha256sum -c SHA256SUMS
+          cd ..
+          mkdir -p kit
+          unzip -q "$SOURCE_ARCHIVE" -d kit
+          test ! -e kit/regression_tests/evidence/oem_reference/application_r0323.bin
+          test ! -e kit/firmware/1.bin
+          python - <<'PYCI'
+          import zipfile
+          with zipfile.ZipFile('source/INVENTURE_RC7_2_PUBLIC_GNU_ARM_SOURCE.zip') as z:
+              assert z.testzip() is None
+              for item in z.infolist():
+                  assert not item.filename.startswith('/')
+                  assert '..' not in item.filename.split('/')
+                  assert item.filename != 'regression_tests/evidence/oem_reference/application_r0323.bin'
+          print('PUBLIC_SOURCE_CRC_AND_NO_FULL_OEM_FIRMWARE_PASS')
+          PYCI
+
+      - name: Install deterministic Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r kit/REQUIREMENTS_MAC_TEST.txt
+
+      - name: Download Arm GNU Toolchain 14.2.Rel1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/arm-toolchain"
+          curl --fail --location --retry 3 --retry-all-errors             "$TOOLCHAIN_URL" --output "$RUNNER_TEMP/arm-toolchain.tar.xz"
+          tar -xJf "$RUNNER_TEMP/arm-toolchain.tar.xz" -C "$RUNNER_TEMP/arm-toolchain" --strip-components=1
+          echo "$RUNNER_TEMP/arm-toolchain/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/arm-toolchain/bin/arm-none-eabi-gcc" --version
+          "$RUNNER_TEMP/arm-toolchain/bin/arm-none-eabi-gcc" --print-file-name=libc_nano.a | grep -Fq '/libc_nano.a'
+          test "$("$RUNNER_TEMP/arm-toolchain/bin/arm-none-eabi-gcc" -dumpfullversion)" = 14.2.1
+
+      - name: Verify all public offline regression and P4/OLED C tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python kit/scripts/verify_release.py | tee "$RUNNER_TEMP/offline_validation.json"
+          python - <<'PYCI'
+          import json
+          with open('/dev/null','w') as _:
+              pass
+          from pathlib import Path
+          r=json.loads(Path('kit/VALIDATION_REPRODUCIBLE_RC7.json').read_text())
+          assert r['status']=='PASS_OFFLINE_ONLY'
+          assert r['source_overlay_count']==26
+          assert r['unit_tests']==567
+          assert r['public_source_passed']==566
+          assert r['private_oem_reference_skipped']==1
+          assert r['acceptance_tests']==28
+          print('PUBLIC_TESTS_566_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
+          PYCI
+
+      - name: Fresh complete ARM build and image validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kit
+          python scripts/build_firmware_on_mac.py --doctor
+          python scripts/build_firmware_on_mac.py --jobs 4 --baud 250000
+          find dist -name 'INVENTUR.IVB' -type f -print
+          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC7_1_*')
+          test "${#folders[@]}" -eq 1
+          python scripts/verify_built_ivb.py "${folders[0]}" | tee "$RUNNER_TEMP/verify_built_ivb.json"
+          echo "BUILT_FOLDER=${folders[0]}" >> "$GITHUB_ENV"
+
+      - name: Package firmware, reports, matching host and Fluidd macros
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
+          cp "$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
+          cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
+          cp -a kit/fluidd/. release/FLUIDD/
+          cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
+          cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
+          (cd release/MCU && sha256sum -c SHA256SUMS)
+          (cd release && find . -type f -print0 | sort -z | xargs -0 sha256sum) > release/SHA256_ALL_FILES.txt
+          echo 'No flash, USB or serial connection was attempted.' > release/README_NOT_HARDWARE_TESTED.txt
+          echo 'User needs to install a matching host and validate hardware before enabling movement/heating.' >> release/README_NOT_HARDWARE_TESTED.txt
+          ls -lah release/MCU
+
+      - name: Save verified downloadable GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventure-rc7_2-stm32f207-gnu-arm-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
