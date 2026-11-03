@@ -52,6 +52,10 @@
     }
   },
   "host": {
+    "klippy/serialhdl.py": {
+      "old_sha256": "7bf9fe0f6654d79db59f3b13adbf073d37bd9084156f797cdbbc05e1789ce8b9",
+      "new_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc"
+    },
     "klippy/extras/inventure_mcu.py": {
       "old_sha256": "fc1db6ccb4a41335dafe925b83e28f7ba4deb9ffb096f26eed0246d9be2ada47",
       "new_sha256": "5b86b2935e9e8fea26184b25679766a0fe813be7ada6e1cd76f11474b8789c73"

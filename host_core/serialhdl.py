@@ -117,14 +117,14 @@ class SerialReader:
             wire_freq = msgparser.get_constant_float('CANBUS_FREQUENCY', None)
         else:
             wire_freq = msgparser.get_constant_float('SERIAL_BAUD', None)
-        # InventureBoot P4-PERSIST stores baud in boot Flash, read by MCU
-        # at startup. The firmware dictionary's CONFIG_SERIAL_BAUD remains
-        # the fixed build fallback; at runtime the ACTUAL host UART rate is
-        # the wire rate. Restrict this exception to the explicit RC5 ABI.
+        # P4 uses either the InventureBoot Flash setting or the lab image's
+        # forced rate. After identify, use the active UART rate for pacing.
         if (serial_fd_type == b'u' and
                 msgparser.get_constant_int('INVENTURE_P4_BOOT_JOURNAL_ABI', None) == 1):
             active_baud = getattr(serial_dev, 'baudrate', None)
-            if active_baud not in (19200, 57600, 115200, 250000, 500000):
+            if active_baud not in (19200, 57600, 115200, 250000, 500000,
+                                   750000, 1000000, 1500000, 2000000):
+                self.disconnect()
                 self._error('Inventure P4 baud not supported: %r', active_baud)
             wire_freq = float(active_baud)
         if wire_freq is not None:

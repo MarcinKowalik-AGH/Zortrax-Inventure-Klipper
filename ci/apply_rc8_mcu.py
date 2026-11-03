@@ -46,18 +46,23 @@ def apply(kit,repo=REPO):
             hashes[key]['new_sha256']=record['new_sha256']
             writes[kit/'mcu'/name]=data;writes[kit/'regression_tests/overlay'/key]=data
     for key,record in meta['host'].items():
-        name=Path(key).name;data=(repo/'host'/name).read_bytes()
-        if sha(data)!=record['new_sha256'] or sha((kit/'host'/name).read_bytes())!=record['old_sha256']:
+        name=Path(key).name;folder='host_core' if key=='klippy/serialhdl.py' else 'host'
+        data=(repo/folder/name).read_bytes();dest=kit/folder/name
+        if (sha(data)!=record['new_sha256'] or sha(dest.read_bytes())!=record['old_sha256']
+                or hashes[key]['new_sha256']!=record['old_sha256']):
             raise ValueError('Unknown host transfer: '+name)
         hashes[key]['new_sha256']=record['new_sha256']
-        writes[kit/'host'/name]=data;writes[kit/'regression_tests/overlay'/key]=data
+        writes[dest]=data
+        if folder=='host':writes[kit/'regression_tests/overlay'/key]=data
     for key,allowed in meta['host_compat'].items():
         hashes[key]['allowed_existing']=sorted(set(hashes[key].get('allowed_existing',[]))|set(allowed))
     writes[kit/'baseline/expected_hashes.json']=encoded(hashes)
     for name in ('baseline/p0_module_contracts_RC7.json','regression_tests/config/p0_module_contracts.json'):
         c=json.loads((kit/name).read_text())
         for key in list(meta['mcu'])+list(meta['host']):
-            rel='overlay/'+key;target=kit/'regression_tests'/rel;new=writes[target]
+            rel='overlay/'+key;target=kit/'regression_tests'/rel
+            if target not in writes:continue
+            new=writes[target]
             if rel in c['protected_files']:
                 if sha(target.read_bytes())!=c['protected_files'][rel]:raise ValueError('Unknown protected source: '+rel)
                 c['protected_files'][rel]=sha(new)

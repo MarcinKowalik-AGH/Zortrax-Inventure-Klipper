@@ -37,12 +37,15 @@ def apply(kit,repo=REPO):
             raise ValueError('Unknown kit input: '+name)
     # The readable MCU and serial overlays must remain exactly the same code
     # built from the snapshot plus the existing two audited GNU ARM fixes.
+    rc8_path=repo/'ci/rc8_manifest.json'
+    rc8=json.loads(rc8_path.read_text()) if rc8_path.exists() else {'mcu':{},'host':{}}
     for folder in ('mcu','host_core'):
-        rc8_path=repo/'ci/rc8_manifest.json'
-        rc8=json.loads(rc8_path.read_text())['mcu'] if rc8_path.exists() else {}
         for source in (repo/folder).iterdir():
             if source.is_file() and source.suffix in ('.c','.h','.inc','.py'):
-                record=rc8.get('src/stm32/'+source.name) if folder=='mcu' else None
+                if folder=='host_core' and 'klippy/'+source.name in rc8['host']:
+                    # The RC8 integration checks both hashes before applying this overlay.
+                    continue
+                record=rc8['mcu'].get('src/stm32/'+source.name) if folder=='mcu' else None
                 if record:
                     if sha(source.read_bytes())!=record['new_sha256']:
                         raise ValueError('Unknown RC8 readable MCU: '+source.name)

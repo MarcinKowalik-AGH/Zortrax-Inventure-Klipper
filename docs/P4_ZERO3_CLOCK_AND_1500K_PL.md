@@ -31,18 +31,36 @@ debugfs jest dostępny.
 ## Wariant laboratoryjny
 
 Używaj po sprawdzeniu zegara i stabilnego połączenia na obrazie dziennikowym.
-Zachowaj dotychczasowy IVB i używaną prędkość BOOT (np. 500000).
-Zatrzymaj Klippera, ustaw hosta na 1500000 z rzeczywistą wartością zegara
-i sprawdź wygenerowany backup. Dla potwierdzonych 24 MHz polecenia są następujące.
+Zachowaj dotychczasowy IVB i używaną prędkość BOOT (np. 500000). Zaktualizuj
+moduł `klippy/serialhdl.py` przez instalator hosta. Starsze wydania mogą
+odczytać słownik MCU przy 1,5 Mbaud, po czym przerwać start z komunikatem
+`Inventure P4 baud not supported: 1500000`.
+
+Przygotuj i sprawdź aktualizację z istniejącego klonu na Orange Pi.
 
 ```sh
-cd "$HOME/inventure-rc8-repo"
-git pull --ff-only
-sudo systemctl stop klipper
+cd "$HOME/inventure-rc8-repo" &&
+git pull --ff-only &&
+kit_dir=$(mktemp -d "$HOME/inventure-p4-host.XXXXXX") &&
+python3 ci/prepare_kit.py --destination "$kit_dir/kit" &&
+python3 "$kit_dir/kit/scripts/install_host.py" "$HOME/klipper"
+```
+
+Po komunikacie `DRY RUN only` zatrzymaj Klippera i zastosuj aktualizację.
+Dla potwierdzonych 24 MHz polecenia są następujące.
+
+```sh
+sudo systemctl stop klipper &&
+python3 "$kit_dir/kit/scripts/install_host.py" "$HOME/klipper" \
+  --apply --confirm-service-stopped &&
 python3 scripts/inventure_p4_baud_stage.py \
   --printer-cfg "$HOME/printer_data/config/printer.cfg" --baud 1500000 \
   --uart-clock-hz 24000000 --apply --confirm-klipper-stopped
 ```
+
+Jeśli aplikacja MCU już pokazuje `P4: 1500000 8N1` i `[mcu]` ma
+`baud: 1500000`, do usunięcia tego błędu wystarczy aktualizacja hosta
+i ponowne uruchomienie usługi.
 
 Z osobnego artefaktu `P4-LAB-FORCED-1500000` użyj wyłącznie aplikacji
 `MCU/INVENTUR.IVB`. Bootloader pozostaw na dotychczasowej prędkości
