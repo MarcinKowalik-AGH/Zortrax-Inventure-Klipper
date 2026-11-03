@@ -48,13 +48,13 @@
     "src/stm32/inventure_p4_baud.h": {
       "old_sha256": "847e7158c9be45c80ebb1d4e8011dd38005e575797dd3cd149e399ab58356510",
       "kit_mcu_present": true,
-      "new_sha256": "79b4039755e54aafaff15321c79a836b545b23faef786aa5da71e4454dc046ae"
+      "new_sha256": "f6a4b72e385ff1d569e7455f95180d091d81eafd63c91549d32ee699eb9313ed"
     }
   },
   "host": {
     "klippy/serialhdl.py": {
       "old_sha256": "7bf9fe0f6654d79db59f3b13adbf073d37bd9084156f797cdbbc05e1789ce8b9",
-      "new_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc"
+      "new_sha256": "7e48ea5b11c3e646b3bb50e98eb1d74a04091528843adbd3819fcc301aa70ac8"
     },
     "klippy/extras/inventure_mcu.py": {
       "old_sha256": "fc1db6ccb4a41335dafe925b83e28f7ba4deb9ffb096f26eed0246d9be2ada47",
@@ -64,15 +64,15 @@
   "files": {
     "scripts/build_firmware_on_mac.py": {
       "old_sha256": "1b334834ee7b02b1b783ff06e151ad021296c57652273052f8c6e8662d3262f6",
-      "new_sha256": "80c75b7956cfd6929578168a2ea575a4ff9cf591130bc104b225ec4cf6a56c3b"
+      "new_sha256": "3bcf568c7eca9043cfe76f97a6defd16f04029b0e3f526ab5e709c149211f345"
     },
     "scripts/verify_release.py": {
       "old_sha256": "23592e8e596f0f047fd769a9583bd9ee151879d919a1237d715cd9aea1911e18",
-      "new_sha256": "e17352611b0a664e061e9c2b764074b7571b6c9eabacc0cc890b8023c5a7c095"
+      "new_sha256": "e6caca0f2e88f8dd64c23b45e77393bba1609090c8865f4f3fa721cbeaa7cfb4"
     },
     "scripts/validate_build.py": {
       "old_sha256": "39e526bf528ceb708c1608607e66557ccaa843564289986c06278d91d6024184",
-      "new_sha256": "587687416df92b573a75f94dd1b926bea35b41a6a4c18055167dc6f5022a6b3e"
+      "new_sha256": "eb1fa5f365cb7adaf2ae49b46271b9cd1b6c1ab1a07f6822e09334cad490abcb"
     },
     "scripts/verify_built_ivb.py": {
       "old_sha256": "fc52ea0cfc37ec95ee5fb133d06e76b339c4e4769c9ba0894965fc022065aef5",
@@ -89,6 +89,9 @@
     "regression_tests/config/p0_module_contracts.json": "b4fead527a45bb32537814b8a4d327e2f9c5fee6466cb325d8005426839cc7aa"
   },
   "host_compat": {
+    "klippy/serialhdl.py": [
+      "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc"
+    ],
     "klippy/extras/inventure_oem_menu.py": [
       "53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0",
       "64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c",

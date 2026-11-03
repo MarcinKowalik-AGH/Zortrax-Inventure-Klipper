@@ -149,7 +149,7 @@ def main():
     ap.add_argument('--doctor',action='store_true',help='Only test local compiler')
     ap.add_argument('--verify-source',action='store_true',help='Verify bundle and payload hashes without compiler')
     ap.add_argument('--jobs',type=int,default=4)
-    ap.add_argument('--baud',type=int,choices=(250000,1000000,1500000,2000000),default=250000,help='250000 reads InventureBoot journal; 1M/1.5M/2M explicit nonpersistent MCU test variant')
+    ap.add_argument('--baud',type=int,choices=(250000,1000000,1500000,2000000,3000000),default=250000,help='250000 reads InventureBoot journal; 1M/1.5M/2M/3M explicit nonpersistent MCU test variant')
     a=ap.parse_args()
     if not 1<=a.jobs<=16:raise ValueError('Parallel jobs must be 1..16')
     expected=json.loads(HIST.read_text())

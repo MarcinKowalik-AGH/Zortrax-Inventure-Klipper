@@ -123,7 +123,7 @@ class SerialReader:
                 msgparser.get_constant_int('INVENTURE_P4_BOOT_JOURNAL_ABI', None) == 1):
             active_baud = getattr(serial_dev, 'baudrate', None)
             if active_baud not in (19200, 57600, 115200, 250000, 500000,
-                                   750000, 1000000, 1500000, 2000000):
+                                   750000, 1000000, 1500000, 2000000, 3000000):
                 self.disconnect()
                 self._error('Inventure P4 baud not supported: %r', active_baud)
             wire_freq = float(active_baud)

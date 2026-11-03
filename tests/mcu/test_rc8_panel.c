@@ -114,6 +114,8 @@ static void reference(unsigned reason) {
     ref_text(4,34,reason==3?"Cooling: automatic":reason?"Connection lost / released":"MCU: RC8.0  BOOT: 1.4 r2");
 #if CONFIG_SERIAL_BAUD == 1500000
     ref_text(4,50,"P4: 1500000 8N1");
+#elif CONFIG_SERIAL_BAUD == 3000000
+    ref_text(4,50,"P4: 3000000 8N1");
 #else
     ref_text(4,50,"P4: 250000 8N1");
 #endif

@@ -87,10 +87,12 @@ def main():
                     '-I',KIT/'mcu',KIT/'tests/test_rc7_autobaud_2m.c',
                     KIT/'mcu/serial.c','-o',t/'p4_auto2m'])
         items.append(run([t/'p4_auto2m']).strip())
-        run(native+['-Wno-pointer-to-int-cast','-DCONFIG_SERIAL_BAUD=1500000',
-                    '-I',KIT/'tests/p4_mock','-I',KIT/'mcu',KIT/'tests/test_rc7_forced_baud.c',
-                    KIT/'mcu/serial.c','-o',t/'p4_forced1500k'])
-        items.append(run([t/'p4_forced1500k']).strip())
+        for rate in (1500000,3000000):
+            executable=t/f'p4_forced_{rate}'
+            run(native+['-Wno-pointer-to-int-cast',f'-DCONFIG_SERIAL_BAUD={rate}',
+                        '-I',KIT/'tests/p4_mock','-I',KIT/'mcu',KIT/'tests/test_rc7_forced_baud.c',
+                        KIT/'mcu/serial.c','-o',executable])
+            items.append(run([executable]).strip())
         run(native+['-I',KIT/'mcu',KIT/'tests/test_p4_boot_journal_rc5.c',
                     KIT/'mcu/inventure_p4_baud.c','-o',t/'p4_journal'])
         items.append(run([t/'p4_journal']).strip())
@@ -144,7 +146,7 @@ def main():
     report={'release':'P01_P17_RC8_0_LOCAL_SERVICES','status':'PASS_OFFLINE_ONLY','host_release':'RC7.6-KLIPPER-GRAPHICS','mcu_release':'P01-P17-RC8.0-LOCAL',
       'p4_journal':'r1/r2/1.5-HW2 + authenticated 1.6-RC2 r3; eight read-compatible baud codes, separate bootwait records, last valid baud, fallback 250000',
       'runtime_uart': [19200,57600,115200,250000,500000,750000,1000000,2000000],
-      'optional_compiled_uart': [1000000,2000000],
+      'optional_compiled_uart': [1000000,1500000,2000000,3000000],
       'high_baud_journal_mapping_verified':True,
       'boot_v16_sha256':'577d1780fec0d423af54662da2580139d438b1757ff7ba68712fa73143a665ec',
       'source_overlay_count':29,'macos_arm_link_verified':False,

@@ -38,6 +38,7 @@ class McuLocalServices(unittest.TestCase):
     def test_oled_row_oracle_and_local_recovery(self):
         self.run_c('test_rc8_panel')
         self.run_c('test_rc8_panel','-DCONFIG_SERIAL_BAUD=1500000')
+        self.run_c('test_rc8_panel','-DCONFIG_SERIAL_BAUD=3000000')
     def test_full_host_accepts_oled_versions_supported_by_launcher(self):
         spec=importlib.util.spec_from_file_location('launcher_install',ROOT/'install_rc75_oled.py')
         launcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(launcher)
@@ -88,8 +89,9 @@ class McuLocalServices(unittest.TestCase):
 
         p4={'INVENTURE_P4_BOOT_JOURNAL_ABI':1,'SERIAL_BAUD':250000}
         cases=[(rate,b'u',p4,rate) for rate in (500000,750000,1000000,2000000)]
+        cases.extend((rate,b'u',dict(p4,SERIAL_BAUD=rate,INVENTURE_P4_FORCED_BAUD=rate),rate)
+                     for rate in (1500000,3000000))
         cases.extend([
-            (1500000,b'u',dict(p4,SERIAL_BAUD=1500000,INVENTURE_P4_FORCED_BAUD=1500000),1500000),
             (1500000,b'u',{'SERIAL_BAUD':115200},115200),
             (None,b'c',dict(p4,CANBUS_FREQUENCY=1000000),1000000),
             (1750000,b'u',p4,None),

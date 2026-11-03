@@ -25,7 +25,7 @@ def check_config(path: Path) -> dict:
     for k,v in EXPECTED.items():
         actual=cfg.get(k)
         if k=='CONFIG_SERIAL_BAUD':
-            ok=actual in ('250000','1000000','1500000','2000000')
+            ok=actual in ('250000','1000000','1500000','2000000','3000000')
         elif k in ['CONFIG_FLASH_APPLICATION_ADDRESS','CONFIG_FLASH_SIZE']:
             ok=actual is not None and int(actual,16)==int(v,16)
         else:ok=actual==v
@@ -203,7 +203,7 @@ def check_dictionary(path: Path) -> dict:
     if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'P01-P17-RC8.0-LOCAL':
         raise ValueError('RC7 MCU dictionary wrong application release')
     forced=d.get('config',{}).get('INVENTURE_P4_FORCED_BAUD')
-    if str(forced) not in ('0','1000000','1500000','2000000'):
+    if str(forced) not in ('0','1000000','1500000','2000000','3000000'):
         raise ValueError('RC7 MCU dictionary wrong forced baud')
     new_config = {'INVENTURE_LOCAL_OLED_ABI': 1,
                   'INVENTURE_LOCAL_OLED_RECOVERY_ABI':1,

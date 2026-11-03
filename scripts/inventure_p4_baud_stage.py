@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Stage an Inventure V9 Orange Pi Zero 3 [mcu] baud switch, NEVER touch MCU.
 
-The normal application follows the InventureBoot P4 setting. The separate
-1.5 Mbaud lab image overrides it for the application only. This script
+The normal application follows the InventureBoot P4 setting. A forced
+1.5 or 3 Mbaud lab image overrides it for the application only. This script
 changes only the host printer.cfg after stopping klipper.service.
 
 No serial port is opened. No MCU/GPIO writes, firmware resets or heat/motion.
@@ -13,12 +13,12 @@ import argparse,datetime,hashlib,json,os,re,shutil,stat,subprocess,sys,tempfile
 from pathlib import Path
 
 BASE_RATES={250000,500000}
-FORCED_LAB_BAUD=1500000
-RATES=BASE_RATES|{1000000,FORCED_LAB_BAUD,2000000}
+FORCED_LAB_RATES={1500000,3000000}
+RATES=BASE_RATES|FORCED_LAB_RATES|{1000000,2000000}
 TRANSITIONS={(old,new) for old in RATES for new in BASE_RATES}
 TRANSITIONS.update({(250000,1000000),(500000,1000000),(1000000,2000000),
-                    (2000000,1000000),(250000,FORCED_LAB_BAUD),
-                    (500000,FORCED_LAB_BAUD),(1000000,FORCED_LAB_BAUD)})
+                    (2000000,1000000),(250000,1500000),(500000,1500000),
+                    (1000000,1500000),(1500000,3000000),(3000000,1500000)})
 HEADER=re.compile(r'^\s*\[([^\]]+)\]\s*(?:[#;].*)?$')
 ENTRY=re.compile(r'^(\s*)(baud|serial)(\s*:\s*)([^#;\s]+)(.*)$',re.I)
 SHA=lambda data:hashlib.sha256(data).hexdigest()
@@ -57,7 +57,7 @@ def parse_and_plan(content,new_baud):
     if old not in RATES:raise ValueError('Existing baud not among qualified candidate rates')
     if old==new_baud:return content,old
     if (old,new_baud) not in TRANSITIONS:
-        raise ValueError('Select a base rate first, or qualify 1000000 before 2000000')
+        raise ValueError('Qualify 1000000 before 2000000 and 1500000 before 3000000, or select a base rate')
     idx,m=options['baud']
     # Preserve whitespace, comments, exact neighboring options and sections.
     tail=m.group(5)
@@ -98,10 +98,10 @@ def apply(path,original,modified,old,new):
     atomic_write(path,modified.encode())
     print('HOST_BAUD_STAGED_NOT_CONNECTED',old,'->',new)
     print('BACKUP:',folder)
-    if new==FORCED_LAB_BAUD:
-        print('NEXT: use the separate LAB 1500000 MCU application. Keep the verified BOOT baud.')
+    if new in FORCED_LAB_RATES:
+        print(f'NEXT: use the separate LAB {new} MCU application. Keep the verified BOOT baud.')
     else:
-        if old==FORCED_LAB_BAUD:
+        if old in FORCED_LAB_RATES:
             print('NEXT: restore the journal-mode MCU application before starting Klipper.')
         print('NEXT: set bootloader Diagnostics -> UART -> P4 baud rate to '+str(new))
     print('NEXT: leave UART on bootwait OFF, cold power cycle MCU; only then start Klipper.')

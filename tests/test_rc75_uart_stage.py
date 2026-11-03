@@ -31,12 +31,18 @@ class UARTTests(unittest.TestCase):
             p4.validate_clock(1500000,None)
         for baud in (1000000,2000000):
             p4.validate_clock(baud,64000000)
+        with self.assertRaises(ValueError):
+            p4.validate_clock(3000000,24000000)
+        p4.validate_clock(3000000,48000000)
     def test_transition_from_500k_to_1500k_and_recovery(self):
         base,_=p4.parse_and_plan(CFG,500000)
         lab,old=p4.parse_and_plan(base,1500000)
         self.assertEqual(old,500000)
         self.assertIn('baud: 1500000 # current P4',lab)
         self.assertEqual(p4.parse_and_plan(lab,500000),(base,1500000))
+        fast,old=p4.parse_and_plan(lab,3000000)
+        self.assertEqual(old,1500000)
+        self.assertEqual(p4.parse_and_plan(fast,1500000),(lab,3000000))
     def test_cli_uses_the_measured_uart_clock(self):
         with tempfile.TemporaryDirectory() as d:
             path=pathlib.Path(d)/'printer.cfg'
