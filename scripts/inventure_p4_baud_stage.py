@@ -125,6 +125,7 @@ def main():
     mx=ap.add_mutually_exclusive_group(required=True)
     mx.add_argument('--baud',type=int,choices=sorted(RATES))
     mx.add_argument('--rollback',type=Path)
+    ap.add_argument('--uart-clock-hz',type=int,help='Active UART5 clock in Hz')
     ap.add_argument('--apply',action='store_true')
     ap.add_argument('--confirm-klipper-stopped',action='store_true')
     a=ap.parse_args();p=a.printer_cfg.expanduser().resolve()

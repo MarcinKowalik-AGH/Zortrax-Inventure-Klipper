@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-import pathlib,sys,tempfile,unittest
+import pathlib,subprocess,sys,tempfile,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import inventure_p4_baud_stage as p4
@@ -37,6 +37,17 @@ class UARTTests(unittest.TestCase):
         self.assertEqual(old,500000)
         self.assertIn('baud: 1500000 # current P4',lab)
         self.assertEqual(p4.parse_and_plan(lab,500000),(base,1500000))
+    def test_cli_uses_the_measured_uart_clock(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=pathlib.Path(d)/'printer.cfg'
+            path.write_text(CFG)
+            for baud,expected in ((1000000,1),(2000000,1),(1500000,0)):
+                result=subprocess.run([sys.executable,p4.__file__,'--printer-cfg',str(path),
+                                       '--baud',str(baud),'--uart-clock-hz','24000000'],
+                                      capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
+            self.assertEqual(path.read_text(),CFG)
+
     def test_restore_host_cfg_does_not_touch_mcu(self):
         with tempfile.TemporaryDirectory() as d:
             path=pathlib.Path(d)/'printer.cfg';path.write_text(CFG)
