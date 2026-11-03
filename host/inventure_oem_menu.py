@@ -21,6 +21,37 @@ class Item:
 # Exact OEM order for the five main branches; nested action labels follow
 # the static r0323 audit. Discovered callbacks are NOT executed by this UI.
 MENU = {
+ # M300-style split root: Klipper / Zortrax / Service & Tests.
+ # Never dispatch an unqualified printer action from this UI-only branch.
+ 'launcher':('Klipper','Klipper',None,[
+    Item('Klipper','Klipper','klipper_main'),
+    Item('Zortrax Inventure','Zortrax Inventure','root'),
+    Item('Serwis / Testy','Service / Tests','service_tests')]),
+ 'klipper_main':('Klipper','Klipper',None,[
+    Item('Status drukarki','Printer status',action='go_status'),
+    Item('Druk / Zadanie','Print / Job',action='job_info'),
+    Item('Temperatury','Temperatures',action='thermal_info'),
+    Item('Sterowanie','Control','klipper_control'),
+    Item('Ustawienia','Settings','klipper_settings'),
+    Item('Informacje','Information','klipper_information')]),
+ 'klipper_control':('Sterowanie','Control',None,[
+    Item('Ruch nieaktywny','Motion not qualified',action='motion_disabled'),
+    Item('Bazowanie nieaktywne','Homing not qualified',action='homing_disabled'),
+    Item('Grzanie nieaktywne','Heating not qualified',action='heating_disabled')]),
+ 'klipper_settings':('Ustawienia','Settings',None,[
+    Item('Konfiguracja: Fluidd','Configuration: Fluidd',action='settings_info'),
+    Item('Przyciski i OLED','Panel and OLED',action='oled_info')]),
+ 'klipper_information':('Informacje','Information',None,[
+    Item('Wersja MCU','MCU version',action='version'),
+    Item('Port UART P4','P4 serial port',action='uart_info'),
+    Item('Stan drukarki','Printer status',action='go_status')]),
+ 'service_tests':('Serwis / Testy','Service / Tests',None,[
+    Item('Stan MCU','MCU status',action='mcu_info'),
+    Item('OLED i menu','OLED and menu',action='oled_info'),
+    Item('UART P4','P4 UART',action='uart_info'),
+    Item('Wentylatory','Fans',action='fans_info'),
+    Item('Czujniki / ADC','Inputs / ADC',action='adc_info'),
+    Item('RFID / filament','RFID / material',action='rfid_info')]),
  'root': ('Menu główne', 'Main Menu', None, [
    Item('Modele','Models','models',icon='models',oem_ram='0x20000448'),
    Item('Konserwacja','Maintenance','maintenance',icon='maintenance',oem_ram='0x20000A8C'),
@@ -101,11 +132,13 @@ MENU = {
 
 class OEMMenu:
     """Navigation only: all unqualified hardware-affecting choices are inert."""
-    def __init__(self, language='pl', root_back_to_status=True):
+    def __init__(self, language='pl', root_back_to_status=True, root_page='root'):
         if language not in ('pl','en'): raise ValueError('Language must be pl/en')
         self.language=language
+        if root_page not in ('root','launcher'): raise ValueError('Unknown menu root page')
+        self.root_page=root_page
         self.root_back_to_status=bool(root_back_to_status)
-        self.page='root';self.stack=[];self.selected=0;self.window=1 if self.root_back_to_status else 0
+        self.page=self.root_page;self.stack=[];self.selected=0;self.window=1 if self.root_back_to_status else 0
         self.notice=None;self.last_action=None;self.generation=0
 
     def _entry(self, node):
@@ -117,7 +150,7 @@ class OEMMenu:
 
     def items(self):
         nodes=MENU[self.page][3]
-        if self.page=='root' and not self.root_back_to_status:return list(nodes)
+        if self.page==self.root_page and not self.root_back_to_status:return list(nodes)
         return [Item('Powrót','Back',action='back')]+list(nodes)
 
     def view(self):
@@ -127,7 +160,7 @@ class OEMMenu:
         # This is the largest source of 250000-baud navigation latency.
         # Keep the OEM category icon on a submenu page instead.
         icon=MENU[self.page][2]
-        if self.page!='root' and items and items[selected].icon:
+        if self.page not in ('root','launcher') and items and items[selected].icon:
             icon=items[selected].icon
         return {'page':self.page,'title':self._title(),
                 'labels':[self._entry(i) for i in items],
@@ -160,7 +193,7 @@ class OEMMenu:
         return self.selected
 
     def home(self):
-        self.page='root';self.stack=[];self.selected=0
+        self.page=self.root_page;self.stack=[];self.selected=0
         self.window=1 if self.root_back_to_status else 0
         self.notice=None;self.last_action=None;self.generation+=1
 
@@ -181,6 +214,9 @@ class OEMMenu:
             self.stack.append((self.page,self.selected,self.window))
             self.page=node.child;self.selected=0;self.window=1;self.notice=None
             self.generation+=1;return 'submenu'
+        if node.action=='go_status':
+            self.last_action=node.action;self.generation+=1
+            return 'exit_to_status'
         if node.action in ('language_pl','language_en'):
             self.language='pl' if node.action=='language_pl' else 'en'
             self.notice='Polski' if self.language=='pl' else 'English'
@@ -198,5 +234,6 @@ class OEMMenu:
                 'stack_depth':len(self.stack),'language':self.language,
                 'notice':self.notice,'last_action':self.last_action,
                 'generation':self.generation, 'root_back_to_status':self.root_back_to_status,
+                'root_page':self.root_page,'navigation_profile':'M300_LAUNCHER',
                 'ui_only':True,
                 'actuators_enabled_by_menu':False}

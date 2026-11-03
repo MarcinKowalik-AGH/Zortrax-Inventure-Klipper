@@ -14,6 +14,8 @@ on:
       - 'zero3/**'
       - 'tests/**'
       - 'install_rc74_oled.py'
+      - 'install_rc75_oled.py'
+      - 'scripts/**'
       - 'docs/**'
   workflow_dispatch:
 
@@ -109,24 +111,51 @@ jobs:
           print('PUBLIC_TESTS_566_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
 
-      - name: RC7.4 host UI, ACK pacing, install and rollback regression
+      - name: RC7.5 Klipper/M300 launcher, OLED ACK, P4 host and rollback regression
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q host install_rc74_oled.py
-          mkdir -p tests/baseline_host
-          cp kit/host/inventure_oled.py kit/host/inventure_oled_render.py kit/host/inventure_oem_menu.py tests/baseline_host/
-          python -m unittest discover -s tests -p 'test_*rc74*.py' -v 2>&1 | tee "$RUNNER_TEMP/rc74_host_tests.log"
+          python -m compileall -q host install_rc75_oled.py scripts/inventure_p4_baud_stage.py
+          python -m unittest discover -s tests -p 'test_rc75*.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_tests.log"
+          python -m unittest discover -s tests -p 'test_rc74_ack_pump.py' -v 2>&1 | tee "$RUNNER_TEMP/rc74_ack_tests.log"
+          # Run lifecycle regression against the ACTUAL RC7.5 host modules,
+          # after immutable RC7.1 MCU source/regression verification.
+          cp host/inventure_oled.py host/inventure_oem_menu.py host/inventure_oled_render.py kit/regression_tests/overlay/klippy/extras/
+          PYTHONPATH=kit/regression_tests/tests python -m unittest discover -s kit/regression_tests/tests -p 'test_host_adapters.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_host_integration.log"
+          PYTHONPATH=kit/regression_tests/tests python -m unittest discover -s kit/regression_tests/tests -p 'test_oled_lifecycle.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_oled_lifecycle.log"
+          PYTHONPATH=kit/regression_tests/tests python - <<'PYCI'
+          from test_host_adapters import Printer
+          import tempfile
+          with tempfile.TemporaryDirectory() as tmp:
+              p=Printer(tmp)
+              p.settings['inventure_oled'].update(oem_menu=True,oem_start_screen='klipper')
+              o=p.load_object(None,'inventure_oled')
+              p.board_ready();p.configure();p.send_event('klippy:ready')
+              assert o.oem_display_mode=='status'
+              assert o._rendered_screen=='klipper_status'
+              assert o.oem_menu.page=='launcher'
+              assert len(o.stream.latest)==8192 and any(o.stream.latest)
+              first=o.stream.latest
+              o._select(0.);o._render(.01)
+              assert o.oem_display_mode=='menu'
+              assert o.oem_menu.view()['labels'][1:]==['Klipper','Zortrax Inventure','Serwis / Testy']
+              assert o.stream.latest!=first
+              o.oem_menu.move(1);o.oem_menu.move(1)
+              o._select(.02);o._render(.03)
+              assert o.oem_menu.page=='root'
+              assert o.oem_menu.view()['labels'][1]=='Modele'
+          print('REAL_HOST_RC75_STATUS_LAUNCHER_ZORTRAX_NESTED_PASS')
+          PYCI
           python - <<'PYCI'
           from pathlib import Path
-          import hashlib, importlib.util
-          spec=importlib.util.spec_from_file_location('rc74installer','install_rc74_oled.py')
+          import hashlib,importlib.util
+          spec=importlib.util.spec_from_file_location('rc75installer','install_rc75_oled.py')
           mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-          for name,(allowed,expected) in mod.FILES.items():
+          for name,(accepted,expected) in mod.FILES.items():
               actual=hashlib.sha256((Path('host')/name).read_bytes()).hexdigest()
               assert actual==expected,(name,actual,expected)
-              assert len(allowed)>=2
-          print('RC74_PUBLISHED_HOST_SHA256_PASS')
+              assert len(accepted)==1
+          print('RC75_PUBLISHED_HOST_SHA256_PASS')
           PYCI
 
       - name: Fresh complete ARM build and image validation
@@ -149,12 +178,14 @@ jobs:
           mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
           cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
           cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
-          # Published host modules MUST match the tested RC7.4 repo sources,
+          # Published host modules MUST match the tested RC7.5 repo sources,
           # not the old immutable MCU build snapshot (RC7.2).
           cp host/inventure_oled.py host/inventure_oled_render.py host/inventure_oem_menu.py release/HOST/host/
-          cp install_rc74_oled.py release/HOST/
-          cp docs/RC7_4_OLED_ACK_FAST_PL.md release/HOST/
-          cp "$RUNNER_TEMP/rc74_host_tests.log" release/REPORTS/
+          cp install_rc75_oled.py release/HOST/
+          mkdir -p release/HOST/scripts
+          cp scripts/inventure_p4_baud_stage.py release/HOST/scripts/
+          cp docs/RC7_5_UI_M300_AND_P4_PL.md release/HOST/
+          cp "$RUNNER_TEMP/rc75_tests.log" "$RUNNER_TEMP/rc74_ack_tests.log" "$RUNNER_TEMP/rc75_host_integration.log" "$RUNNER_TEMP/rc75_oled_lifecycle.log" release/REPORTS/
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
           cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
@@ -168,7 +199,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc7_4-host-rc7_1-mcu-gnu-arm-${{ github.sha }}
+          name: inventure-rc7_5-host-rc7_1-mcu-gnu-arm-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

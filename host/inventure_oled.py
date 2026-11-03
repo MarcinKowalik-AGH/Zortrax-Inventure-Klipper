@@ -18,12 +18,18 @@ class InventureOLED:
         self.mcu=self.board.mcu;self.gcode=self.printer.lookup_object('gcode')
         self.speed=config.getint('spi_speed',2000000,minval=500000,maxval=2000000)
         self.oem_ui_enabled=config.getboolean('oem_menu',False)
-        self.oem_menu=OEMMenu(config.get('oem_language','pl')) if self.oem_ui_enabled else None
+        self.menu_profile=config.get('menu_profile','m300').strip().lower()
+        if self.menu_profile not in ('m300','zortrax'):
+            raise config.error('menu_profile must be m300 or zortrax')
+        root_page='launcher' if self.menu_profile=='m300' else 'root'
+        self.oem_menu=OEMMenu(config.get('oem_language','pl'),root_page=root_page) if self.oem_ui_enabled else None
         self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
         if self.oem_start_screen not in ('klipper','menu'):
             raise config.error('oem_start_screen must be klipper or menu')
         self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
         self._oem_render_cache=None
+        self._rendered_screen='not_rendered'
+        self._rendered_menu_page=None
         self.interval=config.getfloat('chunk_interval',.002,minval=.002,maxval=.050)
         self.stream=OledStream(config.getfloat('ack_timeout',1.,minval=.1,maxval=10.),
             config.getfloat('refresh_interval',.5,minval=.2,maxval=10.))
@@ -48,6 +54,7 @@ class InventureOLED:
         # TEST01: read-only telemetry for physical OLED ACK timeout investigation.
         self._oled_last_tx=None;self._oled_last_ack=None
         self._oled_session_sent=0;self._oled_session_acked=0
+        self._ack_pump_active=False;self._ack_pump_deferrals=0
         self.mcu.register_config_callback(self._build_config)
         self.printer.register_event_handler('klippy:ready',self._ready)
         self.printer.register_event_handler('klippy:shutdown',self._shutdown)
@@ -88,8 +95,16 @@ class InventureOLED:
     def _ready(self):
         if self.shutdown_latched:return
         self.connected=True;now=self.reactor.monotonic()
+        # On a fresh host Ready, choose the configured Klipper status page
+        # deterministically. No stock/OEM menu can inherit a stale selection.
+        self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
+        if self.oem_menu is not None:self.oem_menu.home()
+        self.message=None
         self._oem_render_cache=None
         self._render(now);self._start(now,'initial_start')
+        logging.info('INVENTURE_UI_READY display=%s profile=%s root=%s',
+                     self.oem_display_mode,self.menu_profile,
+                     self.oem_menu.root_page if self.oem_menu is not None else 'legacy')
         self.reactor.update_timer(self.timer,self.reactor.NOW)
 
     def _start(self,now,reason):
@@ -152,7 +167,16 @@ class InventureOLED:
                     # Still strictly one outstanding operation, no DMA/RLE
                     # claims and no MCU/bootloader modifications.
                     if self.stream.enabled and not self.shutdown_latched:
-                        self._send_one(now)
+                        # A test MCU can deliver ACK synchronously from send().
+                        # Never let the ACK pump recurse through hundreds of
+                        # 32-byte operations; continue at the next reactor tick.
+                        if getattr(self, '_ack_pump_active', False):
+                            self._ack_pump_deferrals+=1
+                            self.reactor.update_timer(self.timer,self.reactor.NOW)
+                        else:
+                            self._ack_pump_active=True
+                            try:self._send_one(now)
+                            finally:self._ack_pump_active=False
         self.reactor.register_async_callback(deliver)
 
     def _state(self,params):
@@ -327,6 +351,13 @@ class InventureOLED:
             self.selection=max(0,min(self.selection,len(rows)-1))
             frame.menu(title,[r[0] for r in rows],self.selection,self.page!='home')
         self.stream.request(frame.wire_bytes(),urgent=self._user_refresh_pending)
+        if measuring:self._rendered_screen='calibration'
+        elif self.message:self._rendered_screen='message'
+        elif klipper_status is not None:self._rendered_screen='klipper_status'
+        elif menu_view is not None or self.oem_menu is not None:
+            self._rendered_screen='oem_menu'
+        else:self._rendered_screen='legacy'
+        self._rendered_menu_page=(menu_view or {}).get('page')
         self._oem_render_cache=snapshot
         self._user_refresh_pending=False
 
@@ -423,6 +454,9 @@ class InventureOLED:
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
         details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
         details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
+        details['menu_profile']=self.menu_profile
+        details['screen_requested']=self.oem_start_screen
+        details['rendered_screen']=self._rendered_screen
         gcmd.respond_info('V9_MENU '+json.dumps(details,sort_keys=True))
     def cmd_status(self,gcmd):gcmd.respond_info('V9_OLED '+json.dumps(self.get_status(self.reactor.monotonic()),sort_keys=True))
     def get_status(self,now):
@@ -440,7 +474,17 @@ class InventureOLED:
                 'shutdown_policy':'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED',
                 'blank_confirmed':bool(self.wire_state.get('configured') and self.wire_state.get('reset')==0
                     and self.wire_state.get('active')==0 and self.state_received is not None and now-self.state_received<=.75),
-                'page':self.page,'selection':self.selection,'oem_menu':self.oem_menu.status() if self.oem_menu is not None else None,'events':list(self.events),
+                'page':self.page,'selection':self.selection,
+                'display_mode':self.oem_display_mode,
+                'menu_profile':self.menu_profile,
+                'screen_requested':self.oem_start_screen,
+                'rendered_screen':self._rendered_screen,
+                'host_frame_acknowledged':bool(self.stream.ready and
+                    self.stream.previous is not None and
+                    self.stream.previous==self.stream.latest),
+                'ack_pump_deferrals':self._ack_pump_deferrals,
+                'rendered_menu_page':self._rendered_menu_page,
+                'oem_menu':self.oem_menu.status() if self.oem_menu is not None else None,'events':list(self.events),
                 'ack_diagnostic':{'last_tx':self._oled_last_tx,
                     'last_ack':self._oled_last_ack,
                     'attempt_sent':self.stream.sent-self._oled_session_sent,

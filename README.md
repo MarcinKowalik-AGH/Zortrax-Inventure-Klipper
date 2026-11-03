@@ -60,3 +60,29 @@ actual OLED speed still requiring hardware validation.
 **MCU APP and InventureBoot unchanged.** CI builds and validates the pinned
 RC7.1 STM32F207 APP and now explicitly packages the current tested RC7.4 host
 files, instead of republishing the old kit/host snapshot.
+
+
+## RC7.5 — M300-like launcher / P4 stage (03 November 2026)
+
+The diagnostic OLED defaults to the KLIPPER host status **after** MCU
+connection and OLED handover. OK opens a three-way launcher:
+`Klipper`, `Zortrax Inventure`, and `Service / Tests`; the five
+r0323 OEM branches live under Zortrax Inventure, not immediately under OK.
+The M300-like launcher is explicitly display-only for unqualified
+movement, heating, RFID and calibration. `INVENTURE_MENU_STATUS` and
+`INVENTURE_OLED_STATUS` expose the requested and rendered screen,
+current menu root and whether the host frame was ACKed. Before host Ready,
+the MCU may display only its local `Waiting for Klipper` screen.
+
+The ACK-driven OLED transport now also guards against synchronous,
+recursive MCU ACK delivery. Hardware-independent lifecycle and host
+integration tests are included in GitHub Actions.
+
+The matching InventureBoot 1.6-RC2 P4 journal supports both
+**1000000** and **2000000** baud; baud is *not auto-negotiated*. Change
+bootloader P4 baud and host `printer.cfg` together while the Klipper
+service is stopped; test 1M before 2M. The `scripts/inventure_p4_baud_stage.py`
+helper performs only an offline hash-backed host config edit. No
+bootloader, MCU or motor/heater action is performed by this commit.
+
+[RC7.5 installation, verification and rollback (Polish)](docs/RC7_5_UI_M300_AND_P4_PL.md).
