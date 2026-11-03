@@ -12,6 +12,9 @@ on:
       - 'host_core/**'
       - 'fluidd/**'
       - 'zero3/**'
+      - 'tests/**'
+      - 'install_rc74_oled.py'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -106,6 +109,26 @@ jobs:
           print('PUBLIC_TESTS_566_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
 
+      - name: RC7.4 host UI, ACK pacing, install and rollback regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q host install_rc74_oled.py
+          mkdir -p tests/baseline_host
+          cp kit/host/inventure_oled.py kit/host/inventure_oled_render.py kit/host/inventure_oem_menu.py tests/baseline_host/
+          python -m unittest discover -s tests -p 'test_*rc74*.py' -v 2>&1 | tee "$RUNNER_TEMP/rc74_host_tests.log"
+          python - <<'PYCI'
+          from pathlib import Path
+          import hashlib, importlib.util
+          spec=importlib.util.spec_from_file_location('rc74installer','install_rc74_oled.py')
+          mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+          for name,(allowed,expected) in mod.FILES.items():
+              actual=hashlib.sha256((Path('host')/name).read_bytes()).hexdigest()
+              assert actual==expected,(name,actual,expected)
+              assert len(allowed)>=2
+          print('RC74_PUBLISHED_HOST_SHA256_PASS')
+          PYCI
+
       - name: Fresh complete ARM build and image validation
         shell: bash
         run: |
@@ -126,6 +149,12 @@ jobs:
           mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
           cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
           cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
+          # Published host modules MUST match the tested RC7.4 repo sources,
+          # not the old immutable MCU build snapshot (RC7.2).
+          cp host/inventure_oled.py host/inventure_oled_render.py host/inventure_oem_menu.py release/HOST/host/
+          cp install_rc74_oled.py release/HOST/
+          cp docs/RC7_4_OLED_ACK_FAST_PL.md release/HOST/
+          cp "$RUNNER_TEMP/rc74_host_tests.log" release/REPORTS/
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
           cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
@@ -139,7 +168,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc7_2-stm32f207-gnu-arm-${{ github.sha }}
+          name: inventure-rc7_4-host-rc7_1-mcu-gnu-arm-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

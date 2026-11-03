@@ -101,10 +101,11 @@ MENU = {
 
 class OEMMenu:
     """Navigation only: all unqualified hardware-affecting choices are inert."""
-    def __init__(self, language='pl'):
+    def __init__(self, language='pl', root_back_to_status=True):
         if language not in ('pl','en'): raise ValueError('Language must be pl/en')
         self.language=language
-        self.page='root';self.stack=[];self.selected=0;self.window=0
+        self.root_back_to_status=bool(root_back_to_status)
+        self.page='root';self.stack=[];self.selected=0;self.window=1 if self.root_back_to_status else 0
         self.notice=None;self.last_action=None;self.generation=0
 
     def _entry(self, node):
@@ -116,14 +117,18 @@ class OEMMenu:
 
     def items(self):
         nodes=MENU[self.page][3]
-        if self.page=='root':return list(nodes)
+        if self.page=='root' and not self.root_back_to_status:return list(nodes)
         return [Item('Powrót','Back',action='back')]+list(nodes)
 
     def view(self):
         items=self.items();selected=min(self.selected,max(0,len(items)-1))
         if selected!=self.selected:self.selected=selected
+        # In a fast root menu, do not redraw a 50x50 bitmap for every UP/DOWN.
+        # This is the largest source of 250000-baud navigation latency.
+        # Keep the OEM category icon on a submenu page instead.
         icon=MENU[self.page][2]
-        if items and items[selected].icon:icon=items[selected].icon
+        if self.page!='root' and items and items[selected].icon:
+            icon=items[selected].icon
         return {'page':self.page,'title':self._title(),
                 'labels':[self._entry(i) for i in items],
                 'selected':self.selected,'window':self.window,
@@ -134,17 +139,30 @@ class OEMMenu:
         if direction not in (-1,1):raise ValueError('direction -1/+1')
         prev=self.selected
         self.selected=min(len(self.items())-1,max(0,self.selected+direction))
-        if prev!=self.selected:self.notice=None;self.generation+=1
-        # OEM main menu has 5 branches: maintain a 4-row viewport without
-        # hiding the selected first row. Subs use pinned Back plus 3 rows.
-        if self.page=='root' and len(self.items())>4:
-            if self.selected<self.window:self.window=self.selected
-            elif self.selected>self.window+3:self.window=self.selected-3
-        if self.page!='root' and len(self.items())>4:
-            if self.selected==0:self.window=1
-            elif self.selected<self.window:self.window=self.selected
-            elif self.selected>self.window+2:self.window=self.selected-2
+        if prev!=self.selected:
+            self.notice=None;self.generation+=1
+        # Five physical 12-pixel rows, top Back pinned when present.
+        # Never wrap; move the cursor in its existing window first.
+        entries=self.items()
+        has_back=bool(entries and entries[0].action=='back')
+        visible=4 if has_back else 5
+        if len(entries)>(visible+int(has_back)):
+            if has_back:
+                self.window=max(1,self.window)
+                if self.selected and self.selected<self.window:
+                    self.window=self.selected
+                elif self.selected>self.window+visible-1:
+                    self.window=self.selected-visible+1
+            else:
+                if self.selected<self.window:self.window=self.selected
+                elif self.selected>self.window+visible-1:
+                    self.window=self.selected-visible+1
         return self.selected
+
+    def home(self):
+        self.page='root';self.stack=[];self.selected=0
+        self.window=1 if self.root_back_to_status else 0
+        self.notice=None;self.last_action=None;self.generation+=1
 
     def back(self):
         if not self.stack:return False
@@ -156,7 +174,9 @@ class OEMMenu:
         items=self.items()
         if not items:return 'empty'
         node=items[self.selected]
-        if node.action=='back':self.back();return 'back'
+        if node.action=='back':
+            if self.back():return 'back'
+            return 'exit_to_status'
         if node.child:
             self.stack.append((self.page,self.selected,self.window))
             self.page=node.child;self.selected=0;self.window=1;self.notice=None
@@ -177,5 +197,6 @@ class OEMMenu:
         return {'page':self.page,'selected':self.selected,'window':self.window,
                 'stack_depth':len(self.stack),'language':self.language,
                 'notice':self.notice,'last_action':self.last_action,
-                'generation':self.generation, 'ui_only':True,
+                'generation':self.generation, 'root_back_to_status':self.root_back_to_status,
+                'ui_only':True,
                 'actuators_enabled_by_menu':False}

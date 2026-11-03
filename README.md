@@ -37,3 +37,26 @@ The second audited CI-only patch, `ci/apply_rc7_dict_fix.py`, checks
 compile-time markers in the **actual built `klipper.dict`** instead of a
 shortened report. `validate_build.py` still verifies all values/schemas
 before the IVB can be published. No safety gate is disabled.
+
+
+## OLED RC7.4 / 2026-11-03 — M300-style, Inventure ABI2
+
+The Inventure host UI now has full-height 256x64 menu rows without the fixed
+Zortrax title, an English KLIPPER home/status page, pinned Back, and original
+Inventure glyphs. OLED frame updates are pumped immediately from valid MCU ACK
+callbacks rather than waiting for every 20 ms host timer tick. Unlike the M300
+FAST DMA driver, RC7.4 deliberately retains one outstanding 32-byte ABI2
+operation; DMA window=4 and RLE would require a new compatible MCU ABI and
+separate firmware qualification.
+
+**Current operator log (03 Nov 2026):** The loaded printer.cfg still showed
+chunk_interval=0.020 / refresh_interval=0.5, proving the earlier RC7.3 installer
+settings had not become active. An 8192-byte full frame took about 7.14 seconds
+with 301 ACKed operations. RC7.4 changes those defaults to 0.002 / 0.2 using
+the SHA-pinned `install_rc74_oled.py` and adds ACK-driven pumping, with the
+actual OLED speed still requiring hardware validation.
+
+[Polish install and limitations](docs/RC7_4_OLED_ACK_FAST_PL.md).
+**MCU APP and InventureBoot unchanged.** CI builds and validates the pinned
+RC7.1 STM32F207 APP and now explicitly packages the current tested RC7.4 host
+files, instead of republishing the old kit/host snapshot.
