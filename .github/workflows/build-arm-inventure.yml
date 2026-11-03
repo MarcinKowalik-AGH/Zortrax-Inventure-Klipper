@@ -118,12 +118,14 @@ jobs:
           python -m compileall -q host install_rc75_oled.py scripts/inventure_p4_baud_stage.py
           python -m unittest discover -s tests -p 'test_rc75*.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_tests.log"
           python -m unittest discover -s tests -p 'test_rc74_ack_pump.py' -v 2>&1 | tee "$RUNNER_TEMP/rc74_ack_tests.log"
-          # Run lifecycle regression against the ACTUAL RC7.5 host modules,
-          # after immutable RC7.1 MCU source/regression verification.
-          cp host/inventure_oled.py host/inventure_oem_menu.py host/inventure_oled_render.py kit/regression_tests/overlay/klippy/extras/
-          PYTHONPATH=kit/regression_tests/tests python -m unittest discover -s kit/regression_tests/tests -p 'test_host_adapters.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_host_integration.log"
-          PYTHONPATH=kit/regression_tests/tests python -m unittest discover -s kit/regression_tests/tests -p 'test_oled_lifecycle.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_oled_lifecycle.log"
-          PYTHONPATH=kit/regression_tests/tests python - <<'PYCI'
+          # Test current host in an ISOLATED fixture copy. The pinned MCU
+          # source snapshot must remain byte-for-byte unchanged, since its
+          # integrity is checked a second time by build_firmware_on_mac.py.
+          cp -a kit/regression_tests "$RUNNER_TEMP/rc75_regression_tests"
+          cp host/inventure_oled.py host/inventure_oem_menu.py host/inventure_oled_render.py "$RUNNER_TEMP/rc75_regression_tests/overlay/klippy/extras/"
+          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python -m unittest discover -s "$RUNNER_TEMP/rc75_regression_tests/tests" -p 'test_host_adapters.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_host_integration.log"
+          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python -m unittest discover -s "$RUNNER_TEMP/rc75_regression_tests/tests" -p 'test_oled_lifecycle.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_oled_lifecycle.log"
+          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python - <<'PYCI'
           from test_host_adapters import Printer
           import tempfile
           with tempfile.TemporaryDirectory() as tmp:
