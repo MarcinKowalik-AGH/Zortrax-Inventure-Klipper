@@ -7,6 +7,7 @@ import unittest
 import sys
 import importlib.util
 import io
+import json
 import zipfile
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
@@ -34,6 +35,15 @@ class McuLocalServices(unittest.TestCase):
         print(p.stdout,end='')
     def test_local_cooling_adc_ownership_faults_and_fast_paths(self):self.run_c('test_rc8_board')
     def test_oled_row_oracle_and_local_recovery(self):self.run_c('test_rc8_panel')
+    def test_full_host_accepts_oled_versions_supported_by_launcher(self):
+        spec=importlib.util.spec_from_file_location('launcher_install',ROOT/'install_rc75_oled.py')
+        launcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(launcher)
+        history=json.loads((self.kit/'baseline/expected_hashes.json').read_text())
+        for name,(accepted,current) in launcher.FILES.items():
+            entry=history['klippy/extras/'+name]
+            allowed={entry['sha256'],entry['new_sha256'],*entry.get('allowed_existing',[])}
+            self.assertLessEqual(set(accepted)|{current},allowed,name)
+
     def test_matching_full_host_installs_and_rolls_back_rc72_sources(self):
         root=Path(self.tmp.name)/'host-upgrade'
         with zipfile.ZipFile(self.kit/'baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip') as z:
