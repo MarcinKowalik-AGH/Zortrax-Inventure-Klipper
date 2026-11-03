@@ -28,11 +28,12 @@ class InventureOLED:
             raise config.error('oem_start_screen must be klipper or menu')
         self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
         self._oem_render_cache=None
+        self._rendered_frames=0;self._render_cache_hits=0
         self._rendered_screen='not_rendered'
         self._rendered_menu_page=None
         self.interval=config.getfloat('chunk_interval',.002,minval=.002,maxval=.050)
         self.stream=OledStream(config.getfloat('ack_timeout',1.,minval=.1,maxval=10.),
-            config.getfloat('refresh_interval',.5,minval=.2,maxval=10.))
+            config.getfloat('refresh_interval',.2,minval=.2,maxval=10.))
         self.page='home';self.selection=0;self.message=None
         self.last_buttons=0;self.pressed_at={};self.repeat_at={}
         self.power_fired=False;self.connected=False;self.render_at=0.
@@ -101,7 +102,8 @@ class InventureOLED:
         if self.oem_menu is not None:self.oem_menu.home()
         self.message=None
         self._oem_render_cache=None
-        self._render(now);self._start(now,'initial_start')
+        self._render(now);self.render_at=now+self.stream.refresh_interval
+        self._start(now,'initial_start')
         logging.info('INVENTURE_UI_READY display=%s profile=%s root=%s',
                      self.oem_display_mode,self.menu_profile,
                      self.oem_menu.root_page if self.oem_menu is not None else 'legacy')
@@ -124,11 +126,15 @@ class InventureOLED:
     def _shutdown(self,*args):
         self.shutdown_latched=True;self.connected=False
         self.recover_at=None;self.recovery_reason='Klipper shutdown'
-        self.recovery_state='shutdown';self.stream.stop('Klipper shutdown; MCU RESET held LOW')
+        local_recovery=int(self.mcu.get_constants().get('INVENTURE_LOCAL_OLED_RECOVERY_ABI',0))==1
+        self.recovery_state='shutdown';self.stream.stop(
+            'Klipper shutdown; MCU local status requested' if local_recovery else
+            'Klipper shutdown; MCU RESET held LOW')
         self.reactor.update_timer(self.timer,self.reactor.NEVER)
         # Nonblocking best effort only. The MCU has its own local shutdown hook
         # and watchdog; correctness does not depend on this packet arriving.
-        self._stop_wire();self._event('OLED_SHUTDOWN_BLANK_REQUESTED')
+        self._stop_wire();self._event('OLED_SHUTDOWN_LOCAL_STATUS_REQUESTED'
+            if local_recovery else 'OLED_SHUTDOWN_BLANK_REQUESTED')
 
     def _disconnect(self):self._shutdown()
     def _restart(self,*args):self._shutdown()
@@ -243,7 +249,8 @@ class InventureOLED:
                 self._lose(now,'OLED command unavailable: '+str(exc))
             self.next_query=now+.25
         self._held_keys(now)
-        if now>=self.render_at:self._render(now);self.render_at=now+.25
+        if now>=self.render_at:
+            self._render(now);self.render_at=now+self.stream.refresh_interval
         if self.recovery_state=='backoff' and now>=self.recover_at:
             # Don't burn through retries while the underlying MCU is absent.
             if self._base_live(now) and self._wire_live(now,False):
@@ -263,7 +270,22 @@ class InventureOLED:
                                 frames=self.stream.generation_frames)
                 if self.confirmed_since is not None and now-self.confirmed_since>=self.stable_time:
                     self.retries=0
-        return now+self.interval
+        return self._next_tick(now)
+
+    def _next_tick(self,now):
+        # Keep 2 ms pacing during transfers and held keys. An unchanged screen
+        # needs only service/render deadlines, not 500 reactor calls per second.
+        busy=self.stream.enabled and (self.stream.operations is not None or
+            self.stream.pending is not None or self.stream.latest!=self.stream.previous)
+        if busy or self.pressed_at:return now+self.interval
+        due=min(now+.050,self.next_query,self.render_at)
+        if self.recovery_state=='backoff' and self.recover_at is not None:
+            due=min(due,self.recover_at)
+        return max(now+self.interval,due)
+
+    def _wake(self):
+        if self.connected and not self.shutdown_latched:
+            self.reactor.update_timer(self.timer,self.reactor.NOW)
 
     def _cal(self):return self.printer.lookup_object('inventure_calibration',None)
     def _rows(self,now):
@@ -330,6 +352,7 @@ class InventureOLED:
                           menu_view['selected'],menu_view['window'],
                           menu_view.get('icon'),menu_view.get('notice'))
             if snapshot==self._oem_render_cache:
+                self._render_cache_hits+=1
                 self._user_refresh_pending=False
                 return
         frame=Frame()
@@ -358,6 +381,7 @@ class InventureOLED:
             self._rendered_screen='oem_menu'
         else:self._rendered_screen='legacy'
         self._rendered_menu_page=(menu_view or {}).get('page')
+        self._rendered_frames+=1
         self._oem_render_cache=snapshot
         self._user_refresh_pending=False
 
@@ -418,6 +442,7 @@ class InventureOLED:
                     self._user_refresh_pending=True
                 self.pressed_at.pop(bit,None);self.repeat_at.pop(bit,None)
         self.last_buttons=mask;self.render_at=0.
+        self._wake()
 
     def _navigate(self,direction,now):
         self.message=None
@@ -447,9 +472,11 @@ class InventureOLED:
         self.retries=0;self.recovery_reason='manual_reinit';self._render(now)
         try:self._start(now,'manual_reinit')
         except ValueError as exc:raise gcmd.error(str(exc))
+        self._wake()
     def cmd_text(self,gcmd):
         self.message=(gcmd.get('LINE1','Inventure'),gcmd.get('LINE2',''))
         self.render_at=0.;self._user_refresh_pending=True
+        self._wake()
     def cmd_menu_status(self,gcmd):
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
         details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
@@ -471,7 +498,9 @@ class InventureOLED:
                 'recover_at':self.recover_at,'ignored_acks':self.stream.ignored_acks,
                 'mcu_state':dict(self.wire_state),'mcu_state_age':None if self.state_received is None else max(0.,now-self.state_received),
                 'rejected_state_reports':self.state_rejected,'shutdown_latched':self.shutdown_latched,
-                'shutdown_policy':'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED',
+                'shutdown_policy':('MCU_LOCAL_STATUS_NO_ACTUATOR_RESTART'
+                    if int(self.mcu.get_constants().get('INVENTURE_LOCAL_OLED_RECOVERY_ABI',0))==1
+                    else 'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED'),
                 'blank_confirmed':bool(self.wire_state.get('configured') and self.wire_state.get('reset')==0
                     and self.wire_state.get('active')==0 and self.state_received is not None and now-self.state_received<=.75),
                 'page':self.page,'selection':self.selection,
@@ -489,7 +518,13 @@ class InventureOLED:
                     'last_ack':self._oled_last_ack,
                     'attempt_sent':self.stream.sent-self._oled_session_sent,
                     'attempt_acked':self.stream.acked-self._oled_session_acked},
-                'ui_transport':{'full_frames':self.stream.full_frames,
+                'ui_transport':{'host_release':'RC7.5-M300-ACK',
+                    'chunk_interval_s':self.interval,
+                    'refresh_interval_s':self.stream.refresh_interval,
+                    'idle_poll_interval_s':.050,
+                    'rendered_frames':self._rendered_frames,
+                    'render_cache_hits':self._render_cache_hits,
+                    'full_frames':self.stream.full_frames,
                     'partial_frames':self.stream.partial_frames,
                     'committed_wire_bytes':self.stream.committed_wire_bytes,
                     'last_window':self.stream.last_window,

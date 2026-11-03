@@ -26,7 +26,7 @@ DECL_CONSTANT_STR("INVENTURE_BOARD", "V9-0.3.16-LAB_FILAMENT_P13");
 DECL_CONSTANT_STR("RESERVE_PINS_inventure_aux", "PA2,PA3,PA8,PB7,PC5,PG11,PE6,PG5,PG6,PG7,PD11,PE9,PE11,PE13,PE14,PB12,PD14");
 
 static volatile uint8_t armed, fault, heartbeat_live;
-static uint8_t initialized, input_previous, guard_div;
+static uint8_t initialized, input_previous, guard_div, sample_started;
 static volatile uint8_t sensor_seen;
 static volatile uint32_t heartbeat_deadline;
 static volatile uint32_t pulses[6], edge_time[6];
@@ -96,11 +96,18 @@ uint8_t inventure_is_armed(void) { return armed && !fault; }
 
 /* Standard GPIO/software-PWM requests remain unable to energize while unarmed. */
 uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
+    /* STEP is the frequent path. Keep E accounting exactly once; never run
+     * fan classification or heater/resource branches for these four pins. */
+    if((r==GPIOA && (bit==BIT(6) || bit==BIT(7))) ||
+       (r==GPIOB && (bit==BIT(8) || bit==BIT(9)))) {
+        uint32_t effective=inventure_is_armed()?!!value:0;
+        if(r==GPIOB && bit==BIT(9))transport_gpio(r,bit,effective);
+        return effective;
+    }
     transport_gpio(r,bit,value);
     uint8_t allow = inventure_is_armed();
-    if(!allow && r==GPIOB && bit==BIT(14)) value=0;
-    if(!allow && ((r==GPIOB && bit==BIT(15)) ||
-                  (r==GPIOC && (bit==BIT(6) || bit==BIT(7))))) value=1;
+    int fi=fan_index(r,bit);
+    if(!allow && fi>=0)value=!!(cool_mask&BIT(fi));
     fan_gpio_observe(r,bit,value);
     // Heaters must use the guarded fixed hardware-PWM path. A digital ON
     // would bypass duty/tach bookkeeping; reject it instead of silently allowing.
@@ -118,7 +125,7 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
                   (r == GPIOC && (bit == BIT(6) || bit == BIT(7))) ||
                   (r == GPIOA && bit == BIT(1)) ||
                   (r == GPIOD && bit == BIT(13))))
-        return 1;
+        return !!(cool_mask & BIT(r==GPIOA?4:r==GPIOD?5:r==GPIOB?0:bit==BIT(7)?2:3));
     return value;
 }
 
@@ -136,11 +143,13 @@ uint32_t inventure_filter_pwm(void *reg, uint32_t value, uint32_t maximum) {
         return effective;
     }
     if(reg==(void*)&TIM5->CCR2 || reg==(void*)&TIM4->CCR2) {
-        uint32_t duty=inventure_is_armed()?value:maximum;
+        uint32_t duty=inventure_is_armed()?value:
+            ((cool_mask&BIT(reg==(void*)&TIM5->CCR2?4:5))?maximum:0);
         fan_set_duty(reg==(void*)&TIM5->CCR2?4:5,(duty*255+maximum/2)/maximum);
     }
     if (!inventure_is_armed()) {
-        if (reg == (void*)&TIM5->CCR2 || reg == (void*)&TIM4->CCR2) return maximum;
+        if (reg == (void*)&TIM5->CCR2 || reg == (void*)&TIM4->CCR2)
+            return (cool_mask&BIT(reg==(void*)&TIM5->CCR2?4:5))?maximum:0;
         if (reg == (void*)&TIM5->CCR3 || reg == (void*)&TIM5->CCR4 ||
             reg == (void*)&TIM9->CCR2) return 0;
     }
@@ -156,6 +165,8 @@ static int16_t lut_temperature(uint16_t adc) {
     return lo < ARRAY_SIZE(iv9_lut) ? iv9_lut[lo].temperature : -46;
 }
 
+#include "inventure_cooling.inc"
+
 void inventure_adc_observe(void *adc, uint8_t ch, uint16_t value) {
     int i=-1;
     if (adc == ADC1) {
@@ -165,11 +176,13 @@ void inventure_adc_observe(void *adc, uint8_t ch, uint16_t value) {
         if (ch==6) i=1; else if(ch==9) i=5; else if(ch==14) i=6;
     }
     if (i<0) return;
+    if(cool_local_read) {cooling_local_observe(i,value);return;}
     irqstatus_t saved_irq=irq_save();
     latest_adc[i]=value;
     latest_temperature[i] = i<2 ? (int16_t)(((uint32_t)value*660u)/4095u) : lut_temperature(value);
     adc_time[i]=timer_read_time();
     sensor_seen |= BIT(i);
+    cool_native_seen |= BIT(i);
     irq_restore(saved_irq);
 }
 
@@ -182,6 +195,7 @@ static uint8_t read_pulses(void) {
 
 static void force_safe(void) {
     armed=0;
+    cool_mask=COOL_MASK;cool_applied=255;cool_policy_started=0;
     transport_shutdown();
     // Use GPIO output mode so stale timer compare/preload cannot energize heaters.
     raw_safe_outputs();
@@ -247,7 +261,10 @@ static void guard_check(uint32_t observed_now) {
         duty[3] || temp[3]>40};
     for(unsigned fan=0;fan<4;fan++) {
         if(!required[fan]) {fan_watch_active[fan]=0;continue;}
-        if(!fan_watch_active[fan]) {fan_watch_active[fan]=1;edge_time[fan]=now;}
+        if(!fan_watch_active[fan]) {
+            fan_watch_active[fan]=1;edge_time[fan]=now;
+            last_edge[fan]=now; // first requirement starts a FULL grace period
+        }
         if(iv9_due(now,last_edge[fan]+TACH_TICKS)) {
             fan_required_mask |= BIT(fan);fan_fault_mask |= BIT(fan);trip(5);
         }
@@ -271,8 +288,10 @@ static uint_fast8_t lock_hold(struct timer *t) {
 static uint_fast8_t sample_event(struct timer *t) {
     uint32_t now=timer_read_time();
     uint8_t value=read_pulses(), changed=value^input_previous;
-    for(unsigned i=0;i<4;i++) if((changed & value) & BIT(i)) {
-        pulses[i]++; edge_time[i]=now;
+    uint8_t rising=changed & value & 15u;
+    while(rising) {
+        unsigned i=__builtin_ctz((unsigned)rising);
+        pulses[i]++;edge_time[i]=now;rising&=rising-1u;
     }
     for(unsigned i=0;i<2;i++) {
         if(quiet_ticks[i]<401) quiet_ticks[i]++;
@@ -296,13 +315,25 @@ void inventure_board_init(void) {
     inventure_inputs_init();
     input_previous=read_pulses();
     sample_timer.func=sample_event;
-    sample_timer.waketime=timer_read_time()+SAMPLE_TICKS;
     initialized=1;
-    sched_add_timer(&sample_timer);
 }
 DECL_INIT(inventure_board_init);
+void inventure_board_start_task(void) {
+    if(sample_started || !initialized || fault)return;
+    irqstatus_t flags=irq_save();
+    /* All DECL_INIT callbacks, including counter initialization, have ended. */
+    sample_timer.waketime=timer_read_time()+SAMPLE_TICKS;
+    sched_add_timer(&sample_timer);sample_started=1;
+    irq_restore(flags);
+}
+DECL_TASK(inventure_board_start_task);
 
-void inventure_board_shutdown(void) { fault = fault ? fault : 255; force_safe(); }
+void inventure_board_shutdown(void) {
+    fault=fault?fault:255;force_safe();
+    /* sched_timer_reset removed the soft-service timer. Native task wakeup
+     * remains periodic and restarts it without touching motion timers. */
+    cool_timer_started=0;
+}
 DECL_SHUTDOWN(inventure_board_shutdown);
 
 void command_inventure_heartbeat(uint32_t *args) {
@@ -319,7 +350,7 @@ void command_inventure_arm(uint32_t *args) {
     uint8_t ok = args[0] == 0x56394c42 && initialized && !fault && heartbeat_live &&
         sensors_valid(now) && !(GPIOD->IDR&BIT(11)) &&
         !iv9_due(now,heartbeat_deadline);
-    if(ok) armed=1;
+    if(ok) {armed=1;cooling_native_handover();}
     irq_restore(saved_irq);
     sendf("inventure_arm_result armed=%c fault=%c",armed,fault);
 }

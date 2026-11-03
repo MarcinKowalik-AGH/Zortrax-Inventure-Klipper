@@ -1,6 +1,21 @@
 name: Build Inventure STM32F207 GNU ARM
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/build-arm-inventure.yml'
+      - 'source/**'
+      - 'ci/**'
+      - 'mcu/**'
+      - 'host/**'
+      - 'host_core/**'
+      - 'fluidd/**'
+      - 'zero3/**'
+      - 'config/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'install_rc75_oled.py'
+      - 'docs/**'
   push:
     branches: [main]
     paths:
@@ -12,10 +27,10 @@ on:
       - 'host_core/**'
       - 'fluidd/**'
       - 'zero3/**'
+      - 'config/**'
       - 'tests/**'
-      - 'install_rc74_oled.py'
-      - 'install_rc75_oled.py'
       - 'scripts/**'
+      - 'install_rc75_oled.py'
       - 'docs/**'
   workflow_dispatch:
 
@@ -23,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: inventure-rc7-gnu-arm-${{ github.ref }}
+  group: inventure-rc8-gnu-arm-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -74,6 +89,12 @@ jobs:
       - name: Verify dictionary against actual compiled MCU output
         run: python ci/apply_rc7_dict_fix.py kit
 
+      - name: Integrate hash-pinned RC7.5 launcher, ACK pump and regression contracts
+        run: python ci/apply_rc75_oled.py kit
+
+      - name: Integrate RC8 F207 local cooling and OLED recovery
+        run: python ci/apply_rc8_mcu.py kit
+
       - name: Install deterministic Python test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -103,62 +124,22 @@ jobs:
           from pathlib import Path
           r=json.loads(Path('kit/VALIDATION_REPRODUCIBLE_RC7.json').read_text())
           assert r['status']=='PASS_OFFLINE_ONLY'
-          assert r['source_overlay_count']==26
-          assert r['unit_tests']==567
-          assert r['public_source_passed']==566
+          assert r['source_overlay_count']==29
+          assert r['unit_tests']==592
+          assert r['public_source_passed']==591
           assert r['private_oem_reference_skipped']==1
           assert r['acceptance_tests']==28
-          print('PUBLIC_TESTS_566_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
+          assert r['host_release']=='RC7.5-M300-ACK'
+          assert r['mcu_release']=='P01-P17-RC8.0-LOCAL'
+          print('PUBLIC_TESTS_591_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
 
-      - name: RC7.5 Klipper/M300 launcher, OLED ACK, P4 host and rollback regression
+      - name: Verify matched host, ACK pacing, launcher, P4 and MCU register mocks
         shell: bash
         run: |
           set -euo pipefail
           python -m compileall -q host install_rc75_oled.py scripts/inventure_p4_baud_stage.py
-          python -m unittest discover -s tests -p 'test_rc75*.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_tests.log"
-          python -m unittest discover -s tests -p 'test_rc74_ack_pump.py' -v 2>&1 | tee "$RUNNER_TEMP/rc74_ack_tests.log"
-          # Test current host in an ISOLATED fixture copy. The pinned MCU
-          # source snapshot must remain byte-for-byte unchanged, since its
-          # integrity is checked a second time by build_firmware_on_mac.py.
-          cp -a kit/regression_tests "$RUNNER_TEMP/rc75_regression_tests"
-          cp host/inventure_oled.py host/inventure_oem_menu.py host/inventure_oled_render.py "$RUNNER_TEMP/rc75_regression_tests/overlay/klippy/extras/"
-          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python -m unittest discover -s "$RUNNER_TEMP/rc75_regression_tests/tests" -p 'test_host_adapters.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_host_integration.log"
-          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python -m unittest discover -s "$RUNNER_TEMP/rc75_regression_tests/tests" -p 'test_oled_lifecycle.py' -v 2>&1 | tee "$RUNNER_TEMP/rc75_oled_lifecycle.log"
-          PYTHONPATH="$RUNNER_TEMP/rc75_regression_tests/tests" python - <<'PYCI'
-          from test_host_adapters import Printer
-          import tempfile
-          with tempfile.TemporaryDirectory() as tmp:
-              p=Printer(tmp)
-              p.settings['inventure_oled'].update(oem_menu=True,oem_start_screen='klipper')
-              o=p.load_object(None,'inventure_oled')
-              p.board_ready();p.configure();p.send_event('klippy:ready')
-              assert o.oem_display_mode=='status'
-              assert o._rendered_screen=='klipper_status'
-              assert o.oem_menu.page=='launcher'
-              assert len(o.stream.latest)==8192 and any(o.stream.latest)
-              first=o.stream.latest
-              o._select(0.);o._render(.01)
-              assert o.oem_display_mode=='menu'
-              assert o.oem_menu.view()['labels'][1:]==['Klipper','Zortrax Inventure','Serwis / Testy']
-              assert o.stream.latest!=first
-              o.oem_menu.move(1);o.oem_menu.move(1)
-              o._select(.02);o._render(.03)
-              assert o.oem_menu.page=='root'
-              assert o.oem_menu.view()['labels'][1]=='Modele'
-          print('REAL_HOST_RC75_STATUS_LAUNCHER_ZORTRAX_NESTED_PASS')
-          PYCI
-          python - <<'PYCI'
-          from pathlib import Path
-          import hashlib,importlib.util
-          spec=importlib.util.spec_from_file_location('rc75installer','install_rc75_oled.py')
-          mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-          for name,(accepted,expected) in mod.FILES.items():
-              actual=hashlib.sha256((Path('host')/name).read_bytes()).hexdigest()
-              assert actual==expected,(name,actual,expected)
-              assert len(accepted)==1
-          print('RC75_PUBLISHED_HOST_SHA256_PASS')
-          PYCI
+          python -m unittest discover -s tests -p 'test_rc[78]*.py' -v 2>&1 | tee "$RUNNER_TEMP/matched_integration.log"
 
       - name: Fresh complete ARM build and image validation
         shell: bash
@@ -168,7 +149,7 @@ jobs:
           python scripts/build_firmware_on_mac.py --doctor
           python scripts/build_firmware_on_mac.py --jobs 4 --baud 250000
           find dist -name 'INVENTUR.IVB' -type f -print
-          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC7_1_*')
+          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC8_0_*')
           test "${#folders[@]}" -eq 1
           python scripts/verify_built_ivb.py "${folders[0]}" | tee "$RUNNER_TEMP/verify_built_ivb.json"
           echo "BUILT_FOLDER=${folders[0]}" >> "$GITHUB_ENV"
@@ -177,20 +158,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release/MCU release/HOST release/FLUIDD release/REPORTS
-          cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC7_1_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
-          cp -a kit/host kit/host_core kit/zero3 kit/scripts/install_host.py release/HOST/
-          # Published host modules MUST match the tested RC7.5 repo sources,
-          # not the old immutable MCU build snapshot (RC7.2).
-          cp host/inventure_oled.py host/inventure_oled_render.py host/inventure_oem_menu.py release/HOST/host/
+          mkdir -p release/MCU release/HOST/scripts release/HOST/baseline release/FLUIDD release/REPORTS
+          cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC8_0_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
+          cp -a kit/host kit/host_core release/HOST/
+          mkdir -p release/HOST/zero3
+          cp kit/zero3/check_zero3.py release/HOST/zero3/
           cp install_rc75_oled.py release/HOST/
-          mkdir -p release/HOST/scripts
           cp scripts/inventure_p4_baud_stage.py release/HOST/scripts/
-          cp docs/RC7_5_UI_M300_AND_P4_PL.md release/HOST/
-          cp "$RUNNER_TEMP/rc75_tests.log" "$RUNNER_TEMP/rc74_ack_tests.log" "$RUNNER_TEMP/rc75_host_integration.log" "$RUNNER_TEMP/rc75_oled_lifecycle.log" release/REPORTS/
+          cp docs/RC8_ZERO3_TEST_PL.md release/HOST/README_ZERO3_PL.md
+          cp config/OLED_FAST_RC7_5.cfg release/HOST/
+          sed -e 's|/dev/REPLACE_WITH_ORANGE_PI_UART|/dev/ttyS1|' \
+            -e 's|~/printer_data/config/inventure_calibration.json|./inventure_calibration.json|' \
+            kit/config/printer_DIAGNOSTIC_RC2_example.cfg > release/HOST/printer.test.cfg
+          grep -Fx 'allow_actuators: False' release/HOST/printer.test.cfg
+          grep -Fx 'kinematics: none' release/HOST/printer.test.cfg
+          grep -Fx 'oem_start_screen: klipper' release/HOST/printer.test.cfg
+          grep -Fx 'menu_profile: m300' release/HOST/printer.test.cfg
+          grep -Fx 'baud: 250000' release/HOST/printer.test.cfg
+          stage="$RUNNER_TEMP/inventure-zero3"
+          python kit/zero3/stage_pinned_host.py --destination "$stage/klipper-inventure" --apply
+          tar -czf release/HOST/klipper-inventure.tar.gz -C "$stage" klipper-inventure
+          cp kit/scripts/install_host.py release/HOST/scripts/
+          cp kit/baseline/expected_hashes.json release/HOST/baseline/
+          cp docs/MCU_RC8_LOCAL_SERVICES_PL.md release/HOST/
+          (cd release && zip -qr INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip HOST)
+          unzip -tq release/INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
-          cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
+          cp kit/HOST_RELEASE_RC7_5.json release/REPORTS/
+          cp kit/MCU_RELEASE_RC8.json release/REPORTS/
+          cp kit/LATEST_RC7_FULL_REGRESSION.log release/REPORTS/
+          cp kit/LATEST_RC7_1_ACCEPTANCE.log release/REPORTS/
+          cp "$RUNNER_TEMP/verify_built_ivb.json" "$RUNNER_TEMP/matched_integration.log" release/REPORTS/
           (cd release/MCU && sha256sum -c SHA256SUMS)
           echo 'No flash, USB or serial connection was attempted.' > release/README_NOT_HARDWARE_TESTED.txt
           echo 'User needs to install a matching host and validate hardware before enabling movement/heating.' >> release/README_NOT_HARDWARE_TESTED.txt
@@ -201,7 +200,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc7_5-host-rc7_1-mcu-gnu-arm-${{ github.sha }}
+          name: inventure-rc8_0-mcu-rc7_5-host-zero3-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

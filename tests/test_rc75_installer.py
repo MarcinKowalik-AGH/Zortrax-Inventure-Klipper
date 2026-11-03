@@ -20,7 +20,7 @@ class InstallerTests(unittest.TestCase):
         for name,(accepted,new) in installer.FILES.items():
             self.assertIn(name,('inventure_oled.py','inventure_oem_menu.py'))
             self.assertEqual(installer.SHA((HOST/name).read_bytes()),new)
-            self.assertEqual(len(accepted),1)
+            self.assertGreaterEqual(len(accepted),2)
     def test_apply_rollback_with_sha_staged_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
             base=pathlib.Path(tmp);host=base/'klipper';extras=host/'klippy/extras';extras.mkdir(parents=True)

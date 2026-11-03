@@ -48,6 +48,8 @@ class InventureMCU:
         self.p4_abi = False
         self.mcu_release = 'unknown'
         self.local_oled_state = {}
+        self.local_cooling_state = {}
+        self.local_cooling_received = None
         self.local_oled_received = None
         self.next_local_query = 0.
 
@@ -108,6 +110,13 @@ class InventureMCU:
         self.local_oled_abi = (int(self.mcu.get_constants().get(
             'INVENTURE_LOCAL_OLED_ABI',0))==1)
         self.mcu_release=self.mcu.get_constants().get('INVENTURE_MCU_RELEASE','unknown')
+        if int(self.mcu.get_constants().get('INVENTURE_LOCAL_COOLING_ABI',0))==1:
+            self.commands['cooling_query']=self.mcu.lookup_command('inventure_cooling_query')
+            fmt='inventure_cooling_state clock=%u mode=%c reason=%c valid=%c mask=%c max_temp=%hi native_owner=%c adc_failures=%u gpio_updates=%u'
+            if not self.mcu.check_valid_response(fmt):
+                raise self.printer.config_error('RC8 cooling response ABI mismatch')
+            self.mcu.register_serial_response(self._cooling_response,fmt)
+        self.gcode.register_command('INVENTURE_COOLING_STATUS',self.cmd_cooling_status,when_not_ready=True)
         if self.local_oled_abi:
             self.commands['local_oled_query']=self.mcu.lookup_command('inventure_local_oled_query')
             fmt='inventure_local_oled_status state=%c boot_revision=%c baud=%u'
@@ -197,6 +206,27 @@ class InventureMCU:
     def _deliver_local_oled(self,sample,received):
         self.local_oled_state=dict(sample)
         self.local_oled_received=received
+
+    def _cooling_response(self,params):
+        received=self.reactor.monotonic()
+        sample={k:v for k,v in params.items() if not k.startswith('#')}
+        self.reactor.register_async_callback(lambda now:self._deliver_cooling(sample,received))
+    def _deliver_cooling(self,sample,received):
+        limits={'clock':0xffffffff,'mode':3,'reason':3,'valid':1,'mask':63,
+                'native_owner':1,'adc_failures':0xffffffff,'gpio_updates':0xffffffff}
+        if any(type(sample.get(k)) is not int or not 0<=sample[k]<=v for k,v in limits.items()):return
+        if sample['mask']&2 or type(sample.get('max_temp')) is not int or not -32768<=sample['max_temp']<=32767:return
+        if self.local_cooling_state:
+            delta=(sample['clock']-self.local_cooling_state['clock'])&0xffffffff
+            if not 0<delta<0x80000000:return
+        self.local_cooling_state=dict(sample);self.local_cooling_received=received
+    def cmd_cooling_status(self,gcmd):
+        supported='cooling_query' in self.commands
+        if supported:self.commands['cooling_query'].send([])
+        now=self.reactor.monotonic()
+        gcmd.respond_info('V9_COOLING '+json.dumps({'supported':supported,
+            'query_sent':supported,'last_received':dict(self.local_cooling_state),
+            'age':None if self.local_cooling_received is None else max(0.,now-self.local_cooling_received)},sort_keys=True))
 
     def _p4_baud_received(self,params):
         received=self.reactor.monotonic()
@@ -296,6 +326,7 @@ class InventureMCU:
                     uart_buffer_stats=dict(self.uart_buffer_stats),
                     p4_boot=dict(self.p4_boot), p4_journal_abi=self.p4_abi,
                     mcu_release=self.mcu_release, local_oled=dict(self.local_oled_state),
+                    local_cooling=dict(self.local_cooling_state),
                     local_oled_age=(None if self.local_oled_received is None else
                                     max(0.,eventtime-self.local_oled_received)),
                     fan_batch=self.fan_batch, connected=self.connected,

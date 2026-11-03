@@ -74,7 +74,7 @@ class RealOledReadyTests(unittest.TestCase):
         x=types.SimpleNamespace(shutdown_latched=False,connected=False,
           reactor=Reactor(),oem_start_screen='klipper',oem_display_mode='menu',
           menu_profile='m300',oem_menu=OEMMenu(root_page='launcher'),message=('temp','notice'),
-          timer=object(),_oem_render_cache='dirty',
+          timer=object(),stream=types.SimpleNamespace(refresh_interval=.2),_oem_render_cache='dirty',
           _render=lambda now:actions.append(('render',now)),
           _start=lambda now,reason:actions.append(('start',now,reason)))
         x.oem_menu.move(1);x.oem_menu.move(1);x.oem_menu.select()
@@ -91,7 +91,7 @@ class RealOledReadyTests(unittest.TestCase):
         x=types.SimpleNamespace(shutdown_latched=False,connected=False,
           reactor=Reactor(),oem_start_screen='menu',oem_display_mode='status',
           menu_profile='m300',oem_menu=OEMMenu(root_page='launcher'),message=None,
-          timer=object(),_oem_render_cache=None,_render=lambda x:None,_start=lambda x,y:None)
+          timer=object(),stream=types.SimpleNamespace(refresh_interval=.2),_oem_render_cache=None,_render=lambda x:None,_start=lambda x,y:None)
         RealOledReadyTests._ready(x)
         self.assertEqual(x.oem_display_mode,'menu')
     def test_status_contains_root_diagnostic(self):

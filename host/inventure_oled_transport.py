@@ -144,7 +144,7 @@ class OledStream:
     start() always sends init and a full frame; partial failed writes are discarded.
     ACK proves MCU transaction completion, not optical/readback verification.
     """
-    def __init__(self, timeout=1.0, refresh_interval=0.5, generation_seed=0):
+    def __init__(self, timeout=1.0, refresh_interval=0.2, generation_seed=0):
         if not 0.1<=timeout<=10 or not 0.2<=refresh_interval<=10:
             raise ValueError('Invalid OLED timeout/refresh interval')
         if type(generation_seed) is not int or not 0<=generation_seed<MAX_GENERATION:

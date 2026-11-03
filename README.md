@@ -1,28 +1,42 @@
-# Zortrax Inventure V9 — Klipper (RC7.2 GitHub GNU ARM build)
+# Zortrax Inventure V9 — MCU RC8.0 i host RC7.5
 
-**Experimental, source-controlled STM32F207 build for the owner's printer.**  
-Orange Pi Zero 3 / STM32F207 / InventureBoot 1.6-RC2 / P4-PERSIST-r3 / SSD1322 / Fluidd.  
-This is **not** a stock Zortrax firmware or a physical-hardware qualification.
+Wydanie testowe dla Inventure V9 STM32F207 z InventureBoot 1.6-RC2 i Orange Pi
+Zero 3 (Armbian ARM64). Pobierz oba pakiety z zakończonego sukcesem przebiegu
+[Build Inventure STM32F207 GNU ARM](../../actions/workflows/build-arm-inventure.yml).
 
-## Automated GNU ARM compile
+| Pakiet | Zawartość |
+|---|---|
+| `MCU/INVENTURE_RC8_0_SD_BOOT16.zip` | Aplikacja `INVENTUR.IVB` dla istniejącego InventureBoot |
+| `INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip` | Przypięty Klipper, konfiguracja diagnostyczna, instalator i rollback |
+| `REPORTS/` | Wyniki regresji, sprawdzenie IVB i kontrakty źródłowe |
 
-[Open Actions builds](../../actions/workflows/build-arm-inventure.yml) and select **Build Inventure STM32F207 GNU ARM** (or view its automatic run on source changes). Actions uses Arm GNU Toolchain **14.2.Rel1**, runs source/ABI/unit tests and packs an actual `INVENTUR.IVB` *only if* ELF, vector table, MCU dictionary and archive checks pass. The resulting downloadable Actions artifact includes `INVENTURE_RC7_1_SD_BOOT16.zip`, `INVENTUR.IVB`, `klipper.elf/.bin/.dict`, build reports and SHA-256.
+MCU `P01-P17-RC8.0-LOCAL` utrzymuje chłodzenie przy utracie hosta lub
+nieuzbrojonej drukarce. Włącza je od 50°C, wyłącza przy najwyżej 45°C
+przy świeżych i poprawnych pomiarach wszystkich ośmiu czujników.
+OLED wraca do strony oczekiwania lub pokazuje status zatrzymania
+i chłodzenia. Renderer lokalny używa 128 B na wiersz zamiast bufora 8192 B.
+Obraz APP zaczyna się pod adresem `0x08010000`.
 
-**Bootloader is not built or modified.** The APP starts at **0x08010000**. Never flash raw `.bin` to address 0x08000000. The documented install format for the user's InventureBoot is **`INVENTUR.IVB`**.
+Host wyświetla **KLIPPER** jako pierwszy ekran po Ready. OK otwiera launcher.
+Sterownik wysyła kolejne porcje po ACK, aktualizuje zmienione obszary
+i odświeża status co 0,2 s. GitHub Actions buduje i weryfikuje parę
+MCU/host. Potwierdzenie czasu wyświetlania i chłodzenia wymaga testu
+na drukarce.
 
-## Source and scope
+[Instalacja MCU i rollback](docs/MCU_RC8_LOCAL_SERVICES_PL.md) ·
+[Test Orange Pi Zero 3](docs/RC8_ZERO3_TEST_PL.md) ·
+[Zakres źródeł](docs/SOURCE_AND_LIMITATIONS.md)
 
-- `source/INVENTURE_RC7_2_PUBLIC_GNU_ARM_SOURCE.zip`: complete pinned **build snapshot**, Klipper baseline reduced to the F207 dependencies, 26 RC7.1 overlays, host Zero 3 files, 29 diagnostic Fluidd macros + 19 opt-in procedure macros, and public offline tests.
-- `mcu/`, `host/`, `host_core/`, `zero3/`, `fluidd/`: readable copies of production/host overlays (the CI source snapshot is authoritative; checksums verified before build).
-- `.github/workflows/build-arm-inventure.yml`: actual cross-compilation, package verification, and downloadable CI artifact.
-- `docs/BUILD_AND_INSTALL_PL.md`: how to read results, install host, and choose speed.
-- `docs/SOURCE_AND_LIMITATIONS.md`: exclusions, licenses, and hardware testing caveats.
+## Źródła i kompilacja
 
-**Privacy:** full original Zortrax application `.bin`, private Flash/NVM/OTP/UID dumps, device IDs, credentials and OEM decryption tools are NOT distributed. The original-firmware byte comparison test is explicitly `SKIPPED` in public CI; other tests are retained.
+`python3 ci/prepare_kit.py --destination <nowy-katalog>` odtwarza
+snapshot z `source/parts`, sprawdza SHA-256 i nakłada wersjonowane
+zmiany ze źródeł w `mcu/`, `host/` i `host_core/`. GitHub Actions
+kompiluje rzeczywistą aplikację GNU ARM 14.2.Rel1 i weryfikuje wektory,
+słownik MCU, granice pamięci oraz wynikowe IVB. Pełny fabryczny obraz
+Zortrax i prywatne zrzuty pamięci są wyłączone z dystrybucji.
 
-**Hardware limitations:** software tests cannot verify thermistor wiring, heater watchdogs under power, CoreXY directions, Z contact, material motion, stepping waveform, OLED pixels or 1–2 Mbaud UART on a physical Zero 3. Do not enable actuator/heater qualification solely on a green CI result.
-
-Derived from project release RC7.1 (2026-11-02); `RC7.2` denotes the **GitHub GNU ARM publication/build packaging**, not newly verified printer behavior. The firmware still identifies the RC7.1 ABI and release.
+## Historia wydań RC7
 
 ### GNU ARM follow-up (02.11.2026)
 

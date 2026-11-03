@@ -13,7 +13,7 @@ from validate_build import check_elf,check_config,check_dictionary
 def check(folder:Path)->dict:
     folder=folder.resolve()
     needed=('klipper.bin','klipper.elf','klipper.dict','INVENTUR.IVB',
-            'build.config','BUILD_REPORT.json','SHA256SUMS','INVENTURE_RC7_1_SD_BOOT16.zip')
+            'build.config','BUILD_REPORT.json','SHA256SUMS','INVENTURE_RC8_0_SD_BOOT16.zip')
     missing=[n for n in needed if not (folder/n).is_file()]
     if missing:raise ValueError('Missing artifact: '+','.join(missing))
     raw=(folder/'klipper.bin').read_bytes()
@@ -30,14 +30,14 @@ def check(folder:Path)->dict:
     dig=hashlib.sha256(ivb).hexdigest()
     lines=[l.split() for l in (folder/'SHA256SUMS').read_text().splitlines() if l.strip()]
     if [dig,'INVENTUR.IVB'] not in lines:raise ValueError('SHA256SUMS does not match IVB')
-    with zipfile.ZipFile(folder/'INVENTURE_RC7_1_SD_BOOT16.zip') as z:
+    with zipfile.ZipFile(folder/'INVENTURE_RC8_0_SD_BOOT16.zip') as z:
         if z.testzip() or z.namelist().count('INVENTUR.IVB')!=1 or z.read('INVENTUR.IVB')!=ivb:
             raise ValueError('SD package CRC/content mismatch')
     report=json.loads((folder/'BUILD_REPORT.json').read_text())
     if report.get('status')!='BUILD_VALIDATED_NOT_HARDWARE_TESTED':raise ValueError('Unexpected build status')
     return {'status':'PASS_BUILT_IMAGE_OFFLINE_NOT_HARDWARE_TESTED','folder':str(folder),
         'ivb_bytes':len(ivb),'ivb_sha256':dig,'build_cfg_baud':wanted,
-        'MCU_release':'P01-P17-RC7.1-ZERO3',
+        'MCU_release':'P01-P17-RC8.0-LOCAL',
         'reset_vector':elf['reset_vector'], 'application_base':hex(0x08010000),
         'dict_checks':len(dict_report),'no_hardware_test':True,'not_flashed':True}
 
@@ -47,4 +47,4 @@ if __name__=='__main__':
     a=p.parse_args()
     try:print(json.dumps(check(a.build_folder),indent=2))
     except (OSError,ValueError,KeyError,struct.error,zipfile.BadZipFile) as e:
-        print('RC7.1 BUILT IMAGE REJECTED:',e,file=sys.stderr);sys.exit(1)
+        print('RC8.0 BUILT IMAGE REJECTED:',e,file=sys.stderr);sys.exit(1)

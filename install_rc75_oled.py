@@ -14,8 +14,22 @@ HERE=Path(__file__).resolve().parent
 PAYLOAD = (HERE/'HOST' if (HERE/'HOST').is_dir() else HERE/'host'
            if (HERE/'host').is_dir() else HERE.parent/'host')
 FILES={
-    'inventure_oled.py': (('fbe07948565315a81c0436f3040116555a0f94cd76ba378eb2a6305351c22125',), 'b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380'),
-    'inventure_oem_menu.py': (('53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0',), '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c'),
+    'inventure_oled.py': (
+        (
+            'fbe07948565315a81c0436f3040116555a0f94cd76ba378eb2a6305351c22125',
+            'b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380',
+            '90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d',
+        ),
+        '69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb',
+    ),
+    'inventure_oem_menu.py': (
+        (
+            '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0',
+            '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
+            'e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949',
+        ),
+        '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
+    ),
 }
 SHA=lambda b:hashlib.sha256(b).hexdigest()
 HEADER=re.compile(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$')
