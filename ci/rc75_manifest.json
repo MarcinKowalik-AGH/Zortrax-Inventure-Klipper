@@ -1,5 +1,5 @@
 {
-  "release": "RC7.5-M300-ACK",
+  "release": "RC7.6-KLIPPER-GRAPHICS",
   "base_commit": "216f138c898189f1235de26a2e3ef60886f0a9c0",
   "mcu_modified": false,
   "unit_tests": 588,
@@ -8,19 +8,19 @@
   "host": {
     "klippy/extras/inventure_oled.py": {
       "old_sha256": "90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d",
-      "new_sha256": "69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb"
+      "new_sha256": "42b410cf06a7755bc7f06f1139d8234542c9893ae9b43148b4bc275400973966"
     },
     "klippy/extras/inventure_oled_render.py": {
       "old_sha256": "34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab",
-      "new_sha256": "327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767"
+      "new_sha256": "ccd4f6f881f854242917aa662b887d70143ffbd29a25717290260fb71e72330f"
     },
     "klippy/extras/inventure_oem_menu.py": {
       "old_sha256": "e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949",
-      "new_sha256": "64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c"
+      "new_sha256": "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad"
     },
     "klippy/extras/inventure_oled_transport.py": {
       "old_sha256": "2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf",
-      "new_sha256": "c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6"
+      "new_sha256": "c605681bb3406c76a5bb9540bb859118e844e3404f92dab18ee7e28513adba42"
     }
   },
   "kit_inputs": {

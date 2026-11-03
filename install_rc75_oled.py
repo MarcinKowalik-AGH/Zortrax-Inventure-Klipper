@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Safe, hash-pinned RC7.4 -> RC7.5 M300 launcher OLED host-only patch and rollback.
+"""Safe, hash-pinned RC7.6 native Klipper graphics and English launcher patch and rollback.
 
 Dry-run by default; refuses active Klipper, mismatched sources, symlinks,
 unknown configuration, duplicate parameters, and concurrent modification.
@@ -16,11 +16,22 @@ PAYLOAD = (HERE/'HOST' if (HERE/'HOST').is_dir() else HERE/'host'
 FILES={
     'inventure_oled.py': (
         (
-            'fbe07948565315a81c0436f3040116555a0f94cd76ba378eb2a6305351c22125',
-            'b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380',
+            '207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f',
+            '69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb',
             '90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d',
+            'b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380',
+            'cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008',
+            'e86a81f6a632353a47ae339ba92021e00a7e308a209abad16452172d29583cd5',
+            'fbe07948565315a81c0436f3040116555a0f94cd76ba378eb2a6305351c22125',
         ),
-        '69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb',
+        '42b410cf06a7755bc7f06f1139d8234542c9893ae9b43148b4bc275400973966',
+    ),
+    'inventure_oled_render.py': (
+        (
+            '327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767',
+            '34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab',
+        ),
+        'ccd4f6f881f854242917aa662b887d70143ffbd29a25717290260fb71e72330f',
     ),
     'inventure_oem_menu.py': (
         (
@@ -28,14 +39,21 @@ FILES={
             '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
             'e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949',
         ),
-        '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
+        '643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad',
+    ),
+    'inventure_oled_transport.py': (
+        (
+            '2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf',
+            'c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6',
+        ),
+        'c605681bb3406c76a5bb9540bb859118e844e3404f92dab18ee7e28513adba42',
     ),
 }
 SHA=lambda b:hashlib.sha256(b).hexdigest()
 HEADER=re.compile(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$')
 ENTRY=re.compile(r'^(\s*)([A-Za-z0-9_]+)(\s*:\s*)([^#;\r\n]*)(.*)$')
 CFG={'chunk_interval':'0.002','refresh_interval':'0.2',
-     'oem_start_screen':'klipper','menu_profile':'m300'}
+     'oem_start_screen':'klipper','menu_profile':'m300','oem_language':'en'}
 
 def service_stopped():
     if shutil.which('systemctl'):
@@ -81,6 +99,8 @@ def plan_config(content:str):
         raise ValueError('Unknown menu_profile; manually review')
     if 'oem_start_screen' in params and params['oem_start_screen'][1].group(4).strip() not in ('klipper','menu'):
         raise ValueError('Unknown oem_start_screen; manually review')
+    if 'oem_language' in params and params['oem_language'][1].group(4).strip() not in ('pl','en'):
+        raise ValueError('Unknown oem_language; manually review')
     for key,value in CFG.items():
         if key not in params:continue
         i,m=params[key]
@@ -88,7 +108,7 @@ def plan_config(content:str):
             # Keep original indentation and trailing commentary.
             tail=m.group(5)
             lines[i]=m.group(1)+m.group(2)+m.group(3)+value+(' ' if tail and not tail.startswith(' ') else '')+tail+('\n' if lines[i].endswith('\n') else '')
-    for key in ('oem_start_screen','menu_profile'):
+    for key in ('oem_start_screen','menu_profile','oem_language'):
         if key not in params:
             lines.insert(end,key+': '+CFG[key]+'\n')
             end+=1
@@ -156,7 +176,7 @@ def apply(klipper,cfg,items,orig,patched):
     except BaseException:
         for target,data in reversed(completed):atomic_write(target,data)
         raise
-    print('RC7.5 M300 LAUNCHER HOST INSTALLED / READBACK PASS')
+    print('RC7.6 NATIVE GRAPHICS HOST INSTALLED / READBACK PASS')
     print('BACKUP:',backup)
     print('NO MCU/BOOT/FLUIDD/MOTION/INTERLOCK WRITES')
     print('Service remains STOPPED; start with sudo systemctl start klipper')

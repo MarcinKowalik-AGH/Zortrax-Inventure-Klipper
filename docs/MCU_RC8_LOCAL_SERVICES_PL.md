@@ -116,7 +116,7 @@ transferu i rozdzielenia testów programowych od sprzętowych pozostają w
 
 ## Instalacja nowego MCU i pasującego hosta
 
-Pobierz artefakt **inventure-rc8_0-mcu-rc7_5-host-zero3-…** wyłącznie
+Pobierz artefakt **inventure-rc8_0-mcu-rc7_6-host-zero3-…** wyłącznie
 z zakończonego SUCCESS przebiegu. Rozpakuj go. Na Orange Pi, w katalogu `HOST`:
 
 ```sh

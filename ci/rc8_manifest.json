@@ -53,8 +53,8 @@
       "new_sha256": "0f2e4ffb5009e023221da995939a136724d395a7bbfb3e0429abf68eccc6b85f"
     },
     "scripts/verify_release.py": {
-      "old_sha256": "d5e9d3022d18c6e88ba0b2f73f94fc2ddafc7dbcad609467d3b1c362a101ec3c",
-      "new_sha256": "bbc6d79498201b5cdf84f90f5965c91079ff8503d48b29bd29168c01cea0f545"
+      "old_sha256": "23592e8e596f0f047fd769a9583bd9ee151879d919a1237d715cd9aea1911e18",
+      "new_sha256": "38821b3c5181d7e8a379bed643da2f97075c502b69de5669e8217de68544ee40"
     },
     "scripts/validate_build.py": {
       "old_sha256": "39e526bf528ceb708c1608607e66557ccaa843564289986c06278d91d6024184",
@@ -70,9 +70,9 @@
     }
   },
   "contracts": {
-    "baseline/expected_hashes.json": "2484c8f968ea97df79a226092055df5f8cfa3b63b2b3eb0813f445afe20b9251",
-    "baseline/p0_module_contracts_RC7.json": "0185c3c0970764d84f99ebfac0c28a829ec53007c29250ded3ccff19c9453b56",
-    "regression_tests/config/p0_module_contracts.json": "0185c3c0970764d84f99ebfac0c28a829ec53007c29250ded3ccff19c9453b56"
+    "baseline/expected_hashes.json": "a570f8fa13015ae5ded2629d8882e68c6baf89e510b5a59d55e9d0c6259551eb",
+    "baseline/p0_module_contracts_RC7.json": "b4fead527a45bb32537814b8a4d327e2f9c5fee6466cb325d8005426839cc7aa",
+    "regression_tests/config/p0_module_contracts.json": "b4fead527a45bb32537814b8a4d327e2f9c5fee6466cb325d8005426839cc7aa"
   },
   "host_compat": {
     "klippy/extras/inventure_oem_menu.py": [
@@ -82,6 +82,7 @@
     ],
     "klippy/extras/inventure_oled.py": [
       "207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f",
+      "69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb",
       "90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d",
       "b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380",
       "cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008",

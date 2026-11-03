@@ -137,7 +137,7 @@ def main():
     # for a new source build; every build still links and verifies its own ELF.
     if (KIT/'dist').exists():
         items.append('Existing local dist retained; new BUILD requires fresh link and dictionary')
-    report={'release':'P01_P17_RC8_0_LOCAL_SERVICES','status':'PASS_OFFLINE_ONLY','host_release':'RC7.5-M300-ACK','mcu_release':'P01-P17-RC8.0-LOCAL',
+    report={'release':'P01_P17_RC8_0_LOCAL_SERVICES','status':'PASS_OFFLINE_ONLY','host_release':'RC7.6-KLIPPER-GRAPHICS','mcu_release':'P01-P17-RC8.0-LOCAL',
       'p4_journal':'r1/r2/1.5-HW2 + authenticated 1.6-RC2 r3; eight read-compatible baud codes, separate bootwait records, last valid baud, fallback 250000',
       'runtime_uart': [19200,57600,115200,250000,500000,750000,1000000,2000000],
       'optional_compiled_uart': [1000000,2000000],

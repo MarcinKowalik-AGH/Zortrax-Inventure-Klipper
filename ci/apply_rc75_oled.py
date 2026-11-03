@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integrate reviewed host-only RC7.5 into the immutable RC7.2 build kit.
+"""Integrate reviewed host-only RC7.6 into the immutable RC7.2 build kit.
 
 Validate every source and contract before writing anything. Only the four OLED
 host modules, their contracts/tests and OLED example options may change.
@@ -22,7 +22,7 @@ def revised_verifier(data):
         "'unit_tests':567":"'unit_tests':588",
         "'public_source_passed':566":"'public_source_passed':587",
         "'total_offline_python_tests':595":"'total_offline_python_tests':616",
-        "'status':'PASS_OFFLINE_ONLY',":"'status':'PASS_OFFLINE_ONLY','host_release':'RC7.5-M300-ACK',",
+        "'status':'PASS_OFFLINE_ONLY',":"'status':'PASS_OFFLINE_ONLY','host_release':'RC7.6-KLIPPER-GRAPHICS',",
     }
     for before,after in changes.items():
         if text.count(before)!=1:raise ValueError('Unexpected verifier contract: '+before)
@@ -58,7 +58,7 @@ def apply(kit,repo=REPO):
     for key,record in manifest['host'].items():
         name=Path(key).name;source=repo/'host'/name
         data=source.read_bytes()
-        if sha(data)!=record['new_sha256']:raise ValueError('Unknown RC7.5 host: '+name)
+        if sha(data)!=record['new_sha256']:raise ValueError('Unknown RC7.6 host: '+name)
         if hashes[key]['new_sha256']!=record['old_sha256']:
             raise ValueError('Unknown manifest host: '+name)
         for dest in (kit/'host'/name,kit/'regression_tests/overlay'/key):
@@ -76,20 +76,37 @@ def apply(kit,repo=REPO):
                 if contract['protected_files'][path]!=record['old_sha256']:
                     raise ValueError('Unknown protected OLED: '+path)
                 contract['protected_files'][path]=record['new_sha256']
-        contract['baseline_release']='RC7.5 M300 launcher and ACK pump; MCU RC7.1 unchanged'
+        contract['baseline_release']='RC7.6 native Klipper graphics, English launcher and ACK pump; MCU RC7.1 unchanged'
         writes[kit/name]=(json.dumps(contract,indent=2,ensure_ascii=False)+'\n').encode()
     for name in ('test_rc7_oem_menu.py','test_rc73_m300_oled.py','test_rc74_oled_scheduling.py'):
         dest=kit/'regression_tests/tests'/name
         if name!='test_rc7_oem_menu.py' and dest.exists():
             raise ValueError('New test already exists: '+name)
         writes[dest]=(repo/'tests/regression'/name).read_bytes()
+    # The hardware adapter fixtures model Klippy I/O, not the native template loader.
+    adapters=kit/'regression_tests/tests/test_host_adapters.py'
+    fixtures=adapters.read_text()
+    init="            self.objects[name]=mod.load_config(Config(self,name,self.settings[name]))"
+    if fixtures.count(init)!=1:raise ValueError('Unknown host adapter fixture')
+    fake_status="""            config=Config(self,name,self.settings[name])
+            if name=='inventure_oled':
+                from unittest.mock import patch
+                class StatusDouble:
+                    layout='_default_16x4'
+                    def __init__(self,config):pass
+                    def render(self,now,board):return b'\\x00\\xff'*4096
+                with patch.object(oledmod,'KlipperStatus',StatusDouble):
+                    self.objects[name]=mod.load_config(config)
+            else:
+                self.objects[name]=mod.load_config(config)"""
+    writes[adapters]=fixtures.replace(init,fake_status).encode()
     writes[kit/'scripts/verify_release.py']=revised_verifier((kit/'scripts/verify_release.py').read_bytes())
     fragment=(repo/'config/OLED_FAST_RC7_5.cfg').read_bytes()
     writes[kit/'config/OLED_OEM_MENU_RC7_1_FRAGMENT_PL.txt']=fragment
     example=(kit/'config/printer_DIAGNOSTIC_RC2_example.cfg').read_text()
     for old,new in (('chunk_interval: 0.004','chunk_interval: 0.002'),
                     ('refresh_interval: 0.5','refresh_interval: 0.2'),
-                    ('[inventure_oled]','[inventure_oled]\noem_menu: True\noem_start_screen: klipper\nmenu_profile: m300')):
+                    ('[inventure_oled]','[inventure_oled]\noem_menu: True\noem_start_screen: klipper\nmenu_profile: m300\noem_language: en')):
         if example.count(old)!=1:raise ValueError('Unknown OLED example: '+old)
         example=example.replace(old,new)
     writes[kit/'config/printer_DIAGNOSTIC_RC2_example.cfg']=example.encode()
@@ -97,7 +114,7 @@ def apply(kit,repo=REPO):
     for path,data in writes.items():
         path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
     (kit/'HOST_RELEASE_RC7_5.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    print('PASS_RC7_5_OLED_HOST_ONLY',len(writes),'files; MCU and ABI unchanged')
+    print('PASS_RC7_6_OLED_HOST_ONLY',len(writes),'files; MCU and ABI unchanged')
 
 if __name__=='__main__':
     try:

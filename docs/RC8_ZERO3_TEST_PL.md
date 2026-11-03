@@ -1,7 +1,7 @@
 # Test Klippera na Orange Pi Zero 3
 
 Pakiet `INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip` zawiera przypięte źródła
-Klippera z hostem RC7.5, konfigurację `printer.test.cfg` i instalator
+Klippera z hostem RC7.6, konfigurację `printer.test.cfg` i instalator
 nakładek z kontrolą SHA-256. Pasuje do aplikacji MCU `P01-P17-RC8.0-LOCAL`.
 Dla pierwszego uruchomienia testowego używa portu `/dev/ttyS1`, 250000 baud,
 `kinematics: none` i `allow_actuators: False`.
@@ -32,8 +32,10 @@ cd "$stage"
 ```
 
 Obserwuj OLED i log. Najpierw MCU pokazuje `Waiting for Klipper`.
-Po `Ready` pierwszą klatką hosta jest status **KLIPPER**. OK otwiera menu
-`Klipper / Zortrax Inventure / Serwis / Testy`. Wybierz `Zortrax Inventure`
+Po `Ready` pierwszą klatką hosta jest graficzny ekran Klippera `_default_16x4`,
+jak w M300. Pokazuje ikony temperatur i wentylatora, feed rate, postęp i czas.
+W trybie diagnostycznym wyświetla świeży odczyt T0. Dla brakujących pomiarów
+pokazuje `--`. OK otwiera angielskie menu `Klipper / Zortrax Inventure / Service / Tests`. Wybierz `Zortrax Inventure`
 i sprawdź pięć sekcji OEM. Zatrzymaj test przez Ctrl-C i sprawdź powrót
 lokalnego statusu MCU. Test zachowuje bieżące dowiązanie `~/klipper`,
 `printer.cfg`, usługę systemd i konfigurację Moonrakera. Przed powrotem do
@@ -49,10 +51,16 @@ W istniejącej sekcji `[inventure_oled]` użyj opcji z
 
 Po Ready polecenia `INVENTURE_MENU_STATUS` i `INVENTURE_OLED_STATUS`
 powinny pokazać `rendered_screen=klipper_status`, `menu_profile=m300`
-i po przesłaniu klatki `host_frame_acknowledged=true`. Z kolei
+oraz `language=en` i `ui_transport.status_layout=_default_16x4`. Po
+przesłaniu klatki pojawi się `host_frame_acknowledged=true`. Z kolei
 `INVENTURE_COOLING_STATUS` odczytuje lokalny stan chłodzenia MCU.
 
 Odświeżanie statusu ma okres 0,2 s. Kolejne porcje OLED wysyłane są po
 prawidłowym ACK, przy pojedynczej operacji ABI2 w locie. 2 ms to krok
 timera podczas transferu, a przewijanie wysyła zmienione obszary.
 Rzeczywisty czas pokazania pełnego obrazu zależy od UART, SPI i panelu.
+
+Jeśli host RC7.5 współpracuje już z MCU RC8.0, zaktualizuj klon GitHub
+i uruchom `install_rc75_oled.py` w trybie podglądu. Po zatrzymaniu Klippera
+uruchom go z `--apply --confirm-service-stopped`. Instalator sprawdza SHA
+czterech modułów i ustawia `oem_language: en` w istniejącej sekcji OLED.

@@ -134,9 +134,9 @@ class OEMMenu:
     """Navigation only: all unqualified hardware-affecting choices are inert."""
     def __init__(self, language='pl', root_back_to_status=True, root_page='root'):
         if language not in ('pl','en'): raise ValueError('Language must be pl/en')
-        self.language=language
         if root_page not in ('root','launcher'): raise ValueError('Unknown menu root page')
         self.root_page=root_page
+        self.language='en' if root_page=='launcher' else language
         self.root_back_to_status=bool(root_back_to_status)
         self.page=self.root_page;self.stack=[];self.selected=0;self.window=1 if self.root_back_to_status else 0
         self.notice=None;self.last_action=None;self.generation=0
@@ -150,6 +150,8 @@ class OEMMenu:
 
     def items(self):
         nodes=MENU[self.page][3]
+        if self.root_page=='launcher' and self.page=='language':
+            nodes=[node for node in nodes if node.action=='language_en']
         if self.page==self.root_page and not self.root_back_to_status:return list(nodes)
         return [Item('Powrót','Back',action='back')]+list(nodes)
 

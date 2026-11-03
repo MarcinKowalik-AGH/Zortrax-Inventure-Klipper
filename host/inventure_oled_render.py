@@ -12,6 +12,7 @@ import argparse
 import json
 import base64
 import zlib
+from functools import lru_cache
 from pathlib import Path
 
 WIDTH, HEIGHT = 256, 64
@@ -45,6 +46,61 @@ def get_oem_assets(path=None):
         return OEMAssets(path)
     if _OEM_ASSETS is None: _OEM_ASSETS=OEMAssets()
     return _OEM_ASSETS
+
+
+# One bit from Klipper's column-oriented 128x64 bitmap becomes two 4bpp
+# pixels (one packed byte) in an SSD1322 row.
+_BIT_PLANES = tuple(bytes(255 if value & (1 << bit) else 0
+                         for value in range(256)) for bit in range(8))
+
+
+class KlipperStatus:
+    """Native 16x4 Klipper display, rendered in memory as on M300."""
+
+    layout = '_default_16x4'
+
+    def __init__(self, config):
+        from .display.display import PrinterLCD, lookup_display_templates
+        from .display.uc1701 import DisplayBase
+
+        self.printer = config.get_printer()
+        self.printer.load_object(config, 'display_status')
+        templates = lookup_display_templates(config)
+        self.display_templates = templates.get_display_templates()
+        self.group = templates.get_display_data_groups()[self.layout]
+        self.lcd_chip = DisplayBase(self)
+        self.lcd_chip.set_glyphs(templates.get_display_glyphs())
+        self.draw_text = PrinterLCD.draw_text.__get__(self)
+        self.draw_progress_bar = PrinterLCD.draw_progress_bar.__get__(self)
+        self._previous = self._wire = None
+
+    @staticmethod
+    def send(*args, **kwargs):
+        raise RuntimeError('Inventure status is a memory-only renderer')
+
+    def render(self, now, board):
+        self.lcd_chip.clear()
+        self.group.show(self, self.display_templates, now)
+        self._draw_unconfigured_fields(now, board)
+        pages = tuple(map(bytes, self.lcd_chip.vram))
+        if pages != self._previous:
+            self._wire = b''.join(page.translate(table)
+                                  for page in pages for table in _BIT_PLANES)
+            self._previous = pages
+        return self._wire
+
+    def _draw_unconfigured_fields(self, now, board):
+        extruder = self.printer.lookup_object('toolhead').get_extruder().get_name()
+        if not self.printer.lookup_object(extruder, None):
+            status = board.get_status(now)
+            t0, age = status['temperatures'][0], status['adc_ages'][0]
+            fresh = age is not None and age < 1. and t0 is not None and -30 < t0 <= 310
+            value = '%3.0f' % t0 if fresh else ' --'
+            self.draw_text(0, 0, '~extruder~'+value+'~degrees~', now)
+        if self.printer.lookup_object('heater_bed', None) is None:
+            self.draw_text(1, 0, '~bed~ --~degrees~', now)
+        if self.printer.lookup_object('fan', None) is None:
+            self.draw_text(0, 10, '~fan1~ --%', now)
 
 
 class Frame:
@@ -113,9 +169,10 @@ class Frame:
         sprite on every navigation detent. Action dispatch stays host-owned.
         """
         atlas=assets or get_oem_assets()
-        self.raw[:]=b'\x00'*RAW_LEN
         labels=list(view['labels'])
-        if not labels:return self
+        if not labels:
+            self.raw[:]=bytes(RAW_LEN)
+            return self
         sel=max(0,min(view['selected'],len(labels)-1))
         has_back=labels[0] in ('Back','Powrót')
         visible_count=4 if has_back else 5
@@ -127,41 +184,14 @@ class Frame:
         else:
             first=max(0,min(int(view.get('window',0)),max(0,len(labels)-visible_count)))
             visible=list(range(first,min(first+visible_count,len(labels))))
-        right=193 if view.get('icon') else 253
-        for row,index in enumerate(visible):
-            y=row*12
-            self.oem_text(19,y,labels[index],atlas,right=right)
-            if index==sel:
-                # Nine-pixel stock marker; Back points left, all other rows
-                # point right. Marker never overlaps text or the next row.
-                for dy in range(-4,5):
-                    yy=y+5+dy
-                    xx=(8+abs(dy)) if index==0 and has_back else (12-abs(dy))
-                    self.pixel(xx,yy,15)
-        if view.get('notice'):
-            # Preserve all five selectable rows: notice is in icon column.
-            self.oem_text(203,14,'INFO',atlas,right=255)
-            self.oem_text(203,30,'NO ACT',atlas,right=255)
-        elif view.get('icon'):
-            self.oem_icon(view['icon'],atlas)
-        return self
-
-    def klipper_status(self, status, assets=None):
-        """M300-like Klipper home (EN); OK opens the full-height OEM menu.
-
-        Do not mislabel unqualified native board ADC samples as actual
-        extruder/bed temperatures; the test-only printer uses kinematics none.
-        """
-        atlas=assets or get_oem_assets()
-        self.raw[:]=b'\x00'*RAW_LEN
-        self.oem_text(4,0,'KLIPPER',atlas,right=252)
-        healthy=bool(status.get('connected') and not status.get('fault'))
-        self.oem_text(4,12,'MCU: Ready' if healthy else 'MCU: Check status',atlas,right=252)
-        rel=str(status.get('mcu_release') or 'unknown')
-        self.oem_text(4,24,rel.replace('P01-P17-',''),atlas,right=252)
-        baud=status.get('p4_boot',{}).get('baud')
-        self.oem_text(4,36,'P4: '+str(baud if baud is not None else '---'),atlas,right=252)
-        self.oem_text(4,48,'OK: Open menu',atlas,right=252)
+        self.raw[:]=_menu_background(atlas,tuple(labels[i] for i in visible),
+                                     view.get('icon'),bool(view.get('notice')))
+        if sel in visible:
+            # The stock Back marker points left. Other rows point right.
+            y=visible.index(sel)*12+5
+            for dy in range(-4,5):
+                x=8+abs(dy) if sel==0 and has_back else 12-abs(dy)
+                self.pixel(x,y+dy,15)
         return self
 
     def header(self, title=TITLE):
@@ -223,8 +253,7 @@ class Frame:
     def wire_bytes(self):
         # SSD1322 0x5C stream: 64 rows x 128 bytes per row.
         # WARNING: writing self.raw directly produces distorted image!
-        return bytes(self.raw[col_byte * HEIGHT + y]
-                     for y in range(HEIGHT) for col_byte in range(WIDTH//2))
+        return b''.join(self.raw[y::HEIGHT] for y in range(HEIGHT))
 
     def to_image(self, scale=4):
         try:
@@ -241,4 +270,17 @@ class Frame:
             for x in range(WIDTH):
                 px[x,y]=palette[self.get_pixel(x,y)]
         return img.resize((WIDTH*scale,HEIGHT*scale), Image.Resampling.NEAREST)
+
+
+@lru_cache(maxsize=16)
+def _menu_background(atlas, labels, icon, notice):
+    frame = Frame()
+    for row, label in enumerate(labels):
+        frame.oem_text(19, row*12, label, atlas, right=193 if icon else 253)
+    if notice:
+        frame.oem_text(203, 14, 'INFO', atlas, right=255)
+        frame.oem_text(203, 30, 'NO ACT', atlas, right=255)
+    elif icon:
+        frame.oem_icon(icon, atlas)
+    return bytes(frame.raw)
 

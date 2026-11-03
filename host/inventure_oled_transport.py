@@ -82,13 +82,18 @@ def diff_regions(before, after, max_regions=16):
     bounding=diff_window(before, after)
     if bounding is None:
         return ()
+    return _dirty_regions(before,after,bounding,max_regions)
+
+
+def _dirty_regions(before,after,bounding,max_regions):
     def cost(w):
         y0,y1,c0,c1=w
         size=(y1-y0+1)*(c1-c0+1)*2
         # Each rectangle needs five ACK-paced command/data operations.
         return 5 + (size+31)//32
-    if bounding==(0,63,0,63):
-        pass
+    y0,y1,c0,c1=bounding
+    if y0//8==y1//8 and c0//8==c1//8:
+        return (bounding,)
     # 8 column-address groups (32 visible px) by 8 row tiles; 64 tiles.
     tile_dirty=[[False]*8 for _ in range(8)]
     for ty in range(8):
@@ -241,7 +246,7 @@ class OledStream:
                 self.urgent_refresh=False
                 return None
             self.window=window
-            self.windows=diff_regions(self.previous,self.target) if self.previous is not None else (window,)
+            self.windows=_dirty_regions(self.previous,self.target,window,16) if self.previous is not None else (window,)
             self.operations=itertools.chain.from_iterable(
                 frame_operations(self.target,*region) for region in self.windows)
             self.phase='updating'

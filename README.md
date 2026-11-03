@@ -1,4 +1,4 @@
-# Zortrax Inventure V9 — MCU RC8.0 i host RC7.5
+# Zortrax Inventure V9 — MCU RC8.0 i host RC7.6
 
 Wydanie testowe dla Inventure V9 STM32F207 z InventureBoot 1.6-RC2 i Orange Pi
 Zero 3 (Armbian ARM64). Pobierz oba pakiety z zakończonego sukcesem przebiegu
@@ -17,11 +17,10 @@ OLED wraca do strony oczekiwania lub pokazuje status zatrzymania
 i chłodzenia. Renderer lokalny używa 128 B na wiersz zamiast bufora 8192 B.
 Obraz APP zaczyna się pod adresem `0x08010000`.
 
-Host wyświetla **KLIPPER** jako pierwszy ekran po Ready. OK otwiera launcher.
-Sterownik wysyła kolejne porcje po ACK, aktualizuje zmienione obszary
-i odświeża status co 0,2 s. GitHub Actions buduje i weryfikuje parę
-MCU/host. Potwierdzenie czasu wyświetlania i chłodzenia wymaga testu
-na drukarce.
+Host po Ready pokazuje graficzny ekran Klippera `_default_16x4` z M300.
+OK otwiera angielski launcher. Sterownik zachowuje tło menu przy ruchu
+kursora, wysyła zmienione obszary po ACK i odświeża status co 0,2 s.
+Rzeczywisty czas wyświetlania zależy od UART, SPI i panelu.
 
 [Instalacja MCU i rollback](docs/MCU_RC8_LOCAL_SERVICES_PL.md) ·
 [Test Orange Pi Zero 3](docs/RC8_ZERO3_TEST_PL.md) ·

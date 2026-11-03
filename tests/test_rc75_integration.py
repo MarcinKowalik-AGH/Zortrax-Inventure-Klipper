@@ -98,7 +98,7 @@ class Installer(unittest.TestCase):
 
     def test_precise_update_idempotence_and_bitwise_rollback(self):
         items,old,new=installer.make_plan(self.host,self.cfg)
-        self.assertEqual(len(items),2)
+        self.assertEqual(len(items),4)
         self.assertIn('chunk_interval: 0.002',new);self.assertIn('refresh_interval: 0.2',new)
         self.assertIn('kinematics: none',new);self.assertIn('allow_actuators: False',new)
         installer.apply(self.host,self.cfg,items,old,new)

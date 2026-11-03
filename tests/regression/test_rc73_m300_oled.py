@@ -1,21 +1,32 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """RC7.3 M300-style OLED navigation: genuine host code, modeled I/O only."""
 import importlib, sys, unittest
+from types import SimpleNamespace
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'host'))
 from inventure_oem_menu import OEMMenu
-from inventure_oled_render import Frame, get_oem_assets
+from inventure_oled_render import Frame, KlipperStatus, get_oem_assets
 from inventure_oled_transport import diff_regions, frame_operations
 
 class FiveRows(unittest.TestCase):
-    def test_status_home_has_five_rows_and_no_zortrax_label(self):
-        status={'connected':True,'fault':0,'mcu_release':'P01-P17-RC7.1-ZERO3',
-                'p4_boot':{'baud':250000}}
-        a=Frame().klipper_status(status)
-        self.assertEqual(len(a.wire_bytes()),8192)
-        self.assertTrue(any(a.get_pixel(x,y) for y in range(48,61) for x in range(4,100)))
-        self.assertNotEqual(a.wire_bytes(),Frame().oem_menu(OEMMenu().view()).wire_bytes())
+    def test_native_status_packs_rows_and_reuses_unchanged_wire(self):
+        status=KlipperStatus.__new__(KlipperStatus)
+        pages=[bytearray(128) for _ in range(8)]
+        pages[0][0]=1
+        pages[1][2]=1<<5
+        pages[7][127]=1<<7
+        status.lcd_chip=SimpleNamespace(clear=lambda:None,vram=pages)
+        status.display_templates={}
+        status.group=SimpleNamespace(show=lambda *args:None)
+        status._draw_unconfigured_fields=lambda *args:None
+        status._previous=status._wire=None
+        frame=status.render(0.,None)
+        self.assertEqual(len(frame),8192)
+        self.assertEqual([i for i,value in enumerate(frame) if value], [0,13*128+2,8191])
+        self.assertTrue(all(value in (0,255) for value in frame))
+        self.assertIs(status.render(.2,None),frame)
+
     def test_root_full_height_pinned_back_scroll_and_return(self):
         m=OEMMenu(language='pl')
         self.assertEqual(m.view()['labels'],['Powrót','Modele','Konserwacja','Materiał','Ustawienia','Informacje'])
@@ -83,12 +94,12 @@ class HostLifecycle(unittest.TestCase):
         self.assertNotEqual(first,self.o.stream.latest)
         self.assertIs(first,self.o.stream.target)  # finish the first status frame
         self.assertEqual(self.o.oem_menu.view()['labels'][1:],
-                         ['Klipper','Zortrax Inventure','Serwis / Testy'])
+                         ['Klipper','Zortrax Inventure','Service / Tests'])
         self.o.oem_menu.move(1)
         self.o.oem_menu.move(1)
         self.o._select(.002)
         self.assertEqual(self.o.oem_menu.page,'root')
-        self.assertEqual(self.o.oem_menu.view()['labels'][1],'Modele')
+        self.assertEqual(self.o.oem_menu.view()['labels'][1],'Models')
         self.o._select(.003)
         self.assertEqual(self.o.oem_menu.page,'launcher')
         self.o.oem_menu.home()
@@ -103,7 +114,7 @@ class HostLifecycle(unittest.TestCase):
             o=p.load_object(None,'inventure_oled');p.board_ready();p.configure()
             p.send_event('klippy:ready')
             self.assertEqual(o.oem_display_mode,'menu')
-            self.assertEqual(o.oem_menu.view()['labels'][0],'Powrót')
+            self.assertEqual(o.oem_menu.view()['labels'][0],'Back')
             self.assertFalse(p.objects['toolhead'].moves)
     def test_repeated_static_render_reuses_cached_frame(self):
         first=self.o.stream.latest

@@ -89,7 +89,7 @@ jobs:
       - name: Verify dictionary against actual compiled MCU output
         run: python ci/apply_rc7_dict_fix.py kit
 
-      - name: Integrate hash-pinned RC7.5 launcher, ACK pump and regression contracts
+      - name: Integrate hash-pinned RC7.6 native graphics, English launcher, ACK pump and regression contracts
         run: python ci/apply_rc75_oled.py kit
 
       - name: Integrate RC8 F207 local cooling and OLED recovery
@@ -129,7 +129,7 @@ jobs:
           assert r['public_source_passed']==591
           assert r['private_oem_reference_skipped']==1
           assert r['acceptance_tests']==28
-          assert r['host_release']=='RC7.5-M300-ACK'
+          assert r['host_release']=='RC7.6-KLIPPER-GRAPHICS'
           assert r['mcu_release']=='P01-P17-RC8.0-LOCAL'
           print('PUBLIC_TESTS_591_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
@@ -174,6 +174,7 @@ jobs:
           grep -Fx 'kinematics: none' release/HOST/printer.test.cfg
           grep -Fx 'oem_start_screen: klipper' release/HOST/printer.test.cfg
           grep -Fx 'menu_profile: m300' release/HOST/printer.test.cfg
+          grep -Fx 'oem_language: en' release/HOST/printer.test.cfg
           grep -Fx 'baud: 250000' release/HOST/printer.test.cfg
           stage="$RUNNER_TEMP/inventure-zero3"
           python kit/zero3/stage_pinned_host.py --destination "$stage/klipper-inventure" --apply
@@ -200,7 +201,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc8_0-mcu-rc7_5-host-zero3-${{ github.sha }}
+          name: inventure-rc8_0-mcu-rc7_6-host-zero3-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

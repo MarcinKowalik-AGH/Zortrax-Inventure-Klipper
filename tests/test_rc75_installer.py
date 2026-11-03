@@ -11,14 +11,16 @@ class InstallerTests(unittest.TestCase):
         new=installer.plan_config(CFG)
         self.assertIn('menu_profile: m300',new)
         self.assertIn('baud: 250000',new)
-        self.assertEqual(new.replace('menu_profile: m300\n',''),CFG)
+        self.assertIn('oem_language: en',new)
+        self.assertEqual(new.replace('menu_profile: m300\n','').replace('oem_language: en','oem_language: pl'),CFG)
     def test_unknown_option_and_duplicate_rejected(self):
         with self.assertRaises(ValueError):installer.plan_config(CFG.replace('oem_menu: True','oem_menu: False'))
         with self.assertRaises(ValueError):installer.plan_config(CFG.replace('refresh_interval: 0.2','refresh_interval: 0.2\nrefresh_interval: 0.2'))
         with self.assertRaises(ValueError):installer.plan_config(CFG.replace('oem_start_screen: klipper','oem_start_screen: invalid'))
     def test_payload_shas_match_source(self):
         for name,(accepted,new) in installer.FILES.items():
-            self.assertIn(name,('inventure_oled.py','inventure_oem_menu.py'))
+            self.assertIn(name,('inventure_oled.py','inventure_oem_menu.py',
+                                'inventure_oled_render.py','inventure_oled_transport.py'))
             self.assertEqual(installer.SHA((HOST/name).read_bytes()),new)
             self.assertGreaterEqual(len(accepted),2)
     def test_apply_rollback_with_sha_staged_fixture(self):
@@ -38,7 +40,7 @@ class InstallerTests(unittest.TestCase):
                 installer.FILES=accepted;installer.PAYLOAD=source
                 installer.service_stopped=lambda:None
                 items,old,new=installer.make_plan(host,cfg)
-                self.assertEqual(len(items),2)
+                self.assertEqual(len(items),4)
                 installer.apply(host,cfg,items,old,new)
                 self.assertIn('menu_profile: m300',cfg.read_text())
                 bak=next((host/'.inventure-rc75-backups').iterdir())

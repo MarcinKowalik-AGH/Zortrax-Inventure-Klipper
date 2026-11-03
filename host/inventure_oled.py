@@ -7,7 +7,7 @@ import collections
 import json
 import logging
 import secrets
-from .inventure_oled_render import Frame
+from .inventure_oled_render import Frame, KlipperStatus
 from .inventure_oem_menu import OEMMenu
 from .inventure_oled_transport import OledStream
 
@@ -22,7 +22,8 @@ class InventureOLED:
         if self.menu_profile not in ('m300','zortrax'):
             raise config.error('menu_profile must be m300 or zortrax')
         root_page='launcher' if self.menu_profile=='m300' else 'root'
-        self.oem_menu=OEMMenu(config.get('oem_language','pl'),root_page=root_page) if self.oem_ui_enabled else None
+        self.oem_menu=OEMMenu(config.get('oem_language','en'),root_page=root_page) if self.oem_ui_enabled else None
+        self.native_status=KlipperStatus(config) if self.oem_menu is not None else None
         self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
         if self.oem_start_screen not in ('klipper','menu'):
             raise config.error('oem_start_screen must be klipper or menu')
@@ -338,14 +339,11 @@ class InventureOLED:
             'preparing_t0','measuring_t0','preparing_t1','measuring_t1')
         snapshot=None
         menu_view=None
-        klipper_status=None
+        native_wire=None
         if self.oem_menu is not None and not measuring and not self.message:
             if self.oem_display_mode=='status':
-                klipper_status=self.board.get_status(now)
-                boot=klipper_status.get('p4_boot',{})
-                snapshot=('status',klipper_status.get('connected'),
-                          klipper_status.get('fault'),
-                          klipper_status.get('mcu_release'),boot.get('baud'))
+                native_wire=self.native_status.render(now,self.board)
+                snapshot=('status',native_wire)
             else:
                 menu_view=self.oem_menu.view()
                 snapshot=('menu',menu_view['page'],menu_view['generation'],
@@ -355,16 +353,16 @@ class InventureOLED:
                 self._render_cache_hits+=1
                 self._user_refresh_pending=False
                 return
-        frame=Frame()
-        if measuring:
+        frame=Frame() if native_wire is None else None
+        if native_wire is not None:
+            wire=native_wire
+        elif measuring:
             counts=cal_status.get('sample_counts',[0,0])
             frame.progress('Nozzle Z Height',
                            'T0 %d/2  T1 %d/3'%(counts[0],counts[1]),
                            sum(counts)*20)
         elif self.message:
             frame.status(self.message[0],self.message[1])
-        elif klipper_status is not None:
-            frame.klipper_status(klipper_status)
         elif menu_view is not None:
             frame.oem_menu(menu_view)
         elif self.oem_menu is not None:
@@ -373,10 +371,11 @@ class InventureOLED:
             title,rows=self._rows(now)
             self.selection=max(0,min(self.selection,len(rows)-1))
             frame.menu(title,[r[0] for r in rows],self.selection,self.page!='home')
-        self.stream.request(frame.wire_bytes(),urgent=self._user_refresh_pending)
+        if frame is not None:wire=frame.wire_bytes()
+        self.stream.request(wire,urgent=self._user_refresh_pending)
         if measuring:self._rendered_screen='calibration'
         elif self.message:self._rendered_screen='message'
-        elif klipper_status is not None:self._rendered_screen='klipper_status'
+        elif native_wire is not None:self._rendered_screen='klipper_status'
         elif menu_view is not None or self.oem_menu is not None:
             self._rendered_screen='oem_menu'
         else:self._rendered_screen='legacy'
@@ -518,7 +517,8 @@ class InventureOLED:
                     'last_ack':self._oled_last_ack,
                     'attempt_sent':self.stream.sent-self._oled_session_sent,
                     'attempt_acked':self.stream.acked-self._oled_session_acked},
-                'ui_transport':{'host_release':'RC7.5-M300-ACK',
+                'ui_transport':{'host_release':'RC7.6-KLIPPER-GRAPHICS',
+                    'status_layout':KlipperStatus.layout,
                     'chunk_interval_s':self.interval,
                     'refresh_interval_s':self.stream.refresh_interval,
                     'idle_poll_interval_s':.050,

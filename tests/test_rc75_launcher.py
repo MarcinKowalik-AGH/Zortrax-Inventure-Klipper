@@ -12,8 +12,8 @@ class LauncherMenuTests(unittest.TestCase):
         self.assertEqual(m.view()['labels'][:3],['Powrót','Modele','Konserwacja'])
         self.assertEqual(m.select(),'exit_to_status')
     def test_launcher_is_m300_style_without_oem_as_first_screen(self):
-        m=OEMMenu(root_page='launcher')
-        self.assertEqual(m.view()['labels'],['Powrót','Klipper','Zortrax Inventure','Serwis / Testy'])
+        m=OEMMenu('pl',root_page='launcher')
+        self.assertEqual(m.view()['labels'],['Back','Klipper','Zortrax Inventure','Service / Tests'])
         self.assertEqual(m.select(),'exit_to_status')
         self.assertEqual(m.status()['root_page'],'launcher')
         self.assertFalse(m.status()['actuators_enabled_by_menu'])
@@ -21,7 +21,7 @@ class LauncherMenuTests(unittest.TestCase):
         m=OEMMenu(root_page='launcher')
         m.move(1);m.move(1);self.assertEqual(m.select(),'submenu')
         self.assertEqual(m.page,'root')
-        self.assertEqual(m.view()['labels'][:3],['Powrót','Modele','Konserwacja'])
+        self.assertEqual(m.view()['labels'][:3],['Back','Models','Maintenance'])
         self.assertEqual(m.select(),'back')
         self.assertEqual(m.page,'launcher')
         self.assertEqual(m.selected,2)
@@ -32,7 +32,7 @@ class LauncherMenuTests(unittest.TestCase):
         m=OEMMenu(root_page='launcher')
         m.move(1);self.assertEqual(m.select(),'submenu')
         self.assertEqual(m.page,'klipper_main')
-        self.assertEqual(m.view()['labels'][1:4],['Status drukarki','Druk / Zadanie','Temperatury'])
+        self.assertEqual(m.view()['labels'][1:4],['Printer status','Print / Job','Temperatures'])
         m.move(1);self.assertEqual(m.select(),'exit_to_status')
         self.assertFalse(m.status()['actuators_enabled_by_menu'])
     def test_service_is_diagnostic_and_no_side_effect(self):
@@ -51,6 +51,14 @@ class LauncherMenuTests(unittest.TestCase):
         for _ in range(20):m.move(1)
         self.assertEqual(m.selected,len(m.items())-1)
         self.assertEqual(m.window,2)
+    def test_launcher_language_page_stays_english(self):
+        m=OEMMenu('pl',root_page='launcher')
+        m.page='language'
+        self.assertEqual(m.view()['labels'],['Back','English'])
+        m.move(1)
+        self.assertEqual(m.select(),'language')
+        self.assertEqual(m.status()['language'],'en')
+
     def test_root_rejects_unknown_mode(self):
         with self.assertRaises(ValueError):OEMMenu(root_page='unknown')
 
