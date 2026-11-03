@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Safe, hash-pinned RC7.2/RC7.3 -> RC7.4 OLED host-only patch and rollback.
+"""Safe, hash-pinned RC7.4 -> RC7.5 M300 launcher OLED host-only patch and rollback.
 
 Dry-run by default; refuses active Klipper, mismatched sources, symlinks,
 unknown configuration, duplicate parameters, and concurrent modification.
@@ -11,24 +11,31 @@ import argparse,datetime,difflib,hashlib,json,os,re,shutil,stat,subprocess,sys,t
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent
-PAYLOAD=(HERE/'host') if (HERE/'host').is_dir() else HERE.parent/'host'
-FILES={'inventure_oem_menu.py': ('e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949',
-                           '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0'),
- 'inventure_oled.py': ('90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d',
-                       'cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008'),
- 'inventure_oled_render.py': ('34006181ee40229c740c88f97a7f0a278548af5eca6904d8325a2a89eed4faab',
-                              '327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767'),
- 'inventure_oled_transport.py': ('2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf',
-                                 'c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6')}
-INTERMEDIATE={'inventure_oem_menu.py': '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0',
- 'inventure_oled.py': 'e86a81f6a632353a47ae339ba92021e00a7e308a209abad16452172d29583cd5',
- 'inventure_oled_render.py': '327b9f5a9d495420586f734d17fed9641995135a5814adf5f596d5785b698767'}
-RC74_ORIGINAL={'inventure_oled.py': '207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f'}
+PAYLOAD = (HERE/'HOST' if (HERE/'HOST').is_dir() else HERE/'host'
+           if (HERE/'host').is_dir() else HERE.parent/'host')
+FILES={
+    'inventure_oled.py': (
+        (
+            'fbe07948565315a81c0436f3040116555a0f94cd76ba378eb2a6305351c22125',
+            'b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380',
+            '90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d',
+        ),
+        '69e66068e9eb70facd40cb56207df5a15148af04916476e79e4af241c4e6affb',
+    ),
+    'inventure_oem_menu.py': (
+        (
+            '53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0',
+            '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
+            'e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949',
+        ),
+        '64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c',
+    ),
+}
 SHA=lambda b:hashlib.sha256(b).hexdigest()
 HEADER=re.compile(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$')
 ENTRY=re.compile(r'^(\s*)([A-Za-z0-9_]+)(\s*:\s*)([^#;\r\n]*)(.*)$')
 CFG={'chunk_interval':'0.002','refresh_interval':'0.2',
-     'oem_start_screen':'klipper'}
+     'oem_start_screen':'klipper','menu_profile':'m300'}
 
 def service_stopped():
     if shutil.which('systemctl'):
@@ -66,37 +73,37 @@ def plan_config(content:str):
     # Preserve all unrelated options and comments; narrowly update OLED pacing.
     for key in ('chunk_interval','refresh_interval'):
         if key not in params:raise ValueError('Expected existing '+key+' in [inventure_oled]')
-    if float(params['chunk_interval'][1].group(4).strip()) not in (0.02,0.004,0.002):
+    if float(params['chunk_interval'][1].group(4).strip()) not in (0.02,0.002):
         raise ValueError('Unexpected chunk_interval; manual review required')
     if float(params['refresh_interval'][1].group(4).strip()) not in (0.5,0.2):
         raise ValueError('Unexpected refresh_interval; manual review required')
+    if 'menu_profile' in params and params['menu_profile'][1].group(4).strip() not in ('m300','zortrax'):
+        raise ValueError('Unknown menu_profile; manually review')
     if 'oem_start_screen' in params and params['oem_start_screen'][1].group(4).strip() not in ('klipper','menu'):
         raise ValueError('Unknown oem_start_screen; manually review')
     for key,value in CFG.items():
-        if key=='oem_start_screen' and key in params and params[key][1].group(4).strip()=='menu':
-            # Respect a deliberate user opt-in for immediate menu.
-            continue
         if key not in params:continue
         i,m=params[key]
         if m.group(4).strip()!=value:
             # Keep original indentation and trailing commentary.
             tail=m.group(5)
             lines[i]=m.group(1)+m.group(2)+m.group(3)+value+(' ' if tail and not tail.startswith(' ') else '')+tail+('\n' if lines[i].endswith('\n') else '')
-    if 'oem_start_screen' not in params:
-        # End index is next section; add before that section.
-        lines.insert(end,'oem_start_screen: klipper\n')
+    for key in ('oem_start_screen','menu_profile'):
+        if key not in params:
+            lines.insert(end,key+': '+CFG[key]+'\n')
+            end+=1
     return ''.join(lines)
 
 def make_plan(klipper:Path,cfg:Path):
     extras=klipper/'klippy/extras'
     if not (klipper/'klippy/klippy.py').is_file():raise ValueError('Not a Klipper tree: '+str(klipper))
     result=[]
-    for name,(old,new) in FILES.items():
+    for name,(accepted,new) in FILES.items():
         src=unique_path(PAYLOAD/name)
         if SHA(src.read_bytes())!=new:raise ValueError('Unexpected patch SHA: '+name)
         target=unique_path(extras/name)
         current=SHA(target.read_bytes())
-        if current not in (old,new,INTERMEDIATE.get(name),RC74_ORIGINAL.get(name)):
+        if current not in (*accepted,new):
             raise ValueError('REFUSED unknown existing SHA '+name+': '+current)
         result.append(dict(name=name,path=str(target),current=current,new=new,action='same' if current==new else 'update'))
     unique_path(cfg)
@@ -106,7 +113,7 @@ def make_plan(klipper:Path,cfg:Path):
 
 def atomic_write(dst:Path,data:bytes):
     orig_mode=stat.S_IMODE(dst.stat().st_mode)
-    fd,name=tempfile.mkstemp(prefix='.'+dst.name+'.rc74-',dir=dst.parent)
+    fd,name=tempfile.mkstemp(prefix='.'+dst.name+'.rc75-',dir=dst.parent)
     try:
         with os.fdopen(fd,'wb') as f:
             f.write(data);f.flush();os.fsync(f.fileno())
@@ -125,12 +132,12 @@ def apply(klipper,cfg,items,orig,patched):
             raise ValueError('Concurrent modification: '+item['name'])
     if cfg.read_text()!=orig:raise ValueError('Configuration changed during preflight')
     t=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ')
-    backup=klipper/'.inventure-rc74-backups'/t
+    backup=klipper/'.inventure-rc75-backups'/t
     backup.mkdir(parents=True,exist_ok=False)
     (backup/'HOST').mkdir()
     for item in items:(backup/'HOST'/item['name']).write_bytes(Path(item['path']).read_bytes())
     (backup/'printer.cfg').write_bytes(orig.encode('utf-8'))
-    manifest={'kind':'RC7.2_to_RC7.4_OLED_HOST_ONLY',
+    manifest={'kind':'RC7.4_to_RC7.5_M300_LAUNCHER',
               'target':str(klipper),'config':str(cfg),'files':items,
               'old_config_sha256':SHA(orig.encode('utf-8')),
               'new_config_sha256':SHA(patched.encode('utf-8')),
@@ -149,7 +156,7 @@ def apply(klipper,cfg,items,orig,patched):
     except BaseException:
         for target,data in reversed(completed):atomic_write(target,data)
         raise
-    print('RC7.4 HOST OLED PATCH INSTALLED / READBACK PASS')
+    print('RC7.5 M300 LAUNCHER HOST INSTALLED / READBACK PASS')
     print('BACKUP:',backup)
     print('NO MCU/BOOT/FLUIDD/MOTION/INTERLOCK WRITES')
     print('Service remains STOPPED; start with sudo systemctl start klipper')
@@ -157,9 +164,9 @@ def apply(klipper,cfg,items,orig,patched):
 def rollback(klipper,cfg,backup):
     service_stopped()
     backup=backup.expanduser().resolve()
-    if backup.parent!=klipper/'.inventure-rc74-backups':raise ValueError('Unexpected backup location')
+    if backup.parent!=klipper/'.inventure-rc75-backups':raise ValueError('Unexpected backup location')
     m=json.loads((backup/'manifest.json').read_text())
-    if m['kind']!='RC7.2_to_RC7.4_OLED_HOST_ONLY' or m['target']!=str(klipper) or m['config']!=str(cfg):
+    if m['kind']!='RC7.4_to_RC7.5_M300_LAUNCHER' or m['target']!=str(klipper) or m['config']!=str(cfg):
         raise ValueError('Backup identity mismatch')
     for item in m['files']:
         target=unique_path(Path(item['path']))
@@ -191,11 +198,11 @@ def main():
     print('TARGET:',klipper,'CONFIG:',cfg)
     for item in items:print(item['action'],item['name'],item['current'][:16]+'...')
     print('CONFIG DIFF:')
-    print(''.join(difflib.unified_diff(old.splitlines(True),new.splitlines(True),fromfile='before printer.cfg',tofile='RC7.4 printer.cfg')) or '(no changes)')
+    print(''.join(difflib.unified_diff(old.splitlines(True),new.splitlines(True),fromfile='before printer.cfg',tofile='RC7.5 printer.cfg')) or '(no changes)')
     if a.apply:
         if not a.confirm_service_stopped:raise ValueError('Use --confirm-service-stopped after stopping Klipper')
         apply(klipper,cfg,items,old,new)
     else:print('DRY_RUN_ONLY: nothing changed')
 if __name__=='__main__':
     try:main()
-    except (ValueError,OSError) as e:print('RC7.4 REFUSED:',e,file=sys.stderr);sys.exit(1)
+    except (ValueError,OSError) as e:print('RC7.5 REFUSED:',e,file=sys.stderr);sys.exit(1)

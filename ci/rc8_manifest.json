@@ -53,8 +53,8 @@
       "new_sha256": "0f2e4ffb5009e023221da995939a136724d395a7bbfb3e0429abf68eccc6b85f"
     },
     "scripts/verify_release.py": {
-      "old_sha256": "f405615cb44f1e0cadf4d98679f46057861b88451d891cccaf6d1d9cd39a874a",
-      "new_sha256": "9d49fd3beba722e9fe01a6bc4b05d60b747985e6903a7a4c9d126e810e9ee640"
+      "old_sha256": "d5e9d3022d18c6e88ba0b2f73f94fc2ddafc7dbcad609467d3b1c362a101ec3c",
+      "new_sha256": "bbc6d79498201b5cdf84f90f5965c91079ff8503d48b29bd29168c01cea0f545"
     },
     "scripts/validate_build.py": {
       "old_sha256": "39e526bf528ceb708c1608607e66557ccaa843564289986c06278d91d6024184",
@@ -70,18 +70,20 @@
     }
   },
   "contracts": {
-    "baseline/expected_hashes.json": "04ebf83d64ca77131b15d7471d6a281861e977bae2d7b57c134efc2091357d64",
-    "baseline/p0_module_contracts_RC7.json": "e338af283c631fab9344a0f4fc8940a092a0369889ea70bd3d635a6b9a51d58e",
-    "regression_tests/config/p0_module_contracts.json": "e338af283c631fab9344a0f4fc8940a092a0369889ea70bd3d635a6b9a51d58e"
+    "baseline/expected_hashes.json": "2484c8f968ea97df79a226092055df5f8cfa3b63b2b3eb0813f445afe20b9251",
+    "baseline/p0_module_contracts_RC7.json": "0185c3c0970764d84f99ebfac0c28a829ec53007c29250ded3ccff19c9453b56",
+    "regression_tests/config/p0_module_contracts.json": "0185c3c0970764d84f99ebfac0c28a829ec53007c29250ded3ccff19c9453b56"
   },
   "host_compat": {
     "klippy/extras/inventure_oem_menu.py": [
       "53b9a88e1fce3749c70d7a7a4a2a96aeee6467ea992226fc78583cef9e1539e0",
+      "64ab52504e0d30e99c88365cd4721428cd094f50d521a3efbf4ffb3fb33a054c",
       "e7a16d116d6d7a9c98952a8f29def4024fd8d373f27e938bffe832a165247949"
     ],
     "klippy/extras/inventure_oled.py": [
       "207a6a4627431c2ea4fa4c6198ff6442ce35513aaab89b0f66ccbe27c542ff5f",
       "90e5f0210fe7d53fdec8944d2dd0833bd862b0ddfe7a0ee0b2d8fc92dc82c58d",
+      "b99bacda6cd1ab36ce7fad003f9016d18b64d38b60b5a5cd44f223025c273380",
       "cca9728a8b107e176fddef38191080931529784a58b28bb28c892f2868bf6008",
       "e86a81f6a632353a47ae339ba92021e00a7e308a209abad16452172d29583cd5"
     ],

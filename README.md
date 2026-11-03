@@ -1,74 +1,42 @@
-# Zortrax Inventure V9 — Klipper (MCU RC8.0 LOCAL)
+# Zortrax Inventure V9 — MCU RC8.0 i host RC7.5
 
-**Experimental, source-controlled STM32F207 build for the owner's printer.**  
-Orange Pi Zero 3 / STM32F207 / InventureBoot 1.6-RC2 / P4-PERSIST-r3 / SSD1322 / Fluidd.  
-This is **not** a stock Zortrax firmware or a physical-hardware qualification.
+Wydanie testowe dla Inventure V9 STM32F207 z InventureBoot 1.6-RC2 i Orange Pi
+Zero 3 (Armbian ARM64). Pobierz oba pakiety z zakończonego sukcesem przebiegu
+[Build Inventure STM32F207 GNU ARM](../../actions/workflows/build-arm-inventure.yml).
 
-## Current release: autonomous cooling and display recovery
+| Pakiet | Zawartość |
+|---|---|
+| `MCU/INVENTURE_RC8_0_SD_BOOT16.zip` | Aplikacja `INVENTUR.IVB` dla istniejącego InventureBoot |
+| `INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip` | Przypięty Klipper, konfiguracja diagnostyczna, instalator i rollback |
+| `REPORTS/` | Wyniki regresji, sprawdzenie IVB i kontrakty źródłowe |
 
-**MCU `P01-P17-RC8.0-LOCAL`** adds a local **50°C ON / 45°C OFF** thermostat
-while unarmed or disconnected. All eight Inventure temperature inputs must be
-fresh and plausible before cooling may stop. A diagnosed thermal/cable/tach
-fault keeps protective cooling on. The model fan is off in local mode.
-The normal armed printer retains its existing native fan policy.
+MCU `P01-P17-RC8.0-LOCAL` utrzymuje chłodzenie przy utracie hosta lub
+nieuzbrojonej drukarce. Włącza je od 50°C, wyłącza przy najwyżej 45°C
+przy świeżych i poprawnych pomiarach wszystkich ośmiu czujników.
+OLED wraca do strony oczekiwania lub pokazuje status zatrzymania
+i chłodzenia. Renderer lokalny używa 128 B na wiersz zamiast bufora 8192 B.
+Obraz APP zaczyna się pod adresem `0x08010000`.
 
-The MCU now redraws its waiting page after OLED lease expiry/release, or a
-stopped/cooling page after global shutdown. Host generation checks and the
-actuator fault latch remain enforced. The local renderer uses **128 B** of
-pixel buffer instead of 8192 B. ASCII glyph lookup and STEP/tach hot paths
-are shortened; the 20 kHz sample rate and motion parameters are preserved.
+Host wyświetla **KLIPPER** jako pierwszy ekran po Ready. OK otwiera launcher.
+Sterownik wysyła kolejne porcje po ACK, aktualizuje zmienione obszary
+i odświeża status co 0,2 s. GitHub Actions buduje i weryfikuje parę
+MCU/host. Potwierdzenie czasu wyświetlania i chłodzenia wymaga testu
+na drukarce.
 
-This update needs a new **MCU application** and its matching host. The
-bootloader is unchanged. Use [RC8 installation and audit](docs/MCU_RC8_LOCAL_SERVICES_PL.md).
-The Actions artifact contains `MCU/INVENTURE_RC8_0_SD_BOOT16.zip` and a complete,
-hash-verified host installer at `HOST/scripts/install_host.py`.
-`INVENTURE_COOLING_STATUS` requests the new read-only MCU diagnostics.
+[Instalacja MCU i rollback](docs/MCU_RC8_LOCAL_SERVICES_PL.md) ·
+[Test Orange Pi Zero 3](docs/RC8_ZERO3_TEST_PL.md) ·
+[Zakres źródeł](docs/SOURCE_AND_LIMITATIONS.md)
 
-## Earlier RC7.4 host-only OLED update
+## Źródła i kompilacja
 
-RC7.4 integrates the separate RC7.3 full-height, five-row menu into the actual
-GitHub build and install path. The Klipper status page opens first; OK opens
-the menu and its pinned Back row returns to status. Unchanged screens reuse
-the rendered buffer, and moving the root cursor does not redraw a 50×50 icon.
+`python3 ci/prepare_kit.py --destination <nowy-katalog>` odtwarza
+snapshot z `source/parts`, sprawdza SHA-256 i nakłada wersjonowane
+zmiany ze źródeł w `mcu/`, `host/` i `host_core/`. GitHub Actions
+kompiluje rzeczywistą aplikację GNU ARM 14.2.Rel1 i weryfikuje wektory,
+słownik MCU, granice pamięci oraz wynikowe IVB. Pełny fabryczny obraz
+Zortrax i prywatne zrzuty pamięci są wyłączone z dystrybucji.
 
-Defaults are **`refresh_interval: 0.2` seconds** and
-**`chunk_interval: 0.002` seconds**. These are 200 ms and 2 ms, respectively.
-The refresh setting is a scheduling interval, not a promise that a complete
-8192-byte frame transfers in 200 ms. Single-operation ACK pacing, generation
-fences, retries and MCU shutdown behavior remain enforced. RC7.4 also avoids
-500 reactor polls/s on a static screen, with immediate wake on panel events.
-
-For an existing RC7.2/RC7.3 host, use the reversible host-only installer:
-`python3 scripts/install_oled_rc74.py --klipper ~/klipper --printer-cfg ~/printer_data/config/printer.cfg`
-(dry run). Details and validation are in [the audit](docs/OLED_RC7_4_AUDIT_PL.md).
-That earlier host-only update keeps MCU RC7.1; the RC8 local services above
-require the new application image.
-
-## Automated GNU ARM compile
-
-[Open Actions builds](../../actions/workflows/build-arm-inventure.yml) and select **Build Inventure STM32F207 GNU ARM** (or view its automatic run on source changes). Actions uses Arm GNU Toolchain **14.2.Rel1**, runs source/ABI/unit tests and packs an actual `INVENTUR.IVB` *only if* ELF, vector table, MCU dictionary and archive checks pass. The resulting downloadable Actions artifact includes `INVENTURE_RC8_0_SD_BOOT16.zip`, `INVENTUR.IVB`, `klipper.elf/.bin/.dict`, build reports and SHA-256.
-
-**Bootloader is not built or modified.** The APP starts at **0x08010000**. Never flash raw `.bin` to address 0x08000000. The documented install format for the user's InventureBoot is **`INVENTUR.IVB`**.
-
-## Source and scope
-
-- `source/INVENTURE_RC7_2_PUBLIC_GNU_ARM_SOURCE.zip`: complete pinned **build snapshot**, Klipper baseline reduced to the F207 dependencies, 29 release overlays, host Zero 3 files, 29 diagnostic Fluidd macros + 19 opt-in procedure macros, and public offline tests.
-- `mcu/`, `host/`, `host_core/`, `zero3/`, `fluidd/`: readable production overlays. The immutable source snapshot plus the four audited `ci/apply_*.py` steps define the build. `ci/rc74_manifest.json` pins the exact OLED inputs/outputs, and CI rejects readable/build MCU drift.
-- `.github/workflows/build-arm-inventure.yml`: actual cross-compilation, package verification, and downloadable CI artifact.
-- `docs/BUILD_AND_INSTALL_PL.md`: how to read results, install host, and choose speed.
-- `docs/SOURCE_AND_LIMITATIONS.md`: exclusions, licenses, and hardware testing caveats.
-
-**Privacy:** full original Zortrax application `.bin`, private Flash/NVM/OTP/UID dumps, device IDs, credentials and OEM decryption tools are NOT distributed. The original-firmware byte comparison test is explicitly `SKIPPED` in public CI; other tests are retained.
-
-**Hardware limitations:** software tests cannot verify thermistor wiring, heater watchdogs under power, CoreXY directions, Z contact, material motion, stepping waveform, OLED pixels or 1–2 Mbaud UART on a physical Zero 3. Do not enable actuator/heater qualification solely on a green CI result.
-
-Derived from project release RC7.1 (2026-11-02); `RC7.2` denotes the **GitHub GNU ARM publication/build packaging**, not newly verified printer behavior. The earlier build identified MCU RC7.1; the current application identifies RC8.0 and preserves board ABI3 / OLED ABI2.
-
-To reconstruct a new local kit exactly as CI does, run
-`python3 ci/prepare_kit.py --destination ../inventure-rc74-kit`.
-Then run `python3 ../inventure-rc74-kit/scripts/verify_release.py`.
-The current public suite is **591 passed + 1 private-reference skip**, plus
-**28 acceptance** and **14 repository integration/installer/C-wrapper** tests.
+## Historia wydań RC7
 
 ### GNU ARM follow-up (02.11.2026)
 
@@ -83,3 +51,52 @@ The second audited CI-only patch, `ci/apply_rc7_dict_fix.py`, checks
 compile-time markers in the **actual built `klipper.dict`** instead of a
 shortened report. `validate_build.py` still verifies all values/schemas
 before the IVB can be published. No safety gate is disabled.
+
+
+## OLED RC7.4 / 2026-11-03 — M300-style, Inventure ABI2
+
+The Inventure host UI now has full-height 256x64 menu rows without the fixed
+Zortrax title, an English KLIPPER home/status page, pinned Back, and original
+Inventure glyphs. OLED frame updates are pumped immediately from valid MCU ACK
+callbacks rather than waiting for every 20 ms host timer tick. Unlike the M300
+FAST DMA driver, RC7.4 deliberately retains one outstanding 32-byte ABI2
+operation; DMA window=4 and RLE would require a new compatible MCU ABI and
+separate firmware qualification.
+
+**Current operator log (03 Nov 2026):** The loaded printer.cfg still showed
+chunk_interval=0.020 / refresh_interval=0.5, proving the earlier RC7.3 installer
+settings had not become active. An 8192-byte full frame took about 7.14 seconds
+with 301 ACKed operations. RC7.4 changes those defaults to 0.002 / 0.2 using
+the SHA-pinned `install_rc74_oled.py` and adds ACK-driven pumping, with the
+actual OLED speed still requiring hardware validation.
+
+[Polish install and limitations](docs/RC7_4_OLED_ACK_FAST_PL.md).
+**MCU APP and InventureBoot unchanged.** CI builds and validates the pinned
+RC7.1 STM32F207 APP and now explicitly packages the current tested RC7.4 host
+files, instead of republishing the old kit/host snapshot.
+
+
+## RC7.5 — M300-like launcher / P4 stage (03 November 2026)
+
+The diagnostic OLED defaults to the KLIPPER host status **after** MCU
+connection and OLED handover. OK opens a three-way launcher:
+`Klipper`, `Zortrax Inventure`, and `Service / Tests`; the five
+r0323 OEM branches live under Zortrax Inventure, not immediately under OK.
+The M300-like launcher is explicitly display-only for unqualified
+movement, heating, RFID and calibration. `INVENTURE_MENU_STATUS` and
+`INVENTURE_OLED_STATUS` expose the requested and rendered screen,
+current menu root and whether the host frame was ACKed. Before host Ready,
+the MCU may display only its local `Waiting for Klipper` screen.
+
+The ACK-driven OLED transport now also guards against synchronous,
+recursive MCU ACK delivery. Hardware-independent lifecycle and host
+integration tests are included in GitHub Actions.
+
+The matching InventureBoot 1.6-RC2 P4 journal supports both
+**1000000** and **2000000** baud; baud is *not auto-negotiated*. Change
+bootloader P4 baud and host `printer.cfg` together while the Klipper
+service is stopped; test 1M before 2M. The `scripts/inventure_p4_baud_stage.py`
+helper performs only an offline hash-backed host config edit. No
+bootloader, MCU or motor/heater action is performed by this commit.
+
+[RC7.5 installation, verification and rollback (Polish)](docs/RC7_5_UI_M300_AND_P4_PL.md).

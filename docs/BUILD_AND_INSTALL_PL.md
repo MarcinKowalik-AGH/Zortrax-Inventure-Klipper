@@ -1,25 +1,5 @@
-# Inventure RC8.0 — bieżąca instalacja
+# Instalacja Inventure V9
 
-Aktualne chłodzenie lokalne i odzyskiwanie ekranu wymagają nowej aplikacji MCU
-oraz pasującego hosta. Użyj [pełnej instrukcji RC8](MCU_RC8_LOCAL_SERVICES_PL.md).
-
-Poniższa instrukcja RC7.4 jest historyczną aktualizacją samego interfejsu OLED.
-
-# Inventure RC7.4 OLED FAST — build i instalacja
-
-**Aktualizacja samego OLED na działającym RC7.2/RC7.3:** użyj
-`scripts/install_oled_rc74.py` z instrukcją w
-[OLED_RC7_4_AUDIT_PL.md](OLED_RC7_4_AUDIT_PL.md). Nie wymaga nowego obrazu MCU.
-Instalator sprawdza znane sumy źródeł, zachowuje backup i umożliwia rollback.
-W artefakcie Actions jest pod `HOST/install_oled_rc74.py` obok katalogu `host/`.
-
-1. Otwórz **Actions → Build Inventure STM32F207 GNU ARM**. Najpierw wymagany zielony status wszystkich etapów: source checksum, 26 nakładek, regresja, GNU ARM link, kontrola wektorów i słownika oraz weryfikacja wygenerowanego IVB.
-2. Pobierz załącznik **inventure-rc7_4-oled-fast-stm32f207-gnu-arm-<commit>** spod zakończonego przebiegu. Nie pobieraj załącznika z przebiegu FAILED. GitHub artifact jest archiwum zewnętrznym; w środku znajduje się samodzielna paczka **`INVENTURE_RC7_1_SD_BOOT16.zip`** i nowy obraz `INVENTUR.IVB`. Numer aplikacji MCU pozostaje RC7.1, a host OLED ma RC7.4.
-3. Sprawdź dołączone `SHA256SUMS` i `BUILD_REPORT.json`, `RELEASE_RC7.json`, `TOOLCHAIN_RC7.json`. Wersja obrazu to RC7.1; RC7.2 oznacza miejsce budowania i publicznie zweryfikowany snapshot. Bootloader InventureBoot 1.6-RC2 nie jest aktualizowany.
-4. Najpierw skonfiguruj na Orange Pi Zero 3 pasujący **host**: osobny, przypięty Klipper, `inventure_mcu.py`, `inventure_oled.py`, `inventure_oem_menu.py`, `serialhdl.py`. Nie kopiuj portu UART z Orange Pi Zero pierwszej generacji. Używaj `zero3/check_zero3.py` read-only i staging `zero3/stage_pinned_host.py` w osobnym katalogu; bez przełączenia service automatycznie.
-5. Pozostaw do pierwszego testu **250000 baud** w bootloaderze i `[mcu]` hosta; po stronie STM32 odczyt dziennika `P4-PERSIST-r3`. `1000000`/`2000000` to odrębne próby z kwalifikacją fizycznego UART. Przed podniesieniem szybkości użyj `INVENTURE_VERSION` i sprawdź `p4_boot.match`.
-6. Sprawdź lokalny ekran `Waiting for Klipper` i statusy `INVENTURE_STATUS`, `INVENTURE_OLED_STATUS` oraz makra z **`fluidd/inventure_01_diagnostyka.cfg`**. Rozdziel makra diagnostyczne (29) i **opt-in** wykonawcze (19); te drugie nie są do włączenia na pierwszym uruchomieniu.
-7. `step_pulse_duration: 0.000002` musi być ustawione osobno dla każdego używanego silnika w rzeczywistym `printer.cfg`, bez zmiany geometrii, homingu, limitu prędkości czy blokowania suwaka 150%. Nie jest to równoznaczne ze zmierzoną szerokością impulsu na V9.
-8. Dopiero po kopiach własnego Flash/NVM i sprawdzeniu bootloadera rozpakuj wygenerowaną paczkę SD; w katalogu głównym FAT32 ma znaleźć się `INVENTUR.IVB`. Użyj menu bootloadera **Firmware on SD → Choose firmware file → Check selected file**, a następnie osobnej instalacji i Verify Flash. Nie kopiuj archiwum GitHub Actions jako firmware na kartę.
-
-**Zatrzymaj się, jeśli** CI zgłosi odmowę, brakuje `INVENTUR.IVB`, host ma inną wersję protokołu, firmware nie przechodzi verify, lub połączenie nie osiąga Ready. Nie testuj ruchu/grzania/kalibracji tylko na podstawie PASS z CI. 
+- [Aplikacja RC8.0, chłodzenie, OLED awaryjny i rollback](MCU_RC8_LOCAL_SERVICES_PL.md)
+- [Testowy Klipper RC7.5 na Orange Pi Zero 3](RC8_ZERO3_TEST_PL.md)
+- [Przypięte źródła i ograniczenia](SOURCE_AND_LIMITATIONS.md)

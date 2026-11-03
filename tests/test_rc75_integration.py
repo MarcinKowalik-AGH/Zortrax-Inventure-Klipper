@@ -1,5 +1,4 @@
 """Verify source-to-artifact integration and reversible live-host installation."""
-import hashlib
 import importlib.util
 import io
 import json
@@ -14,10 +13,10 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'ci'))
 from apply_gnu_ctr_fix import main as gnu_fix
 from apply_rc7_dict_fix import apply as dictionary_fix
-from apply_rc74_oled import apply as oled_fix
+from apply_rc75_oled import apply as oled_fix
 from prepare_kit import prepare
 
-spec=importlib.util.spec_from_file_location('rc74install',ROOT/'scripts/install_oled_rc74.py')
+spec=importlib.util.spec_from_file_location('rc74install',ROOT/'install_rc75_oled.py')
 installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
 
 SAMPLE='''[mcu]
@@ -60,7 +59,7 @@ class Integration(unittest.TestCase):
         for path in (ROOT/'mcu').iterdir():
             if path.is_file():self.assertEqual(path.read_bytes(),(self.kit/'mcu'/path.name).read_bytes())
         hashes=json.loads((self.kit/'baseline/expected_hashes.json').read_text())
-        for key,record in json.loads((ROOT/'ci/rc74_manifest.json').read_text())['host'].items():
+        for key,record in json.loads((ROOT/'ci/rc75_manifest.json').read_text())['host'].items():
             self.assertEqual(hashes[key]['new_sha256'],record['new_sha256'])
             self.assertEqual((self.kit/'regression_tests/overlay'/key).read_bytes(),
                              (ROOT/'host'/Path(key).name).read_bytes())
@@ -99,13 +98,13 @@ class Installer(unittest.TestCase):
 
     def test_precise_update_idempotence_and_bitwise_rollback(self):
         items,old,new=installer.make_plan(self.host,self.cfg)
-        self.assertEqual(len(items),4)
+        self.assertEqual(len(items),2)
         self.assertIn('chunk_interval: 0.002',new);self.assertIn('refresh_interval: 0.2',new)
         self.assertIn('kinematics: none',new);self.assertIn('allow_actuators: False',new)
         installer.apply(self.host,self.cfg,items,old,new)
         items2,old2,new2=installer.make_plan(self.host,self.cfg)
         self.assertEqual(old2,new2);self.assertTrue(all(i['action']=='same' for i in items2))
-        backup=next((self.host/'.inventure-rc74-backups').iterdir())
+        backup=next((self.host/'.inventure-rc75-backups').iterdir())
         installer.rollback(self.host,self.cfg,backup)
         self.assertEqual(self.cfg.read_text(),SAMPLE)
         for name,data in self.original.items():self.assertEqual((self.extras/name).read_bytes(),data)
@@ -123,9 +122,9 @@ class Installer(unittest.TestCase):
                 self.cfg.write_text(text)
                 with self.assertRaises(ValueError):installer.make_plan(self.host,self.cfg)
 
-    def test_deliberate_start_menu_is_preserved(self):
+    def test_release_config_selects_klipper_start(self):
         self.cfg.write_text(SAMPLE.replace('oem_language: pl','oem_language: pl\noem_start_screen: menu'))
-        self.assertIn('oem_start_screen: menu',installer.make_plan(self.host,self.cfg)[2])
+        self.assertIn('oem_start_screen: klipper',installer.make_plan(self.host,self.cfg)[2])
 
     def test_unknown_pacing_is_refused(self):
         self.cfg.write_text(SAMPLE.replace('chunk_interval: 0.020','chunk_interval: 0.050'))
@@ -134,7 +133,7 @@ class Installer(unittest.TestCase):
 
     def test_concurrent_change_cannot_partially_install(self):
         items,old,new=installer.make_plan(self.host,self.cfg)
-        (self.extras/'inventure_oled_transport.py').write_text('concurrent change')
+        (self.extras/'inventure_oem_menu.py').write_text('concurrent change')
         with self.assertRaisesRegex(ValueError,'Concurrent modification'):
             installer.apply(self.host,self.cfg,items,old,new)
         self.assertEqual((self.extras/'inventure_oled.py').read_bytes(),self.original['inventure_oled.py'])

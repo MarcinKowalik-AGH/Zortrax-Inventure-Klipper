@@ -1,7 +1,7 @@
 # Inventure MCU RC8.0 — chłodzenie lokalne, odzyskiwanie OLED i wydajność
 
-Data: 2 listopada 2026. Baza: RC7.4, commit
-`e370d5899b68a48274179349428285cb59d5bfdd`.
+Data: 3 listopada 2026. Host RC7.5 bazuje na commicie
+`013e9fcb0578147227f8f5301502b375f73506ef`.
 Nowa aplikacja MCU: **`P01-P17-RC8.0-LOCAL`**, STM32F207, start `0x08010000`.
 InventureBoot, P4-PERSIST, UART i konfiguracja mechaniki pozostają takie same.
 
@@ -91,7 +91,7 @@ limitów prędkości/przyspieszeń ani zachowania suwaka 150% Fluidd.
 ## Walidacja i zakres dowodu
 
 Lokalnie przechodzą: **591 testów regresji + 1 prywatny reference SKIPPED**,
-**28 testów akceptacji** oraz **14 testów integracji/instalatora**, w tym
+**28 testów akceptacji** oraz **38 testów integracji/instalatora**, w tym
 uruchomienie rzeczywistego C płyty i panelu na modelach rejestrów/API.
 Ponadto zachowano 10 wcześniejszych zestawów C P4/UART/OLED.
 
@@ -116,7 +116,7 @@ transferu i rozdzielenia testów programowych od sprzętowych pozostają w
 
 ## Instalacja nowego MCU i pasującego hosta
 
-Pobierz artefakt **inventure-rc8_0-local-cooling-oled-stm32f207-…** wyłącznie
+Pobierz artefakt **inventure-rc8_0-mcu-rc7_5-host-zero3-…** wyłącznie
 z zakończonego SUCCESS przebiegu. Rozpakuj go. Na Orange Pi, w katalogu `HOST`:
 
 ```sh
@@ -131,9 +131,10 @@ python3 scripts/install_host.py ~/klipper --apply --confirm-service-stopped
 ```
 
 Zapisz ścieżkę backupu. Ten krok aktualizuje pasujące 14 dodatków, dane fontów
-i moduł serial; nie zmienia `printer.cfg`. Istniejące 0,2 s / 2 ms z RC7.3/7.4
-pozostają aktywne. W przypadku starszych interwałów użyj udokumentowanego
-dry run `install_oled_rc74.py` dla konfiguracji; nie dopisuj drugiej sekcji OLED.
+i moduł serial. W istniejącej sekcji `[inventure_oled]` zastosuj opcje z
+`OLED_FAST_RC7_5.cfg`, w tym `oem_start_screen: klipper` i `menu_profile: m300`.
+Instalator nakładek zachowuje `printer.cfg`. Do testu w osobnym katalogu
+użyj ZIP dla Orange Pi z dołączonym `README_ZERO3_PL.md`.
 
 Z `MCU/INVENTURE_RC8_0_SD_BOOT16.zip` wypakuj `INVENTUR.IVB` do głównego
 katalogu FAT32 SD. W istniejącym InventureBoot sprawdź wybrany plik, wgraj

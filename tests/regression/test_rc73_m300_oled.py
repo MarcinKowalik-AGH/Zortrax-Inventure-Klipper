@@ -74,18 +74,24 @@ class HostLifecycle(unittest.TestCase):
     def test_default_m300_status_then_ok_menu_then_back(self):
         self.assertEqual(self.o.oem_display_mode,'status')
         self.assertTrue(self.o.stream.latest)
-        self.assertEqual(self.o.oem_menu.page,'root')
-        first=self.o.stream.latest
+        self.assertEqual(self.o._rendered_screen,'klipper_status')
+        self.assertEqual(self.o.oem_menu.page,'launcher')
+        first=self.o.stream.target
         self.o._select(0.)
         self.assertEqual(self.o.oem_display_mode,'menu')
         self.o._render(.001)
         self.assertNotEqual(first,self.o.stream.latest)
+        self.assertIs(first,self.o.stream.target)  # finish the first status frame
+        self.assertEqual(self.o.oem_menu.view()['labels'][1:],
+                         ['Klipper','Zortrax Inventure','Serwis / Testy'])
+        self.o.oem_menu.move(1)
         self.o.oem_menu.move(1)
         self.o._select(.002)
-        self.assertEqual(self.o.oem_menu.page,'models')
-        self.o._select(.003)
         self.assertEqual(self.o.oem_menu.page,'root')
-        self.o.oem_menu.home() # Back in root returns to Klipper status
+        self.assertEqual(self.o.oem_menu.view()['labels'][1],'Modele')
+        self.o._select(.003)
+        self.assertEqual(self.o.oem_menu.page,'launcher')
+        self.o.oem_menu.home()
         self.o._select(.004)
         self.assertEqual(self.o.oem_display_mode,'status')
     def test_immediate_menu_mode_is_opt_in_and_safe(self):

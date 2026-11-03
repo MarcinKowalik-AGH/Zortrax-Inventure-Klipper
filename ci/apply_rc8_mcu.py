@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply reviewed RC8 local services to the verified RC7.4 kit, fail closed."""
+"""Apply reviewed RC8 local services to the verified RC7.5 kit, fail closed."""
 import ast
 import hashlib
 import json

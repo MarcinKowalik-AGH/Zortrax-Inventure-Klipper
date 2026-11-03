@@ -31,7 +31,7 @@ def prepare(destination,repo=REPO):
                 if path.is_absolute() or '..' in path.parts or '\\' in info.filename:
                     raise ValueError('Unsafe archive path')
             z.extractall(kit)
-        for script in ('apply_gnu_ctr_fix.py','apply_rc7_dict_fix.py','apply_rc74_oled.py','apply_rc8_mcu.py'):
+        for script in ('apply_gnu_ctr_fix.py','apply_rc7_dict_fix.py','apply_rc75_oled.py','apply_rc8_mcu.py'):
             subprocess.run([sys.executable,str(repo/'ci'/script),str(kit)],check=True)
         kit.rename(destination)
     return destination

@@ -18,12 +18,19 @@ class InventureOLED:
         self.mcu=self.board.mcu;self.gcode=self.printer.lookup_object('gcode')
         self.speed=config.getint('spi_speed',2000000,minval=500000,maxval=2000000)
         self.oem_ui_enabled=config.getboolean('oem_menu',False)
-        self.oem_menu=OEMMenu(config.get('oem_language','pl')) if self.oem_ui_enabled else None
+        self.menu_profile=config.get('menu_profile','m300').strip().lower()
+        if self.menu_profile not in ('m300','zortrax'):
+            raise config.error('menu_profile must be m300 or zortrax')
+        root_page='launcher' if self.menu_profile=='m300' else 'root'
+        self.oem_menu=OEMMenu(config.get('oem_language','pl'),root_page=root_page) if self.oem_ui_enabled else None
         self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
         if self.oem_start_screen not in ('klipper','menu'):
             raise config.error('oem_start_screen must be klipper or menu')
         self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
         self._oem_render_cache=None
+        self._rendered_frames=0;self._render_cache_hits=0
+        self._rendered_screen='not_rendered'
+        self._rendered_menu_page=None
         self.interval=config.getfloat('chunk_interval',.002,minval=.002,maxval=.050)
         self.stream=OledStream(config.getfloat('ack_timeout',1.,minval=.1,maxval=10.),
             config.getfloat('refresh_interval',.2,minval=.2,maxval=10.))
@@ -34,7 +41,6 @@ class InventureOLED:
         # Button actions bypass periodic refresh throttling, but are coalesced
         # if a previous frame is still in flight.
         self._user_refresh_pending=False
-        self._rendered_frames=0;self._render_cache_hits=0
         # New host instances use a new 63-bit starting generation; recoveries
         # increment it. Tokens never wrap or reset within this stream.
         self.stream.generation=secrets.randbits(63)
@@ -49,6 +55,7 @@ class InventureOLED:
         # TEST01: read-only telemetry for physical OLED ACK timeout investigation.
         self._oled_last_tx=None;self._oled_last_ack=None
         self._oled_session_sent=0;self._oled_session_acked=0
+        self._ack_pump_active=False;self._ack_pump_deferrals=0
         self.mcu.register_config_callback(self._build_config)
         self.printer.register_event_handler('klippy:ready',self._ready)
         self.printer.register_event_handler('klippy:shutdown',self._shutdown)
@@ -89,8 +96,17 @@ class InventureOLED:
     def _ready(self):
         if self.shutdown_latched:return
         self.connected=True;now=self.reactor.monotonic()
+        # On a fresh host Ready, choose the configured Klipper status page
+        # deterministically. No stock/OEM menu can inherit a stale selection.
+        self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
+        if self.oem_menu is not None:self.oem_menu.home()
+        self.message=None
         self._oem_render_cache=None
-        self._render(now);self._start(now,'initial_start')
+        self._render(now);self.render_at=now+self.stream.refresh_interval
+        self._start(now,'initial_start')
+        logging.info('INVENTURE_UI_READY display=%s profile=%s root=%s',
+                     self.oem_display_mode,self.menu_profile,
+                     self.oem_menu.root_page if self.oem_menu is not None else 'legacy')
         self.reactor.update_timer(self.timer,self.reactor.NOW)
 
     def _start(self,now,reason):
@@ -117,7 +133,8 @@ class InventureOLED:
         self.reactor.update_timer(self.timer,self.reactor.NEVER)
         # Nonblocking best effort only. The MCU has its own local shutdown hook
         # and watchdog; correctness does not depend on this packet arriving.
-        self._stop_wire();self._event('OLED_SHUTDOWN_BLANK_REQUESTED')
+        self._stop_wire();self._event('OLED_SHUTDOWN_LOCAL_STATUS_REQUESTED'
+            if local_recovery else 'OLED_SHUTDOWN_BLANK_REQUESTED')
 
     def _disconnect(self):self._shutdown()
     def _restart(self,*args):self._shutdown()
@@ -151,6 +168,21 @@ class InventureOLED:
                         'operation':tx['operation'] if matching else 'unknown',
                         'queued_to_receive_ms':round(1000*(received-tx['queued_at']),2)
                         if matching else None}
+                    # M300-derived ACK-driven pump: do not wait for the next
+                    # 20 ms fallback timer on every 32-byte ABI2 operation.
+                    # Still strictly one outstanding operation, no DMA/RLE
+                    # claims and no MCU/bootloader modifications.
+                    if self.stream.enabled and not self.shutdown_latched:
+                        # A test MCU can deliver ACK synchronously from send().
+                        # Never let the ACK pump recurse through hundreds of
+                        # 32-byte operations; continue at the next reactor tick.
+                        if getattr(self, '_ack_pump_active', False):
+                            self._ack_pump_deferrals+=1
+                            self.reactor.update_timer(self.timer,self.reactor.NOW)
+                        else:
+                            self._ack_pump_active=True
+                            try:self._send_one(now)
+                            finally:self._ack_pump_active=False
         self.reactor.register_async_callback(deliver)
 
     def _state(self,params):
@@ -185,6 +217,27 @@ class InventureOLED:
             self.recover_at=now+self.retry_base*(2**self.retries)
             self.recovery_state='backoff'
 
+    def _send_one(self,now):
+        # Transport's pending-token gate preserves the single-inflight ABI2
+        # safety contract. Duplicate/out-of-order ACK cannot advance it.
+        try:operation=self.stream.step(now)
+        except TimeoutError:
+            self._lose(now,self.stream.failure);return
+        if self.stream.failure and self.recovery_state not in ('backoff','fault'):
+            self._lose(now,self.stream.failure);return
+        if not operation:return
+        kind,token,args=operation;gen=self.stream.generation
+        detail={'generation':gen,'token':token,'operation':kind,
+                'phase':self.stream.phase,'queued_at':round(now,6)}
+        if kind=='write':
+            dc,blob=args
+            detail.update(dc=dc,length=len(blob),first8_hex=blob[:8].hex())
+        elif kind=='control':
+            detail.update(reset=args[0],gate=args[1])
+        self._oled_last_tx=detail
+        try:self.commands[kind].send([gen>>32,gen&0xffffffff,token,*args])
+        except Exception as exc:self._lose(now,'OLED command unavailable: '+str(exc))
+
     def _tick(self,now):
         if not self.connected or self.shutdown_latched:return self.reactor.NEVER
         if now>=self.next_query:
@@ -206,23 +259,7 @@ class InventureOLED:
                 except ValueError as exc:
                     self.recovery_state='fault';self.recover_at=None;self.recovery_reason=str(exc)
             else:self.recover_at=now+.25
-        try:operation=self.stream.step(now)
-        except TimeoutError:
-            self._lose(now,self.stream.failure);operation=None
-        if self.stream.failure and self.recovery_state not in ('backoff','fault'):
-            self._lose(now,self.stream.failure)
-        if operation:
-            kind,token,args=operation;gen=self.stream.generation
-            detail={'generation':gen,'token':token,'operation':kind,
-                    'phase':self.stream.phase,'queued_at':round(now,6)}
-            if kind=='write':
-                dc,blob=args
-                detail.update(dc=dc,length=len(blob),first8_hex=blob[:8].hex())
-            elif kind=='control':
-                detail.update(reset=args[0],gate=args[1])
-            self._oled_last_tx=detail
-            try:self.commands[kind].send([gen>>32,gen&0xffffffff,token,*args])
-            except Exception as exc:self._lose(now,'OLED command unavailable: '+str(exc))
+        self._send_one(now)
         if self.stream.ready:
             if not self._base_live(now) or not self._wire_live(now):
                 self._lose(now,'OLED/MCU status not fresh or session not active')
@@ -337,6 +374,13 @@ class InventureOLED:
             self.selection=max(0,min(self.selection,len(rows)-1))
             frame.menu(title,[r[0] for r in rows],self.selection,self.page!='home')
         self.stream.request(frame.wire_bytes(),urgent=self._user_refresh_pending)
+        if measuring:self._rendered_screen='calibration'
+        elif self.message:self._rendered_screen='message'
+        elif klipper_status is not None:self._rendered_screen='klipper_status'
+        elif menu_view is not None or self.oem_menu is not None:
+            self._rendered_screen='oem_menu'
+        else:self._rendered_screen='legacy'
+        self._rendered_menu_page=(menu_view or {}).get('page')
         self._rendered_frames+=1
         self._oem_render_cache=snapshot
         self._user_refresh_pending=False
@@ -437,6 +481,9 @@ class InventureOLED:
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
         details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
         details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
+        details['menu_profile']=self.menu_profile
+        details['screen_requested']=self.oem_start_screen
+        details['rendered_screen']=self._rendered_screen
         gcmd.respond_info('V9_MENU '+json.dumps(details,sort_keys=True))
     def cmd_status(self,gcmd):gcmd.respond_info('V9_OLED '+json.dumps(self.get_status(self.reactor.monotonic()),sort_keys=True))
     def get_status(self,now):
@@ -456,18 +503,28 @@ class InventureOLED:
                     else 'MCU_RESET_LOW_CS_HIGH_PD3_UNCHANGED'),
                 'blank_confirmed':bool(self.wire_state.get('configured') and self.wire_state.get('reset')==0
                     and self.wire_state.get('active')==0 and self.state_received is not None and now-self.state_received<=.75),
-                'page':self.page,'selection':self.selection,'oem_menu':self.oem_menu.status() if self.oem_menu is not None else None,'events':list(self.events),
+                'page':self.page,'selection':self.selection,
+                'display_mode':self.oem_display_mode,
+                'menu_profile':self.menu_profile,
+                'screen_requested':self.oem_start_screen,
+                'rendered_screen':self._rendered_screen,
+                'host_frame_acknowledged':bool(self.stream.ready and
+                    self.stream.previous is not None and
+                    self.stream.previous==self.stream.latest),
+                'ack_pump_deferrals':self._ack_pump_deferrals,
+                'rendered_menu_page':self._rendered_menu_page,
+                'oem_menu':self.oem_menu.status() if self.oem_menu is not None else None,'events':list(self.events),
                 'ack_diagnostic':{'last_tx':self._oled_last_tx,
                     'last_ack':self._oled_last_ack,
                     'attempt_sent':self.stream.sent-self._oled_session_sent,
                     'attempt_acked':self.stream.acked-self._oled_session_acked},
-                'ui_transport':{'full_frames':self.stream.full_frames,
-                    'host_release':'RC7.4-OLED-FAST',
+                'ui_transport':{'host_release':'RC7.5-M300-ACK',
                     'chunk_interval_s':self.interval,
                     'refresh_interval_s':self.stream.refresh_interval,
                     'idle_poll_interval_s':.050,
                     'rendered_frames':self._rendered_frames,
                     'render_cache_hits':self._render_cache_hits,
+                    'full_frames':self.stream.full_frames,
                     'partial_frames':self.stream.partial_frames,
                     'committed_wire_bytes':self.stream.committed_wire_bytes,
                     'last_window':self.stream.last_window,

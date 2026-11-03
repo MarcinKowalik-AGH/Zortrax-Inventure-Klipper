@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+import pathlib,sys,tempfile,unittest
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import inventure_p4_baud_stage as p4
+CFG='''[mcu]\nserial: /dev/ttyS1\nbaud: 250000 # current P4\nrestart_method: command\n\n[printer]\nkinematics: none\n\n[inventure_oled]\nrefresh_interval: 0.2\n'''
+class UARTTests(unittest.TestCase):
+    def test_step_250_to_1m(self):
+        new,old=p4.parse_and_plan(CFG,1000000)
+        self.assertEqual(old,250000)
+        self.assertIn('baud: 1000000 # current P4',new)
+        self.assertEqual(new.replace('baud: 1000000','baud: 250000'),CFG)
+        newer,old=p4.parse_and_plan(new,2000000)
+        self.assertEqual(old,1000000)
+        self.assertIn('baud: 2000000',newer)
+    def test_reject_direct_250_to_2m(self):
+        with self.assertRaises(ValueError):p4.parse_and_plan(CFG,2000000)
+    def test_reject_wrong_port(self):
+        with self.assertRaises(ValueError):p4.parse_and_plan(CFG.replace('/dev/ttyS1','/dev/ttyS3'),1000000)
+    def test_reject_duplicate_baud(self):
+        with self.assertRaises(ValueError):p4.parse_and_plan(CFG.replace('baud: 250000','baud: 250000\nbaud: 250000'),1000000)
+    def test_reject_nonqual_rate(self):
+        with self.assertRaises(ValueError):p4.parse_and_plan(CFG,1500000)
+    def test_restore_host_cfg_does_not_touch_mcu(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=pathlib.Path(d)/'printer.cfg';path.write_text(CFG)
+            target,_=p4.parse_and_plan(CFG,1000000)
+            p4.active_service=lambda:False
+            p4.apply(path,CFG,target,250000,1000000)
+            backup=next((path.parent/'.inventure-p4-backups').iterdir())
+            self.assertEqual(path.read_text(),target)
+            p4.rollback(path,backup)
+            self.assertEqual(path.read_text(),CFG)
+
+if __name__=='__main__':unittest.main()

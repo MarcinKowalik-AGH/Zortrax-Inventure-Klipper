@@ -14,6 +14,8 @@ on:
       - 'config/**'
       - 'tests/**'
       - 'scripts/**'
+      - 'install_rc75_oled.py'
+      - 'docs/**'
   push:
     branches: [main]
     paths:
@@ -28,13 +30,15 @@ on:
       - 'config/**'
       - 'tests/**'
       - 'scripts/**'
+      - 'install_rc75_oled.py'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: inventure-rc7-gnu-arm-${{ github.ref }}
+  group: inventure-rc8-gnu-arm-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -85,8 +89,8 @@ jobs:
       - name: Verify dictionary against actual compiled MCU output
         run: python ci/apply_rc7_dict_fix.py kit
 
-      - name: Integrate hash-pinned RC7.4 OLED host and regression contracts
-        run: python ci/apply_rc74_oled.py kit
+      - name: Integrate hash-pinned RC7.5 launcher, ACK pump and regression contracts
+        run: python ci/apply_rc75_oled.py kit
 
       - name: Integrate RC8 F207 local cooling and OLED recovery
         run: python ci/apply_rc8_mcu.py kit
@@ -125,13 +129,17 @@ jobs:
           assert r['public_source_passed']==591
           assert r['private_oem_reference_skipped']==1
           assert r['acceptance_tests']==28
-          assert r['host_release']=='RC7.4-OLED-FAST'
+          assert r['host_release']=='RC7.5-M300-ACK'
           assert r['mcu_release']=='P01-P17-RC8.0-LOCAL'
           print('PUBLIC_TESTS_591_PASS_1_SKIPPED_28_ACCEPTANCE_PASS')
           PYCI
 
-      - name: Verify host installer and source integration
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Verify matched host, ACK pacing, launcher, P4 and MCU register mocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q host install_rc75_oled.py scripts/inventure_p4_baud_stage.py
+          python -m unittest discover -s tests -p 'test_rc[78]*.py' -v 2>&1 | tee "$RUNNER_TEMP/matched_integration.log"
 
       - name: Fresh complete ARM build and image validation
         shell: bash
@@ -152,20 +160,36 @@ jobs:
           set -euo pipefail
           mkdir -p release/MCU release/HOST/scripts release/HOST/baseline release/FLUIDD release/REPORTS
           cp "kit/$BUILT_FOLDER"/{INVENTUR.IVB,INVENTURE_RC8_0_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} release/MCU/
-          cp -a kit/host kit/host_core kit/zero3 release/HOST/
+          cp -a kit/host kit/host_core release/HOST/
+          mkdir -p release/HOST/zero3
+          cp kit/zero3/check_zero3.py release/HOST/zero3/
+          cp install_rc75_oled.py release/HOST/
+          cp scripts/inventure_p4_baud_stage.py release/HOST/scripts/
+          cp docs/RC8_ZERO3_TEST_PL.md release/HOST/README_ZERO3_PL.md
+          cp config/OLED_FAST_RC7_5.cfg release/HOST/
+          sed -e 's|/dev/REPLACE_WITH_ORANGE_PI_UART|/dev/ttyS1|' \
+            -e 's|~/printer_data/config/inventure_calibration.json|./inventure_calibration.json|' \
+            kit/config/printer_DIAGNOSTIC_RC2_example.cfg > release/HOST/printer.test.cfg
+          grep -Fx 'allow_actuators: False' release/HOST/printer.test.cfg
+          grep -Fx 'kinematics: none' release/HOST/printer.test.cfg
+          grep -Fx 'oem_start_screen: klipper' release/HOST/printer.test.cfg
+          grep -Fx 'menu_profile: m300' release/HOST/printer.test.cfg
+          grep -Fx 'baud: 250000' release/HOST/printer.test.cfg
+          stage="$RUNNER_TEMP/inventure-zero3"
+          python kit/zero3/stage_pinned_host.py --destination "$stage/klipper-inventure" --apply
+          tar -czf release/HOST/klipper-inventure.tar.gz -C "$stage" klipper-inventure
           cp kit/scripts/install_host.py release/HOST/scripts/
           cp kit/baseline/expected_hashes.json release/HOST/baseline/
-          cp scripts/install_oled_rc74.py release/HOST/
-          cp config/OLED_FAST_RC7_4.cfg release/HOST/
-          cp docs/OLED_RC7_4_AUDIT_PL.md release/HOST/
           cp docs/MCU_RC8_LOCAL_SERVICES_PL.md release/HOST/
+          (cd release && zip -qr INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip HOST)
+          unzip -tq release/INVENTURE_RC8_0_ORANGE_PI_ZERO3_HOST.zip
           cp -a kit/fluidd/. release/FLUIDD/
           cp kit/VALIDATION_REPRODUCIBLE_RC7.json release/REPORTS/
-          cp kit/HOST_RELEASE_RC7_4.json release/REPORTS/
+          cp kit/HOST_RELEASE_RC7_5.json release/REPORTS/
           cp kit/MCU_RELEASE_RC8.json release/REPORTS/
           cp kit/LATEST_RC7_FULL_REGRESSION.log release/REPORTS/
           cp kit/LATEST_RC7_1_ACCEPTANCE.log release/REPORTS/
-          cp "$RUNNER_TEMP/verify_built_ivb.json" release/REPORTS/
+          cp "$RUNNER_TEMP/verify_built_ivb.json" "$RUNNER_TEMP/matched_integration.log" release/REPORTS/
           (cd release/MCU && sha256sum -c SHA256SUMS)
           echo 'No flash, USB or serial connection was attempted.' > release/README_NOT_HARDWARE_TESTED.txt
           echo 'User needs to install a matching host and validate hardware before enabling movement/heating.' >> release/README_NOT_HARDWARE_TESTED.txt
@@ -176,7 +200,7 @@ jobs:
       - name: Save verified downloadable GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: inventure-rc8_0-local-cooling-oled-stm32f207-${{ github.sha }}
+          name: inventure-rc8_0-mcu-rc7_5-host-zero3-${{ github.sha }}
           path: release/
           if-no-files-found: error
           retention-days: 30

@@ -1,5 +1,8 @@
 # Inventure RC7.4 OLED FAST — audyt i wdrożenie, 2 listopada 2026
 
+Opis dotyczy historycznej wersji RC7.4 z [commita e370d58](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/tree/e370d5899b68a48274179349428285cb59d5bfdd).
+Dla bieżących paczek użyj [instrukcji RC8](BUILD_AND_INSTALL_PL.md).
+
 ## Baza i źródła wymagań
 
 Baza GitHub: `216f138c898189f1235de26a2e3ef60886f0a9c0`,
