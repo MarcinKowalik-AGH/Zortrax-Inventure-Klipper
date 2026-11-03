@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import importlib.util, pathlib, tempfile, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+HOST=ROOT/'HOST' if (ROOT/'HOST').is_dir() else ROOT/'host'
 spec=importlib.util.spec_from_file_location('rc75installer',ROOT/'install_rc75_oled.py')
 installer=importlib.util.module_from_spec(spec);spec.loader.exec_module(installer)
 CFG='''[mcu]\nserial: /dev/ttyS1\nbaud: 250000\n\n[printer]\nkinematics: none\n\n[inventure_oled]\nspi_speed: 2000000\nchunk_interval: 0.002\nrefresh_interval: 0.2\noem_menu: True\noem_language: pl\noem_start_screen: klipper\n\n[extruder]\nmax_extrude_only_distance: 25\n'''
@@ -18,7 +19,7 @@ class InstallerTests(unittest.TestCase):
     def test_payload_shas_match_source(self):
         for name,(accepted,new) in installer.FILES.items():
             self.assertIn(name,('inventure_oled.py','inventure_oem_menu.py'))
-            self.assertEqual(installer.SHA((ROOT/'HOST'/name).read_bytes()),new)
+            self.assertEqual(installer.SHA((HOST/name).read_bytes()),new)
             self.assertEqual(len(accepted),1)
     def test_apply_rollback_with_sha_staged_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:

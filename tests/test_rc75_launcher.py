@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import ast, pathlib, sys, types, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'HOST'))
+HOST=ROOT/'HOST' if (ROOT/'HOST').is_dir() else ROOT/'host'
+sys.path.insert(0,str(HOST))
 from inventure_oem_menu import OEMMenu
 
 class LauncherMenuTests(unittest.TestCase):
@@ -56,7 +57,7 @@ class LauncherMenuTests(unittest.TestCase):
 class RealOledReadyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tree=ast.parse((ROOT/'HOST/inventure_oled.py').read_text())
+        tree=ast.parse((HOST/'inventure_oled.py').read_text())
         klass=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='InventureOLED')
         methods={n.name:n for n in klass.body if isinstance(n,ast.FunctionDef)}
         for name in ('_ready','cmd_menu_status'):
