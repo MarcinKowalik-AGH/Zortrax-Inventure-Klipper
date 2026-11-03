@@ -112,7 +112,11 @@ static void reference(unsigned reason) {
     for(unsigned x=4;x<252;x++)ref_pixel(x,12,5);
     ref_text(4,18,reason==3?"MCU stopped":"Waiting for Klipper...");
     ref_text(4,34,reason==3?"Cooling: automatic":reason?"Connection lost / released":"MCU: RC8.0  BOOT: 1.4 r2");
+#if CONFIG_SERIAL_BAUD == 1500000
+    ref_text(4,50,"P4: 1500000 8N1");
+#else
     ref_text(4,50,"P4: 250000 8N1");
+#endif
 }
 static void finish_local(unsigned reason) {
     for(unsigned n=0;n<1600 && (local_start_pending || local_state!=LOCAL_READY);n++) {

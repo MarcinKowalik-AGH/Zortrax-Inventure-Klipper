@@ -20,7 +20,23 @@ class UARTTests(unittest.TestCase):
     def test_reject_duplicate_baud(self):
         with self.assertRaises(ValueError):p4.parse_and_plan(CFG.replace('baud: 250000','baud: 250000\nbaud: 250000'),1000000)
     def test_reject_nonqual_rate(self):
-        with self.assertRaises(ValueError):p4.parse_and_plan(CFG,1500000)
+        with self.assertRaises(ValueError):p4.parse_and_plan(CFG,1750000)
+    def test_zero3_24mhz_exact_and_incompatible_speeds(self):
+        for baud in (250000,500000,1500000):
+            p4.validate_clock(baud,24000000)
+        for baud in (1000000,2000000):
+            with self.assertRaises(ValueError):
+                p4.validate_clock(baud,24000000)
+        with self.assertRaises(ValueError):
+            p4.validate_clock(1500000,None)
+        for baud in (1000000,2000000):
+            p4.validate_clock(baud,64000000)
+    def test_transition_from_500k_to_1500k_and_recovery(self):
+        base,_=p4.parse_and_plan(CFG,500000)
+        lab,old=p4.parse_and_plan(base,1500000)
+        self.assertEqual(old,500000)
+        self.assertIn('baud: 1500000 # current P4',lab)
+        self.assertEqual(p4.parse_and_plan(lab,500000),(base,1500000))
     def test_restore_host_cfg_does_not_touch_mcu(self):
         with tempfile.TemporaryDirectory() as d:
             path=pathlib.Path(d)/'printer.cfg';path.write_text(CFG)

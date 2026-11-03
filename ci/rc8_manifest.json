@@ -22,7 +22,7 @@
     },
     "src/stm32/inventure_oled_local.inc": {
       "old_sha256": "ab84cc81e82410cb3cc43b1408e1beda83e349576a5b90c74c832a8543a9c5b9",
-      "new_sha256": "4153481436550dbee412347446cb6096b9aa6c6afdf1db3afb8189cdcf0eddc4",
+      "new_sha256": "c2d9d3b59d4c0978329e2b9a5686485b642c69522585749e1ffcc3d9a6f5c9c0",
       "kit_mcu_present": true
     },
     "src/stm32/adc.c": {
@@ -39,6 +39,16 @@
       "old_sha256": null,
       "new_sha256": "8de17f20ee5e9a5ff129fa1dac0e9ba4d851fc798f52f95150c97cb706a9e17d",
       "kit_mcu_present": false
+    },
+    "src/stm32/serial.c": {
+      "old_sha256": "227a49654c5cf404994c5701bc0a512017c0d13225419fc198fb075bcb17d5f4",
+      "kit_mcu_present": true,
+      "new_sha256": "2b7bc5012813eee3c8e3dea8bc67460023fecfc495ccb96a4bb58266c1aefde4"
+    },
+    "src/stm32/inventure_p4_baud.h": {
+      "old_sha256": "847e7158c9be45c80ebb1d4e8011dd38005e575797dd3cd149e399ab58356510",
+      "kit_mcu_present": true,
+      "new_sha256": "79b4039755e54aafaff15321c79a836b545b23faef786aa5da71e4454dc046ae"
     }
   },
   "host": {
@@ -50,15 +60,15 @@
   "files": {
     "scripts/build_firmware_on_mac.py": {
       "old_sha256": "1b334834ee7b02b1b783ff06e151ad021296c57652273052f8c6e8662d3262f6",
-      "new_sha256": "0f2e4ffb5009e023221da995939a136724d395a7bbfb3e0429abf68eccc6b85f"
+      "new_sha256": "80c75b7956cfd6929578168a2ea575a4ff9cf591130bc104b225ec4cf6a56c3b"
     },
     "scripts/verify_release.py": {
       "old_sha256": "23592e8e596f0f047fd769a9583bd9ee151879d919a1237d715cd9aea1911e18",
-      "new_sha256": "38821b3c5181d7e8a379bed643da2f97075c502b69de5669e8217de68544ee40"
+      "new_sha256": "e17352611b0a664e061e9c2b764074b7571b6c9eabacc0cc890b8023c5a7c095"
     },
     "scripts/validate_build.py": {
       "old_sha256": "39e526bf528ceb708c1608607e66557ccaa843564289986c06278d91d6024184",
-      "new_sha256": "27650bb2acf259a9950589ff235f33e25695d6ac9b03465eb165fff61e96ac8e"
+      "new_sha256": "587687416df92b573a75f94dd1b926bea35b41a6a4c18055167dc6f5022a6b3e"
     },
     "scripts/verify_built_ivb.py": {
       "old_sha256": "fc52ea0cfc37ec95ee5fb133d06e76b339c4e4769c9ba0894965fc022065aef5",

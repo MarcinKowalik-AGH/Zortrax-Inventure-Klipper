@@ -149,7 +149,7 @@ def main():
     ap.add_argument('--doctor',action='store_true',help='Only test local compiler')
     ap.add_argument('--verify-source',action='store_true',help='Verify bundle and payload hashes without compiler')
     ap.add_argument('--jobs',type=int,default=4)
-    ap.add_argument('--baud',type=int,choices=(250000,1000000,2000000),default=250000,help='250000 reads InventureBoot journal; 1M/2M explicit nonpersistent MCU test variant')
+    ap.add_argument('--baud',type=int,choices=(250000,1000000,1500000,2000000),default=250000,help='250000 reads InventureBoot journal; 1M/1.5M/2M explicit nonpersistent MCU test variant')
     a=ap.parse_args()
     if not 1<=a.jobs<=16:raise ValueError('Parallel jobs must be 1..16')
     expected=json.loads(HIST.read_text())
@@ -192,6 +192,8 @@ def main():
         note=('INVENTURE RC8.0 application update for custom InventureBoot 1.4/1.5/1.6-RC2.\n'
               'STILL NOT HARDWARE QUALIFIED. Use only after complete Flash/NVM backup.\n'
               'Extract INVENTUR.IVB to FAT32 SD root. Do not rename to InventureUpdate.bin.\n')
+        if a.baud!=250000:
+            note+=f'LAB ONLY: application UART forced to {a.baud}; BOOT journal remains unchanged.\n'
         (output/'README_SD_FLASH.txt').write_text(note)
         digest=sha(ivb.read_bytes())
         (output/'SHA256SUMS').write_text(digest+'  INVENTUR.IVB\n')

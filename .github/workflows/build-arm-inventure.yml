@@ -205,3 +205,25 @@ jobs:
           path: release/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Build and verify separate 1.5 Mbaud lab application
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kit
+          python scripts/build_firmware_on_mac.py --jobs 4 --baud 1500000
+          mapfile -t folders < <(find dist -mindepth 1 -maxdepth 1 -type d -name 'RC8_0_*_BAUD1500000')
+          test "${#folders[@]}" -eq 1
+          mkdir -p ../lab-p4-1500000/MCU
+          cp "${folders[0]}"/{INVENTUR.IVB,INVENTURE_RC8_0_SD_BOOT16.zip,klipper.elf,klipper.bin,klipper.dict,BUILD_REPORT.json,TOOLCHAIN_RC7.json,RELEASE_RC7.json,build.config,SHA256SUMS} ../lab-p4-1500000/MCU/
+          python scripts/verify_built_ivb.py ../lab-p4-1500000/MCU > ../lab-p4-1500000/VERIFY_IVB.json
+          cp ../docs/P4_ZERO3_CLOCK_AND_1500K_PL.md ../lab-p4-1500000/README_PL.md
+          (cd ../lab-p4-1500000/MCU && sha256sum -c SHA256SUMS)
+
+      - name: Save 1.5 Mbaud lab artifact separately
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventure-rc8_0-P4-LAB-FORCED-1500000-${{ github.sha }}
+          path: lab-p4-1500000/
+          if-no-files-found: error
+          retention-days: 30

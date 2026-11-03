@@ -21,12 +21,12 @@ class McuLocalServices(unittest.TestCase):
         prepare(cls.kit)
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
-    def run_c(self,name):
+    def run_c(self,name,*options):
         cc=shutil.which('cc') or shutil.which('gcc')
         self.assertIsNotNone(cc,'native C compiler is required')
         out=Path(self.tmp.name)/name
         command=[cc,'-std=gnu11','-O2','-Wall','-Wextra','-Werror','-Wno-pointer-to-int-cast',
-            '-I',ROOT/'tests/mcu/mock','-I',self.kit/'mcu',
+            *options,'-I',ROOT/'tests/mcu/mock','-I',self.kit/'mcu',
             '-I',self.kit/'regression_tests/overlay/src/stm32',ROOT/'tests/mcu'/f'{name}.c','-o',out]
         p=subprocess.run(list(map(str,command)),capture_output=True,text=True,timeout=30)
         self.assertEqual(p.returncode,0,p.stdout+p.stderr)
@@ -34,7 +34,9 @@ class McuLocalServices(unittest.TestCase):
         self.assertEqual(p.returncode,0,p.stdout+p.stderr)
         print(p.stdout,end='')
     def test_local_cooling_adc_ownership_faults_and_fast_paths(self):self.run_c('test_rc8_board')
-    def test_oled_row_oracle_and_local_recovery(self):self.run_c('test_rc8_panel')
+    def test_oled_row_oracle_and_local_recovery(self):
+        self.run_c('test_rc8_panel')
+        self.run_c('test_rc8_panel','-DCONFIG_SERIAL_BAUD=1500000')
     def test_full_host_accepts_oled_versions_supported_by_launcher(self):
         spec=importlib.util.spec_from_file_location('launcher_install',ROOT/'install_rc75_oled.py')
         launcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(launcher)

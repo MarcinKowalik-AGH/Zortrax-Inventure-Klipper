@@ -24,6 +24,7 @@ Rzeczywisty czas wyświetlania zależy od UART, SPI i panelu.
 
 [Instalacja MCU i rollback](docs/MCU_RC8_LOCAL_SERVICES_PL.md) ·
 [Test Orange Pi Zero 3](docs/RC8_ZERO3_TEST_PL.md) ·
+[Zegary P4 i test 1,5 Mbaud](docs/P4_ZERO3_CLOCK_AND_1500K_PL.md) ·
 [Zakres źródeł](docs/SOURCE_AND_LIMITATIONS.md)
 
 ## Źródła i kompilacja

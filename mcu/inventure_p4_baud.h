@@ -9,6 +9,14 @@
 #define INVENTURE_P4_STORE_SIZE 256u
 #define INVENTURE_P4_DEFAULT_BAUD UINT32_C(250000)
 #define INVENTURE_P4_JOURNAL_ABI 1u
+/* Compile-time laboratory variant. The normal application reads BOOT P4. */
+#if defined(CONFIG_SERIAL_BAUD) && (CONFIG_SERIAL_BAUD == 1000000 || \
+    CONFIG_SERIAL_BAUD == 1500000 || CONFIG_SERIAL_BAUD == 2000000)
+#define INVENTURE_P4_FORCED_BAUD CONFIG_SERIAL_BAUD
+#else
+#define INVENTURE_P4_FORCED_BAUD 0
+#endif
+
 struct inventure_p4_selection {
     uint32_t baud;
     uint16_t slots_used;

@@ -87,6 +87,10 @@ def main():
                     '-I',KIT/'mcu',KIT/'tests/test_rc7_autobaud_2m.c',
                     KIT/'mcu/serial.c','-o',t/'p4_auto2m'])
         items.append(run([t/'p4_auto2m']).strip())
+        run(native+['-Wno-pointer-to-int-cast','-DCONFIG_SERIAL_BAUD=1500000',
+                    '-I',KIT/'tests/p4_mock','-I',KIT/'mcu',KIT/'tests/test_rc7_forced_baud.c',
+                    KIT/'mcu/serial.c','-o',t/'p4_forced1500k'])
+        items.append(run([t/'p4_forced1500k']).strip())
         run(native+['-I',KIT/'mcu',KIT/'tests/test_p4_boot_journal_rc5.c',
                     KIT/'mcu/inventure_p4_baud.c','-o',t/'p4_journal'])
         items.append(run([t/'p4_journal']).strip())

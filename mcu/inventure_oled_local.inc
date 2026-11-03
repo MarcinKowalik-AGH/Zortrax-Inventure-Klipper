@@ -165,9 +165,9 @@ static void local_render(unsigned row) {
  * Called after clock_setup by Klipper DECL_INIT; before any config command. */
 void inventure_local_oled_init(void) {
     inventure_p4_from_image((const volatile uint8_t*)INVENTURE_P4_BOOT_BASE,&local_boot);
-#if CONFIG_SERIAL_BAUD == 1000000 || CONFIG_SERIAL_BAUD == 2000000
+#if INVENTURE_P4_FORCED_BAUD
     /* Local splash must report the REAL USART baud, not the stored baud. */
-    local_boot.baud=CONFIG_SERIAL_BAUD;
+    local_boot.baud=INVENTURE_P4_FORCED_BAUD;
 #endif
     local_cs=gpio_out_setup(GPIO('D',1),1);
     local_dc=gpio_out_setup(GPIO('D',2),0);

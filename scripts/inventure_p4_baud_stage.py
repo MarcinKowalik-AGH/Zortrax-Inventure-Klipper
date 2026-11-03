@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Stage an Inventure V9 Orange Pi Zero 3 [mcu] baud switch, NEVER touch MCU.
 
-The operator MUST configure InventureBoot 1.6-RC2 P4-PERSIST-r3 manually in
-Diagnostics -> UART -> P4 baud rate, with UART on bootwait OFF. This script
-changes only the host printer.cfg, after stopping klipper.service.
+The normal application follows the InventureBoot P4 setting. The separate
+1.5 Mbaud lab image overrides it for the application only. This script
+changes only the host printer.cfg after stopping klipper.service.
 
 No serial port is opened. No MCU/GPIO writes, firmware resets or heat/motion.
 """
@@ -12,9 +12,13 @@ from __future__ import annotations
 import argparse,datetime,hashlib,json,os,re,shutil,stat,subprocess,sys,tempfile
 from pathlib import Path
 
-RATES={250000,1000000,2000000}
-TRANSITIONS={(250000,1000000),(1000000,2000000),
-             (1000000,250000),(2000000,1000000),(2000000,250000)}
+BASE_RATES={250000,500000}
+FORCED_LAB_BAUD=1500000
+RATES=BASE_RATES|{1000000,FORCED_LAB_BAUD,2000000}
+TRANSITIONS={(old,new) for old in RATES for new in BASE_RATES}
+TRANSITIONS.update({(250000,1000000),(500000,1000000),(1000000,2000000),
+                    (2000000,1000000),(250000,FORCED_LAB_BAUD),
+                    (500000,FORCED_LAB_BAUD),(1000000,FORCED_LAB_BAUD)})
 HEADER=re.compile(r'^\s*\[([^\]]+)\]\s*(?:[#;].*)?$')
 ENTRY=re.compile(r'^(\s*)(baud|serial)(\s*:\s*)([^#;\s]+)(.*)$',re.I)
 SHA=lambda data:hashlib.sha256(data).hexdigest()
@@ -53,12 +57,21 @@ def parse_and_plan(content,new_baud):
     if old not in RATES:raise ValueError('Existing baud not among qualified candidate rates')
     if old==new_baud:return content,old
     if (old,new_baud) not in TRANSITIONS:
-        raise ValueError('Staged rate order requires 250000 -> 1000000 -> 2000000')
+        raise ValueError('Select a base rate first, or qualify 1000000 before 2000000')
     idx,m=options['baud']
     # Preserve whitespace, comments, exact neighboring options and sections.
     tail=m.group(5)
     lines[idx]=m.group(1)+m.group(2)+m.group(3)+str(new_baud)+tail+('\n' if lines[idx].endswith('\n') else '')
     return ''.join(lines),old
+
+def validate_clock(baud,uart_clock_hz):
+    if uart_clock_hz is None:
+        if baud not in BASE_RATES:
+            raise ValueError('Supply --uart-clock-hz from the active UART5 clock before staging a high baud')
+        return
+    divisor,remainder=divmod(uart_clock_hz,16*baud)
+    if not 1<=divisor<=65535 or remainder:
+        raise ValueError(f'UART5 clock {uart_clock_hz} Hz does not give an exact integer divisor at {baud} baud')
 
 def atomic_write(path,data):
     mode=stat.S_IMODE(path.stat().st_mode)
@@ -85,7 +98,12 @@ def apply(path,original,modified,old,new):
     atomic_write(path,modified.encode())
     print('HOST_BAUD_STAGED_NOT_CONNECTED',old,'->',new)
     print('BACKUP:',folder)
-    print('NEXT: set bootloader Diagnostics -> UART -> P4 baud rate to '+str(new))
+    if new==FORCED_LAB_BAUD:
+        print('NEXT: use the separate LAB 1500000 MCU application. Keep the verified BOOT baud.')
+    else:
+        if old==FORCED_LAB_BAUD:
+            print('NEXT: restore the journal-mode MCU application before starting Klipper.')
+        print('NEXT: set bootloader Diagnostics -> UART -> P4 baud rate to '+str(new))
     print('NEXT: leave UART on bootwait OFF, cold power cycle MCU; only then start Klipper.')
 
 def rollback(path,folder):
@@ -115,6 +133,7 @@ def main():
     if a.rollback:
         if not a.apply or not a.confirm_klipper_stopped:raise ValueError('Rollback needs --apply --confirm-klipper-stopped')
         rollback(p,a.rollback);return
+    validate_clock(a.baud,a.uart_clock_hz)
     old_text=read_cfg(p);new_text,old=parse_and_plan(old_text,a.baud)
     print('HOST_CONFIG',p,'PORT=/dev/ttyS1',old,'->',a.baud)
     print('MCU_AND_BOOTLOADER_UNCHANGED_BY_THIS_TOOL')

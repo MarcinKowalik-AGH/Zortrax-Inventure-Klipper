@@ -52,6 +52,11 @@ Oczekuj `menu_profile=m300`, `root_page=launcher`, `display_mode=status`, `rende
 
 **Jeśli nie ma stanu Ready**: nie ponawiaj wielokrotnie `FIRMWARE_RESTART`; w podanym logu po tej komendzie połączenie MCU bywało utracone. Wykonaj kontrolę portu, P4 i rozważ fizyczne zimne uruchomienie STM32 przy zatrzymanej usłudze, następnie `sudo systemctl start klipper`. Nie przechodź do 1M/2M, jeśli stabilność przy 250k nie została potwierdzona.
 
+Przed wyższą prędkością odczytaj zegar UART5. Przy 24 MHz
+1M i 2M nie mają całkowitego dzielnika. Dla takiej konfiguracji
+[procedura 1,5 Mbaud](P4_ZERO3_CLOCK_AND_1500K_PL.md) używa osobnej aplikacji.
+Etapy 1M/2M poniżej dotyczą tylko zegara, dla którego dzielnik jest dokładny.
+
 ### Etap 1 — 250000 -> 1000000 (tylko po stabilnym UI/MCU)
 
 Dokumentacja właściciela bootloadera 1.6-RC2 identyfikuje **Diagnostics → UART → P4 baud rate**, wartości 115200, 250000, 500000, 1000000 i 2000000. **UART on bootwait = OFF**. Aplikacja RC7.1 z `INVENTURE_P4_FORCED_BAUD=0` czyta ostatnią poprawną prędkość z dziennika Flash `0x08007F00`, więc NIE ma autonegocjacji. Orange Pi Zero 3: `/dev/ttyS1` na `overlays=uart5`, **3,3 V TTL**.
@@ -62,8 +67,8 @@ Dokumentacja właściciela bootloadera 1.6-RC2 identyfikuje **Diagnostics → UA
 
 ```bash
 cd ~/inventure-rc72-repo
-python3 scripts/inventure_p4_baud_stage.py --printer-cfg ~/printer_data/config/printer.cfg --baud 1000000
-python3 scripts/inventure_p4_baud_stage.py --printer-cfg ~/printer_data/config/printer.cfg --baud 1000000 --apply --confirm-klipper-stopped
+python3 scripts/inventure_p4_baud_stage.py --printer-cfg ~/printer_data/config/printer.cfg --baud 1000000 --uart-clock-hz "$UART5_CLOCK_HZ"
+python3 scripts/inventure_p4_baud_stage.py --printer-cfg ~/printer_data/config/printer.cfg --baud 1000000 --uart-clock-hz "$UART5_CLOCK_HZ" --apply --confirm-klipper-stopped
 ```
 
 4. **Przy drukarce** uruchom bootloader fizycznie, zatrzymując 5-sekundowy autostart przyciskiem. Wybierz `Diagnostics → UART → P4 baud rate → 1000000` i zatwierdź zapis. Pozostaw `UART on bootwait → OFF`. Dziennik ma 256 B, a odczyt przy zapisie jest weryfikowany przez bootloader.

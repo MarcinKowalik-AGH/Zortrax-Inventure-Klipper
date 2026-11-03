@@ -90,6 +90,9 @@ def apply(kit,repo=REPO):
     for name in ('tests/acceptance/test_rc7_dictionary_contract.py','tests/acceptance/test_zero3_fluidd.py'):
         s=(kit/name).read_text().replace('P01-P17-RC7.1-ZERO3','P01-P17-RC8.0-LOCAL')
         if name.endswith('dictionary_contract.py'):
+            s=s.replace('test_all_three_baud_build_modes','test_all_four_baud_build_modes')
+            s=s.replace('(0,1000000,2000000)','(0,1000000,1500000,2000000)')
+            s=s.replace("('INVENTURE_P4_FORCED_BAUD',1500000)","('INVENTURE_P4_FORCED_BAUD',1750000)")
             s=s.replace("'INVENTURE_LOCAL_OLED_ABI':1,", "'INVENTURE_LOCAL_OLED_ABI':1,'INVENTURE_LOCAL_OLED_RECOVERY_ABI':1,'INVENTURE_LOCAL_OLED_BUFFER_BYTES':128,'INVENTURE_LOCAL_COOLING_ABI':1,'INVENTURE_LOCAL_COOLING_ON_C':50,'INVENTURE_LOCAL_COOLING_OFF_C':45,")
             s=s.replace("'inventure_local_oled_query'", "'inventure_local_oled_query','inventure_cooling_query'")
             s=s.replace("'inventure_local_oled_status state=%c boot_revision=%c baud=%u'", "'inventure_local_oled_status state=%c boot_revision=%c baud=%u','inventure_cooling_state clock=%u mode=%c reason=%c valid=%c mask=%c max_temp=%hi native_owner=%c adc_failures=%u gpio_updates=%u'")

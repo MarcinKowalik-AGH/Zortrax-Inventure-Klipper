@@ -15,15 +15,6 @@
 static struct inventure_p4_selection p4_boot_selection;
 DECL_CONSTANT("INVENTURE_P4_BOOT_JOURNAL_ABI", INVENTURE_P4_JOURNAL_ABI);
 DECL_CONSTANT("INVENTURE_P4_BOOT_BASE", INVENTURE_P4_BOOT_BASE);
-/* High-speed test variant: nonpersistent, compile-time forced USART6.
- * BOOT P4 journal is still read but never written. The host MUST match baud.
- * No undocumented 1M/2M journal codes are accepted or invented.
- */
-#if CONFIG_SERIAL_BAUD == 1000000 || CONFIG_SERIAL_BAUD == 2000000
-#define INVENTURE_P4_FORCED_BAUD CONFIG_SERIAL_BAUD
-#else
-#define INVENTURE_P4_FORCED_BAUD 0
-#endif
 DECL_CONSTANT("INVENTURE_P4_FORCED_BAUD", INVENTURE_P4_FORCED_BAUD);
 DECL_CONSTANT("INVENTURE_P4_JOURNAL_BASE", INVENTURE_P4_BOOT_BASE + INVENTURE_P4_STORE_OFFSET);
 #endif
