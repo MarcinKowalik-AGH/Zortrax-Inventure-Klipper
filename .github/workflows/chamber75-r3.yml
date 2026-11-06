@@ -1,0 +1,58 @@
+name: Build Inventure chamber 75 percent R3
+on:
+  push:
+    branches: ['codex/chamber75-r3-*']
+    paths:
+      - 'experiments/chamber75-r3/**'
+      - '.github/workflows/chamber75-r3.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reconstruct the verified RC8 source kit
+        run: python ci/prepare_kit.py --destination "$RUNNER_TEMP/inventure-kit"
+      - name: Install GNU ARM 14.2.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/arm-toolchain"
+          curl --fail --location --retry 3 --retry-all-errors \
+            'https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz' \
+            --output "$RUNNER_TEMP/arm-toolchain.tar.xz"
+          tar -xJf "$RUNNER_TEMP/arm-toolchain.tar.xz" -C "$RUNNER_TEMP/arm-toolchain" --strip-components=1
+          echo "$RUNNER_TEMP/arm-toolchain/bin" >> "$GITHUB_PATH"
+          test "$("$RUNNER_TEMP/arm-toolchain/bin/arm-none-eabi-gcc" -dumpfullversion)" = 14.2.1
+      - name: Compile APP and validate ELF BIN dictionary and IVB
+        shell: bash
+        run: |
+          set -euo pipefail
+          python experiments/chamber75-r3/SOURCE_MCU/build_thermal_test.py \
+            "$RUNNER_TEMP/inventure-kit" "$RUNNER_TEMP/chamber75/MCU"
+          python - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'chamber75/MCU'
+          cfg=json.loads((root/'klipper.dict').read_text())['config']
+          assert cfg['INVENTURE_HEAT_TEST_ABI']==3
+          assert cfg['INVENTURE_CHAMBER_DUTY_PCT']==75
+          assert cfg['INVENTURE_CHAMBER_DURATION_MS']==180000
+          assert cfg['INVENTURE_CHAMBER_OVERHEAT_C']==50
+          assert cfg['INVENTURE_P4_FORCED_BAUD']==0
+          assert cfg['INVENTURE_P4_BOOT17_ABI']==1
+          print('PASS_ARM_CHAMBER75_BOOT17')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inventure-chamber75-r3-${{ github.sha }}
+          path: ${{ runner.temp }}/chamber75/MCU/
+          if-no-files-found: error
+          retention-days: 30
