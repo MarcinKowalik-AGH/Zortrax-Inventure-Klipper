@@ -1,14 +1,21 @@
 {
-  "host_revision": "RC8-MOTOR-R1",
-  "host_module_sha256": "fd22cd15083dac79ada7e099c5e2d023602a0421d30263d6e9d1f837a161f383",
+  "host_revision": "RC8-MOTOR-R2-DOOR-POLICY",
+  "host_module_sha256": "8f5fd638239e0127f6b1a2a712d7fa7acec21c0f0586d10b68716d20713181e8",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
   "firmware_for_motor_tests": {
     "bootloader": "InventureBoot 1.7",
-    "motor_test_abi": 1,
-    "ivb_sha256": "8c8a21d7401f0b1a800fff3d60689f143d58be9882861ad22e3dc0ef2774cc0e",
-    "distribution": "ZIP attached in the ChatGPT conversation"
+    "motor_test_abi": 2,
+    "ivb_sha256": "5d05f5c9532d94b5759b2d5e04d4d3081b430d979325172ba1f83445eaa90627",
+    "distribution": "ZIP attached in the ChatGPT conversation",
+    "door_policy_abi": 1
   },
-  "verified_tests": 9,
-  "source_package_sha256": "6d8a5fddbc84e4b4491ed069cb0543c4cb7b7dc1592ecd6db27e3dec0bde2c39"
+  "verified_tests": 16,
+  "previous_host_commit": "46e1b6f6fc338ae11f85c098ee583d1980621289",
+  "oem_door_policy": {
+    "source_audit": "2026-10-02 external/doors/fans/thermistors, section 4",
+    "disable_bit": 3,
+    "default_enabled": true,
+    "scope": "bounded_motor_tests"
+  }
 }

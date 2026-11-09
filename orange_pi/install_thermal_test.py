@@ -58,7 +58,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
     expected={'inventure_mcu.py':meta['module_sha256'],
               'inventure_oled.py':meta['oled_module_sha256'],'serialhdl.py':meta['serialhdl_sha256']}
     accepted={'inventure_mcu.py':{meta['baseline_sha256'],*meta.get('allowed_existing_sha256',[]),expected['inventure_mcu.py']},
-              'inventure_oled.py':{meta['oled_baseline_sha256'],expected['inventure_oled.py']},
+              'inventure_oled.py':{meta['oled_baseline_sha256'],expected['inventure_oled.py'],*meta.get('oled_allowed_existing_sha256',[])},
               'serialhdl.py':{*meta['serialhdl_allowed_sha256'],expected['serialhdl.py']}}
     before={}
     for name in names:

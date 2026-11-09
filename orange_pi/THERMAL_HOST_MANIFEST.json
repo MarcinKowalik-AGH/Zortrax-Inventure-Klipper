@@ -1,7 +1,7 @@
 {
   "release": "RC8-THERMAL-R3-CHAMBER75",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "fd22cd15083dac79ada7e099c5e2d023602a0421d30263d6e9d1f837a161f383",
+  "module_sha256": "8f5fd638239e0127f6b1a2a712d7fa7acec21c0f0586d10b68716d20713181e8",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -10,11 +10,12 @@
     "7190a8648931f37c5ebce49009259fb6a4dec0dbf828287c8251ff67a8623c71",
     "cb936c9207de82ee15cb59c4afcd95c47f568d806954bfe8c10af13a3e93a06e",
     "36bed8a83ac21ab86d9ade6d07f07c60e0f6b59994d9a7e4a3e09b1f7d6d8804",
-    "42169a9cda1190c73469756b8641127b81c6397bc81a08f1a54cee6cb5d802b6"
+    "42169a9cda1190c73469756b8641127b81c6397bc81a08f1a54cee6cb5d802b6",
+    "fd22cd15083dac79ada7e099c5e2d023602a0421d30263d6e9d1f837a161f383"
   ],
-  "host_revision": "RC8-MOTOR-R1",
+  "host_revision": "RC8-MOTOR-R2-DOOR-POLICY",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
-  "oled_module_sha256": "e539ced0f43aae32fd064ea59b48ab8d46e80cbb9f7237a5cd2bf1dd2a8a89c8",
+  "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
   "serialhdl_allowed_sha256": [
     "0d1990c4539c7d90b4664b5aea811dc4847457e683fc49e28ea7651bd98b0121",
@@ -30,5 +31,15 @@
     "overheat_limit_c": 50,
     "maximum_duration_s": 180
   },
-  "motor_test_release": "RC8-MOTOR-R1"
+  "motor_test_release": "RC8-MOTOR-R2-DOOR-POLICY",
+  "oled_allowed_existing_sha256": [
+    "e539ced0f43aae32fd064ea59b48ab8d46e80cbb9f7237a5cd2bf1dd2a8a89c8"
+  ],
+  "door_policy": {
+    "abi": 1,
+    "oem_disable_bit_index": 3,
+    "default_enabled": true,
+    "scope": "bounded_motor_tests",
+    "mcu_motor_test_abi": 2
+  }
 }

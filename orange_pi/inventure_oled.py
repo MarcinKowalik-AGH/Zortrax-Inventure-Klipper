@@ -658,6 +658,13 @@ class InventureOLED:
                     self.oem_display_mode='status'
                 elif selected == 'bench':
                     self._bench_action(self.oem_menu.last_action,now)
+                elif selected == 'inert' and self.oem_menu.last_action in ('door_unlock','door_lock'):
+                    enabled=int(self.oem_menu.last_action == 'door_lock')
+                    self._script('INVENTURE_DOOR_POLICY ENABLE=%d' % enabled)
+                    if self.message is None:
+                        self.oem_menu.notice=None
+                        self.message=(('Door check enabled','Close front and top door') if enabled
+                                      else ('Door lock disabled','Beware of moving parts'))
             self.render_at=0.;self._user_refresh_pending=True
             return
         _,rows=self._rows(now);action=rows[self.selection][1]

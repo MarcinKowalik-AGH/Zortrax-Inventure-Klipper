@@ -9,10 +9,15 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-MOTOR-R1'
+HOST_REVISION = 'RC8-MOTOR-R2-DOOR-POLICY'
 
 MOTOR_TEST_RESPONSE = ('inventure_motor_state run=%u token=%u motor=%c direction=%c '
     'phase=%c reason=%c reject=%c forward=%hu returned=%hu planned=%hu enabled=%c')
+MOTOR_TEST_R2_RESPONSE = MOTOR_TEST_RESPONSE + ' door_lock_enabled=%c door_closed_mask=%c'
+DOOR_POLICY_RESPONSE = ('inventure_door_policy_state enabled=%c disable_bit=%c '
+    'closed_mask=%c lock_command_mask=%c motor_busy=%c reject=%c')
+DOOR_POLICY_REJECTS = (None, 'invalid_request', 'finish_or_stop_the_active_test_first',
+                       'mcu_not_ready')
 MOTOR_PHASES = ('idle', 'forward', 'reversing', 'return', 'done', 'aborted')
 MOTOR_REASONS = ('none', 'completed', 'operator_stop', 'heartbeat_lost', 'door_open',
                  'endstop_active', 'shutdown', 'maximum_test_time', 'heat_busy')
@@ -130,6 +135,8 @@ class InventureMCU:
         self.motor_test_abi = 0
         self.motor_test_last = {}
         self.motor_test_token = int(self.reactor.monotonic()*1000000) & 0xffffffff
+        self.door_policy_abi = 0
+        self.door_policy_last = {}
 
         table_path = Path(__file__).with_name('inventure_lut.json')
         self.lut = json.loads(table_path.read_text())
@@ -167,6 +174,8 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_MOTOR_TEST', self.cmd_motor_test,
                                     when_not_ready=True)
         self.gcode.register_command('INVENTURE_MOTOR_TEST_STOP', self.cmd_motor_test_stop,
+                                    when_not_ready=True)
+        self.gcode.register_command('INVENTURE_DOOR_POLICY', self.cmd_door_policy,
                                     when_not_ready=True)
         self.gcode.register_command('INVENTURE_HEAT_TEST', self.cmd_t0_heat_test,
                                     when_not_ready=True)
@@ -237,13 +246,22 @@ class InventureMCU:
                 'inventure_t0_heat_test action=%c', T0_HEAT_RESPONSE)
         self.heat_test_abi = int(self.mcu.get_constants().get('INVENTURE_HEAT_TEST_ABI', 0))
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
-        if self.motor_test_abi == 1:
+        self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
+        if self.door_policy_abi == 1:
+            if int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_DISABLE_BIT', -1)) != 3:
+                raise self.printer.config_error('Door policy MCU flag does not match this host')
+            self.commands['door_policy'] = self.mcu.lookup_query_command(
+                'inventure_door_policy action=%c enabled=%c', DOOR_POLICY_RESPONSE)
+        if self.motor_test_abi in (1, 2):
             if (int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_HZ', 0)) != 400
                 or int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_PULSE_US', 0)) != 100
                 or int(self.mcu.get_constants().get('INVENTURE_MOTOR_ENABLE_ON', 0)) != 1):
                 raise self.printer.config_error('Motor test MCU limits do not match this host')
             self.commands['motor_test'] = self.mcu.lookup_query_command(
-                'inventure_motor_test action=%c motor=%c direction=%c token=%u', MOTOR_TEST_RESPONSE)
+                'inventure_motor_test action=%c motor=%c direction=%c token=%u',
+                MOTOR_TEST_R2_RESPONSE if self.motor_test_abi == 2 else MOTOR_TEST_RESPONSE)
+            if self.motor_test_abi == 2 and self.door_policy_abi != 1:
+                raise self.printer.config_error('R2 motor test requires door policy ABI 1')
         if self.heat_test_abi == 3:
             expected={'INVENTURE_CHAMBER_HEAT_ABI':1,'INVENTURE_CHAMBER_DUTY_PCT':75,
                       'INVENTURE_CHAMBER_DURATION_MS':180000,'INVENTURE_CHAMBER_OVERHEAT_C':50}
@@ -321,6 +339,7 @@ class InventureMCU:
         self.adc_accepting = False
         self.adc_generation += 1
         self.connected = False
+        self.door_policy_last = {}
         self.reactor.update_timer(self.timer, self.reactor.NEVER)
     def _tick(self, eventtime):
         if not self.connected: return self.reactor.NEVER
@@ -685,10 +704,48 @@ class InventureMCU:
             return self.reactor.NEVER
         return eventtime + 1. if state['phase'] in ('heating', 'cooling') else self.reactor.NEVER
 
+    def _door_policy_query(self, enabled=None):
+        wire=self.commands.get('door_policy')
+        if wire is None:
+            raise ValueError('Door policy requires the RC8-MOTOR-R2-DOOR-POLICY MCU application')
+        if enabled is not None and not self.connected:
+            raise ValueError('MCU is not connected')
+        action=int(enabled is not None)
+        p=self._thermal_query_send(wire,[action,1 if enabled is None else enabled],start=bool(action))
+        bounds={'enabled':1,'disable_bit':1,'closed_mask':3,'lock_command_mask':3,
+                'motor_busy':1,'reject':3}
+        if (any(type(p.get(k)) is not int or not 0<=p[k]<=v for k,v in bounds.items())
+            or p['enabled']+p['disable_bit'] != 1
+            or (action and not p['reject'] and p['enabled'] != enabled)):
+            self.door_policy_last={}
+            raise ValueError('Invalid MCU door policy response')
+        state=dict(enabled=bool(p['enabled']),oem_disable_bit=p['disable_bit'],
+            oem_disable_bit_index=3,front_door_closed=bool(p['closed_mask']&2),
+            lid_closed=bool(p['closed_mask']&1),lock_command_mask=p['lock_command_mask'],
+            physical_lock_position_verified=False,motor_busy=bool(p['motor_busy']),
+            reject=DOOR_POLICY_REJECTS[p['reject']],scope='bounded_motor_tests',
+            resets_on_mcu_restart=True)
+        self.door_policy_last=state
+        return state
+
+    def cmd_door_policy(self,gcmd):
+        enabled=None if gcmd.get('ENABLE',None) is None else gcmd.get_int('ENABLE',minval=0,maxval=1)
+        try:state=self._door_policy_query(enabled)
+        except Exception as exc:
+            if enabled == 0 and 'door_policy' in self.commands:
+                self.door_policy_last={}
+                try:self.commands['door_policy'].send([1,1])
+                except Exception:logging.exception('Could not confirm restoring door policy')
+            raise gcmd.error(str(exc))
+        gcmd.respond_info('V9_DOOR_POLICY '+json.dumps(state,sort_keys=True))
+        if state['reject']:raise gcmd.error(state['reject'])
+        if enabled == 0:
+            gcmd.respond_info('Door lock disabled for both doors. Be careful of moving printer parts.')
+
     def _motor_test_query(self, action=0, motor=0, direction=1):
         wire = self.commands.get('motor_test')
         if wire is None:
-            raise ValueError('Motor tests require the RC8-MOTOR-R1 MCU application')
+            raise ValueError('Motor tests require an RC8-MOTOR-R1 or R2 MCU application')
         if action == 1:
             if not self.connected: raise ValueError('MCU is not connected')
             self.motor_test_token = (self.motor_test_token+1) & 0xffffffff or 1
@@ -697,6 +754,8 @@ class InventureMCU:
         bounds = {'run':0xffffffff,'token':0xffffffff,'motor':3,'direction':1,
                   'phase':5,'reason':8,'reject':6,'forward':640,'returned':640,
                   'planned':640,'enabled':1}
+        if getattr(self,'motor_test_abi',1) == 2:
+            bounds.update(door_lock_enabled=1,door_closed_mask=3)
         if any(type(p.get(k)) is not int or not 0 <= p[k] <= v for k,v in bounds.items()):
             raise ValueError('Invalid MCU motor test response')
         planned = (640,640,401,96)[p['motor']]
@@ -713,6 +772,10 @@ class InventureMCU:
             step_pin=('PA7','PA6','PB8','PB9')[p['motor']],
             dir_pin=('PB2','PB1','PE7','PE8')[p['motor']],
             establishes_position=False, maximum_duration_s=5)
+        if getattr(self,'motor_test_abi',1) == 2:
+            state.update(door_lock_enabled=bool(p['door_lock_enabled']),
+                front_door_closed=bool(p['door_closed_mask']&2),
+                lid_closed=bool(p['door_closed_mask']&1))
         self.motor_test_last=state
         return state
 
@@ -991,6 +1054,9 @@ class InventureMCU:
         return dict(self.status, temperatures=list(self.temperatures),
                     host_revision=HOST_REVISION, host_module=str(Path(__file__).resolve()),
                     heat_test_abi=self.heat_test_abi,
+                    motor_test_abi=getattr(self,'motor_test_abi',0),
+                    door_policy_abi=getattr(self,'door_policy_abi',0),
+                    door_policy=dict(getattr(self,'door_policy_last',{})),
                     raw_adc=list(self.raw_adc), rfid_host_overruns=list(self.rfid_overruns),
                     adc_dispatch='reactor',fans=[dict(f) for f in self.fans],
                     fan_ages=[None if t is None else max(0.,eventtime-t) for t in self.fan_received],
@@ -1110,6 +1176,7 @@ class InventureMCU:
             'host_revision':HOST_REVISION, 'host_module':str(Path(__file__).resolve()),
             'heat_test_abi':getattr(self,'heat_test_abi',0),
             'motor_test_abi':getattr(self,'motor_test_abi',0),
+            'door_policy_abi':getattr(self,'door_policy_abi',0),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
             'host_baud':self.p4_boot.get('host_baud'),
