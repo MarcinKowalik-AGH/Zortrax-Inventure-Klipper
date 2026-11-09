@@ -5,11 +5,12 @@ import collections
 import json
 import logging
 import math
+from contextlib import nullcontext
 from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-SENSORS'
+HOST_REVISION = 'RC8-CONTROL-R5-FEEDRUN'
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -203,7 +204,11 @@ class InventureMCU:
         self.fan_window_valid=[False]*6
         self.fan_rejected=0
         self.commands = {}
+        self.query_mutex = self.reactor.mutex()
         self.cassette_gpio_baseline = None
+        self.feeder_test_pending_until = None
+        self.feeder_run_context = None
+        self.feeder_run_last = {'phase':'idle'}
         self.connected = False
         self.fan_group = 0
         self.fan_batch = False
@@ -297,6 +302,7 @@ class InventureMCU:
                 ('INVENTURE_CASSETTE_DIAG',self.cmd_cassette_diag)):
             self.gcode.register_command(name,callback,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -512,6 +518,8 @@ class InventureMCU:
         self.adc_accepting = False
         self.adc_generation += 1
         self.connected = False
+        self._feeder_run_cancel('mcu_shutdown',phase='failed',stop=False)
+        self.feeder_test_pending_until = None
         self.cassette_gpio_baseline = None
         self.door_policy_last = {}
         self.reactor.update_timer(self.timer, self.reactor.NEVER)
@@ -651,12 +659,15 @@ class InventureMCU:
         self.thermal_display_held=bool(hold)
 
     def _thermal_query_send(self, command, data, start=False):
-        heartbeat=self.commands.get('heartbeat')
-        if self.connected and heartbeat is not None:
-            # The pinned Klipper wrapper enqueues this preface on the SAME
-            # command queue before the read. It never restarts a heater window.
-            return command.send_with_preface(heartbeat, [], data, retry=not start)
-        return command.send(data, retry=not start)
+        # Timer jobs and console commands must not replace each other's
+        # SerialRetryCommand callback while either waits for the same reply.
+        mutex=getattr(self,'query_mutex',None)
+        with mutex if mutex is not None else nullcontext():
+            heartbeat=self.commands.get('heartbeat')
+            if self.connected and heartbeat is not None:
+                # Preface and read share a queue; no actuator window is renewed.
+                return command.send_with_preface(heartbeat, [], data, retry=not start)
+            return command.send(data, retry=not start)
 
     def _thermal_heat_query(self, action, heater=0):
         query_started=self.reactor.monotonic()
@@ -1567,11 +1578,14 @@ class InventureMCU:
         return self.control_last
 
     def _control_service(self):
+        if getattr(self,'feeder_run_context',None) is not None:
+            raise ValueError('Feeder run is active; use INVENTURE_STOP first')
         state=self._control_query()
         if state['mode']!='SERVICE' or state['latched'] or state['fault']:
             raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
 
     def _control_abort(self):
+        self._feeder_run_cancel('control_abort')
         try: self._control_query(2)
         except Exception: logging.exception('R5 STOP response unavailable; MCU heartbeat remains authoritative')
 
@@ -1583,6 +1597,9 @@ class InventureMCU:
         if mode is not None:
             mode=str(mode).upper()
             if mode not in CONTROL_MODES: raise gcmd.error('MODE must be OFF, SERVICE or NATIVE')
+        if mode is not None and getattr(self,'feeder_run_context',None) is not None:
+            if mode!='OFF':raise gcmd.error('Feeder run is active; use INVENTURE_STOP first')
+            self._feeder_run_cancel('mode_off')
         try:
             if mode=='NATIVE':self._native_preflight()
             state=self._control_query(0 if mode is None else 1,0 if mode is None else CONTROL_MODES.index(mode))
@@ -1601,6 +1618,8 @@ class InventureMCU:
             guards=getattr(self,'guard_last',{})),sort_keys=True))
 
     def cmd_control_stop(self,gcmd):
+        self._feeder_run_cancel('operator_stop')
+        self.feeder_test_pending_until = None
         try: state=self._control_query(2)
         except Exception as exc: raise gcmd.error(str(exc))
         self.motion_last={};self.output_last={}
@@ -1835,6 +1854,19 @@ class InventureMCU:
     def _cassette_gpio_snapshot(self):
         if not self.connected:raise ValueError('MCU is disconnected')
         state=self._control_query()
+        pending=getattr(self,'feeder_test_pending_until',None)
+        if pending is not None:
+            # G4 queues print time and does not necessarily wait in wall time.
+            # Finish a recent short feeder window before reading the final
+            # inputs, and confirm the MCU has actually released its owner.
+            deadline=max(pending,self.reactor.monotonic())+.75
+            while (state['mode']=='SERVICE' and not state['fault'] and not state['latched']
+                    and (self.reactor.monotonic()<pending or state['active'])
+                    and self.reactor.monotonic()<deadline):
+                self.reactor.pause(min(deadline,self.reactor.monotonic()+.05))
+                state=self._control_query()
+            if self.reactor.monotonic()>=pending and not state['active']:
+                self.feeder_test_pending_until=None
         if state['mode']!='SERVICE' or state['active'] or state['fault'] or state['latched']:
             raise ValueError('Cassette input comparison requires idle SERVICE mode')
         sensor=self._fresh_sensor_snapshot()
@@ -1854,19 +1886,10 @@ class InventureMCU:
                 t0_pb12=self.status['p4'],t1_pd14=self.status['p5']),
             rfid_uart=sensor['rfid_uart'])
 
-    def cmd_cassette_diag(self,gcmd):
-        action=gcmd.get('ACTION','STATUS').upper()
-        if action not in ('BASELINE','COMPARE','STATUS'):
-            raise gcmd.error('Use ACTION=BASELINE, COMPARE or STATUS')
-        baseline=getattr(self,'cassette_gpio_baseline',None)
-        if action=='COMPARE' and baseline is None:
-            raise gcmd.error('Run INVENTURE_CASSETTE_DIAG ACTION=BASELINE first')
-        try:
-            current=self._cassette_gpio_snapshot()
-        except Exception as exc:
-            raise gcmd.error(str(exc))
+    @staticmethod
+    def _cassette_difference(baseline,current):
         changes=[];mode_changes=[]
-        if baseline is not None and action!='BASELINE':
+        if baseline is not None:
             for port in GPIO_PORTS:
                 before=baseline['ports'][port];after=current['ports'][port]
                 for i in range(16):
@@ -1877,13 +1900,29 @@ class InventureMCU:
                             and (before['idr']^after['idr'])&(1<<i)):
                         changes.append(dict(pin=pin,name=CASSETTE_PIN_NAMES.get(pin,'unmapped_input'),
                             before=(before['idr']>>i)&1,after=(after['idr']>>i)&1))
-        if action=='BASELINE':self.cassette_gpio_baseline=current
         pulse_delta=None
-        if baseline is not None and action!='BASELINE':
+        if baseline is not None:
             pulse_delta={k:(current['filament'][k]-baseline['filament'][k])&0xffffffff
                          for k in ('t0_pb12','t1_pd14')}
+        return dict(changes=changes,mode_changes=mode_changes,pulse_delta=pulse_delta)
+
+    def cmd_cassette_diag(self,gcmd):
+        action=gcmd.get('ACTION','STATUS').upper()
+        if action not in ('BASELINE','COMPARE','STATUS'):
+            raise gcmd.error('Use ACTION=BASELINE, COMPARE or STATUS')
+        if getattr(self,'feeder_run_context',None) is not None:
+            raise gcmd.error('Wait for V9_FEEDER_RUN phase=done or use INVENTURE_STOP')
+        baseline=getattr(self,'cassette_gpio_baseline',None)
+        if action=='COMPARE' and baseline is None:
+            raise gcmd.error('Run INVENTURE_CASSETTE_DIAG ACTION=BASELINE first')
+        try:
+            current=self._cassette_gpio_snapshot()
+        except Exception as exc:
+            raise gcmd.error(str(exc))
+        difference=self._cassette_difference(None if action=='BASELINE' else baseline,current)
+        if action=='BASELINE':self.cassette_gpio_baseline=current
         gcmd.respond_info('V9_CASSETTE_DIAG '+json.dumps(dict(current,action=action,
-            changes=changes,mode_changes=mode_changes,pulse_delta=pulse_delta,
+            **difference,
             baseline_available=self.cassette_gpio_baseline is not None,
             scope='sequential_GPIOA_to_GPIOG_input_register_readbacks',
             physical_function_confirmed=False),sort_keys=True))
@@ -1952,6 +1991,30 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
+    def _feeder_service_preflight(self,allow_run=False,allow_active=False):
+        if not self.connected:raise ValueError('MCU is disconnected')
+        if getattr(self,'feeder_run_context',None) is not None and not allow_run:
+            raise ValueError('Feeder run is active; use INVENTURE_STOP first')
+        state=self._control_query()
+        if state['mode']!='SERVICE' or state['latched'] or state['fault'] or state['reject']:
+            raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
+        if state['active'] and not allow_active:
+            raise ValueError('Stop the active service output or motion before testing a feeder')
+        ops=self.printer.lookup_object('inventure_operations',None)
+        if ops is not None:
+            operation=getattr(ops,'state',None)
+            if (operation is None or getattr(operation,'mode',None)!='idle'
+                    or getattr(operation,'owner',None) is not None
+                    or getattr(operation,'fatal',None) is not None
+                    or getattr(ops,'cancel_in_progress',False)):
+                raise ValueError('Feeder service test requires idle operations with no owner or fault')
+        filament=self.printer.lookup_object('inventure_filament',None)
+        if filament is not None and (getattr(filament,'running',False)
+                or getattr(filament,'assisting',False) or getattr(filament,'configuring',False)
+                or getattr(filament,'jog_until',0)>self.reactor.monotonic()):
+            raise ValueError('Finish or cancel the active filament procedure before a service test')
+        return state
+
     def cmd_feeder_test(self,gcmd):
         # The legacy INVENTURE_FEEDER command is intercepted by the global
         # operation owner. This bounded service entrypoint owns its own checks
@@ -1962,30 +2025,112 @@ class InventureMCU:
         direction=0 if action=='STOP' else gcmd.get_int('DIRECTION',0,minval=0,maxval=1)
         duration=0 if action=='STOP' else gcmd.get_int('DURATION_MS',100,minval=0,maxval=1500)
         if duration:
-            if not self.connected:raise gcmd.error('MCU is disconnected')
-            try:state=self._control_query()
+            try:self._feeder_service_preflight()
             except Exception as exc:raise gcmd.error(str(exc))
-            if state['mode']!='SERVICE' or state['latched'] or state['fault'] or state['reject']:
-                raise gcmd.error('Select INVENTURE_CONTROL MODE=SERVICE first')
-            if state['active']:raise gcmd.error('Stop the active service output or motion before testing a feeder')
-            ops=self.printer.lookup_object('inventure_operations',None)
-            if ops is not None:
-                operation=getattr(ops,'state',None)
-                if (operation is None or getattr(operation,'mode',None)!='idle'
-                        or getattr(operation,'owner',None) is not None
-                        or getattr(operation,'fatal',None) is not None
-                        or getattr(ops,'cancel_in_progress',False)):
-                    raise gcmd.error('Feeder service test requires idle operations with no owner or fault')
-            filament=self.printer.lookup_object('inventure_filament',None)
-            if filament is not None and (getattr(filament,'running',False)
-                    or getattr(filament,'assisting',False) or getattr(filament,'configuring',False)
-                    or getattr(filament,'jog_until',0)>self.reactor.monotonic()):
-                raise gcmd.error('Finish or cancel the active filament procedure before a service test')
+        else:
+            context=getattr(self,'feeder_run_context',None)
+            if context is not None and context['channel']==channel:
+                self._feeder_run_cancel('operator_stop')
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([channel,direction,duration])
+        self.feeder_test_pending_until=self.reactor.monotonic()+duration/1000. if duration else None
         gcmd.respond_info('V9_FEEDER_TEST '+json.dumps({'channel':channel,'direction':direction,
             'duration_ms':duration,'phase':'requested' if duration else 'stop_requested',
             'physical_motion_confirmed':False},sort_keys=True))
+
+    def _feeder_run_report(self,context,phase='running',reason=None):
+        return dict(phase=phase,reason=reason,channel=context['channel'],direction=context['direction'],
+            elapsed_s=round(max(0.,self.reactor.monotonic()-context['started']),3),
+            requested_motor_s=context['total_ms']/1000.,
+            completed_windows_s=context['completed_ms']/1000.,
+            remaining_requested_s=(context['total_ms']-context['completed_ms'])/1000.,
+            windows_sent=context['windows'],maximum_mcu_window_ms=1500,
+            filament_before=context['initial']['filament'],
+            physical_motion_confirmed=False)
+
+    def _feeder_run_cancel(self,reason,phase='stopped',stop=True):
+        context=getattr(self,'feeder_run_context',None)
+        if context is None:return
+        self.feeder_run_context=None
+        self.reactor.unregister_timer(context['timer'])
+        if stop and self.connected:
+            try:self.commands['feeder'].send([context['channel'],0,0])
+            except Exception:logging.exception('Feeder STOP unavailable; MCU timer remains bounded')
+        self.feeder_run_last=self._feeder_run_report(context,phase,reason)
+        self.gcode.respond_info('V9_FEEDER_RUN '+json.dumps(self.feeder_run_last,sort_keys=True))
+
+    def _feeder_run_start_window(self,context):
+        self._feeder_service_preflight(allow_run=True)
+        if self.feeder_run_context is not context:return
+        ms=min(1500,context['total_ms']-context['completed_ms'])
+        self.commands['heartbeat'].send([])
+        self.commands['feeder'].send([context['channel'],context['direction'],ms])
+        context['window_ms']=ms;context['windows']+=1
+        context['window_end']=self.reactor.monotonic()+ms/1000.
+
+    def _feeder_run_tick(self,context,eventtime):
+        if self.feeder_run_context is not context:return self.reactor.NEVER
+        try:
+            state=self._feeder_service_preflight(allow_run=True,allow_active=True)
+            if self.feeder_run_context is not context:return self.reactor.NEVER
+            now=self.reactor.monotonic()
+            if now>=context['window_end'] and not state['active']:
+                context['completed_ms']+=context['window_ms']
+                if context['completed_ms']>=context['total_ms']:
+                    current=self._cassette_gpio_snapshot()
+                    if self.feeder_run_context is not context:return self.reactor.NEVER
+                    report=self._feeder_run_report(context,'done','completed')
+                    report.update(filament_before=context['initial']['filament'],
+                        filament_after=current['filament'],
+                        **self._cassette_difference(context['initial'],current))
+                    self.feeder_run_context=None;self.feeder_run_last=report
+                    self.reactor.unregister_timer(context['timer'])
+                    self.gcode.respond_info('V9_FEEDER_RUN '+json.dumps(report,sort_keys=True))
+                    return self.reactor.NEVER
+                self._feeder_run_start_window(context)
+            elif now>context['window_end']+.75:
+                raise ValueError('MCU feeder owner did not become idle after its window')
+            if self.feeder_run_context is not context:return self.reactor.NEVER
+            if now>=context['next_progress']:
+                self.feeder_run_last=self._feeder_run_report(context)
+                self.gcode.respond_info('V9_FEEDER_RUN '+json.dumps(self.feeder_run_last,sort_keys=True))
+                context['next_progress']=now+5.
+            return self.reactor.monotonic()+.1
+        except Exception as exc:
+            if self.feeder_run_context is context:self._feeder_run_cancel(str(exc),phase='failed')
+            return self.reactor.NEVER
+
+    def cmd_feeder_run(self,gcmd):
+        action=str(gcmd.get('ACTION','START')).upper()
+        if action not in ('START','STATUS','STOP'):
+            raise gcmd.error('ACTION must be START, STATUS or STOP')
+        if action=='STOP' and getattr(self,'feeder_run_context',None) is not None:
+            self._feeder_run_cancel('operator_stop');return
+        if action!='START':
+            context=getattr(self,'feeder_run_context',None)
+            result=self._feeder_run_report(context) if context is not None else getattr(self,'feeder_run_last',{'phase':'idle'})
+            gcmd.respond_info('V9_FEEDER_RUN '+json.dumps(result,sort_keys=True));return
+        channel=gcmd.get_int('CHANNEL',minval=0,maxval=1)
+        direction=gcmd.get_int('DIRECTION',1,minval=0,maxval=1)
+        try:
+            seconds=float(gcmd.get('DURATION',10.))
+            if not math.isfinite(seconds) or not .001<=seconds<=600:
+                raise ValueError('DURATION must be .001..600 seconds')
+            self._feeder_service_preflight()
+            initial=self._cassette_gpio_snapshot()
+        except Exception as exc:raise gcmd.error(str(exc))
+        now=self.reactor.monotonic()
+        context=dict(channel=channel,direction=direction,total_ms=max(1,round(seconds*1000.)),
+            completed_ms=0,windows=0,started=now,next_progress=now+5.,initial=initial)
+        context['timer']=self.reactor.register_timer(lambda eventtime:self._feeder_run_tick(context,eventtime))
+        self.feeder_run_context=context
+        try:self._feeder_run_start_window(context)
+        except Exception as exc:
+            self._feeder_run_cancel(str(exc),phase='failed');raise gcmd.error(str(exc))
+        if self.feeder_run_context is not context:return
+        self.reactor.update_timer(context['timer'],self.reactor.monotonic()+.1)
+        self.feeder_run_last=self._feeder_run_report(context)
+        gcmd.respond_info('V9_FEEDER_RUN '+json.dumps(self.feeder_run_last,sort_keys=True))
     def cmd_lock(self, gcmd):
         i=gcmd.get_int('CHANNEL',minval=0,maxval=1)
         value=gcmd.get_int('VALUE',minval=0,maxval=1)

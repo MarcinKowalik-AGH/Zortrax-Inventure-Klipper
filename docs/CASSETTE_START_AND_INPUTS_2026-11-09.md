@@ -182,6 +182,11 @@ Po ponownym zamontowaniu kasety, przy rurce odłączonej od głowicy, można
 sprawdzić lewy napęd krótkim poleceniem w kierunku przeciwnym do zgłoszonego
 wcześniej cofania DIR0:
 
+**Aktualizacja FEEDRUN:** poprawiono oczekiwanie po krótkim podawaniu;
+`G4` nie gwarantuje oczekiwania w czasie rzeczywistym dla tej komendy.
+Do dłuższego transportu służy [INVENTURE_FEEDER_RUN](FEEDER_RUN_2026-11-09.md),
+który sam wykonuje końcowy odczyt.
+
 ```gcode
 INVENTURE_CASSETTE_DIAG ACTION=BASELINE
 INVENTURE_FEEDER_TEST CHANNEL=0 DIRECTION=1 DURATION_MS=1500

@@ -117,6 +117,13 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),self.original_config)
         self.assertTrue(self.active)
 
+    def test_sensors_host_upgrades_to_realtime_feeder_run_without_changing_config(self):
+        self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_control_r5_sensors.py').read_bytes())
+        with patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.dest.read_bytes(),(ROOT/'orange_pi/inventure_mcu.py').read_bytes())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+        self.assertTrue(self.active)
+
     def test_control_r5_upgrade_preserves_mcu_config_and_reloads_python(self):
         self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_control_r5.py').read_bytes())
         with patch('sys.stdout',new=io.StringIO()):update.update()
