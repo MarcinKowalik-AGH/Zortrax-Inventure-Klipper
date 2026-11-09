@@ -74,8 +74,9 @@ DIR=0 jest kierunkiem w dół. Skale mm i tor E wymagają dalszego pomiaru. Ruch
 Grzałka SERVICE utrzymuje `POWER`, bez wymogu szybkiego przyrostu temperatury.
 Moc, czas, próg i parametry ruchu można zmieniać bez kolejnego wsadu.
 ZLIMIT automatycznie obserwuje PC14 przy podnoszeniu stołu i PE12 przy opuszczaniu.
-PE12=1 zgłoszono przy stole na samym dole; zwolnienie 1→0 i ponowny kontakt
-pozostają następną próbą. Aktywna krańcówka dolna pozwala odjechać w górę.
+PE12 ma 0 po odejściu od dołu i 1 przy dolnym położeniu. Powrót zatrzymał
+się na PE12 po 1457 impulsach; dwie kolejne próby opuszczania nie wysłały
+żadnego impulsu. Aktywna dolna krańcówka pozwala odjechać w górę.
 
 ## Aktualizacja ZLIMIT — wystarczy host, bez wgrywania MCU
 
@@ -98,6 +99,8 @@ Sterowanie NATIVE korzysta z krańcówek skonfigurowanych w Klipperze.
 Po aktualizacji hosta wybierz SERVICE i aktualną politykę drzwi. Aby sprawdzić
 zwolnienie dolnego czujnika, wykonaj osobno ruch Z w górę z tabeli i po wyniku
 `phase: done` wywołaj `INVENTURE_INPUTS`. Oczekiwane po zwolnieniu: `z_bottom: 0`.
+Ta próba została potwierdzona wraz z powrotem i blokadą dalszego opuszczania.
+Wynik: [próba dolnej krańcówki Z](docs/Z_LOWER_LIMIT_TEST_2026-11-09.md).
 Nie wykonuj jeszcze pełnego bazowania Z. MCU pozostaje R5 z tej samej paczki.
 
 ## Natywny Klipper
@@ -123,7 +126,8 @@ statystycznej powtarzalności ani pełnych wymiarów pola roboczego.
 
 R5 przeszedł testy hosta, aktualizatora, prawdziwego parsera G-code, kodeka
 ze skompilowanego słownika i rzeczywistego kodu MCU z rejestrami zastępczymi.
-Nowe MCU R5 nie było jeszcze testowane na drukarce. PC4 jest nadal pomiarem
-niezweryfikowanym i domyślnie nie należy do maski zabezpieczeń. Z, podajniki
-i procedury wydruku wymagają kolejnych pojedynczych prób sprzętowych.
+R5 zostało połączone z drukarką i potwierdzono ruch Z w obie strony,
+zwolnienie PE12, powrót do PE12 oraz blokadę dalszego opuszczania. PC4 pozostaje
+niezweryfikowanym pomiarem poza maską zabezpieczeń. Kontakt dyszy PC14, E,
+podajniki i procedury wydruku wymagają kolejnych pojedynczych prób sprzętowych.
 R5 wymaga domyślnie pierwszych siedmiu czujników temperatury.

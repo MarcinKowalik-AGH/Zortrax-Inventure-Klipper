@@ -10,7 +10,23 @@
     "bootloader": "InventureBoot 1.7",
     "ivb_sha256": "a313dc80b349223913bf03cdcc302b405ecd6b923540f6a8fa0ecb272937e592",
     "distribution": "ZIP attached in the ChatGPT conversation",
-    "physical_R5_tests": "Connected R5 and Z DIR=1 upward confirmed by user; bottom release and return pending"
+    "physical_R5_tests": true,
+    "physical_qualification_complete": false,
+    "physical_observations": {
+      "Z_DIR1_table_up": true,
+      "Z_DIR0_table_down": true,
+      "PE12_raw_inactive": 0,
+      "PE12_raw_active": 1,
+      "PE12_stop_during_motion": {
+        "planned": 1604,
+        "sent": 1457,
+        "elapsed_ms": 1852,
+        "hit": 4
+      },
+      "PE12_already_active_new_trials_zero_pulses": 2,
+      "PC14_contact_test": "pending",
+      "E_and_cassette_feeder_tests": "pending"
+    }
   },
   "control": {
     "abi": 1,
@@ -38,6 +54,6 @@
     "contact_pin": "PC14",
     "contact_active": 0,
     "directional_stop_mask_enforced_for_service_Z": true,
-    "bottom_release_physical_test": "pending"
+    "bottom_release_physical_test": "PASS; raw 0 away from bottom, 1 at bottom; return stops; two subsequent starts emit zero pulses"
   }
 }

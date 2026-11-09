@@ -53,7 +53,7 @@ Dotyczy MOVE i MOTION z niezerowym Z. E nie ma przypisanego wejścia STOP.
 |---|---|---|---|
 | 0 | x_endstop | PB11 | potwierdzony, aktywny 1 |
 | 1 | y_endstop | PC15 | potwierdzony, aktywny 1 |
-| 2 | z_bottom | PE12 | 1 przy stole na samym dole; zwolnienie i powrót oczekują |
+| 2 | z_bottom | PE12 | 0 po odejściu, 1 na dole; zatrzymanie i blokada dalszych kroków potwierdzone |
 | 3 | nozzle_contact | PC14 | surowo 1 otwarty, zwarcie dyszy oczekuje |
 | 4 | tray | PC13 | przełączanie potwierdzone |
 | 5 | bin | PG2 | przełączanie potwierdzone |
