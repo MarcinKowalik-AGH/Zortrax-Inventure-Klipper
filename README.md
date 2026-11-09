@@ -21,7 +21,8 @@ zakładać, że jest to `~/klipper`. Weryfikuje sumy modułów, zachowuje ich ko
 zatrzymuje usługę, instaluje zgodne pliki i uruchamia Klippera ponownie.
 Zmienia tylko adapter Inventure, OLED i zgodny moduł transportu UART.
 Zachowuje ustawienia `printer.cfg`, w tym bieżące 750000 baud.
-Ponowne wykonanie dla już zainstalowanej wersji kończy się bez restartu.
+Ponowne wykonanie dla już zainstalowanej wersji zachowuje pliki i restartuje
+usługę, aby działający Python wczytał aktualny moduł.
 
 Sam odczyt i sprawdzenie planu:
 

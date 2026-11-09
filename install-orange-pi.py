@@ -44,9 +44,6 @@ def update(check_only=False):
     plan=core.install(target)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
-    if plan['status']=='ALREADY_INSTALLED':
-        print(json.dumps(dict(identity,status='ALREADY_INSTALLED'),indent=2))
-        return
     check_print_job()
     if check_only:
         print(json.dumps(dict(identity,status='CHECK_OK'),indent=2))
@@ -67,7 +64,8 @@ def update(check_only=False):
             core.install(target,apply=True,rollback=Path(result['backup']))
         service('start')
         raise
-    print(json.dumps(dict(identity,status='HOST_UPDATED',backup=result.get('backup')),
+    status='HOST_RESTARTED' if result['status']=='ALREADY_INSTALLED' else 'HOST_UPDATED'
+    print(json.dumps(dict(identity,status=status,backup=result.get('backup')),
                      indent=2))
     print('In Klipper console: INVENTURE_VERSION')
 

@@ -72,10 +72,14 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertFalse(any('stop' in a for a in self.calls))
         self.assertFalse((self.live/'.inventure-thermal-test-r2-backups').exists())
 
-    def test_repeated_install_is_noop_without_service_restart(self):
-        self.dest.write_bytes((ROOT/'orange_pi/inventure_mcu.py').read_bytes())
+    def test_same_disk_version_restarts_python_without_rewriting_modules(self):
+        expected=(ROOT/'orange_pi/inventure_mcu.py').read_bytes()
+        self.dest.write_bytes(expected)
         with patch('sys.stdout',new=io.StringIO()):update.update()
-        self.assertFalse(any('stop' in a for a in self.calls))
+        self.assertEqual(self.dest.read_bytes(),expected)
+        self.assertIn(('sudo','systemctl','stop','klipper'),self.calls)
+        self.assertTrue(self.active)
+        self.assertFalse((self.live/'.inventure-thermal-test-r2-backups').exists())
 
     def test_unknown_local_changes_fail_before_stopping(self):
         modified=self.old+b'\n# local user change\n';self.dest.write_bytes(modified)
