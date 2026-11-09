@@ -36,7 +36,7 @@ Po instalacji w konsoli Klippera:
 INVENTURE_VERSION
 ```
 
-Obecny host: **RC8-MOTOR-R3-XY-SEEK**. Z wcześniejszym MCU termicznym pozostają
+Obecny host: **RC8-MOTOR-R4-XY-REPEAT**. Z wcześniejszym MCU termicznym pozostają
 odczyty i dotychczasowe testy termiczne. Testy silników wymagają MCU z
 `motor_test_abi: 1` lub `2`. Nowe ustawienie drzwi wymaga `motor_test_abi: 2`
 i `door_policy_abi: 1`. `INVENTURE_VERSION` nie rozpoczyna ruchu ani grzania.
@@ -76,7 +76,7 @@ nie są aktywowane przez tę opcję.
 Aktualizacje MCU użytkownik dostaje osobno w czacie jako ZIP z plikiem
 `INVENTUR.IVB`, sumami i instrukcją instalacji przez InventureBoot 1.7.
 Instalator hosta nie programuje MCU, nie aktualizuje bootloadera i nie
-zmienia jego ustawienia UART. Nowy host i aplikacja MOTOR-R3 współpracują
+zmienia jego ustawienia UART. Nowy host i aplikacja MOTOR-R4 współpracują
 przy 750000 baud; zgodność sprawdza `INVENTURE_VERSION`.
 
 ## Dojazd do krańcówek XY — MOTOR-R3
@@ -120,6 +120,49 @@ krańcówki potwierdza mechaniczny punkt odniesienia. Offset roboczego zera,
 skala rzeczywista i pełny zakres osi pozostają do kalibracji.
 Źródło limitu 160 mm i kierunków:
 [audyt dojazdu XY](docs/XY_SEEK_OEM_EVIDENCE.md).
+
+## Odjazd 2 mm i wolny ponowny najazd — MOTOR-R4
+
+R3 został potwierdzony na drukarce: oba dojazdy zakończyły się na właściwych
+krańcówkach i zwolniły napędy. R4 zachowuje tę komendę oraz dodaje ograniczoną
+procedurę z `xy_repeat_abi: 1`:
+
+```gcode
+INVENTURE_DOOR_POLICY ENABLE=0
+INVENTURE_XY_REPEAT AXIS=X ACTION=START
+```
+
+Jedna komenda wykonuje pierwszy dojazd, odjazd 1280 par impulsów (nominalnie
+2 mm), potwierdza co najmniej 5 ms zwolnienia krańcówki i wraca do niej
+z limitem 640 par impulsów/s (nominalnie 1 mm/s). Napędy pozostają włączone
+między etapami. Jeśli wejście jest aktywne już na starcie, pierwszy dojazd
+jest pomijany i rozpoczyna się ograniczony odjazd.
+
+Po zakończeniu X oczekiwane są `phase: hit`, `reason: endstop_hit`,
+`stage: slow_approach`, `switch_release_confirmed: true`, `backoff_steps: 1280`
+i `driver_enabled: false`. Wtedy wykonaj osobno Y:
+
+```gcode
+INVENTURE_XY_REPEAT AXIS=Y ACTION=START
+```
+
+Odczyt oraz STOP:
+
+```gcode
+INVENTURE_XY_REPEAT ACTION=STATUS
+INVENTURE_XY_REPEAT_STOP
+```
+
+Dotychczasowe `INVENTURE_XY_SEEK_STOP` i `INVENTURE_MOTOR_TEST_STOP` też
+zatrzymują tę procedurę. Po końcowym kontakcie napędy są zwalniane.
+Całość ma limit 40 s. Pierwszy najazd zachowuje limit R3 102400 par impulsów;
+odjazd ma dokładnie 1280, a wolny najazd maksymalnie 2560 (nominalnie 4 mm).
+Brak zwolnienia wejścia, zbyt wczesny kontakt, brak ponownego kontaktu,
+nowe zadziałanie innej krańcówki, utrata heartbeat oraz shutdown przerywają próbę.
+
+R4 nie ustawia pozycji ani flagi homed w Klipperze. Podane milimetry nadal
+korzystają ze skali OEM 640 kroków/mm; fizyczną skalę i offset zera potwierdza
+pomiar. Dopiero końcowe raporty kolejnych prób pozwolą ocenić powtarzalność.
 
 ## Weryfikacja
 

@@ -9,16 +9,20 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-MOTOR-R3-XY-SEEK'
+HOST_REVISION = 'RC8-MOTOR-R4-XY-REPEAT'
 
 XY_SEEK_RESPONSE = ('inventure_xy_seek_state run=%u token=%u axis=%c phase=%c reason=%c '
     'reject=%c steps=%u elapsed_ms=%u enabled=%c endstop_mask=%c hit_mask=%c door_lock_enabled=%c')
 XY_SEEK_PHASES = ('idle','seeking','hit','stopped','failed')
 XY_SEEK_REASONS = ('none','endstop_hit','endstop_already_active','operator_stop',
     'heartbeat_lost','mcu_shutdown','door_open','heat_busy','maximum_time',
-    'endstop_not_found_within_travel','unexpected_other_endstop')
+    'endstop_not_found_within_travel','unexpected_other_endstop',
+    'endstop_did_not_release','contact_before_minimum_slow_travel')
 XY_SEEK_REJECTS = (None,'another_test_running','mcu_not_ready',
     'close_front_door_and_lid','heat_or_cooldown_running','invalid_request')
+XY_REPEAT_RESPONSE = ('inventure_xy_repeat_state run=%u token=%u axis=%c phase=%c stage=%c '
+    'reason=%c reject=%c first_steps=%u backoff_steps=%hu slow_steps=%hu elapsed_ms=%u '
+    'enabled=%c endstop_mask=%c hit_mask=%c released=%c repeat=%c')
 
 MOTOR_TEST_RESPONSE = ('inventure_motor_state run=%u token=%u motor=%c direction=%c '
     'phase=%c reason=%c reject=%c forward=%hu returned=%hu planned=%hu enabled=%c')
@@ -149,6 +153,8 @@ class InventureMCU:
         self.xy_seek_abi = 0
         self.xy_seek_token = self.motor_test_token
         self.xy_seek_last = {}
+        self.xy_repeat_abi = 0
+        self.xy_repeat_last = {}
 
         table_path = Path(__file__).with_name('inventure_lut.json')
         self.lut = json.loads(table_path.read_text())
@@ -184,6 +190,9 @@ class InventureMCU:
         self.sensor_test_timer = self.reactor.register_timer(self._sensor_test_tick)
         self.motor_test_timer = self.reactor.register_timer(self._motor_test_tick)
         self.xy_seek_timer = self.reactor.register_timer(self._xy_seek_tick)
+        self.xy_repeat_timer = self.reactor.register_timer(self._xy_repeat_tick)
+        self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK_STOP',self.cmd_xy_seek_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_MOTOR_TEST', self.cmd_motor_test,
@@ -272,6 +281,15 @@ class InventureMCU:
                 raise self.printer.config_error('XY seek MCU limits/directions do not match this host')
             self.commands['xy_seek'] = self.mcu.lookup_query_command(
                 'inventure_xy_seek action=%c axis=%c token=%u',XY_SEEK_RESPONSE)
+        self.xy_repeat_abi = int(self.mcu.get_constants().get('INVENTURE_XY_REPEAT_ABI', 0))
+        if self.xy_repeat_abi == 1:
+            expected_repeat={'INVENTURE_XY_REPEAT_BACKOFF_STEPS':1280,
+                'INVENTURE_XY_REPEAT_BACKOFF_HZ':1280,'INVENTURE_XY_REPEAT_SLOW_STEPS':2560,
+                'INVENTURE_XY_REPEAT_SLOW_HZ':640}
+            if self.xy_seek_abi != 1 or any(int(self.mcu.get_constants().get(k,-1))!=v for k,v in expected_repeat.items()):
+                raise self.printer.config_error('XY repeat MCU limits do not match this host')
+            self.commands['xy_repeat'] = self.mcu.lookup_query_command(
+                'inventure_xy_repeat action=%c axis=%c token=%u',XY_REPEAT_RESPONSE)
         if self.door_policy_abi == 1:
             if int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_DISABLE_BIT', -1)) != 3:
                 raise self.printer.config_error('Door policy MCU flag does not match this host')
@@ -729,6 +747,74 @@ class InventureMCU:
             return self.reactor.NEVER
         return eventtime + 1. if state['phase'] in ('heating', 'cooling') else self.reactor.NEVER
 
+    def _xy_repeat_query(self,action=0,axis=0):
+        wire=self.commands.get('xy_repeat')
+        if wire is None:raise ValueError('Backoff and slow approach require the RC8-MOTOR-R4-XY-REPEAT MCU application')
+        if action==1:
+            if not self.connected:raise ValueError('MCU is not connected')
+            # Shared with the single-seek command: a token cannot collide
+            # when changing between diagnostic procedures on this host.
+            self.xy_seek_token=(self.xy_seek_token+1)&0xffffffff or 1
+        token=self.xy_seek_token if action==1 else 0
+        p=self._thermal_query_send(wire,[action,axis,token],start=action==1)
+        bounds={'run':0xffffffff,'token':0xffffffff,'axis':1,'phase':4,'stage':2,'reason':12,
+                'reject':5,'first_steps':102400,'backoff_steps':1280,'slow_steps':2560,
+                'elapsed_ms':0xffffffff,'enabled':1,'endstop_mask':3,'hit_mask':3,'released':1,'repeat':1}
+        if any(type(p.get(k)) is not int or not 0<=p[k]<=v for k,v in bounds.items()):
+            raise ValueError('Invalid MCU XY repeat response')
+        if (p['enabled'] != int(p['phase']==1)
+            or (p['repeat'] and p['phase']==2 and (p['reason']!=1 or p['stage']!=2
+                or p['backoff_steps']!=1280 or not p['released'] or p['slow_steps']<64
+                or not p['hit_mask']&(1<<p['axis'])))
+            or (action==1 and not p['reject'] and (p['token']!=token or p['axis']!=axis or not p['repeat']))):
+            raise ValueError('Inconsistent MCU XY repeat result or token')
+        state=dict(run=p['run'],token=p['token'],axis=('X','Y')[p['axis']],
+            phase=XY_SEEK_PHASES[p['phase']],stage=('first_approach','backoff','slow_approach')[p['stage']],
+            reason=XY_SEEK_REASONS[p['reason']],reject=XY_SEEK_REJECTS[p['reject']],
+            repeat_mode=bool(p['repeat']),driver_enabled=bool(p['enabled']),
+            first_approach_steps=p['first_steps'],backoff_steps=p['backoff_steps'],
+            slow_approach_steps=p['slow_steps'],switch_release_confirmed=bool(p['released']),
+            elapsed_s=round(p['elapsed_ms']/1000.,3),hit_mask=p['hit_mask'],
+            x_endstop=bool(p['endstop_mask']&1),y_endstop=bool(p['endstop_mask']&2),
+            backoff_nominal_mm=2,backoff_hz=1280,slow_hz=640,
+            slow_approach_nominal_mm=round(p['slow_steps']/640.,4),
+            maximum_slow_nominal_mm=4,maximum_duration_s=40,
+            establishes_position=False,pulse_high_us=100)
+        self.xy_repeat_last=state;return state
+
+    def cmd_xy_repeat(self,gcmd):
+        action=gcmd.get('ACTION','START').upper();name=gcmd.get('AXIS','X').upper()
+        if action not in ('START','STOP','STATUS') or name not in ('X','Y'):
+            raise gcmd.error('Use AXIS=X or Y and ACTION=START, STOP or STATUS')
+        try:state=self._xy_repeat_query({'STATUS':0,'START':1,'STOP':2}[action],int(name=='Y'))
+        except Exception as exc:
+            if action=='START' and 'xy_repeat' in self.commands:
+                try:self.commands['xy_repeat'].send([2,0,0])
+                except Exception:logging.exception('XY repeat STOP failed; MCU owns stopping')
+            raise gcmd.error(str(exc))
+        gcmd.respond_info('V9_XY_REPEAT '+json.dumps(state,sort_keys=True))
+        self.reactor.update_timer(self.xy_repeat_timer,self.reactor.monotonic()+.5
+            if state['driver_enabled'] else self.reactor.NEVER)
+        if state['reject']:raise gcmd.error(state['reject'])
+
+    def cmd_xy_repeat_stop(self,gcmd):
+        try:state=self._xy_repeat_query(2)
+        except Exception as exc:raise gcmd.error(str(exc))
+        self.reactor.update_timer(self.xy_repeat_timer,self.reactor.NEVER)
+        gcmd.respond_info('V9_XY_REPEAT '+json.dumps(state,sort_keys=True))
+
+    def _xy_repeat_tick(self,eventtime):
+        if not self.connected:return self.reactor.NEVER
+        try:
+            state=self._xy_repeat_query()
+            self.gcode.respond_info('V9_XY_REPEAT '+json.dumps(state,sort_keys=True))
+        except Exception:
+            logging.exception('XY repeat read failed; requesting STOP')
+            try:self.commands['xy_repeat'].send([2,0,0])
+            except Exception:logging.exception('XY repeat STOP failed; MCU owns stopping')
+            return self.reactor.NEVER
+        return eventtime+.5 if state['driver_enabled'] else self.reactor.NEVER
+
     def _xy_seek_query(self,action=0,axis=0):
         wire=self.commands.get('xy_seek')
         if wire is None:raise ValueError('XY approach requires the RC8-MOTOR-R3-XY-SEEK MCU application')
@@ -737,7 +823,7 @@ class InventureMCU:
             self.xy_seek_token=(self.xy_seek_token+1)&0xffffffff or 1
         token=self.xy_seek_token if action==1 else 0
         p=self._thermal_query_send(wire,[action,axis,token],start=action==1)
-        bounds={'run':0xffffffff,'token':0xffffffff,'axis':1,'phase':4,'reason':10,'reject':5,
+        bounds={'run':0xffffffff,'token':0xffffffff,'axis':1,'phase':4,'reason':12,'reject':5,
                 'steps':102400,'elapsed_ms':0xffffffff,'enabled':1,'endstop_mask':3,'hit_mask':3,
                 'door_lock_enabled':1}
         if any(type(p.get(k)) is not int or not 0<=p[k]<=v for k,v in bounds.items()):
@@ -1147,6 +1233,7 @@ class InventureMCU:
                     motor_test_abi=getattr(self,'motor_test_abi',0),
                     door_policy_abi=getattr(self,'door_policy_abi',0),
                     xy_seek_abi=getattr(self,'xy_seek_abi',0),
+                    xy_repeat_abi=getattr(self,'xy_repeat_abi',0),
                     door_policy=dict(getattr(self,'door_policy_last',{})),
                     raw_adc=list(self.raw_adc), rfid_host_overruns=list(self.rfid_overruns),
                     adc_dispatch='reactor',fans=[dict(f) for f in self.fans],
@@ -1269,6 +1356,7 @@ class InventureMCU:
             'motor_test_abi':getattr(self,'motor_test_abi',0),
             'door_policy_abi':getattr(self,'door_policy_abi',0),
             'xy_seek_abi':getattr(self,'xy_seek_abi',0),
+            'xy_repeat_abi':getattr(self,'xy_repeat_abi',0),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
             'host_baud':self.p4_boot.get('host_baud'),
