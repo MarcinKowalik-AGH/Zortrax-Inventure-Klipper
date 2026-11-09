@@ -1,0 +1,23 @@
+name: Verify Orange Pi host updater
+on:
+  push:
+    branches: [orange-pi]
+    paths:
+      - 'orange_pi/**'
+      - 'install-orange-pi.py'
+      - 'tests/test_orange_pi_update.py'
+      - '.github/workflows/orange-pi-host.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -p test_orange_pi_update.py -v
