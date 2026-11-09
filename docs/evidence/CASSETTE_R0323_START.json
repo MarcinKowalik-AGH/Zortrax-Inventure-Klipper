@@ -1,0 +1,180 @@
+{
+  "application": "Zortrax Inventure 1.6.1 r0323",
+  "application_base": "0x8010000",
+  "sha256": "9b980ba04531fac4425b77a23969076d24d8f25629fc2a501ac05d262c142268",
+  "bytes": 164784,
+  "records": {
+    "T0": {
+      "address": "0x8029a64",
+      "words": {
+        "+0x00": {
+          "role": "run_on",
+          "value": "0x8013af5"
+        },
+        "+0x04": {
+          "role": "run_off",
+          "value": "0x8013b11"
+        },
+        "+0x08": {
+          "role": "direction_1",
+          "value": "0x8013b2d"
+        },
+        "+0x0C": {
+          "role": "direction_0",
+          "value": "0x8013c05"
+        },
+        "+0x10": {
+          "role": "timed_start",
+          "value": "0x801a187"
+        },
+        "+0x14": {
+          "role": "stop",
+          "value": "0x801a195"
+        },
+        "+0x18": {
+          "role": "auto_state",
+          "value": "0x801a1cd"
+        },
+        "+0x1C": {
+          "role": "rfid_acquire",
+          "value": "0x801a8d9"
+        },
+        "+0x20": {
+          "role": "rfid_validate",
+          "value": "0x801a965"
+        },
+        "+0x24": {
+          "role": "input_A",
+          "value": "0x8013c21"
+        },
+        "+0x28": {
+          "role": "input_B",
+          "value": "0x8013c51"
+        },
+        "+0x2C": {
+          "role": "accepted_edge_counter_ram",
+          "value": "0x20001330"
+        },
+        "+0x30": {
+          "role": "last_accepted_edge_ram",
+          "value": "0x2000133c"
+        },
+        "+0x34": {
+          "role": "material_channel_bytes",
+          "value": "0x0"
+        },
+        "+0x38": {
+          "role": "auxiliary_start_counter_ram",
+          "value": "0x200018bc"
+        },
+        "+0x3C": {
+          "role": "service_position_id",
+          "value": "0xc"
+        },
+        "+0x40": {
+          "role": "ui_strings",
+          "value": "0x803689c"
+        }
+      }
+    },
+    "T1": {
+      "address": "0x8029aa8",
+      "words": {
+        "+0x00": {
+          "role": "run_on",
+          "value": "0x8013b01"
+        },
+        "+0x04": {
+          "role": "run_off",
+          "value": "0x8013b1d"
+        },
+        "+0x08": {
+          "role": "direction_1",
+          "value": "0x8013b89"
+        },
+        "+0x0C": {
+          "role": "direction_0",
+          "value": "0x8013c15"
+        },
+        "+0x10": {
+          "role": "timed_start",
+          "value": "0x801a18d"
+        },
+        "+0x14": {
+          "role": "stop",
+          "value": "0x801a1a9"
+        },
+        "+0x18": {
+          "role": "auto_state",
+          "value": "0x801a1d9"
+        },
+        "+0x1C": {
+          "role": "rfid_acquire",
+          "value": "0x801a8df"
+        },
+        "+0x20": {
+          "role": "rfid_validate",
+          "value": "0x801a96d"
+        },
+        "+0x24": {
+          "role": "input_A",
+          "value": "0x8013c39"
+        },
+        "+0x28": {
+          "role": "input_B",
+          "value": "0x8013c69"
+        },
+        "+0x2C": {
+          "role": "accepted_edge_counter_ram",
+          "value": "0x20001334"
+        },
+        "+0x30": {
+          "role": "last_accepted_edge_ram",
+          "value": "0x20001340"
+        },
+        "+0x34": {
+          "role": "material_channel_bytes",
+          "value": "0x101"
+        },
+        "+0x38": {
+          "role": "auxiliary_start_counter_ram",
+          "value": "0x200018c0"
+        },
+        "+0x3C": {
+          "role": "service_position_id",
+          "value": "0xd"
+        },
+        "+0x40": {
+          "role": "ui_strings",
+          "value": "0x80368a8"
+        }
+      }
+    }
+  },
+  "load_entry": "0x0801433c",
+  "gpio_readers": {
+    "T0_A": [
+      "PD10",
+      "0x08013c20"
+    ],
+    "T1_A": [
+      "PD15",
+      "0x08013c38"
+    ],
+    "T0_B": [
+      "PF1",
+      "0x08013c50"
+    ],
+    "T1_B": [
+      "PG10",
+      "0x08013c68"
+    ]
+  },
+  "auto_controller": "0x0801a21c",
+  "pulse_irq": {
+    "vector_entry": "0x8011421",
+    "left_handler": "0x08013258",
+    "right_handler": "0x0801328c",
+    "debounce": "Every edge updates quiet-history; accept after >20 clock ticks since previous edge; accepted count is separate from feeder-start count."
+  }
+}

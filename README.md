@@ -23,7 +23,7 @@ Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
 `INVENTURE_MCU_CONTROL_R5_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
 
-## Po aktualizacji hosta i jednorazowym wgraniu MCU
+## Po aktualizacji hosta
 
 ```gcode
 INVENTURE_VERSION
@@ -32,11 +32,17 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-SERVICE`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-SENSORS`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
 oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
+
+Aktualizacja SENSORS wykorzystuje już wgrane CONTROL-R5. `INVENTURE_SENSORS`
+i `INVENTURE_INPUTS` czekają na odpowiedź MCU. Nowe
+`INVENTURE_CASSETTE_DIAG ACTION=BASELINE/COMPARE` porównuje rzeczywiste wejścia
+GPIOA–GPIOG, także spoza dotychczasowej listy. Odczytuje MODER/IDR bez zmiany
+konfiguracji pinów. [Warunki startu kasety, dowody z binarki i próba przycisku](docs/CASSETTE_START_AND_INPUTS_2026-11-09.md).
 
 Wspólny STOP napędów, podajników, grzałek, wyjść serwisowych i zamków:
 

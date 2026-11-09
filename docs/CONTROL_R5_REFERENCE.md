@@ -59,9 +59,9 @@ Dotyczy MOVE i MOTION z niezerowym Z. E nie ma przypisanego wejścia STOP.
 | 5 | bin | PG2 | przełączanie potwierdzone |
 | 6 | front_door | PB10 | potwierdzony, 1 zamknięte |
 | 7 | lid | PE15 | potwierdzony, 1 zamknięte |
-| 8 | t0_a | PD10 | odczyt dostępny, przełączanie oczekuje |
+| 8 | t0_a | PD10 | obecność filamentu: pusty 0 → wsunięty 1 → wyjęty 0, potwierdzone |
 | 9 | t0_b | PF1 | odczyt dostępny, przełączanie oczekuje |
-| 10 | t1_a | PD15 | odczyt dostępny, przełączanie oczekuje |
+| 10 | t1_a | PD15 | obecność filamentu: pusty 0 → wsunięty 1 → wyjęty 0, potwierdzone |
 | 11 | t1_b | PG10 | odczyt dostępny, przełączanie oczekuje |
 | 12 | up | PD7 | potwierdzony |
 | 13 | down | PD6 | potwierdzony |

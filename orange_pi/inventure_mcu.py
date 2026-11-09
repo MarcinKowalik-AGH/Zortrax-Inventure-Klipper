@@ -9,7 +9,24 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-SERVICE'
+HOST_REVISION = 'RC8-CONTROL-R5-SENSORS'
+
+INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
+BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
+    'p0=%u p1=%u p2=%u p3=%u p4=%u p5=%u')
+UART_RESPONSE = 'inventure_uart_status channel=%c errors=%u received=%u sent=%u'
+DEBUG_RESPONSE = 'debug_result val=%u'
+GPIO_BASE = 0x40020000
+GPIO_PORTS = 'ABCDEFG'
+CASSETTE_PIN_NAMES = {
+    'PB11':'x_endstop', 'PC15':'y_endstop', 'PE12':'z_bottom',
+    'PC14':'nozzle_contact', 'PC13':'tray', 'PG2':'bin',
+    'PB10':'front_door', 'PE15':'lid', 'PD10':'t0_a', 'PF1':'t0_b',
+    'PD15':'t1_a', 'PG10':'t1_b', 'PD7':'up', 'PD6':'down',
+    'PD5':'ok', 'PA15':'power', 'PB12':'t0_pulse_level',
+    'PD14':'t1_pulse_level', 'PD11':'extruder_cable',
+    'PE14':'head_front_tach', 'PE13':'model_bottom_tach',
+    'PE9':'chamber_left_tach', 'PE11':'chamber_right_tach'}
 
 CONTROL_RESPONSE = ('inventure_control_state mode=%c armed=%c active=%c latched=%c '
     'fault=%c guard_mask=%c reject=%c')
@@ -186,6 +203,7 @@ class InventureMCU:
         self.fan_window_valid=[False]*6
         self.fan_rejected=0
         self.commands = {}
+        self.cassette_gpio_baseline = None
         self.connected = False
         self.fan_group = 0
         self.fan_batch = False
@@ -275,7 +293,8 @@ class InventureMCU:
                 ('INVENTURE_MOVE',self.cmd_move),
                 ('INVENTURE_OUTPUT',self.cmd_output),
                 ('INVENTURE_GUARD',self.cmd_guard),
-                ('INVENTURE_SENSORS',self.cmd_sensors)):
+                ('INVENTURE_SENSORS',self.cmd_sensors),
+                ('INVENTURE_CASSETTE_DIAG',self.cmd_cassette_diag)):
             self.gcode.register_command(name,callback,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
@@ -439,6 +458,14 @@ class InventureMCU:
             'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u')
         self.mcu.register_serial_response(self._uart_status,
             'inventure_uart_status channel=%c errors=%u received=%u sent=%u')
+        for key, command, response in (
+                ('sensor_inputs','inventure_inputs_query',INPUT_RESPONSE),
+                ('sensor_board','inventure_query',BOARD_RESPONSE),
+                ('sensor_uart','inventure_uart_query channel=%c',UART_RESPONSE)):
+            self.commands[key] = self.mcu.lookup_query_command(command,response)
+        if self.control_abi == 1 and self.mcu.check_valid_response(DEBUG_RESPONSE):
+            self.commands['gpio_read'] = self.mcu.lookup_query_command(
+                'debug_read order=%c addr=%u',DEBUG_RESPONSE)
     def _adc(self, index, samples):
         # MCU_adc invokes this from serialhdl's background thread. Printer
         # state, thermal procedures and shutdown handlers belong to the reactor.
@@ -485,6 +512,7 @@ class InventureMCU:
         self.adc_accepting = False
         self.adc_generation += 1
         self.connected = False
+        self.cassette_gpio_baseline = None
         self.door_policy_last = {}
         self.reactor.update_timer(self.timer, self.reactor.NEVER)
     def _tick(self, eventtime):
@@ -1436,8 +1464,12 @@ class InventureMCU:
             self.printer.send_event('inventure:rfid_uart_status',channel,sample['errors'])
         self.reactor.register_async_callback(deliver)
     def cmd_inputs(self, gcmd):
-        if self.connected: self.commands['inputs'].send([])
-        gcmd.respond_info(json.dumps(self.inputs, sort_keys=True))
+        try:
+            self._fresh_inputs()
+        except Exception as exc:
+            raise gcmd.error(str(exc))
+        gcmd.respond_info(json.dumps(dict(self.inputs,fresh=True,
+            age_s=max(0.,self.reactor.monotonic()-self.inputs_received)),sort_keys=True))
     def cmd_uart_status(self, gcmd):
         if self.connected:
             for i in range(2): self.commands['uart_status'].send([i])
@@ -1749,18 +1781,126 @@ class InventureMCU:
         gcmd.respond_info('V9_GUARD '+json.dumps(dict(p,pin=self.ADC_PINS[i],
             mandatory_for_heating=i<5),sort_keys=True))
 
+    def _sensor_readback(self,key,args,response,callback):
+        if not self.connected:
+            raise ValueError('MCU is disconnected; no fresh sensor readback')
+        command=self.commands.get(key)
+        if command is None:
+            raise ValueError('MCU sensor readback is not configured')
+        try:
+            return self._thermal_query_send(command,args)
+        finally:
+            # The pinned SerialRetryCommand temporarily replaces the single
+            # serial response callback and unregisters it on completion/error.
+            # Restore the original periodic subscription in every exit path.
+            self.mcu.register_serial_response(callback,response)
+
+    def _fresh_inputs(self):
+        p=self._sensor_readback('sensor_inputs',[],INPUT_RESPONSE,self._inputs)
+        self._control_validate(p,{'clock':(0,0xffffffff),'raw':(0,65535),
+            'buttons':(0,15),'sequence':(0,0xffffffff)})
+        if not self.connected:raise ValueError('MCU disconnected during input readback')
+        self._inputs(p)
+        return dict(self.inputs)
+
+    def _fresh_sensor_snapshot(self):
+        started=self.reactor.monotonic()
+        p=self._sensor_readback('sensor_board',[],BOARD_RESPONSE,self._status)
+        limits={'armed':(0,1),'fault':(0,255),'seen':(0,255),'cable':(0,1)}
+        limits.update({'p%d'%i:(0,0xffffffff) for i in range(6)})
+        self._control_validate(p,limits)
+        self._status(p)
+        inputs=self._fresh_inputs()
+        uart=[]
+        for i in range(2):
+            p=self._sensor_readback('sensor_uart',[i],UART_RESPONSE,self._uart_status)
+            self._control_validate(p,{'channel':(0,1),'errors':(0,0xffffffff),
+                'received':(0,0xffffffff),'sent':(0,0xffffffff)})
+            if p['channel']!=i:raise ValueError('RFID UART readback channel mismatch')
+            uart.append({k:v for k,v in p.items() if not k.startswith('#')})
+            self._uart_status(p)
+        if not self.connected:raise ValueError('MCU disconnected during sensor readback')
+        return dict(inputs=inputs,rfid_uart=uart,
+            refresh_ms=round((self.reactor.monotonic()-started)*1000.,3))
+
+    def _gpio_read_word(self,port,offset):
+        # Fixed read-only register allowlist. No caller-supplied addresses,
+        # pin reconfiguration, pulls, ODR/BSRR access or debug_write command.
+        if port not in GPIO_PORTS or len(port)!=1 or offset not in (0,0x10):
+            raise ValueError('GPIO diagnostic register outside read-only allowlist')
+        p=self._control_send('gpio_read',[2,GPIO_BASE+GPIO_PORTS.index(port)*0x400+offset])
+        self._control_validate(p,{'val':(0,0xffffffff)})
+        return p['val']
+
+    def _cassette_gpio_snapshot(self):
+        if not self.connected:raise ValueError('MCU is disconnected')
+        state=self._control_query()
+        if state['mode']!='SERVICE' or state['active'] or state['fault'] or state['latched']:
+            raise ValueError('Cassette input comparison requires idle SERVICE mode')
+        sensor=self._fresh_sensor_snapshot()
+        started=self.reactor.monotonic();ports={};levels={}
+        for port in GPIO_PORTS:
+            mode=self._gpio_read_word(port,0)
+            value=self._gpio_read_word(port,0x10)&0xffff
+            mask=sum(1<<i for i in range(16) if ((mode>>(2*i))&3)==0)
+            ports[port]=dict(moder=mode,idr=value,input_mask=mask)
+            levels.update({'P%s%d'%(port,i):(value>>i)&1 for i in range(16) if mask&(1<<i)})
+        if not self.connected:raise ValueError('MCU disconnected during GPIO readback')
+        return dict(ports=ports,input_levels=levels,
+            gpio_read_ms=round((self.reactor.monotonic()-started)*1000.,3),
+            filament=dict(t0_a=sensor['inputs']['raw']['t0_a'],
+                t0_b=sensor['inputs']['raw']['t0_b'],t1_a=sensor['inputs']['raw']['t1_a'],
+                t1_b=sensor['inputs']['raw']['t1_b'],
+                t0_pb12=self.status['p4'],t1_pd14=self.status['p5']),
+            rfid_uart=sensor['rfid_uart'])
+
+    def cmd_cassette_diag(self,gcmd):
+        action=gcmd.get('ACTION','STATUS').upper()
+        if action not in ('BASELINE','COMPARE','STATUS'):
+            raise gcmd.error('Use ACTION=BASELINE, COMPARE or STATUS')
+        baseline=getattr(self,'cassette_gpio_baseline',None)
+        if action=='COMPARE' and baseline is None:
+            raise gcmd.error('Run INVENTURE_CASSETTE_DIAG ACTION=BASELINE first')
+        try:
+            current=self._cassette_gpio_snapshot()
+        except Exception as exc:
+            raise gcmd.error(str(exc))
+        changes=[];mode_changes=[]
+        if baseline is not None and action!='BASELINE':
+            for port in GPIO_PORTS:
+                before=baseline['ports'][port];after=current['ports'][port]
+                for i in range(16):
+                    pin='P%s%d'%(port,i)
+                    if ((before['moder']^after['moder'])>>(2*i))&3:
+                        mode_changes.append(pin)
+                    if (before['input_mask']&after['input_mask']&(1<<i)
+                            and (before['idr']^after['idr'])&(1<<i)):
+                        changes.append(dict(pin=pin,name=CASSETTE_PIN_NAMES.get(pin,'unmapped_input'),
+                            before=(before['idr']>>i)&1,after=(after['idr']>>i)&1))
+        if action=='BASELINE':self.cassette_gpio_baseline=current
+        pulse_delta=None
+        if baseline is not None and action!='BASELINE':
+            pulse_delta={k:(current['filament'][k]-baseline['filament'][k])&0xffffffff
+                         for k in ('t0_pb12','t1_pd14')}
+        gcmd.respond_info('V9_CASSETTE_DIAG '+json.dumps(dict(current,action=action,
+            changes=changes,mode_changes=mode_changes,pulse_delta=pulse_delta,
+            baseline_available=self.cassette_gpio_baseline is not None,
+            scope='sequential_GPIOA_to_GPIOG_input_register_readbacks',
+            physical_function_confirmed=False),sort_keys=True))
+
     def cmd_sensors(self,gcmd):
-        # Full current telemetry, including raw PC4, six tach/pulse counters
-        # and both RFID UARTs. Queries never energize outputs.
-        if self.connected:
-            self.commands['query'].send([]);self.commands['inputs'].send([])
-            for i in range(2):self.commands['uart_status'].send([i])
+        try:
+            snapshot=self._fresh_sensor_snapshot()
+        except Exception as exc:
+            raise gcmd.error(str(exc))
         self.cmd_panel_io(gcmd)
         now=self.reactor.monotonic()
         fresh=self.connected and self.status_received is not None and 0<=now-self.status_received<.75
         gcmd.respond_info('V9_SENSORS '+json.dumps({'board_age_s':None if self.status_received is None else now-self.status_received,
             'counters':{str(i):self.status.get('p%d'%i) if fresh else None for i in range(6)},
-            'rfid_uart':self.uart_status,'rfid_rx_overruns':self.rfid_overruns,
+            'rfid_uart':snapshot['rfid_uart'],'rfid_rx_overruns':self.rfid_overruns,
+            'snapshot_fresh':True,'refresh_ms':snapshot['refresh_ms'],
+            'inputs_age_s':max(0.,now-self.inputs_received),
             'unqualified_temperature_pin':'PC4','z_inputs_physically_qualified':False},sort_keys=True))
 
     def _control_poll(self,eventtime):
