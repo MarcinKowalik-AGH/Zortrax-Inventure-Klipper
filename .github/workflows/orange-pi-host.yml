@@ -10,6 +10,7 @@ on:
       - 'tests/test_orange_pi_xy_seek.py'
       - 'tests/test_orange_pi_xy_repeat.py'
       - 'tests/test_orange_pi_control.py'
+      - 'tests/test_orange_pi_feeder_service.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:

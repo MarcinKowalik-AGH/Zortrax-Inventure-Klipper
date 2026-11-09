@@ -32,7 +32,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-ZLIMIT`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-SERVICE`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
@@ -60,8 +60,8 @@ DIR=0 jest kierunkiem w dół. Skale mm i tor E wymagają dalszego pomiaru. Ruch
 | Y, 1 mm od minimum | `INVENTURE_MOVE AXIS=Y DISTANCE=1 SPEED=2` |
 | Mała próba Z z obserwacją kontaktu dyszy | `INVENTURE_MOVE AXIS=Z STEPS=1604 DIR=1 RATE=802 MAX_MS=5000` |
 | E po zwolnieniu toru filamentu | `INVENTURE_MOVE AXIS=E STEPS=48 DIR=0 RATE=160 MAX_MS=2000` |
-| Podajnik kasety 0 | `INVENTURE_FEEDER CHANNEL=0 DIRECTION=0 DURATION_MS=100` |
-| Podajnik kasety 1 | `INVENTURE_FEEDER CHANNEL=1 DIRECTION=0 DURATION_MS=100` |
+| Podajnik kasety 0 | `INVENTURE_FEEDER_TEST CHANNEL=0 DIRECTION=0 DURATION_MS=100` |
+| Podajnik kasety 1 | `INVENTURE_FEEDER_TEST CHANNEL=1 DIRECTION=0 DURATION_MS=100` |
 | F0, połowa wysterowania | `INVENTURE_OUTPUT CHANNEL=F0 ACTION=SET POWER=50 DURATION=20` |
 | PC9, stałe 75%, próg 50°C | `INVENTURE_OUTPUT CHANNEL=PC9 ACTION=SET POWER=75 DURATION=180 LIMIT=50` |
 | Wyłączenie PC9 | `INVENTURE_OUTPUT CHANNEL=PC9 ACTION=OFF` |
@@ -103,6 +103,37 @@ Ta próba została potwierdzona wraz z powrotem i blokadą dalszego opuszczania.
 Wynik: [próba dolnej krańcówki Z](docs/Z_LOWER_LIMIT_TEST_2026-11-09.md).
 Nie wykonuj jeszcze pełnego bazowania Z. MCU pozostaje R5 z tej samej paczki.
 
+## Ręczne próby podajników w SERVICE
+
+Wersja hosta `RC8-CONTROL-R5-SERVICE` dodaje `INVENTURE_FEEDER_TEST`.
+Komendę `INVENTURE_FEEDER` przechwytuje wcześniejszy globalny właściciel
+operacji, wymagający load/unload/calibration. Komunikat
+`Inventure feeder requires owned load/unload/calibration` jest odmową przed
+wykonaniem próby. Nie potwierdza reakcji silnika.
+
+Do krótkich prób z obecnym MCU R5 użyj osobnego polecenia:
+
+```gcode
+INVENTURE_CONTROL MODE=SERVICE
+INVENTURE_FEEDER_TEST CHANNEL=0 DIRECTION=0 DURATION_MS=100
+```
+
+Testuj jeden kanał naraz; kanał 1 wybierz po potwierdzeniu kanału 0.
+`DURATION_MS=0..1500`, `DIRECTION=0/1`; domyślnie 100 ms.
+`INVENTURE_FEEDER_TEST CHANNEL=0 ACTION=STOP` wysyła zero czasu pracy.
+`INVENTURE_STOP` nadal zatrzymuje wszystkie wyjścia.
+
+START wymaga SERVICE, połączenia, braku błędu MCU, zatrzaśnięcia i innych
+aktywnych wyjść serwisowych oraz braku właściciela/błędu operacji i aktywnej
+procedury P13. Samo włączenie modułu P13 przy jego bezczynności nie blokuje
+tej krótkiej próby. W NATIVE stosuje się standardowe procedury filamentu.
+Polecenie nie uruchamia grzania, ruchu XYZ/E ani procedury load/unload.
+MCU utrzymuje sprzętowe wyłączenie czasowe i kontrolę heartbeat.
+
+Raport `V9_FEEDER_TEST` z `phase: requested` oznacza wysłanie żądania.
+Fizyczną reakcję potwierdza użytkownik; raport nie deklaruje jej samodzielnie.
+Zmiana wymaga tylko aktualizacji hosta; plik MCU R5 pozostaje ten sam.
+
 ## Natywny Klipper
 
 `INVENTURE_CONTROL MODE=NATIVE` otwiera standardowe STEP/PWM i transport P13.
@@ -128,6 +159,7 @@ R5 przeszedł testy hosta, aktualizatora, prawdziwego parsera G-code, kodeka
 ze skompilowanego słownika i rzeczywistego kodu MCU z rejestrami zastępczymi.
 R5 zostało połączone z drukarką i potwierdzono ruch Z w obie strony,
 zwolnienie PE12, powrót do PE12 oraz blokadę dalszego opuszczania. PC4 pozostaje
-niezweryfikowanym pomiarem poza maską zabezpieczeń. Kontakt dyszy PC14, E,
+niezweryfikowanym pomiarem poza maską zabezpieczeń. Użytkownik potwierdził też reakcję E po 96 impulsach w 0,613 s;
+kierunek podawania/cofania pozostaje do ustalenia. Kontakt dyszy PC14,
 podajniki i procedury wydruku wymagają kolejnych pojedynczych prób sprzętowych.
 R5 wymaga domyślnie pierwszych siedmiu czujników temperatury.

@@ -109,7 +109,11 @@ pozostałe sprzętowych stałych podstaw czasu. POWER to wysterowanie;
 kalibracja obrotów/przepływu jest osobna. Historyczne nazwy telemetrii
 `chamber_left/right` zachowano; fizyczną stronę F2/F3 podano w tabeli.
 
-`INVENTURE_FEEDER CHANNEL=0/1 DIRECTION=0/1 DURATION_MS=0..1500`:
+`INVENTURE_FEEDER_TEST CHANNEL=0/1 DIRECTION=0/1 DURATION_MS=0..1500`
+wykonuje ręczną próbę w SERVICE przy bezczynnych operacjach i P13. Domyślny
+czas wynosi 100 ms; ACTION=STOP wysyła czas zero. Stara nazwa
+`INVENTURE_FEEDER` pozostaje zastrzeżona przez obsługę load/unload/calibration.
+W teście używane są te same wyjścia MCU:
 PC5/PG11 RUN, PA8/PB7 DIR, PE6 wspólny zegar. Zero wyłącza.
 Natywny P13 zachowuje profile, AUTO, asystę, selekcję E i kontrolę budżetu filamentu.
 `INVENTURE_LOCK CHANNEL=0/1 VALUE=0/1`: 0 klapa PA3, 1 drzwi PA2;
@@ -182,6 +186,9 @@ wydruku pozostaje kolejnym etapem.
 Paczka MCU zawiera nowy overlay, słownik z kompilacji, manifest źródeł, testy
 i powrót do R4. `TESTS/run_all.py`: 120 testów hosta/instalacji/bootloadera/protokołu.
 Osobne programy C wykonują rzeczywisty kod MCU z rejestrami zastępczymi.
-Publiczne CI orange-pi obejmuje 51 testów adaptera/aktualizatora, w tym R4→R5
-i R5→ZLIMIT, kierunkowe maski Z oraz stan krańcówek i jego świeżość.
+Publiczne CI orange-pi obejmuje 59 testów adaptera/aktualizatora, w tym
+przejścia R4→R5→ZLIMIT→SERVICE, maski Z, świeżość krańcówek i próby podajników.
+Test podajników wykonuje rzeczywisty wcześniejszy dispatcher operacji oraz
+prawdziwy parser G-code: odtwarza zgłoszoną odmowę i sprawdza nowy punkt wejścia,
+zgodność z bezczynnym P13 oraz odmowę podczas aktywnych procedur.
 Symulacja nie jest fizycznym testem nowego wsadu.

@@ -9,7 +9,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-ZLIMIT'
+HOST_REVISION = 'RC8-CONTROL-R5-SERVICE'
 
 CONTROL_RESPONSE = ('inventure_control_state mode=%c armed=%c active=%c latched=%c '
     'fault=%c guard_mask=%c reject=%c')
@@ -277,6 +277,7 @@ class InventureMCU:
                 ('INVENTURE_GUARD',self.cmd_guard),
                 ('INVENTURE_SENSORS',self.cmd_sensors)):
             self.gcode.register_command(name,callback,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -1810,6 +1811,41 @@ class InventureMCU:
         if filament is not None and filament.enabled:raise gcmd.error('P13 owns feeder transport; use dedicated filament commands')
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
+
+    def cmd_feeder_test(self,gcmd):
+        # The legacy INVENTURE_FEEDER command is intercepted by the global
+        # operation owner. This bounded service entrypoint owns its own checks
+        # and never enters load/unload or the native automatic P13 transport.
+        channel=gcmd.get_int('CHANNEL',minval=0,maxval=1)
+        action=str(gcmd.get('ACTION','START')).upper()
+        if action not in ('START','STOP'):raise gcmd.error('ACTION must be START or STOP')
+        direction=0 if action=='STOP' else gcmd.get_int('DIRECTION',0,minval=0,maxval=1)
+        duration=0 if action=='STOP' else gcmd.get_int('DURATION_MS',100,minval=0,maxval=1500)
+        if duration:
+            if not self.connected:raise gcmd.error('MCU is disconnected')
+            try:state=self._control_query()
+            except Exception as exc:raise gcmd.error(str(exc))
+            if state['mode']!='SERVICE' or state['latched'] or state['fault'] or state['reject']:
+                raise gcmd.error('Select INVENTURE_CONTROL MODE=SERVICE first')
+            if state['active']:raise gcmd.error('Stop the active service output or motion before testing a feeder')
+            ops=self.printer.lookup_object('inventure_operations',None)
+            if ops is not None:
+                operation=getattr(ops,'state',None)
+                if (operation is None or getattr(operation,'mode',None)!='idle'
+                        or getattr(operation,'owner',None) is not None
+                        or getattr(operation,'fatal',None) is not None
+                        or getattr(ops,'cancel_in_progress',False)):
+                    raise gcmd.error('Feeder service test requires idle operations with no owner or fault')
+            filament=self.printer.lookup_object('inventure_filament',None)
+            if filament is not None and (getattr(filament,'running',False)
+                    or getattr(filament,'assisting',False) or getattr(filament,'configuring',False)
+                    or getattr(filament,'jog_until',0)>self.reactor.monotonic()):
+                raise gcmd.error('Finish or cancel the active filament procedure before a service test')
+        if self.connected:self.commands['heartbeat'].send([])
+        self.commands['feeder'].send([channel,direction,duration])
+        gcmd.respond_info('V9_FEEDER_TEST '+json.dumps({'channel':channel,'direction':direction,
+            'duration_ms':duration,'phase':'requested' if duration else 'stop_requested',
+            'physical_motion_confirmed':False},sort_keys=True))
     def cmd_lock(self, gcmd):
         i=gcmd.get_int('CHANNEL',minval=0,maxval=1)
         value=gcmd.get_int('VALUE',minval=0,maxval=1)

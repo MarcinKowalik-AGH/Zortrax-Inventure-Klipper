@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R5-ZLIMIT",
-  "host_module_sha256": "a9e95aec5fcd92725349379ba1ee018322185a792539a27300840ce1910fa84b",
+  "host_revision": "RC8-CONTROL-R5-SERVICE",
+  "host_module_sha256": "d71961cb33abd7156f3382f1fe57a5bb398394f4e0af5f27124036bbc97cdb00",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 51,
-  "previous_host_commit": "23e97316a006bb245e8f9228e98211c3b1662b53",
+  "verified_public_host_tests": 59,
+  "previous_host_commit": "f3d67c06eab6880c1e3d9971ad9f5dddac5af39b",
   "firmware": {
     "release": "RC8-CONTROL-R5",
     "bootloader": "InventureBoot 1.7",
@@ -25,7 +25,16 @@
       },
       "PE12_already_active_new_trials_zero_pulses": 2,
       "PC14_contact_test": "pending",
-      "E_and_cassette_feeder_tests": "pending"
+      "E_motor_response": {
+        "DIR0_response_confirmed": true,
+        "pulses": 96,
+        "elapsed_ms": 613,
+        "feed_retract_direction": "deferred_by_user"
+      },
+      "cassette_feeders": {
+        "channel0": "not yet executed; legacy INVENTURE_FEEDER ownership refusal",
+        "channel1": "pending"
+      }
     }
   },
   "control": {
@@ -55,5 +64,17 @@
     "contact_active": 0,
     "directional_stop_mask_enforced_for_service_Z": true,
     "bottom_release_physical_test": "PASS; raw 0 away from bottom, 1 at bottom; return stops; two subsequent starts emit zero pulses"
+  },
+  "feeder_service": {
+    "command": "INVENTURE_FEEDER_TEST",
+    "required_mode": "SERVICE",
+    "channels": [
+      0,
+      1
+    ],
+    "maximum_duration_ms": 1500,
+    "requires_idle_operation_owner": true,
+    "requires_idle_P13": true,
+    "uses_existing_MCU_abi": true
   }
 }
