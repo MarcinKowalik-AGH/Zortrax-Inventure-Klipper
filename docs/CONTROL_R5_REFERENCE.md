@@ -44,13 +44,16 @@ Dodatni pozwala odjechać z aktywnej krańcówki. Ruch nie ustala pozycji/homing
 `STOP_MASK` wybiera bity; `STOP_VALUE` podaje ich aktywne poziomy.
 Zatrzymuje **dowolny** wybrany bit zgodny z wartością. Aktywny już przed START
 kończy próbę bez impulsów. Jawna maska zastępuje maskę domyślną danego ruchu.
-Dla Z/E nie przyjęto automatycznie polaryzacji niezakwalifikowanych wejść.
+ZLIMIT dołącza obowiązkowe wejście Z w kierunku ruchu: DIR=1 podnosi stół
+i obserwuje PC14 aktywne LOW; DIR=0 opuszcza stół i obserwuje PE12 aktywne HIGH.
+Dodatkowa maska rozszerza tę kontrolę. Sprzeczna polaryzacja jest odrzucana.
+Dotyczy MOVE i MOTION z niezerowym Z. E nie ma przypisanego wejścia STOP.
 
 | Bit | Nazwa | Pin | Wynik fizyczny |
 |---|---|---|---|
 | 0 | x_endstop | PB11 | potwierdzony, aktywny 1 |
 | 1 | y_endstop | PC15 | potwierdzony, aktywny 1 |
-| 2 | z_bottom | PE12 | surowo 1, próba mechaniczna oczekuje |
+| 2 | z_bottom | PE12 | 1 przy stole na samym dole; zwolnienie i powrót oczekują |
 | 3 | nozzle_contact | PC14 | surowo 1 otwarty, zwarcie dyszy oczekuje |
 | 4 | tray | PC13 | przełączanie potwierdzone |
 | 5 | bin | PG2 | przełączanie potwierdzone |
@@ -67,7 +70,9 @@ Dla Z/E nie przyjęto automatycznie polaryzacji niezakwalifikowanych wejść.
 
 `STOP_MASK=8 STOP_VALUE=0`: PC14 aktywny LOW.
 `STOP_MASK=12 STOP_VALUE=4`: PE12=1 lub PC14=0. Przy obecnym PE12=1 drugi
-przykład skończy próbę od razu; nie odwracamy wejścia na podstawie samego spoczynku.
+przykład skończy próbę od razu. Przy ruchu w górę sama maska PC14 pozwala
+odjechać z aktywnego PE12. Raport zawiera bieżący okresowy stan krańcówek
+z wiekiem próbek oraz osobno `hit`, czyli zatrzaśnięty powód STOP z MCU.
 
 ## Wyjścia
 
@@ -177,5 +182,6 @@ wydruku pozostaje kolejnym etapem.
 Paczka MCU zawiera nowy overlay, słownik z kompilacji, manifest źródeł, testy
 i powrót do R4. `TESTS/run_all.py`: 120 testów hosta/instalacji/bootloadera/protokołu.
 Osobne programy C wykonują rzeczywisty kod MCU z rejestrami zastępczymi.
-Publiczne CI orange-pi obejmuje 44 testy adaptera/aktualizatora z przejściem R4→R5.
+Publiczne CI orange-pi obejmuje 51 testów adaptera/aktualizatora, w tym R4→R5
+i R5→ZLIMIT, kierunkowe maski Z oraz stan krańcówek i jego świeżość.
 Symulacja nie jest fizycznym testem nowego wsadu.

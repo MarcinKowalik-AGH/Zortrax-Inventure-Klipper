@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R5",
+  "release": "RC8-CONTROL-R5-ZLIMIT",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "20dfcff83c027bb7323eb9b5178a4322d33ea88ea61bd7d693594941a842f5de",
+  "module_sha256": "a9e95aec5fcd92725349379ba1ee018322185a792539a27300840ce1910fa84b",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -14,9 +14,10 @@
     "fd22cd15083dac79ada7e099c5e2d023602a0421d30263d6e9d1f837a161f383",
     "8f5fd638239e0127f6b1a2a712d7fa7acec21c0f0586d10b68716d20713181e8",
     "def66fc2faaa9aa07a4e5631c063e2da40fecb91e9a319edaeb906b504ac8997",
-    "1af396d367db372c4a5673b318995fe354e480ebd0db15dedd33c1a71201644a"
+    "1af396d367db372c4a5673b318995fe354e480ebd0db15dedd33c1a71201644a",
+    "20dfcff83c027bb7323eb9b5178a4322d33ea88ea61bd7d693594941a842f5de"
   ],
-  "host_revision": "RC8-CONTROL-R5",
+  "host_revision": "RC8-CONTROL-R5-ZLIMIT",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -76,5 +77,15 @@
     "default_guard_mask": 127,
     "native_enable_requires_restart_after_stop": true
   },
-  "thermal_compat_release": "RC8-THERMAL-R3-CHAMBER75"
+  "thermal_compat_release": "RC8-THERMAL-R3-CHAMBER75",
+  "z_limits": {
+    "table_up_direction": 1,
+    "table_down_direction": 0,
+    "bottom_pin": "PE12",
+    "bottom_active": 1,
+    "contact_pin": "PC14",
+    "contact_active": 0,
+    "directional_stop_mask_enforced_for_service_Z": true,
+    "bottom_release_physical_test": "pending"
+  }
 }

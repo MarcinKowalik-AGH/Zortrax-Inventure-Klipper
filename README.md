@@ -32,7 +32,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` i `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-ZLIMIT`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
@@ -51,14 +51,14 @@ uzbrojenia potrzeba `FIRMWARE_RESTART`, aby stare kolejki STEP/PWM nie wznowiły
 ## Pojedyncze próby
 
 Poniższe wiersze są osobnymi przykładami. Wybieraj jeden element naraz.
-X/Y mają potwierdzone kierunki. Skale mm oraz kierunki Z/E wymagają dalszego
-pomiaru. Ruchy serwisowe nie ustawiają pozycji ani stanu homingu.
+X/Y mają potwierdzone kierunki. Dla Z użytkownik potwierdził DIR=1 w górę;
+DIR=0 jest kierunkiem w dół. Skale mm i tor E wymagają dalszego pomiaru. Ruchy serwisowe nie ustawiają pozycji ani stanu homingu.
 
 | Element | Przykład |
 |---|---|
 | X, 1 mm od minimum | `INVENTURE_MOVE AXIS=X DISTANCE=1 SPEED=2` |
 | Y, 1 mm od minimum | `INVENTURE_MOVE AXIS=Y DISTANCE=1 SPEED=2` |
-| Mała próba Z z obserwacją kontaktu dyszy | `INVENTURE_MOVE AXIS=Z STEPS=40 DIR=0 RATE=160 MAX_MS=2000 STOP_MASK=8 STOP_VALUE=0` |
+| Mała próba Z z obserwacją kontaktu dyszy | `INVENTURE_MOVE AXIS=Z STEPS=1604 DIR=1 RATE=802 MAX_MS=5000` |
 | E po zwolnieniu toru filamentu | `INVENTURE_MOVE AXIS=E STEPS=48 DIR=0 RATE=160 MAX_MS=2000` |
 | Podajnik kasety 0 | `INVENTURE_FEEDER CHANNEL=0 DIRECTION=0 DURATION_MS=100` |
 | Podajnik kasety 1 | `INVENTURE_FEEDER CHANNEL=1 DIRECTION=0 DURATION_MS=100` |
@@ -73,8 +73,32 @@ pomiaru. Ruchy serwisowe nie ustawiają pozycji ani stanu homingu.
 `LIMIT` oznacza wyłączenie po przekroczeniu progu, nie zadaną temperaturę.
 Grzałka SERVICE utrzymuje `POWER`, bez wymogu szybkiego przyrostu temperatury.
 Moc, czas, próg i parametry ruchu można zmieniać bez kolejnego wsadu.
-Przykład Z obserwuje PC14. PE12 ma obecnie surowy stan 1 i nie jest jeszcze
-zakwalifikowane mechanicznie; nie zmieniono jego polaryzacji na podstawie tego odczytu.
+ZLIMIT automatycznie obserwuje PC14 przy podnoszeniu stołu i PE12 przy opuszczaniu.
+PE12=1 zgłoszono przy stole na samym dole; zwolnienie 1→0 i ponowny kontakt
+pozostają następną próbą. Aktywna krańcówka dolna pozwala odjechać w górę.
+
+## Aktualizacja ZLIMIT — wystarczy host, bez wgrywania MCU
+
+R5 wykonało na drukarce 40 impulsów Z w DIR=1; użytkownik potwierdził ruch
+stołu w górę. Jednocześnie wcześniejszy odczyt `z_bottom: 1` odpowiadał
+stołowi na samym dole. Dolny PE12 to Z_MAX w audycie oryginalnego firmware;
+PC14 jest osobnym kontaktem dyszy, aktywnym LOW.
+
+W dotychczasowym raporcie `hit` oznaczało tylko wejście, które zatrzymało
+ruch w wybranej masce. `hit: 0` przy podnoszeniu i obserwacji PC14 nie znaczyło,
+że dolna krańcówka była nieaktywna. Raport pokazuje teraz także `input_raw`,
+`endstop_active`, `inputs_age_s`, `stop_mask`, `stop_value` i `hit_inputs`.
+Odczyty okresowe są odróżnione od zatrzaśniętego powodu STOP z MCU.
+
+Przy Z w dół host zawsze dołącza PE12 aktywne 1; w górę PC14 aktywne 0.
+Dotyczy to `INVENTURE_MOVE` oraz wektorowego `INVENTURE_MOTION`, także po
+podaniu dodatkowej maski. Sprzeczna polaryzacja jest odrzucana przed START.
+Sterowanie NATIVE korzysta z krańcówek skonfigurowanych w Klipperze.
+
+Po aktualizacji hosta wybierz SERVICE i aktualną politykę drzwi. Aby sprawdzić
+zwolnienie dolnego czujnika, wykonaj osobno ruch Z w górę z tabeli i po wyniku
+`phase: done` wywołaj `INVENTURE_INPUTS`. Oczekiwane po zwolnieniu: `z_bottom: 0`.
+Nie wykonuj jeszcze pełnego bazowania Z. MCU pozostaje R5 z tej samej paczki.
 
 ## Natywny Klipper
 

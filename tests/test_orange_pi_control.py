@@ -64,6 +64,59 @@ class ControlHostTests(unittest.TestCase):
             self.assertEqual(packet,(1,dirs,640,640,0,0,1280,10,30000,mask,mask,0,11))
             self.assertFalse(h.motion_last['establishes_position'])
 
+    def test_z_limits_follow_confirmed_table_direction_and_apply_to_raw_vectors(self):
+        for direction,steps,mask,value in ((0,-40,4,4),(1,40,8,0)):
+            for vector in (False,True):
+                h=self.host((0,0,steps,0))
+                if vector:h.cmd_motion(Command(Z=steps))
+                else:h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=direction))
+                self.assertEqual(h.commands['motion'].actions[0][9:11],(mask,value))
+                self.assertEqual(h.motion_last['z_direction'],'table_up' if direction else 'table_down')
+
+    def test_explicit_z_mask_keeps_the_directional_limit_and_rejects_conflicting_polarity(self):
+        h=self.host((0,0,-40,0))
+        h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=0,STOP_MASK=8,STOP_VALUE=0))
+        self.assertEqual(h.commands['motion'].actions[0][9:11],(12,4))
+        h=self.host((0,0,-40,0))
+        with self.assertRaisesRegex(RuntimeError,'polarity conflicts'):
+            h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=0,STOP_MASK=4,STOP_VALUE=0))
+        self.assertEqual(h.commands['motion'].actions,[])
+
+    def test_active_bottom_is_visible_during_a_successful_upward_release(self):
+        h=self.host((0,0,40,0));h.inputs_received=100.
+        h.inputs={'raw':dict(x_endstop=0,y_endstop=0,z_bottom=1,nozzle_contact=1)}
+        h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=1))
+        self.assertEqual(h.motion_last['hit'],0)
+        self.assertTrue(h.motion_last['endstop_active']['z_bottom'])
+        self.assertEqual(h.motion_last['input_raw']['z_bottom'],1)
+        self.assertFalse(h.motion_last['endstop_active']['nozzle_contact'])
+        self.assertEqual(h.motion_last['stop_mask'],8)
+        self.assertEqual(h.motion_last['hit_scope'],'selected_stop_inputs_latched_by_mcu')
+
+    def test_downward_already_active_reply_reports_bottom_with_zero_pulses(self):
+        h=self.host((0,0,-40,0));h.inputs_received=100.
+        h.inputs={'raw':dict(z_bottom=1,nozzle_contact=1)}
+        h.commands['motion'].reply.update(phase=3,reason=2,active=0,hit=4)
+        h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=0))
+        self.assertEqual(h.motion_last['hit_inputs'],['z_bottom'])
+        self.assertEqual(h.motion_last['drivers']['Z']['sent'],0)
+        self.assertEqual(h.motion_last['reason'],'stop_input')
+
+    def test_motion_input_snapshot_has_age_and_never_reuses_stale_or_boolean_raw_values(self):
+        h=self.host();h.inputs={'raw':dict(z_bottom=1,nozzle_contact=True)};h.inputs_received=99.
+        snapshot=h._motion_input_snapshot()
+        self.assertIsNone(snapshot['endstop_active']['z_bottom'])
+        self.assertEqual(snapshot['inputs_age_s'],1.)
+        h.inputs_received=100.;snapshot=h._motion_input_snapshot()
+        self.assertTrue(snapshot['endstop_active']['z_bottom'])
+        self.assertIsNone(snapshot['endstop_active']['nozzle_contact'])
+
+    def test_motion_stop_mask_context_is_retained_only_for_its_run_and_token(self):
+        h=self.host((0,0,40,0));h.cmd_move(Command(AXIS='Z',STEPS=40,DIR=1))
+        self.assertEqual(h._motion_query()['stop_mask'],8)
+        h.commands['motion'].reply['token']=12
+        self.assertIsNone(h._motion_query()['stop_mask'])
+
     def test_all_main_drivers_have_signed_raw_steps_and_direction_override(self):
         for axis,index in (('A',0),('B',1),('Z',2),('E',3)):
             counts=[0]*4;counts[index]=-80

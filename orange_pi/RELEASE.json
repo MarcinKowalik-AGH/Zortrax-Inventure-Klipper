@@ -1,16 +1,16 @@
 {
-  "host_revision": "RC8-CONTROL-R5",
-  "host_module_sha256": "20dfcff83c027bb7323eb9b5178a4322d33ea88ea61bd7d693594941a842f5de",
+  "host_revision": "RC8-CONTROL-R5-ZLIMIT",
+  "host_module_sha256": "a9e95aec5fcd92725349379ba1ee018322185a792539a27300840ce1910fa84b",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 44,
-  "previous_host_commit": "5ceeb83ef8a7751e27e462f0745e0d676f47506c",
+  "verified_public_host_tests": 51,
+  "previous_host_commit": "23e97316a006bb245e8f9228e98211c3b1662b53",
   "firmware": {
     "release": "RC8-CONTROL-R5",
     "bootloader": "InventureBoot 1.7",
     "ivb_sha256": "a313dc80b349223913bf03cdcc302b405ecd6b923540f6a8fa0ecb272937e592",
     "distribution": "ZIP attached in the ChatGPT conversation",
-    "physical_R5_tests": false
+    "physical_R5_tests": "Connected R5 and Z DIR=1 upward confirmed by user; bottom release and return pending"
   },
   "control": {
     "abi": 1,
@@ -29,5 +29,15 @@
   },
   "default_host_baud": 750000,
   "boot_baud_read_only": true,
-  "temperature_guards": "first seven by default; first five mandatory for heating/native; PC4 unqualified"
+  "temperature_guards": "first seven by default; first five mandatory for heating/native; PC4 unqualified",
+  "z_limits": {
+    "table_up_direction": 1,
+    "table_down_direction": 0,
+    "bottom_pin": "PE12",
+    "bottom_active": 1,
+    "contact_pin": "PC14",
+    "contact_active": 0,
+    "directional_stop_mask_enforced_for_service_Z": true,
+    "bottom_release_physical_test": "pending"
+  }
 }

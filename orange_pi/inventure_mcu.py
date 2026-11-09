@@ -9,7 +9,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5'
+HOST_REVISION = 'RC8-CONTROL-R5-ZLIMIT'
 
 CONTROL_RESPONSE = ('inventure_control_state mode=%c armed=%c active=%c latched=%c '
     'fault=%c guard_mask=%c reject=%c')
@@ -220,6 +220,7 @@ class InventureMCU:
         self.control_abi = 0
         self.control_last = {}
         self.motion_last = {}
+        self.motion_request = {}
         self.output_last = {}
         self.guard_last = {}
         self.control_token = self.motor_test_token
@@ -1596,10 +1597,31 @@ class InventureMCU:
             if action==1 and (row['planned']!=abs(counts[i]) or row['direction']!=int(counts[i]>0)):
                 raise ValueError('R5 motion driver parameters differ from the request')
             drivers[name]={k:row[k] for k in ('planned','sent','direction')}
+        if action==1:
+            self.motion_request=dict(run=p['run'],token=p['token'],stop_mask=stop_mask,stop_value=stop_value)
+        request=getattr(self,'motion_request',{})
+        if (request.get('run'),request.get('token'))!=(p['run'],p['token']):request={}
+        snapshot=self._motion_input_snapshot()
         self.motion_last=dict(p,phase=MOTION_PHASES[p['phase']],reason=MOTION_REASONS[p['reason']],
             reject=None,drivers=drivers,elapsed_s=round(p['elapsed_ms']/1000.,3),
-            establishes_position=False)
+            establishes_position=False,stop_mask=request.get('stop_mask'),stop_value=request.get('stop_value'),
+            hit_inputs=[name for i,name in enumerate(self.INPUT_NAMES) if p['hit']&(1<<i)],
+            hit_scope='selected_stop_inputs_latched_by_mcu',
+            z_direction=('table_up' if drivers['Z']['direction'] else 'table_down') if drivers['Z']['planned'] else None,
+            **snapshot)
         return self.motion_last
+
+    def _motion_input_snapshot(self):
+        now=self.reactor.monotonic();received=getattr(self,'inputs_received',None)
+        age=None if received is None else now-received
+        fresh=self.connected and age is not None and 0<=age<.75
+        raw=getattr(self,'inputs',{}).get('raw',{})
+        names=('x_endstop','y_endstop','z_bottom','nozzle_contact')
+        observed={name:raw.get(name) if fresh and type(raw.get(name)) is int and raw[name] in (0,1) else None for name in names}
+        active={name:(None if value is None else bool(value if name!='nozzle_contact' else not value))
+                for name,value in observed.items()}
+        return dict(input_raw=observed,endstop_active=active,
+            inputs_age_s=None if age is None else round(age,3),inputs_scope='latest_periodic_sample')
 
     def _motion_execute(self,gcmd,action,counts=(0,0,0,0),rate=400,stop_mask=0,stop_value=0):
         pulse=gcmd.get_int('PULSE_US',10,minval=2,maxval=100)
@@ -1607,6 +1629,14 @@ class InventureMCU:
         hold=gcmd.get_int('HOLD_MS',0,minval=0,maxval=60000)
         stop_mask=gcmd.get_int('STOP_MASK',stop_mask,minval=0,maxval=65535)
         stop_value=gcmd.get_int('STOP_VALUE',stop_value,minval=0,maxval=65535)
+        if action==1 and counts[2]:
+            # Physical test: DIR=1 raises the table; DIR=0 lowers it.
+            # Require the limit ahead, while allowing release of the one behind.
+            required=8 if counts[2]>0 else 4
+            level=0 if counts[2]>0 else 4
+            if stop_mask&required and (stop_value^level)&required:
+                raise gcmd.error('Z limit polarity conflicts: PE12 bottom active HIGH; PC14 contact active LOW')
+            stop_mask|=required;stop_value=(stop_value&~required)|level
         if action==1 and (not any(counts) or max(map(abs,counts))>2000000 or pulse+2>1000000//rate):
             raise gcmd.error('Invalid counts or pulse width for the requested RATE')
         attempted=False
@@ -1651,8 +1681,8 @@ class InventureMCU:
         counts={'X':(steps,steps,0,0),'Y':(steps,-steps,0,0),'Z':(0,0,steps,0),
                 'E':(0,0,0,steps),'A':(steps,0,0,0),'B':(0,steps,0,0)}[axis]
         rate=gcmd.get_int('RATE',min(20000,max(1,round(speed*scale))),minval=1,maxval=20000)
-        # Only a negative logical X/Y move heads toward a qualified minimum.
-        # Z contact polarity/geometry is still selected explicitly by STOP_*.
+        # Negative X/Y heads toward its minimum. Directional Z limits are
+        # merged in _motion_execute for both MOVE and raw vector MOTION.
         mask=(1 if axis=='X' else 2) if axis in ('X','Y') and steps<0 else 0
         self._motion_execute(gcmd,action,counts,rate,mask,mask)
 
