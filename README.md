@@ -1,177 +1,105 @@
-# Zortrax Inventure — aktualizacje Orange Pi
+# Zortrax Inventure — CONTROL-R5
 
-Gałąź `orange-pi` udostępnia aktualizacje działającego hosta Klippera.
-Instalator korzysta z tego samego schematu co projekt M300:
-`git pull --ff-only`, następnie `python3 install-orange-pi.py`.
+Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
+CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
+RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
+Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
 
-## Pierwsze pobranie na Orange Pi
-
-```bash
-git clone --depth 1 --single-branch --no-tags --branch orange-pi https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper.git "$HOME/inventure-orange-pi" && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
-```
-
-## Kolejne aktualizacje
+## Aktualizacja Orange Pi
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
-Skrypt wykrywa aktywny katalog `klippy.py` przez działającą usługę, zamiast
-zakładać, że jest to `~/klipper`. Weryfikuje sumy modułów, zachowuje ich kopie,
-zatrzymuje usługę, instaluje zgodne pliki i uruchamia Klippera ponownie.
-Zmienia tylko adapter Inventure, OLED i zgodny moduł transportu UART.
-Zachowuje ustawienia `printer.cfg`, w tym bieżące 750000 baud.
-Ponowne wykonanie dla już zainstalowanej wersji zachowuje pliki i restartuje
-usługę, aby działający Python wczytał aktualny moduł.
-
-Sam odczyt i sprawdzenie planu:
+Pierwsza instalacja, jeśli katalog jeszcze nie istnieje:
 
 ```bash
-python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --check
+git clone --depth 1 --single-branch --no-tags --branch orange-pi https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper.git "$HOME/inventure-orange-pi" && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
-Po instalacji w konsoli Klippera:
+Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje kopie
+modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
+Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
+750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
+`INVENTURE_MCU_CONTROL_R5_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
+
+## Po aktualizacji hosta i jednorazowym wgraniu MCU
 
 ```gcode
 INVENTURE_VERSION
-```
-
-Obecny host: **RC8-MOTOR-R4-XY-REPEAT**. Z wcześniejszym MCU termicznym pozostają
-odczyty i dotychczasowe testy termiczne. Testy silników wymagają MCU z
-`motor_test_abi: 1` lub `2`. Nowe ustawienie drzwi wymaga `motor_test_abi: 2`
-i `door_policy_abi: 1`. `INVENTURE_VERSION` nie rozpoczyna ruchu ani grzania.
-
-## Fabryczna opcja Door lock — testy napędów
-
-MOTOR-R2 uwzględnia odnalezioną w audycie r0323 opcję **Settings → Door lock**.
-Ustawienie dotyczy jednocześnie przednich drzwi PB10 i górnej klapy PE15.
-Po aktualizacji hosta i MCU można użyć menu **Zortrax Inventure → Settings →
-Door lock → Disable door lock** albo konsoli:
-
-```gcode
+INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_MOTOR_TEST MOTOR=A ACTION=START
+INVENTURE_SENSORS
 ```
 
-Po wyłączeniu kontroli można obserwować krótki ruch przy otwartych osłonach.
-Trzymaj ręce poza obszarem ruchu. Odczyty obu czujników zachowują rzeczywisty
-stan; opcja nie zmienia kontroli krańcówek, STOP, limitu impulsów ani heartbeat.
-W tej diagnostycznej aplikacji cewki zamków pozostają zwolnione w obu
-ustawieniach. `ENABLE=1` przywraca wymóg zamknięcia osłon dla testu.
+Oczekiwane: `host_revision` i `mcu_release` = `RC8-CONTROL-R5`,
+`control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
+Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
+`ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
+oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
+
+Wspólny STOP napędów, podajników, grzałek, wyjść serwisowych i zamków:
 
 ```gcode
-INVENTURE_DOOR_POLICY
-INVENTURE_DOOR_POLICY ENABLE=1
+INVENTURE_STOP
 ```
 
-Zmiana jest przyjmowana między testami. Restart MCU lub jego shutdown
-przywraca `ENABLE=1`. Ustawienie nie zapisuje pamięci oryginalnego firmware.
-Przeniesiony warunek to odpowiednik bitu systemowego 3 OEM; dokładne adresy
-i zakres potwierdzenia są opisane w [dokumencie audytu](docs/OEM_DOOR_POLICY.md).
-To wydanie obsługuje ograniczone testy napędów; pełny wydruk i bazowanie nadal
-nie są aktywowane przez tę opcję.
+Chłodzenie wymagane przez temperaturę działa dalej. W SERVICE można od razu
+wybrać następną próbę. STOP po NATIVE zatrzaskuje wyjścia; do ponownego
+uzbrojenia potrzeba `FIRMWARE_RESTART`, aby stare kolejki STEP/PWM nie wznowiły ruchu.
 
-## Aplikacja MCU
+## Pojedyncze próby
 
-Aktualizacje MCU użytkownik dostaje osobno w czacie jako ZIP z plikiem
-`INVENTUR.IVB`, sumami i instrukcją instalacji przez InventureBoot 1.7.
-Instalator hosta nie programuje MCU, nie aktualizuje bootloadera i nie
-zmienia jego ustawienia UART. Nowy host i aplikacja MOTOR-R4 współpracują
-przy 750000 baud; zgodność sprawdza `INVENTURE_VERSION`.
+Poniższe wiersze są osobnymi przykładami. Wybieraj jeden element naraz.
+X/Y mają potwierdzone kierunki. Skale mm oraz kierunki Z/E wymagają dalszego
+pomiaru. Ruchy serwisowe nie ustawiają pozycji ani stanu homingu.
 
-## Dojazd do krańcówek XY — MOTOR-R3
+| Element | Przykład |
+|---|---|
+| X, 1 mm od minimum | `INVENTURE_MOVE AXIS=X DISTANCE=1 SPEED=2` |
+| Y, 1 mm od minimum | `INVENTURE_MOVE AXIS=Y DISTANCE=1 SPEED=2` |
+| Mała próba Z z obserwacją kontaktu dyszy | `INVENTURE_MOVE AXIS=Z STEPS=40 DIR=0 RATE=160 MAX_MS=2000 STOP_MASK=8 STOP_VALUE=0` |
+| E po zwolnieniu toru filamentu | `INVENTURE_MOVE AXIS=E STEPS=48 DIR=0 RATE=160 MAX_MS=2000` |
+| Podajnik kasety 0 | `INVENTURE_FEEDER CHANNEL=0 DIRECTION=0 DURATION_MS=100` |
+| Podajnik kasety 1 | `INVENTURE_FEEDER CHANNEL=1 DIRECTION=0 DURATION_MS=100` |
+| F0, połowa wysterowania | `INVENTURE_OUTPUT CHANNEL=F0 ACTION=SET POWER=50 DURATION=20` |
+| PC9, stałe 75%, próg 50°C | `INVENTURE_OUTPUT CHANNEL=PC9 ACTION=SET POWER=75 DURATION=180 LIMIT=50` |
+| Wyłączenie PC9 | `INVENTURE_OUTPUT CHANNEL=PC9 ACTION=OFF` |
+| Zamek klapy: włącz / zwolnij | `INVENTURE_LOCK CHANNEL=0 VALUE=1` / `INVENTURE_LOCK CHANNEL=0 VALUE=0` |
+| Zamek przedni: włącz / zwolnij | `INVENTURE_LOCK CHANNEL=1 VALUE=1` / `INVENTURE_LOCK CHANNEL=1 VALUE=0` |
+| Stan sterowania i prób | `INVENTURE_CONTROL_STATUS` |
+| Wszystkie odczyty | `INVENTURE_SENSORS` |
 
-Po aktualizacji MCU `INVENTURE_VERSION` powinno pokazać `xy_seek_abi: 1`.
-Włączona polityka drzwi nadal wymaga zamkniętych osłon; dla obserwacji użyj
-istniejącej opcji Door lock lub `INVENTURE_DOOR_POLICY ENABLE=0`.
+`LIMIT` oznacza wyłączenie po przekroczeniu progu, nie zadaną temperaturę.
+Grzałka SERVICE utrzymuje `POWER`, bez wymogu szybkiego przyrostu temperatury.
+Moc, czas, próg i parametry ruchu można zmieniać bez kolejnego wsadu.
+Przykład Z obserwuje PC14. PE12 ma obecnie surowy stan 1 i nie jest jeszcze
+zakwalifikowane mechanicznie; nie zmieniono jego polaryzacji na podstawie tego odczytu.
 
-Najpierw pojedynczy dojazd X:
+## Natywny Klipper
 
-```gcode
-INVENTURE_XY_SEEK AXIS=X ACTION=START
-```
+`INVENTURE_CONTROL MODE=NATIVE` otwiera standardowe STEP/PWM i transport P13.
+SERVICE i NATIVE mają osobnych właścicieli wyjść; po restarcie domyślny tryb
+jest OFF. Dotychczasowe testy R1–R4 pozostają dostępne.
 
-Po zatrzymaniu i raporcie `phase: hit`, `reason: endstop_hit` wykonaj Y:
+R5 dodaje chip `inventure_r5` z aktywną niskim stanem polaryzacją wszystkich
+czterech grzałek i właściwymi sprzętowymi okresami PWM. `Inventure R5 ADC`
+korzysta z dotychczasowego pojedynczego odczytu ośmiu ADC. Host odmawia
+uzbrojenia rozpoznanej natywnej grzałki o niezgodnej polaryzacji lub PWM.
+Dotychczasowy `printer.cfg` nie jest automatycznie przekształcany w konfigurację wydruku.
 
-```gcode
-INVENTURE_XY_SEEK AXIS=Y ACTION=START
-```
+Parametry, piny i konfiguracja: [CONTROL_R5_REFERENCE.md](docs/CONTROL_R5_REFERENCE.md).
+Historia R4: [HOST_R4_HISTORY.md](docs/HOST_R4_HISTORY.md).
 
-Oba STEP są zsynchronizowane zgodnie z homingiem CoreXY OEM. X monitoruje
-PB11, Y monitoruje PC15. Na pierwszy aktywny poziom wejścia MCU wyłącza
-oba STEP i wspólne ENABLE. Nie ma automatycznego cofania ani drugiego najazdu.
-Krańcówka X może pozostać aktywna podczas późniejszego dojazdu Y.
-Nowe zadziałanie drugiej krańcówki przerywa przejazd jako błąd.
+## Sprawdzenie
 
-Rampa od 400 do maksymalnie 3200 par impulsów/s daje nominalnie do 5 mm/s
-przy skali OEM 640 kroków/mm. MCU ogranicza przejazd do 102400 par impulsów
-(160 mm według skali OEM) oraz 40 s. Brak krańcówki kończy się błędem,
-nie stanem sukcesu. Utrata heartbeat, shutdown lub STOP również przerywają ruch.
+Użytkownik potwierdził wcześniej X/Y, dojazd do obu krańcówek oraz odjazd
+z ponownym wolnym kontaktem R4. Jeden taki test na oś nie wyznacza jeszcze
+statystycznej powtarzalności ani pełnych wymiarów pola roboczego.
 
-```gcode
-INVENTURE_XY_SEEK_STOP
-INVENTURE_XY_SEEK ACTION=STATUS
-```
-
-`INVENTURE_MOTOR_TEST_STOP` także przerywa dojazd XY. Startu nie ponawia się
-automatycznie. Test nie ustawia pozycji Klippera ani flagi bazowania.
-Użytkownik określił robocze zero z przodu po lewej; pomiar dotknięcia
-krańcówki potwierdza mechaniczny punkt odniesienia. Offset roboczego zera,
-skala rzeczywista i pełny zakres osi pozostają do kalibracji.
-Źródło limitu 160 mm i kierunków:
-[audyt dojazdu XY](docs/XY_SEEK_OEM_EVIDENCE.md).
-
-## Odjazd 2 mm i wolny ponowny najazd — MOTOR-R4
-
-R3 został potwierdzony na drukarce: oba dojazdy zakończyły się na właściwych
-krańcówkach i zwolniły napędy. R4 zachowuje tę komendę oraz dodaje ograniczoną
-procedurę z `xy_repeat_abi: 1`:
-
-```gcode
-INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_XY_REPEAT AXIS=X ACTION=START
-```
-
-Jedna komenda wykonuje pierwszy dojazd, odjazd 1280 par impulsów (nominalnie
-2 mm), potwierdza co najmniej 5 ms zwolnienia krańcówki i wraca do niej
-z limitem 640 par impulsów/s (nominalnie 1 mm/s). Napędy pozostają włączone
-między etapami. Jeśli wejście jest aktywne już na starcie, pierwszy dojazd
-jest pomijany i rozpoczyna się ograniczony odjazd.
-
-Po zakończeniu X oczekiwane są `phase: hit`, `reason: endstop_hit`,
-`stage: slow_approach`, `switch_release_confirmed: true`, `backoff_steps: 1280`
-i `driver_enabled: false`. Wtedy wykonaj osobno Y:
-
-```gcode
-INVENTURE_XY_REPEAT AXIS=Y ACTION=START
-```
-
-Odczyt oraz STOP:
-
-```gcode
-INVENTURE_XY_REPEAT ACTION=STATUS
-INVENTURE_XY_REPEAT_STOP
-```
-
-Dotychczasowe `INVENTURE_XY_SEEK_STOP` i `INVENTURE_MOTOR_TEST_STOP` też
-zatrzymują tę procedurę. Po końcowym kontakcie napędy są zwalniane.
-Całość ma limit 40 s. Pierwszy najazd zachowuje limit R3 102400 par impulsów;
-odjazd ma dokładnie 1280, a wolny najazd maksymalnie 2560 (nominalnie 4 mm).
-Brak zwolnienia wejścia, zbyt wczesny kontakt, brak ponownego kontaktu,
-nowe zadziałanie innej krańcówki, utrata heartbeat oraz shutdown przerywają próbę.
-
-R4 nie ustawia pozycji ani flagi homed w Klipperze. Podane milimetry nadal
-korzystają ze skali OEM 640 kroków/mm; fizyczną skalę i offset zera potwierdza
-pomiar. Dopiero końcowe raporty kolejnych prób pozwolą ocenić powtarzalność.
-
-## Weryfikacja
-
-```bash
-python3 -m unittest discover -s tests -p 'test_orange_pi*.py' -v
-```
-
-Próby obejmują aktywny katalog RC72, przejście z CHAMBER75-R3, kopie,
-rollback po błędzie startu, przerwanie kopiowania, odmowę nadpisania
-nieznanych zmian, przejście adaptera i OLED z MOTOR-R1, ustawienie polityki
-drzwi i zachowanie konfiguracji. Główne źródła i wcześniejszy
-sposób kompilacji są w gałęzi `main`.
+R5 przeszedł testy hosta, aktualizatora, prawdziwego parsera G-code, kodeka
+ze skompilowanego słownika i rzeczywistego kodu MCU z rejestrami zastępczymi.
+Nowe MCU R5 nie było jeszcze testowane na drukarce. PC4 jest nadal pomiarem
+niezweryfikowanym i domyślnie nie należy do maski zabezpieczeń. Z, podajniki
+i procedury wydruku wymagają kolejnych pojedynczych prób sprzętowych.
+R5 wymaga domyślnie pierwszych siedmiu czujników temperatury.

@@ -9,6 +9,7 @@ on:
       - 'tests/test_orange_pi_door_policy.py'
       - 'tests/test_orange_pi_xy_seek.py'
       - 'tests/test_orange_pi_xy_repeat.py'
+      - 'tests/test_orange_pi_control.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:

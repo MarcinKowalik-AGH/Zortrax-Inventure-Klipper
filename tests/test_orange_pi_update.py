@@ -90,6 +90,13 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),self.original_config)
         self.assertTrue(self.active)
 
+    def test_motor_r4_upgrade_preserves_config_and_reloads_python(self):
+        self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_motor_r4.py').read_bytes())
+        with patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.dest.read_bytes(),(ROOT/'orange_pi/inventure_mcu.py').read_bytes())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+        self.assertTrue(self.active)
+
     def test_dry_run_does_not_stop_service_or_write_files(self):
         with patch('sys.stdout',new=io.StringIO()):update.update(True)
         self.assertEqual(self.dest.read_bytes(),self.old)

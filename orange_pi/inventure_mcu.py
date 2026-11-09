@@ -9,7 +9,27 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-MOTOR-R4-XY-REPEAT'
+HOST_REVISION = 'RC8-CONTROL-R5'
+
+CONTROL_RESPONSE = ('inventure_control_state mode=%c armed=%c active=%c latched=%c '
+    'fault=%c guard_mask=%c reject=%c')
+MOTION_COMMAND = ('inventure_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
+    'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u')
+MOTION_RESPONSE = ('inventure_motion_state run=%u token=%u phase=%c reason=%c reject=%c '
+    'active=%c events=%u elapsed_ms=%u hit=%hu')
+MOTION_DRIVER_RESPONSE = 'inventure_motion_driver run=%u channel=%c planned=%u sent=%u direction=%c'
+OUTPUT_RESPONSE = ('inventure_output_state channel=%c duty=%hu remaining_ms=%u token=%u '
+    'reject=%c reason=%c')
+GUARD_RESPONSE = 'inventure_guard_state sensor=%c enabled=%c min_c=%hi max_c=%hi reject=%c'
+CONTROL_MODES = ('OFF','NATIVE','SERVICE')
+CONTROL_REJECTS = (None,'invalid_request','another_owner_is_busy','mcu_not_ready',
+    'FIRMWARE_RESTART_required_after_native_stop','required_sensor_or_door_interlock')
+MOTION_PHASES = ('idle','running','holding','done','stopped','failed')
+MOTION_REASONS = ('none','completed','stop_input','operator_stop','heartbeat_or_cable_lost',
+    'door_open','maximum_time','mcu_shutdown')
+OUTPUT_REASONS = ('idle','applied','operator_off','duration_finished',
+    'temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown')
+OUTPUT_NAMES = ('F0','F1','F2','F3','F4','F5','T0','T1','PC9','PC8')
 
 XY_SEEK_RESPONSE = ('inventure_xy_seek_state run=%u token=%u axis=%c phase=%c reason=%c '
     'reject=%c steps=%u elapsed_ms=%u enabled=%c endstop_mask=%c hit_mask=%c door_lock_enabled=%c')
@@ -80,6 +100,48 @@ HEAT_SENSOR_RESPONSE = (
 )
 HEAT_TEST_NAMES = ('T0', 'T1', 'PC9', 'PC8')
 HEAT_TEST_PINS = ('PA0', 'PE5', 'PC9', 'PC8')
+
+
+class R5SharedSensor:
+    """Use the board's existing eight ADC readers; never allocate a second ADC."""
+    def __init__(self,config,board):
+        self.printer=config.get_printer();self.board=board
+        self.channel=config.getint('sensor_channel',minval=0,maxval=7)
+        self.minimum=self.maximum=None;self.callback=None;self.failed=False
+        board.adc_subscribers[self.channel].append(self._sample)
+    def setup_minmax(self,minimum,maximum):self.minimum,self.maximum=minimum,maximum
+    def setup_callback(self,callback):self.callback=callback
+    def get_report_time_delta(self):return .2
+    def _sample(self,read_time,temperature):
+        if self.failed:return
+        if (not math.isfinite(temperature) or self.minimum is None
+                or not self.minimum<=temperature<=self.maximum):
+            self.failed=True
+            self.printer.invoke_async_shutdown('Inventure R5 ADC %d out of range'%self.channel)
+        elif self.callback is not None:self.callback(read_time,temperature)
+
+
+class R5FixedPWM:
+    """Native Klipper heater/fan algorithms with the fixed OEM timer backend."""
+    def __init__(self,board,name,physical,ticks,hardware):
+        self.board,self.name,self.physical=board,name,physical
+        self.ticks,self.hardware=ticks,hardware
+    def get_mcu(self):return self.physical.get_mcu()
+    def setup_cycle_time(self,cycle_time,hardware_pwm=False):
+        if not math.isfinite(cycle_time) or abs(cycle_time*120000000-self.ticks)>2:
+            raise self.board.printer.config_error('%s requires pwm_cycle_time %.12g'%(self.name,self.ticks/120000000.))
+        self.physical.setup_cycle_time(self.ticks/120000000.,hardware_pwm=self.hardware)
+    def setup_max_duration(self,value):self.physical.setup_max_duration(value)
+    def setup_start_value(self,start,shutdown):
+        if self.name.startswith('HEATER_') and (start or shutdown):
+            raise self.board.printer.config_error('Inventure heaters require start/shutdown OFF')
+        self.physical.setup_start_value(start,shutdown)
+    def next_aligned_print_time(self,print_time,allow_early=0.):
+        return self.physical.next_aligned_print_time(print_time,allow_early)
+    def set_pwm(self,print_time,value):
+        if not math.isfinite(value) or not 0<=value<=1:
+            raise self.board.printer.command_error('Invalid Inventure native PWM')
+        self.physical.set_pwm(print_time,value)
 
 
 class InventureMCU:
@@ -155,6 +217,13 @@ class InventureMCU:
         self.xy_seek_last = {}
         self.xy_repeat_abi = 0
         self.xy_repeat_last = {}
+        self.control_abi = 0
+        self.control_last = {}
+        self.motion_last = {}
+        self.output_last = {}
+        self.guard_last = {}
+        self.control_token = self.motor_test_token
+        self.native_outputs = {}
 
         table_path = Path(__file__).with_name('inventure_lut.json')
         self.lut = json.loads(table_path.read_text())
@@ -167,6 +236,11 @@ class InventureMCU:
                                      minval=0., maxval=1., range_check_count=0)
                 adc.setup_adc_callback(lambda samples, i=i: self._adc(i, samples))
                 self.adcs.append(adc)
+        # A new chip name prevents obsolete virtual heater polarities from
+        # entering the R5 native path. Existing diagnostic cfg needs no edits.
+        self.printer.lookup_object('pins').register_chip('inventure_r5',self)
+        self.printer.load_object(config,'heaters').add_sensor_factory(
+            'Inventure R5 ADC',lambda c:R5SharedSensor(c,self))
         self.mcu.register_config_callback(self._build_config)
         self.printer.register_event_handler('klippy:ready', self._ready)
         self.printer.register_event_handler('klippy:shutdown', self._shutdown)
@@ -191,6 +265,17 @@ class InventureMCU:
         self.motor_test_timer = self.reactor.register_timer(self._motor_test_tick)
         self.xy_seek_timer = self.reactor.register_timer(self._xy_seek_tick)
         self.xy_repeat_timer = self.reactor.register_timer(self._xy_repeat_tick)
+        self.control_timer = self.reactor.register_timer(self._control_poll)
+        for name, callback in (
+                ('INVENTURE_CONTROL',self.cmd_control),
+                ('INVENTURE_CONTROL_STATUS',self.cmd_control_status),
+                ('INVENTURE_STOP',self.cmd_control_stop),
+                ('INVENTURE_MOTION',self.cmd_motion),
+                ('INVENTURE_MOVE',self.cmd_move),
+                ('INVENTURE_OUTPUT',self.cmd_output),
+                ('INVENTURE_GUARD',self.cmd_guard),
+                ('INVENTURE_SENSORS',self.cmd_sensors)):
+            self.gcode.register_command(name,callback,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -269,6 +354,22 @@ class InventureMCU:
             self.commands['t0_heat'] = self.mcu.lookup_query_command(
                 'inventure_t0_heat_test action=%c', T0_HEAT_RESPONSE)
         self.heat_test_abi = int(self.mcu.get_constants().get('INVENTURE_HEAT_TEST_ABI', 0))
+        self.control_abi = int(self.mcu.get_constants().get('INVENTURE_CONTROL_ABI',0))
+        if getattr(self,'native_outputs',{}) and self.control_abi!=1:
+            raise self.printer.config_error('inventure_r5 native PWM requires the CONTROL-R5 MCU')
+        if self.control_abi == 1:
+            expected_control={'INVENTURE_MOTION_ABI':1,'INVENTURE_OUTPUT_ABI':1,
+                'INVENTURE_CONTROL_MAX_HZ':20000,'INVENTURE_CONTROL_MAX_STEPS':2000000,
+                'INVENTURE_CONTROL_MAX_MS':600000,'INVENTURE_HEAT_BENCH_ONLY':0}
+            if any(int(self.mcu.get_constants().get(k,-1))!=v for k,v in expected_control.items()):
+                raise self.printer.config_error('R5 control MCU limits do not match this host')
+            for key,command,response in (
+                ('control','inventure_control action=%c mode=%c',CONTROL_RESPONSE),
+                ('motion',MOTION_COMMAND,MOTION_RESPONSE),
+                ('motion_driver','inventure_motion_driver_query channel=%c',MOTION_DRIVER_RESPONSE),
+                ('output','inventure_output action=%c channel=%c duty=%hu duration_ms=%u limit_c=%hi token=%u',OUTPUT_RESPONSE),
+                ('guard','inventure_control_guard sensor=%c enabled=%c min_c=%hi max_c=%hi',GUARD_RESPONSE)):
+                self.commands[key]=self.mcu.lookup_query_command(command,response)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
         self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
@@ -1357,6 +1458,10 @@ class InventureMCU:
             'door_policy_abi':getattr(self,'door_policy_abi',0),
             'xy_seek_abi':getattr(self,'xy_seek_abi',0),
             'xy_repeat_abi':getattr(self,'xy_repeat_abi',0),
+            'control_abi':getattr(self,'control_abi',0),
+            'motion_abi':1 if getattr(self,'control_abi',0)==1 else 0,
+            'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
+            'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
             'host_baud':self.p4_boot.get('host_baud'),
@@ -1368,7 +1473,288 @@ class InventureMCU:
             'local_oled':dict(self.local_oled_state),
             'connected':self.connected,
         },sort_keys=True))
+    def setup_pin(self,pin_type,pin_params):
+        name=pin_params['pin']
+        mapping={
+            'HEATER_T0':('PA0',True,5632,True),
+            'HEATER_T1':('PE5',True,12800,True),
+            'HEATER_PC9':('PC9',True,16776960,True),
+            'HEATER_PC8':('PC8',True,16776960,True),
+            'F0':('PB15',False,12000000,False),'F1':('PB14',False,12000000,False),
+            'F2':('PC7',False,12000000,False),'F3':('PC6',False,12000000,False),
+            'F4':('PA1',False,5632,True),'F5':('PD13',False,2096640,True)}
+        if pin_type!='pwm' or name not in mapping or pin_params['invert']:
+            raise self.printer.config_error('Use a noninverted inventure_r5 PWM name')
+        if name in self.native_outputs:raise self.printer.config_error('Duplicate Inventure R5 output '+name)
+        pin,invert,ticks,hardware=mapping[name]
+        desc=('!' if invert else '')+self.mcu_name+':'+pin
+        physical=self.printer.lookup_object('pins').setup_pin('pwm',desc)
+        result=R5FixedPWM(self,name,physical,ticks,hardware)
+        self.native_outputs[name]=result
+        return result
+
+    def _native_preflight(self):
+        printer=getattr(self,'printer',None)
+        if printer is None:return
+        for name,obj in printer.lookup_objects():
+            out=getattr(obj,'mcu_pwm',None)
+            physical=getattr(out,'physical',out)
+            pin=getattr(physical,'_pin',None)
+            if pin in HEAT_TEST_PINS and physical.get_mcu() is self.mcu:
+                if not getattr(physical,'_invert',False) or not getattr(physical,'_hardware_pwm',False):
+                    raise ValueError('Native heater '+name+' requires inventure_r5 fixed active-LOW hardware PWM')
+
+    @staticmethod
+    def _control_validate(p, limits):
+        if any(type(p.get(k)) is not int or not low<=p[k]<=high
+               for k,(low,high) in limits.items()):
+            raise ValueError('Invalid R5 MCU response')
+        return p
+
+    def _control_send(self, key, args, mutate=False):
+        command=self.commands.get(key)
+        if command is None:
+            raise ValueError('Install the RC8-CONTROL-R5 MCU application first')
+        if mutate and not self.connected:
+            raise ValueError('MCU is disconnected')
+        return self._thermal_query_send(command,args,start=mutate)
+
+    def _control_next_token(self):
+        self.control_token=(getattr(self,'control_token',0)+1)&0xffffffff or 1
+        return self.control_token
+
+    def _control_query(self, action=0, mode=0):
+        p=self._control_send('control',[action,mode],mutate=action==1 and mode!=0)
+        self._control_validate(p,{'mode':(0,2),'armed':(0,1),'active':(0,1),
+            'latched':(0,1),'fault':(0,255),'guard_mask':(0,255),'reject':(0,5)})
+        if bool(p['armed']) != (p['mode']==1 and not p['latched'] and not p['fault']):
+            raise ValueError('Invalid R5 MCU ARM response')
+        self.control_last=dict(p,mode=CONTROL_MODES[p['mode']],reject=CONTROL_REJECTS[p['reject']])
+        return self.control_last
+
+    def _control_service(self):
+        state=self._control_query()
+        if state['mode']!='SERVICE' or state['latched'] or state['fault']:
+            raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
+
+    def _control_abort(self):
+        try: self._control_query(2)
+        except Exception: logging.exception('R5 STOP response unavailable; MCU heartbeat remains authoritative')
+
+    def _control_schedule(self):
+        self.reactor.update_timer(self.control_timer,self.reactor.monotonic()+.5)
+
+    def cmd_control(self,gcmd):
+        mode=gcmd.get('MODE',None)
+        if mode is not None:
+            mode=str(mode).upper()
+            if mode not in CONTROL_MODES: raise gcmd.error('MODE must be OFF, SERVICE or NATIVE')
+        try:
+            if mode=='NATIVE':self._native_preflight()
+            state=self._control_query(0 if mode is None else 1,0 if mode is None else CONTROL_MODES.index(mode))
+        except Exception as exc:
+            if mode is not None: self._control_abort()
+            raise gcmd.error(str(exc))
+        if state['reject']: raise gcmd.error(state['reject'])
+        gcmd.respond_info('V9_CONTROL '+json.dumps(state,sort_keys=True))
+        if state['mode']!='OFF': self._control_schedule()
+
+    def cmd_control_status(self,gcmd):
+        try: state=self._control_query()
+        except Exception as exc: raise gcmd.error(str(exc))
+        gcmd.respond_info('V9_CONTROL '+json.dumps(dict(state,
+            motion=getattr(self,'motion_last',{}),outputs=getattr(self,'output_last',{}),
+            guards=getattr(self,'guard_last',{})),sort_keys=True))
+
+    def cmd_control_stop(self,gcmd):
+        try: state=self._control_query(2)
+        except Exception as exc: raise gcmd.error(str(exc))
+        self.motion_last={};self.output_last={}
+        self.reactor.update_timer(self.control_timer,self.reactor.NEVER)
+        gcmd.respond_info('V9_CONTROL '+json.dumps(state,sort_keys=True))
+
+    def _motion_query(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
+                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0):
+        directions=sum(1<<i for i,n in enumerate(counts) if n>0)
+        token=self._control_next_token() if action==1 else 0
+        p=self._control_send('motion',[action,directions,*[abs(n) for n in counts],
+            rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token],mutate=action==1)
+        self._control_validate(p,{'run':(0,0xffffffff),'token':(0,0xffffffff),'phase':(0,5),
+            'reason':(0,7),'reject':(0,5),'active':(0,1),'events':(0,2000000),
+            'elapsed_ms':(0,600100),'hit':(0,65535)})
+        if p['reject']:
+            return dict(p,reject=CONTROL_REJECTS[p['reject']])
+        if bool(p['active'])!=(p['phase'] in (1,2)) or (action==1 and p['token']!=token):
+            raise ValueError('Invalid R5 motion ownership response')
+        drivers={}
+        for i,name in enumerate(('A','B','Z','E')):
+            row=self._control_send('motion_driver',[i])
+            self._control_validate(row,{'run':(0,0xffffffff),'channel':(0,3),
+                'planned':(0,2000000),'sent':(0,2000000),'direction':(0,1)})
+            if row['run']!=p['run'] or row['channel']!=i or row['sent']>row['planned']:
+                raise ValueError('R5 motion driver response belongs to a different run')
+            if action==1 and (row['planned']!=abs(counts[i]) or row['direction']!=int(counts[i]>0)):
+                raise ValueError('R5 motion driver parameters differ from the request')
+            drivers[name]={k:row[k] for k in ('planned','sent','direction')}
+        self.motion_last=dict(p,phase=MOTION_PHASES[p['phase']],reason=MOTION_REASONS[p['reason']],
+            reject=None,drivers=drivers,elapsed_s=round(p['elapsed_ms']/1000.,3),
+            establishes_position=False)
+        return self.motion_last
+
+    def _motion_execute(self,gcmd,action,counts=(0,0,0,0),rate=400,stop_mask=0,stop_value=0):
+        pulse=gcmd.get_int('PULSE_US',10,minval=2,maxval=100)
+        max_ms=gcmd.get_int('MAX_MS',30000,minval=1,maxval=600000)
+        hold=gcmd.get_int('HOLD_MS',0,minval=0,maxval=60000)
+        stop_mask=gcmd.get_int('STOP_MASK',stop_mask,minval=0,maxval=65535)
+        stop_value=gcmd.get_int('STOP_VALUE',stop_value,minval=0,maxval=65535)
+        if action==1 and (not any(counts) or max(map(abs,counts))>2000000 or pulse+2>1000000//rate):
+            raise gcmd.error('Invalid counts or pulse width for the requested RATE')
+        attempted=False
+        try:
+            if action==1:self._control_service()
+            attempted=action==1
+            state=self._motion_query(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold)
+        except Exception as exc:
+            if attempted:self._control_abort()
+            raise gcmd.error(str(exc))
+        if state['reject']:raise gcmd.error(state['reject'])
+        gcmd.respond_info('V9_MOTION '+json.dumps(state,sort_keys=True))
+        if state['active']:self._control_schedule()
+
+    @staticmethod
+    def _control_action(gcmd):
+        action=str(gcmd.get('ACTION','START')).upper()
+        if action not in ('START','STATUS','STOP'):raise gcmd.error('ACTION must be START, STATUS or STOP')
+        return {'STATUS':0,'START':1,'STOP':2}[action]
+
+    def cmd_motion(self,gcmd):
+        action=self._control_action(gcmd)
+        counts=tuple(gcmd.get_int(n,0,minval=-2000000,maxval=2000000) for n in ('A','B','Z','E'))
+        rate=gcmd.get_int('RATE',400,minval=1,maxval=20000)
+        self._motion_execute(gcmd,action,counts,rate)
+
+    def cmd_move(self,gcmd):
+        action=self._control_action(gcmd)
+        if action!=1:return self._motion_execute(gcmd,action)
+        axis=str(gcmd.get('AXIS','X')).upper()
+        if axis not in ('X','Y','Z','E','A','B'):raise gcmd.error('AXIS must be X, Y, Z, E, A or B')
+        scale={'X':640,'Y':640,'A':640,'B':640,'Z':802,'E':960}[axis]
+        try:
+            distance=float(gcmd.get('DISTANCE',1.))
+            speed=float(gcmd.get('SPEED',1.))
+            if not math.isfinite(distance) or not math.isfinite(speed) or speed<=0:raise ValueError()
+        except (TypeError,ValueError):raise gcmd.error('DISTANCE and positive SPEED must be finite numbers')
+        steps=gcmd.get_int('STEPS',round(distance*scale),minval=-2000000,maxval=2000000)
+        if gcmd.get('DIR',None) is not None:
+            if axis in ('X','Y'):raise gcmd.error('DIR override is for A, B, Z or E; use signed DISTANCE for X/Y')
+            steps=abs(steps)*(1 if gcmd.get_int('DIR',minval=0,maxval=1) else -1)
+        counts={'X':(steps,steps,0,0),'Y':(steps,-steps,0,0),'Z':(0,0,steps,0),
+                'E':(0,0,0,steps),'A':(steps,0,0,0),'B':(0,steps,0,0)}[axis]
+        rate=gcmd.get_int('RATE',min(20000,max(1,round(speed*scale))),minval=1,maxval=20000)
+        # Only a negative logical X/Y move heads toward a qualified minimum.
+        # Z contact polarity/geometry is still selected explicitly by STOP_*.
+        mask=(1 if axis=='X' else 2) if axis in ('X','Y') and steps<0 else 0
+        self._motion_execute(gcmd,action,counts,rate,mask,mask)
+
+    def _output_query(self,channel,action=0,duty=0,duration=0,limit=0):
+        token=self._control_next_token() if action==1 else 0
+        p=self._control_send('output',[action,channel,duty,duration,limit,token],mutate=action==1)
+        self._control_validate(p,{'channel':(0,9),'duty':(0,256),'remaining_ms':(0,600000),
+            'token':(0,0xffffffff),'reject':(0,5),'reason':(0,6)})
+        if p['channel']!=channel:raise ValueError('R5 output channel mismatch')
+        state=dict(p,channel=OUTPUT_NAMES[channel],power_pct=round(p['duty']*100/256.,2),
+            reason=OUTPUT_REASONS[p['reason']],reject=CONTROL_REJECTS[p['reject']])
+        if not state['reject'] and action==1 and p['token']!=token:
+            raise ValueError('R5 output token mismatch')
+        self.output_last[OUTPUT_NAMES[channel]]=state
+        return state
+
+    def cmd_output(self,gcmd):
+        name=str(gcmd.get('CHANNEL','')).upper()
+        if name not in OUTPUT_NAMES:raise gcmd.error('CHANNEL must be F0..F5, T0, T1, PC9 or PC8')
+        channel=OUTPUT_NAMES.index(name);act=str(gcmd.get('ACTION','STATUS')).upper()
+        if act not in ('SET','ON','OFF','STOP','STATUS'):raise gcmd.error('ACTION must be SET, OFF or STATUS')
+        action={'SET':1,'ON':1,'OFF':2,'STOP':2,'STATUS':0}[act]
+        try:
+            power=float(gcmd.get('POWER',0.))
+            duration_s=float(gcmd.get('DURATION',20. if channel<8 else 180.))
+            if not math.isfinite(power) or not 0<=power<=100 or not math.isfinite(duration_s) or not .001<=duration_s<=600:
+                raise ValueError()
+        except (TypeError,ValueError):raise gcmd.error('POWER must be 0..100 and DURATION .001..600 seconds')
+        limit=gcmd.get_int('LIMIT',45 if channel<8 else 50,minval=0,maxval=310)
+        if action==1 and power==0:action=2
+        if action==1 and channel>=6 and limit<40:raise gcmd.error('Heaters require LIMIT>=40')
+        attempted=False
+        try:
+            if action==1:self._control_service()
+            attempted=action==1
+            state=self._output_query(channel,action,round(power*256/100.),round(duration_s*1000),limit)
+        except Exception as exc:
+            if attempted:self._control_abort()
+            raise gcmd.error(str(exc))
+        if state['reject']:raise gcmd.error(state['reject'])
+        gcmd.respond_info('V9_OUTPUT '+json.dumps(state,sort_keys=True))
+        if state['duty']:self._control_schedule()
+
+    def cmd_guard(self,gcmd):
+        name=str(gcmd.get('SENSOR','')).upper()
+        aliases={s.upper():i for i,s in enumerate(self.ADC_NAMES)}
+        aliases.update({pin:i for i,pin in enumerate(self.ADC_PINS)})
+        if name not in aliases:raise gcmd.error('SENSOR must be an ADC pin or sensor name')
+        if gcmd.get('ENABLE',None) is None:
+            raise gcmd.error('Use explicit ENABLE=0/1 MIN=-20 MAX=...; INVENTURE_CONTROL_STATUS shows cached guards')
+        i=aliases[name];enabled=gcmd.get_int('ENABLE',minval=0,maxval=1)
+        lo=gcmd.get_int('MIN',-20,minval=-30,maxval=309)
+        hi=gcmd.get_int('MAX',(310,310,150,150,150,100,100,190)[i],minval=-29,maxval=310)
+        if hi<=lo:raise gcmd.error('MAX must exceed MIN')
+        try:
+            p=self._control_send('guard',[i,enabled,lo,hi],mutate=True)
+            self._control_validate(p,{'sensor':(0,7),'enabled':(0,1),'min_c':(-30,309),
+                'max_c':(-29,310),'reject':(0,2)})
+            if p['sensor']!=i:raise ValueError('R5 guard sensor mismatch')
+        except Exception as exc:raise gcmd.error(str(exc))
+        if p['reject']:raise gcmd.error(('invalid_guard_limits','stop_active_outputs_before_changing_guards')[p['reject']-1])
+        self.guard_last[self.ADC_PINS[i]]=p
+        gcmd.respond_info('V9_GUARD '+json.dumps(dict(p,pin=self.ADC_PINS[i],
+            mandatory_for_heating=i<5),sort_keys=True))
+
+    def cmd_sensors(self,gcmd):
+        # Full current telemetry, including raw PC4, six tach/pulse counters
+        # and both RFID UARTs. Queries never energize outputs.
+        if self.connected:
+            self.commands['query'].send([]);self.commands['inputs'].send([])
+            for i in range(2):self.commands['uart_status'].send([i])
+        self.cmd_panel_io(gcmd)
+        now=self.reactor.monotonic()
+        fresh=self.connected and self.status_received is not None and 0<=now-self.status_received<.75
+        gcmd.respond_info('V9_SENSORS '+json.dumps({'board_age_s':None if self.status_received is None else now-self.status_received,
+            'counters':{str(i):self.status.get('p%d'%i) if fresh else None for i in range(6)},
+            'rfid_uart':self.uart_status,'rfid_rx_overruns':self.rfid_overruns,
+            'unqualified_temperature_pin':'PC4','z_inputs_physically_qualified':False},sort_keys=True))
+
+    def _control_poll(self,eventtime):
+        if not self.connected:return self.reactor.NEVER
+        try:
+            state=self._control_query()
+            if getattr(self,'motion_last',{}).get('active'):
+                motion=self._motion_query()
+                self.gcode.respond_info('V9_MOTION '+json.dumps(motion,sort_keys=True))
+            for name,row in list(getattr(self,'output_last',{}).items()):
+                if row.get('duty'):
+                    updated=self._output_query(OUTPUT_NAMES.index(name))
+                    if not updated['duty']:self.gcode.respond_info('V9_OUTPUT '+json.dumps(updated,sort_keys=True))
+            return eventtime+.5 if state['mode']!='OFF' else self.reactor.NEVER
+        except Exception:
+            self._control_abort();logging.exception('R5 control polling failed; outputs stopped')
+            return self.reactor.NEVER
+
     def _require_permission(self, gcmd):
+        if 'control' in self.commands:
+            try:
+                state=self._control_query()
+                if state['mode'] in ('SERVICE','NATIVE') and not state['fault'] and not state['latched']:return
+            except Exception as exc:raise gcmd.error(str(exc))
+            raise gcmd.error('Select INVENTURE_CONTROL MODE=SERVICE or NATIVE first')
         if not self.allow_actuators:
             raise gcmd.error('Actuator tests disabled: allow_actuators=False. Bench qualification is required.')
     def cmd_arm(self, gcmd):
@@ -1386,19 +1772,21 @@ class InventureMCU:
         if len(data)>48: raise gcmd.error('At most 48 bytes per request; higher-level framing is separate')
         self.commands['uart'].send([i,data])
     def cmd_feeder(self, gcmd):
-        self._require_permission(gcmd)
-        filament=self.printer.lookup_object('inventure_filament',None)
-        if filament is not None and filament.enabled:raise gcmd.error('P13 owns feeder transport; use dedicated filament commands')
         i=gcmd.get_int('CHANNEL',minval=0,maxval=1)
         direction=gcmd.get_int('DIRECTION',1,minval=0,maxval=1)
         duration=gcmd.get_int('DURATION_MS',0,minval=0,maxval=1500)
+        if duration:self._require_permission(gcmd)
+        filament=self.printer.lookup_object('inventure_filament',None)
+        if filament is not None and filament.enabled:raise gcmd.error('P13 owns feeder transport; use dedicated filament commands')
+        if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
     def cmd_lock(self, gcmd):
-        self._require_permission(gcmd)
-        filament=self.printer.lookup_object('inventure_filament',None)
-        if filament is not None and filament.running and not filament.in_scope():raise gcmd.error('P13 owns lock state during filament procedure')
         i=gcmd.get_int('CHANNEL',minval=0,maxval=1)
         value=gcmd.get_int('VALUE',minval=0,maxval=1)
+        if value:self._require_permission(gcmd)
+        filament=self.printer.lookup_object('inventure_filament',None)
+        if filament is not None and filament.running and not filament.in_scope():raise gcmd.error('P13 owns lock state during filament procedure')
+        if self.connected:self.commands['heartbeat'].send([])
         self.commands['lock'].send([i,value])
 
 def load_config(config): return InventureMCU(config)
