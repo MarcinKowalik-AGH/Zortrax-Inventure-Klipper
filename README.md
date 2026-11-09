@@ -36,7 +36,7 @@ Po instalacji w konsoli Klippera:
 INVENTURE_VERSION
 ```
 
-Obecny host: **RC8-MOTOR-R2-DOOR-POLICY**. Z wcześniejszym MCU termicznym pozostają
+Obecny host: **RC8-MOTOR-R3-XY-SEEK**. Z wcześniejszym MCU termicznym pozostają
 odczyty i dotychczasowe testy termiczne. Testy silników wymagają MCU z
 `motor_test_abi: 1` lub `2`. Nowe ustawienie drzwi wymaga `motor_test_abi: 2`
 i `door_policy_abi: 1`. `INVENTURE_VERSION` nie rozpoczyna ruchu ani grzania.
@@ -76,8 +76,50 @@ nie są aktywowane przez tę opcję.
 Aktualizacje MCU użytkownik dostaje osobno w czacie jako ZIP z plikiem
 `INVENTUR.IVB`, sumami i instrukcją instalacji przez InventureBoot 1.7.
 Instalator hosta nie programuje MCU, nie aktualizuje bootloadera i nie
-zmienia jego ustawienia UART. Nowy host i aplikacja MOTOR-R2 współpracują
+zmienia jego ustawienia UART. Nowy host i aplikacja MOTOR-R3 współpracują
 przy 750000 baud; zgodność sprawdza `INVENTURE_VERSION`.
+
+## Dojazd do krańcówek XY — MOTOR-R3
+
+Po aktualizacji MCU `INVENTURE_VERSION` powinno pokazać `xy_seek_abi: 1`.
+Włączona polityka drzwi nadal wymaga zamkniętych osłon; dla obserwacji użyj
+istniejącej opcji Door lock lub `INVENTURE_DOOR_POLICY ENABLE=0`.
+
+Najpierw pojedynczy dojazd X:
+
+```gcode
+INVENTURE_XY_SEEK AXIS=X ACTION=START
+```
+
+Po zatrzymaniu i raporcie `phase: hit`, `reason: endstop_hit` wykonaj Y:
+
+```gcode
+INVENTURE_XY_SEEK AXIS=Y ACTION=START
+```
+
+Oba STEP są zsynchronizowane zgodnie z homingiem CoreXY OEM. X monitoruje
+PB11, Y monitoruje PC15. Na pierwszy aktywny poziom wejścia MCU wyłącza
+oba STEP i wspólne ENABLE. Nie ma automatycznego cofania ani drugiego najazdu.
+Krańcówka X może pozostać aktywna podczas późniejszego dojazdu Y.
+Nowe zadziałanie drugiej krańcówki przerywa przejazd jako błąd.
+
+Rampa od 400 do maksymalnie 3200 par impulsów/s daje nominalnie do 5 mm/s
+przy skali OEM 640 kroków/mm. MCU ogranicza przejazd do 102400 par impulsów
+(160 mm według skali OEM) oraz 40 s. Brak krańcówki kończy się błędem,
+nie stanem sukcesu. Utrata heartbeat, shutdown lub STOP również przerywają ruch.
+
+```gcode
+INVENTURE_XY_SEEK_STOP
+INVENTURE_XY_SEEK ACTION=STATUS
+```
+
+`INVENTURE_MOTOR_TEST_STOP` także przerywa dojazd XY. Startu nie ponawia się
+automatycznie. Test nie ustawia pozycji Klippera ani flagi bazowania.
+Użytkownik określił robocze zero z przodu po lewej; pomiar dotknięcia
+krańcówki potwierdza mechaniczny punkt odniesienia. Offset roboczego zera,
+skala rzeczywista i pełny zakres osi pozostają do kalibracji.
+Źródło limitu 160 mm i kierunków:
+[audyt dojazdu XY](docs/XY_SEEK_OEM_EVIDENCE.md).
 
 ## Weryfikacja
 

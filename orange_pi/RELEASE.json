@@ -1,21 +1,30 @@
 {
-  "host_revision": "RC8-MOTOR-R2-DOOR-POLICY",
-  "host_module_sha256": "8f5fd638239e0127f6b1a2a712d7fa7acec21c0f0586d10b68716d20713181e8",
+  "host_revision": "RC8-MOTOR-R3-XY-SEEK",
+  "host_module_sha256": "def66fc2faaa9aa07a4e5631c063e2da40fecb91e9a319edaeb906b504ac8997",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
   "firmware_for_motor_tests": {
     "bootloader": "InventureBoot 1.7",
     "motor_test_abi": 2,
-    "ivb_sha256": "5d05f5c9532d94b5759b2d5e04d4d3081b430d979325172ba1f83445eaa90627",
+    "ivb_sha256": "3c0057ef081349f944b744606a92c08f343b08b22e862b87a4b990ef360f27f8",
     "distribution": "ZIP attached in the ChatGPT conversation",
-    "door_policy_abi": 1
+    "door_policy_abi": 1,
+    "xy_seek_abi": 1
   },
-  "verified_tests": 16,
-  "previous_host_commit": "46e1b6f6fc338ae11f85c098ee583d1980621289",
+  "verified_tests": 21,
+  "previous_host_commit": "1991ffbc4cc605586d2c7132a5a7240eee105cb7",
   "oem_door_policy": {
     "source_audit": "2026-10-02 external/doors/fans/thermistors, section 4",
     "disable_bit": 3,
     "default_enabled": true,
     "scope": "bounded_motor_tests"
+  },
+  "xy_seek": {
+    "abi": 1,
+    "maximum_steps_each_motor": 102400,
+    "maximum_hz": 3200,
+    "maximum_ms": 40000,
+    "nominal_maximum_mm": 160,
+    "native_homed_set": false
   }
 }

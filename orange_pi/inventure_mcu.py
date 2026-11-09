@@ -9,7 +9,16 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-MOTOR-R2-DOOR-POLICY'
+HOST_REVISION = 'RC8-MOTOR-R3-XY-SEEK'
+
+XY_SEEK_RESPONSE = ('inventure_xy_seek_state run=%u token=%u axis=%c phase=%c reason=%c '
+    'reject=%c steps=%u elapsed_ms=%u enabled=%c endstop_mask=%c hit_mask=%c door_lock_enabled=%c')
+XY_SEEK_PHASES = ('idle','seeking','hit','stopped','failed')
+XY_SEEK_REASONS = ('none','endstop_hit','endstop_already_active','operator_stop',
+    'heartbeat_lost','mcu_shutdown','door_open','heat_busy','maximum_time',
+    'endstop_not_found_within_travel','unexpected_other_endstop')
+XY_SEEK_REJECTS = (None,'another_test_running','mcu_not_ready',
+    'close_front_door_and_lid','heat_or_cooldown_running','invalid_request')
 
 MOTOR_TEST_RESPONSE = ('inventure_motor_state run=%u token=%u motor=%c direction=%c '
     'phase=%c reason=%c reject=%c forward=%hu returned=%hu planned=%hu enabled=%c')
@@ -137,6 +146,9 @@ class InventureMCU:
         self.motor_test_token = int(self.reactor.monotonic()*1000000) & 0xffffffff
         self.door_policy_abi = 0
         self.door_policy_last = {}
+        self.xy_seek_abi = 0
+        self.xy_seek_token = self.motor_test_token
+        self.xy_seek_last = {}
 
         table_path = Path(__file__).with_name('inventure_lut.json')
         self.lut = json.loads(table_path.read_text())
@@ -171,6 +183,9 @@ class InventureMCU:
         self.t0_heat_timer = self.reactor.register_timer(self._t0_heat_tick)
         self.sensor_test_timer = self.reactor.register_timer(self._sensor_test_tick)
         self.motor_test_timer = self.reactor.register_timer(self._motor_test_tick)
+        self.xy_seek_timer = self.reactor.register_timer(self._xy_seek_tick)
+        self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_XY_SEEK_STOP',self.cmd_xy_seek_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_MOTOR_TEST', self.cmd_motor_test,
                                     when_not_ready=True)
         self.gcode.register_command('INVENTURE_MOTOR_TEST_STOP', self.cmd_motor_test_stop,
@@ -247,6 +262,16 @@ class InventureMCU:
         self.heat_test_abi = int(self.mcu.get_constants().get('INVENTURE_HEAT_TEST_ABI', 0))
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
+        self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
+        if self.xy_seek_abi == 1:
+            expected_seek={'INVENTURE_XY_SEEK_MAX_STEPS':102400,'INVENTURE_XY_SEEK_MAX_HZ':3200,
+                           'INVENTURE_XY_SEEK_MAX_MS':40000,'INVENTURE_XY_SEEK_X_DIR_MASK':0,
+                           'INVENTURE_XY_SEEK_Y_DIR_MASK':2}
+            if (self.motor_test_abi != 2 or self.door_policy_abi != 1
+                or any(int(self.mcu.get_constants().get(k,-1))!=v for k,v in expected_seek.items())):
+                raise self.printer.config_error('XY seek MCU limits/directions do not match this host')
+            self.commands['xy_seek'] = self.mcu.lookup_query_command(
+                'inventure_xy_seek action=%c axis=%c token=%u',XY_SEEK_RESPONSE)
         if self.door_policy_abi == 1:
             if int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_DISABLE_BIT', -1)) != 3:
                 raise self.printer.config_error('Door policy MCU flag does not match this host')
@@ -704,6 +729,71 @@ class InventureMCU:
             return self.reactor.NEVER
         return eventtime + 1. if state['phase'] in ('heating', 'cooling') else self.reactor.NEVER
 
+    def _xy_seek_query(self,action=0,axis=0):
+        wire=self.commands.get('xy_seek')
+        if wire is None:raise ValueError('XY approach requires the RC8-MOTOR-R3-XY-SEEK MCU application')
+        if action == 1:
+            if not self.connected:raise ValueError('MCU is not connected')
+            self.xy_seek_token=(self.xy_seek_token+1)&0xffffffff or 1
+        token=self.xy_seek_token if action==1 else 0
+        p=self._thermal_query_send(wire,[action,axis,token],start=action==1)
+        bounds={'run':0xffffffff,'token':0xffffffff,'axis':1,'phase':4,'reason':10,'reject':5,
+                'steps':102400,'elapsed_ms':0xffffffff,'enabled':1,'endstop_mask':3,'hit_mask':3,
+                'door_lock_enabled':1}
+        if any(type(p.get(k)) is not int or not 0<=p[k]<=v for k,v in bounds.items()):
+            raise ValueError('Invalid MCU XY approach response')
+        if (p['enabled'] != int(p['phase']==1)
+            or (p['phase']==2 and (p['reason'] not in (1,2) or not p['hit_mask']&(1<<p['axis'])))
+            or (action==1 and not p['reject'] and (p['token']!=token or p['axis']!=axis))):
+            raise ValueError('Inconsistent MCU XY approach result or token')
+        state=dict(run=p['run'],token=p['token'],axis=('X','Y')[p['axis']],
+            phase=XY_SEEK_PHASES[p['phase']],reason=XY_SEEK_REASONS[p['reason']],
+            reject=XY_SEEK_REJECTS[p['reject']],steps_each_motor=p['steps'],
+            elapsed_s=round(p['elapsed_ms']/1000.,3),driver_enabled=bool(p['enabled']),
+            x_endstop=bool(p['endstop_mask']&1),y_endstop=bool(p['endstop_mask']&2),
+            hit_mask=p['hit_mask'],door_lock_enabled=bool(p['door_lock_enabled']),
+            endstop_pin=('PB11','PC15')[p['axis']],dir_a=0,dir_b=p['axis'],
+            step_pins=['PA7','PA6'],pulse_hz_max=3200,pulse_high_us=100,
+            maximum_steps_each_motor=102400,maximum_duration_s=40,
+            oem_scale_steps_per_mm=640,maximum_travel_nominal_mm=160,
+            distance_nominal_mm=round(p['steps']/640.,4),
+            establishes_position=False,automatic_retract=False)
+        self.xy_seek_last=state
+        return state
+
+    def cmd_xy_seek(self,gcmd):
+        action=gcmd.get('ACTION','START').upper();name=gcmd.get('AXIS','X').upper()
+        if action not in ('START','STOP','STATUS') or name not in ('X','Y'):
+            raise gcmd.error('Use AXIS=X or Y and ACTION=START, STOP or STATUS')
+        try:state=self._xy_seek_query({'STATUS':0,'START':1,'STOP':2}[action],int(name=='Y'))
+        except Exception as exc:
+            if action=='START' and 'xy_seek' in self.commands:
+                try:self.commands['xy_seek'].send([2,0,0])
+                except Exception:logging.exception('XY STOP failed; MCU heartbeat and limits own stopping')
+            raise gcmd.error(str(exc))
+        gcmd.respond_info('V9_XY_SEEK '+json.dumps(state,sort_keys=True))
+        self.reactor.update_timer(self.xy_seek_timer,self.reactor.monotonic()+.5
+                                  if state['driver_enabled'] else self.reactor.NEVER)
+        if state['reject']:raise gcmd.error(state['reject'])
+
+    def cmd_xy_seek_stop(self,gcmd):
+        try:state=self._xy_seek_query(2)
+        except Exception as exc:raise gcmd.error(str(exc))
+        self.reactor.update_timer(self.xy_seek_timer,self.reactor.NEVER)
+        gcmd.respond_info('V9_XY_SEEK '+json.dumps(state,sort_keys=True))
+
+    def _xy_seek_tick(self,eventtime):
+        if not self.connected:return self.reactor.NEVER
+        try:
+            state=self._xy_seek_query()
+            self.gcode.respond_info('V9_XY_SEEK '+json.dumps(state,sort_keys=True))
+        except Exception:
+            logging.exception('XY approach read failed; requesting STOP')
+            try:self.commands['xy_seek'].send([2,0,0])
+            except Exception:logging.exception('XY STOP failed; MCU owns stopping')
+            return self.reactor.NEVER
+        return eventtime+.5 if state['driver_enabled'] else self.reactor.NEVER
+
     def _door_policy_query(self, enabled=None):
         wire=self.commands.get('door_policy')
         if wire is None:
@@ -1056,6 +1146,7 @@ class InventureMCU:
                     heat_test_abi=self.heat_test_abi,
                     motor_test_abi=getattr(self,'motor_test_abi',0),
                     door_policy_abi=getattr(self,'door_policy_abi',0),
+                    xy_seek_abi=getattr(self,'xy_seek_abi',0),
                     door_policy=dict(getattr(self,'door_policy_last',{})),
                     raw_adc=list(self.raw_adc), rfid_host_overruns=list(self.rfid_overruns),
                     adc_dispatch='reactor',fans=[dict(f) for f in self.fans],
@@ -1177,6 +1268,7 @@ class InventureMCU:
             'heat_test_abi':getattr(self,'heat_test_abi',0),
             'motor_test_abi':getattr(self,'motor_test_abi',0),
             'door_policy_abi':getattr(self,'door_policy_abi',0),
+            'xy_seek_abi':getattr(self,'xy_seek_abi',0),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
             'host_baud':self.p4_boot.get('host_baud'),
