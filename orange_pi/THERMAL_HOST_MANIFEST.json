@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R6-RETRACT",
+  "release": "RC8-CONTROL-R6-T1",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207",
+  "module_sha256": "da971f5c9196cef9f981095b2a19c6fd378f6e3c92048d8ce0e89ba1e8f93a1c",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -27,9 +27,10 @@
     "0e0aa574c47748647e4f4d713508fd1bd299a0b8200e46eca44ccd46a118e255",
     "b733ef5df40002a18f0e9845eebeca5aaca39b71bd97c17a8027fadae7b24bbe",
     "05d8b4a28a9056d9db39cbc275c3ad02bbe58702c03975b31b56db0e9e2bf7e2",
-    "387eef6866228cf57ef1accfa6b9517c57b420abadd8fe07e4a2b112d1a6fc57"
+    "387eef6866228cf57ef1accfa6b9517c57b420abadd8fe07e4a2b112d1a6fc57",
+    "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207"
   ],
-  "host_revision": "RC8-CONTROL-R6-RETRACT",
+  "host_revision": "RC8-CONTROL-R6-T1",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -142,7 +143,33 @@
     "stream_renewal_s": 0.25,
     "old_MCU_explicit_SMOOTH_1_refuses_before_heating": true,
     "default_total_E_steps": 171800,
-    "smooth_requires_separate_MCU_upgrade": true
+    "smooth_requires_separate_MCU_upgrade": true,
+    "default_tool": "T0",
+    "supported_tools": [
+      "T0",
+      "T1"
+    ],
+    "directions_by_tool": {
+      "T0": {
+        "channel": 0,
+        "E_feed": 0,
+        "E_retract": 1,
+        "cassette_feed": 1,
+        "cassette_retract": 0
+      },
+      "T1": {
+        "channel": 1,
+        "E_feed": 1,
+        "E_retract": 0,
+        "cassette_feed": 1,
+        "cassette_retract": 0
+      }
+    },
+    "T1_direction_evidence": "docs/evidence/T1_E_DIRECTION_R0323_2026-11-10.json",
+    "T1_distance_basis": "provisional reuse of T0 171800-step budget; not measured T1 path",
+    "T1_physical_joint_test": "pending first operator trial",
+    "automatic_tool_switch": false,
+    "mechanical_tool_selection_required": true
   },
   "retraction": {
     "action": "INVENTURE_LOAD_TEST ACTION=RETRACT",
@@ -156,6 +183,13 @@
     "cassette_direction": 0,
     "MCU_changed": false,
     "required_MCU": "RC8-CONTROL-R6-SMOOTH",
-    "heater_off_on_completion": true
+    "heater_off_on_completion": true,
+    "supported_tools": [
+      "T0",
+      "T1"
+    ],
+    "T1_E_direction": 0,
+    "T1_cassette_channel": 1,
+    "T1_cassette_direction": 0
   }
 }

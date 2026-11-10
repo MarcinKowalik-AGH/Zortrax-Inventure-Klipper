@@ -28,7 +28,7 @@ class CassetteLoadTests(unittest.TestCase):
         return h,ops,p13,model
 
     def ready(self,h):
-        h.temperatures[0]=230.
+        h.temperatures[h.load_test_context['tool']]=230.
         h.load_test_context['pid'].update(time=h.reactor.now,temperature=230.,derivative=0.,integral=0.)
         h.reactor.pause(h.reactor.now+2.5)
 
@@ -82,7 +82,7 @@ class CassetteLoadTests(unittest.TestCase):
         self.assertEqual(h.load_test_last['cassette_load']['sent'],960)
 
     def test_invalid_or_unqualified_plans_never_energize_any_actuator(self):
-        for values in ({'TOOL':'T1'},{'TUBE_SECONDS':'nan'},{'TUBE_SECONDS':50.1},
+        for values in ({'TOOL':'T2'},{'TUBE_SECONDS':'nan'},{'TUBE_SECONDS':50.1},
                        {'TUBE_SECONDS':-1},{'HEAD_STEPS':0},{'HEAD_STEPS':192001},
                        {'PURGE_STEPS':-1},{'RATE':4000},{'DURATION':10}):
             h,_,_,_=self.host()

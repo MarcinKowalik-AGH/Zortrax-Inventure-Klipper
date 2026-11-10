@@ -1,5 +1,5 @@
 {
-  "host_revision": "RC8-CONTROL-R6-RETRACT",
+  "host_revision": "RC8-CONTROL-R6-T1",
   "host_module_sha256": "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
@@ -273,7 +273,33 @@
     "smooth_physical_joint_test": "pending operator trial; compiled R6 register simulation and host protocol/thermal model validated",
     "smooth_requires_separate_MCU_upgrade": true,
     "physical_evidence": "docs/evidence/CASSETTE1_PHYSICAL_LOAD_2026-11-10.json",
-    "R6_register_evidence": "docs/evidence/R6_SMOOTH_REGISTER_TESTS_2026-11-10.json"
+    "R6_register_evidence": "docs/evidence/R6_SMOOTH_REGISTER_TESTS_2026-11-10.json",
+    "default_tool": "T0",
+    "supported_tools": [
+      "T0",
+      "T1"
+    ],
+    "directions_by_tool": {
+      "T0": {
+        "channel": 0,
+        "E_feed": 0,
+        "E_retract": 1,
+        "cassette_feed": 1,
+        "cassette_retract": 0
+      },
+      "T1": {
+        "channel": 1,
+        "E_feed": 1,
+        "E_retract": 0,
+        "cassette_feed": 1,
+        "cassette_retract": 0
+      }
+    },
+    "T1_direction_evidence": "docs/evidence/T1_E_DIRECTION_R0323_2026-11-10.json",
+    "T1_distance_basis": "provisional reuse of T0 171800-step budget; not measured T1 path",
+    "T1_physical_joint_test": "pending first operator trial",
+    "automatic_tool_switch": false,
+    "mechanical_tool_selection_required": true
   },
   "retraction": {
     "action": "INVENTURE_LOAD_TEST ACTION=RETRACT",
@@ -287,6 +313,13 @@
     "cassette_direction": 0,
     "MCU_changed": false,
     "required_MCU": "RC8-CONTROL-R6-SMOOTH",
-    "heater_off_on_completion": true
+    "heater_off_on_completion": true,
+    "supported_tools": [
+      "T0",
+      "T1"
+    ],
+    "T1_E_direction": 0,
+    "T1_cassette_channel": 1,
+    "T1_cassette_direction": 0
   }
 }

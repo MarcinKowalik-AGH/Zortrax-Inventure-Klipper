@@ -51,7 +51,7 @@ class RetractTests(unittest.TestCase):
         h,_,_,_=cassette_support.CassetteLoadTests().host()
         with self.assertRaisesRegex(RuntimeError,'R6-SMOOTH'):self.start(h)
         self.assertEqual(h.device.packets,[])
-        for params in ({'SMOOTH':0},{'STEPS':0},{'STEPS':192001},{'TOOL':'T1'},{'RATE':960},
+        for params in ({'SMOOTH':0},{'STEPS':0},{'STEPS':192001},{'TOOL':'T2'},{'RATE':960},
                        {'HEAD_STEPS':95000},{'TUBE_SECONDS':50},{'PURGE_STEPS':1000}):
             h,_,_,_=self.host()
             with self.assertRaises(RuntimeError):self.start(h,**params)

@@ -1,0 +1,39 @@
+{
+  "source": "Zortrax Inventure 1.6.1 r0323 application",
+  "base": "0x08010000",
+  "bytes": 164784,
+  "sha256": "9b980ba04531fac4425b77a23969076d24d8f25629fc2a501ac05d262c142268",
+  "source_project_archive": "Inventure_r0323_MASTER_GPIO_PERYFERIA_2026-10-02.zip",
+  "load_caller": "0x080149D2 -> 0x08012458",
+  "active_tool_RAM": "0x2000248D",
+  "gpio": "GPIOE 0x40021000 mask 0x100 (PE8)",
+  "GPIO_set_helper": "0x08023AFC: strh r1,[r0,#24]",
+  "GPIO_reset_helper": "0x08023B00: strh r1,[r0,#26]",
+  "feed_helper": "0x08012458: T0 reset PE8, T1 set PE8",
+  "retract_helper": "0x08012474: T0 set PE8, T1 reset PE8",
+  "T0_feed_direction": 0,
+  "T1_feed_direction": 1,
+  "T0_retract_direction": 1,
+  "T1_retract_direction": 0,
+  "right_feeder_feed_direction": 1,
+  "right_feeder_basis": "user observation CHANNEL=1 DIRECTION=1 feeds filament",
+  "T1_physical_E_feed_test": "pending first operator trial",
+  "automatic_mechanical_switch": false,
+  "raw_segments": [
+    {
+      "start": "0x80149b0",
+      "end_exclusive": "0x80149e0",
+      "hex_bytes": "70b516468cb004aa31460546fff720ff00286bd0012d6fd8384b394c002d18bf1c46fdf741fd23680020984720790af0"
+    },
+    {
+      "start": "0x8012458",
+      "end_exclusive": "0x8012490",
+      "hex_bytes": "044b4ff480711b7803480bb911f04cbb11f048bb8d24002000100240044b4ff480711b7803480bb911f03cbb11f03cbb8d24002000100240"
+    },
+    {
+      "start": "0x8023afc",
+      "end_exclusive": "0x8023b04",
+      "hex_bytes": "0183704741837047"
+    }
+  ]
+}

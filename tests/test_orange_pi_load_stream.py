@@ -13,7 +13,8 @@ class StreamDevice(cassette_support.JointDevice):
         super().__init__(h);self.stream=None;self.stream_packets=[];self.allow_output=False
     def active_motion(self):return not self.allow_output and super().active_motion()
     def out(self,args):
-        self.allow_output=bool(args[0]==1 and args[1]==6 and self.stream and self.stream['active'])
+        self.allow_output=bool(args[0]==1 and self.stream and self.stream['active']
+                               and args[1]==6+self.stream['tool'])
         try:return super().out(args)
         finally:self.allow_output=False
     def sent(self):
@@ -30,32 +31,36 @@ class StreamDevice(cassette_support.JointDevice):
         if self.sent()==self.stream['planned']:self.stop(1)
         elif self.now()>=self.stream['deadline']:self.stop(3)
         elif self.h.status.get('cable') or self.h.status.get('fault'):self.stop(6)
-        elif self.h.temperatures[0]<205. or self.h.temperatures[0]>=240. or self.output(6)['reason']>=3:self.stop(4)
+        elif (not self.stream['low']<=self.h.temperatures[self.stream['tool']]<self.stream['high']
+              or self.output(6+self.stream['tool'])['reason']>=3):self.stop(4)
     def control(self,args):
         if self.stream and self.stream['active'] and (args[0]==2 or args[0]==1 and args[1]==0):self.stop(2)
         return super().control(args)
     def query_stream(self,args):
         action,steps,rate,maximum,lease,low,high,token,sequence=args[:9]
-        assert args[9:11]==[0,0] and args[11:] in ([0,1],[1,0])
+        tool,channel,e_direction,feeder_direction=args[9:]
+        assert all(v in (0,1) for v in (tool,channel,e_direction,feeder_direction))
         self.stream_packets.append(tuple(args));self.guard();reject=0
         if action==1:
             if self.stream is None or token!=self.stream['token']:
-                self.move((1,8 if args[11] else 0,0,0,0,steps,rate,10,maximum,0,0,0,token))
+                self.move((1,8 if e_direction else 0,0,0,0,steps,rate,10,maximum,0,0,0,token))
                 self.stream=dict(token=token,active=1,reason=0,planned=steps,sent=0,
                     elapsed_ms=0,remaining_ms=lease,sequence=0,feeder=1,
+                    tool=tool,channel=channel,e_direction=e_direction,feeder_direction=feeder_direction,
+                    low=low,high=high,
                     start=self.now(),rate=rate,deadline=self.now()+lease/1000.)
-                self.h.device_until=[self.stream['deadline'],0.]
+                self.h.device_until=[0.,0.];self.h.device_until[channel]=self.stream['deadline']
         elif action==2:
             if not self.stream['active'] or self.stream['token']!=token:reject=4
             elif sequence>self.stream['sequence']:
                 self.stream.update(sequence=sequence,deadline=self.now()+lease/1000.)
-                self.h.device_until[0]=self.stream['deadline']
+                self.h.device_until[channel]=self.stream['deadline']
         row=self.stream
         return dict(token=row['token'],active=row['active'],reason=row['reason'],reject=reject,
             planned=row['planned'],sent=self.sent() if row['active'] else row['sent'],
             elapsed_ms=round((self.now()-row['start'])*1000),
             remaining_ms=max(0,round((row['deadline']-self.now())*1000)) if row['active'] else 0,
-            sequence=row['sequence'],feeder=int(self.now()<self.h.device_until[0]))
+            sequence=row['sequence'],feeder=int(self.now()<self.h.device_until[row['channel']]))
 
 
 class LoadStreamTests(unittest.TestCase):

@@ -22,21 +22,22 @@ class ThermalPlant:
     dT/dt = heater_gain * duty - heat_loss * (T-ambient), then sensor lag.
     ADC is quantized only at the feedback boundary, never in the plant state.
     """
-    def __init__(self,h,gain=9.8,loss=.0125,lag=3.,ambient=26.75):
+    def __init__(self,h,gain=9.8,loss=.0125,lag=3.,ambient=26.75,tool=0):
         self.h=h;self.gain=gain;self.loss=loss;self.lag=lag;self.ambient=ambient
+        self.tool=tool
         self.physical=self.measured=ambient;self.last=h.reactor.now;self.rows=[]
         self.original=h.refresh;h.refresh=self.refresh;self.refresh()
     def refresh(self):
         h=self.h;now=h.reactor.now;dt=now-self.last
-        power=h.device.output(6)['duty']/256.
+        power=h.device.output(6+self.tool)['duty']/256.
         steps=max(1,math.ceil(dt/.025));step=dt/steps
         for _ in range(steps):
             self.physical+=step*(self.gain*power-self.loss*(self.physical-self.ambient))
             self.measured+=step*(self.physical-self.measured)/self.lag
         raw=round(self.measured*4095./660.)
-        h.raw_adc[0]=raw;h.temperatures[0]=raw*660./4095.
+        h.raw_adc[self.tool]=raw;h.temperatures[self.tool]=raw*660./4095.
         self.last=now;self.original()
-        self.rows.append((now,h.temperatures[0],power))
+        self.rows.append((now,h.temperatures[self.tool],power))
 
 class TemperatureTests(unittest.TestCase):
     def host(self,old=False):

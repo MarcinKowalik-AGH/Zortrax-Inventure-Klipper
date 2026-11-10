@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R6-RETRACT'
+HOST_REVISION = 'RC8-CONTROL-R6-T1'
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -2049,13 +2049,14 @@ class InventureMCU:
                 else 'tube' if sent<plan['tube_steps']
                 else 'head' if sent<plan['tube_steps']+plan['head_steps'] else 'purge')
             result['cassette_load']=dict(plan,stage=stage,
-                e_direction=plan.get('direction',0),cassette_direction=1-plan.get('direction',0),channel=0,
+                e_direction=plan['direction'],cassette_direction=plan['cassette_direction'],channel=plan['channel'],
                 nominal_steps_per_mm=LOAD_E_STEPS_PER_MM,
                 nominal_E_mm=round(plan['total_steps']/LOAD_E_STEPS_PER_MM,3),
                 nominal_E_sent_mm=round(sent/LOAD_E_STEPS_PER_MM,3),
                 feeder_speed_estimate_mm_s=LOAD_CASSETTE_MM_S,
                 distance_calibrated=False,head_observed_mm_approx=90,
-                head_observation_steps=95000,
+                head_observation_steps=95000,head_reference_tool='T0',
+                automatic_tool_switch=False,mechanical_tool_selection_verified=False,
                 feeder_time_basis='requested MCU timer windows; not measured travel')
             if plan.get('operation')=='retract':
                 result['stage']='heated_cassette_retraction'
@@ -2081,10 +2082,10 @@ class InventureMCU:
                 raise ValueError('Load test was stopped before the cassette request')
             if milliseconds and self.reactor.monotonic()>=context['deadline']:
                 raise ValueError('Load test duration finished before the cassette request')
+            plan=context['cassette_load']
             self.commands['heartbeat'].send([])
-            self.commands['feeder'].send([0,1,milliseconds])
+            self.commands['feeder'].send([plan['channel'],plan['cassette_direction'],milliseconds])
             if milliseconds:
-                plan=context['cassette_load']
                 plan['feeder_windows_requested']+=1
                 plan['feeder_ms_requested']+=milliseconds
 
@@ -2101,7 +2102,7 @@ class InventureMCU:
             plan['started']=True;context['phase']='loading'
             return
         windows=math.ceil(steps/(rate*LOAD_JOG_WINDOW_S))+2
-        context['jog']=dict(identity=None,steps=steps,sent=0,direction=0,rate=rate,
+        context['jog']=dict(identity=None,steps=steps,sent=0,direction=plan['direction'],rate=rate,
             started=now,windows=0,deadline=now+steps/rate+windows*.5+30.,coupled=True)
         plan['started']=True
         context['phase']='loading'
@@ -2119,8 +2120,8 @@ class InventureMCU:
             stream['steps'] if starting else 0,stream['rate'] if starting else 0,
             stream['max_ms'] if starting else 0,1500,
             round(max(180.,context['target']-25.)),round(context['target']+10.),
-            stream['token'],sequence,context['tool'],0,plan.get('direction',0),
-            1-plan.get('direction',0)],mutate=True,owner=context)
+            stream['token'],sequence,context['tool'],plan['channel'],plan['direction'],
+            plan['cassette_direction']],mutate=True,owner=context)
         if self.load_test_context is not context:return
         self._control_validate(row,{'token':(0,0xffffffff),'active':(0,1),'reason':(0,7),
             'reject':(0,4),'planned':(0,400000),'sent':(0,400000),'elapsed_ms':(0,600100),
@@ -2283,12 +2284,17 @@ class InventureMCU:
     @staticmethod
     def _load_test_measurement(context):
         m=context['measurement'];net=m['dir0_steps']-m['dir1_steps']
+        feed_direction=context['tool'];feed=m['dir%d_steps'%feed_direction]
+        retract=m['dir%d_steps'%(1-feed_direction)]
         return dict(m,net_dir0_steps=net,nominal_steps_per_mm=LOAD_E_STEPS_PER_MM,
             dir0_mm=round(m['dir0_steps']/LOAD_E_STEPS_PER_MM,3),
             dir1_mm=round(m['dir1_steps']/LOAD_E_STEPS_PER_MM,3),
             net_dir0_mm=round(net/LOAD_E_STEPS_PER_MM,3),
             basis='MCU-confirmed steps; not measured filament travel',
-            T0_dir0_is_feed=True,has_unfinished_jog=context.get('jog') is not None or context.get('stream') is not None,
+            T0_dir0_is_feed=True,selected_tool='T%d'%context['tool'],feed_direction=feed_direction,
+            retract_direction=1-feed_direction,feed_steps=feed,retract_steps=retract,
+            net_feed_steps=feed-retract,net_feed_mm=round((feed-retract)/LOAD_E_STEPS_PER_MM,3),
+            has_unfinished_jog=context.get('jog') is not None or context.get('stream') is not None,
             flow_mark=context.get('flow_mark'))
 
     def _load_test_check_output(self,context):
@@ -2316,7 +2322,8 @@ class InventureMCU:
             window_deadline=self.reactor.monotonic()+max_ms/1000.+.25)
         if jog.get('coupled'):
             # Start the cassette only after the E START and driver parameters
-            # have been acknowledged. Both directions were physically checked.
+            # have been acknowledged. T0 directions were physically checked;
+            # T1 E polarity follows r0323 0x08012458, awaiting its first trial.
             self._load_test_feeder_window(context,math.ceil(steps*1000./LOAD_CASSETTE_RATE))
 
     def _load_test_account_window(self,context,motion):
@@ -2422,7 +2429,6 @@ class InventureMCU:
             if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
             plan=None
             if action in ('LOAD','RETRACT'):
-                if tool!='T0':raise gcmd.error('Cassette loading currently uses the physically checked left/T0 directions')
                 if action=='RETRACT' and any(gcmd.get(k,None) is not None
                         for k in ('TUBE_SECONDS','HEAD_STEPS','PURGE_STEPS')):
                     raise gcmd.error('RETRACT uses STEPS; remove TUBE_SECONDS, HEAD_STEPS and PURGE_STEPS')
@@ -2444,7 +2450,11 @@ class InventureMCU:
                 plan=dict(tube_seconds=tube_seconds,tube_steps=tube_steps,head_steps=head_steps,
                     purge_steps=purge_steps,total_steps=tube_steps+head_steps+purge_steps,sent=0,
                     rate=rate,smooth=bool(smooth),operation='retract' if action=='RETRACT' else 'load',
-                    direction=int(action=='RETRACT'),started=False,feed_completed=False,
+                    # r0323 0x08012458/0x08012474 invert PE8 for T1.
+                    # Cassette DIR1 is feed for either channel, independently.
+                    direction=int(tool[1])^int(action=='RETRACT'),
+                    channel=int(tool[1]),cassette_direction=int(action!='RETRACT'),
+                    started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
@@ -2478,7 +2488,7 @@ class InventureMCU:
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
-        if context is None:raise gcmd.error('Start INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 first')
+        if context is None:raise gcmd.error('Start INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 or TOOL=T1 TARGET=230 first')
         deadline=self.reactor.monotonic()+1.
         while context['busy'] and self.load_test_context is context and self.reactor.monotonic()<deadline:
             self.reactor.pause(min(deadline,self.reactor.monotonic()+.025))
@@ -2589,9 +2599,10 @@ class InventureMCU:
             raise ValueError('Finish or cancel the active filament procedure before a service test')
         return state
 
-    def _load_test_feeder_stop(self,channel=0):
+    def _load_test_feeder_stop(self,channel=None):
         context=getattr(self,'load_test_context',None)
-        if channel!=0 or context is None or context.get('cassette_load') is None:return False
+        if context is None or context.get('cassette_load') is None:return False
+        if channel is not None and channel!=context['cassette_load']['channel']:return False
         self._load_test_cancel('operator_feeder_stop')
         self._control_abort()
         return True

@@ -33,9 +33,21 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R6-RETRACT`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R6-T1`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
+
+Ładowanie z prawej kasety do T1, na początek na tym samym odcinku co T0:
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=LOAD TOOL=T1 TARGET=230 DURATION=900 TUBE_SECONDS=50 HEAD_STEPS=95000 SMOOTH=1
+```
+
+Wymaga mechanicznego ustawienia głowicy na T1 przed próbą; polecenie nie
+wykonuje przejazdu przełączającego dyszę. Host nagrzewa T1 i wybiera prawy
+podajnik 1. Podawanie E jest przeciwne niż dla T0: DIR1 dla T1, DIR0 dla T0,
+zgodnie z oryginalnym r0323. Kierunek kasety to DIR1 w obu torach.
+[Kierunki, polecenia T1, cofanie i zakres pierwszej próby](docs/T1_LOAD_2026-11-10.md).
 
 Nagrzanie i cofnięcie około 75% poprzedniego pełnego ładowania:
 

@@ -18,6 +18,7 @@ on:
       - 'tests/test_orange_pi_cassette_load.py'
       - 'tests/test_orange_pi_load_stream.py'
       - 'tests/test_orange_pi_retract.py'
+      - 'tests/test_orange_pi_t1_load.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:
