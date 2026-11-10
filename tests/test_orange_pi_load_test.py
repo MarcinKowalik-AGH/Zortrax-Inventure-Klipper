@@ -186,6 +186,28 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(len(self.starts(h)),1)
         self.assertIn('lease expired',h.load_test_last['reason']);self.assertFalse(h.device.active())
 
+    def test_selected_heater_OFF_cancels_the_thermostat_even_when_already_at_target(self):
+        h,_,_=self.host();self.heat(h);self.ready(h)
+        self.assertEqual(h.device.output(6)['duty'],0)
+        h.cmd_output(Command(CHANNEL='T0',ACTION='OFF'))
+        count=len(self.starts(h));h.temperatures[0]=200.;h.reactor.pause(110.)
+        self.assertIsNone(h.load_test_context);self.assertFalse(h.device.active())
+        self.assertEqual(len(self.starts(h)),count)
+
+    def test_cooling_during_a_jog_stops_E_without_renewing_heater_power(self):
+        h,_,_=self.host();self.heat(h);self.ready(h)
+        h.cmd_load_test(Command(ACTION='JOG',DIR=0,STEPS=9600,RATE=960))
+        count=len(self.starts(h));h.temperatures[0]=200.;h.reactor.pause(103.)
+        self.assertEqual(h.load_test_last['phase'],'failed')
+        self.assertIn('cooled below',h.load_test_last['reason'])
+        self.assertFalse(h.device.active());self.assertEqual(len(self.starts(h)),count)
+
+    def test_shutdown_invalidates_the_timer_and_hardware_lease_expires(self):
+        h,_,_=self.host();self.heat(h)
+        count=len(self.starts(h));h._shutdown();h.reactor.pause(105.)
+        self.assertIsNone(h.load_test_context);self.assertEqual(len(self.starts(h)),count)
+        self.assertFalse(h.device.active());self.assertEqual(h.load_test_last['phase'],'failed')
+
     def test_fixed_total_timeout_cannot_be_extended_by_status_or_sampling(self):
         h,_,_=self.host();self.heat(h,DURATION=10);self.ready(h)
         h.cmd_load_test(Command(ACTION='BASELINE'));h.cmd_load_test(Command(ACTION='COMPARE'))

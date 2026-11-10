@@ -1786,6 +1786,10 @@ class InventureMCU:
         limit=gcmd.get_int('LIMIT',45 if channel<8 else 50,minval=0,maxval=310)
         if action==1 and power==0:action=2
         if action==1 and channel>=6 and limit<40:raise gcmd.error('Heaters require LIMIT>=40')
+        load_context=getattr(self,'load_test_context',None)
+        if action==2 and load_context is not None and channel==load_context['tool']+6:
+            self._load_test_cancel('heater_off')
+            self._control_abort()
         attempted=False
         try:
             if action==1:self._control_service()
@@ -2070,6 +2074,8 @@ class InventureMCU:
         temperature=self._load_test_safety(context)
         now=self.reactor.monotonic()
         if context.get('jog') is not None:
+            if temperature<max(170.,context['target']-25.):
+                raise ValueError('Nozzle cooled below the extrusion limit during the jog')
             motion=self._motion_query();expected=context['jog']
             if motion['reject'] or (motion['run'],motion['token'])!=expected['identity']:
                 raise ValueError('Extruder motion ownership changed')
