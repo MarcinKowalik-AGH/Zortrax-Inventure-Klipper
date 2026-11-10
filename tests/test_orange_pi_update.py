@@ -1,5 +1,6 @@
 """Exercise the real host file installer with an isolated systemd/proc model."""
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -26,6 +27,7 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.original_config=self.config.read_bytes()
         self.old=(ROOT/'tests/fixtures/inventure_mcu_chamber75_r3.py').read_bytes()
         self.dest=self.extras/'inventure_mcu.py';self.dest.write_bytes(self.old)
+        self.factory_dest=self.extras/'inventure_factory_core.py'
         for name in ('inventure_oled.py','serialhdl.py'):
             p=self.live/'klippy/serialhdl.py' if name=='serialhdl.py' else self.extras/name
             p.write_bytes((ROOT/'orange_pi'/name).read_bytes())
@@ -55,6 +57,23 @@ class OrangePiUpdateTests(unittest.TestCase):
         else:raise AssertionError('Unexpected system request: '+str(args))
         if check and rc:raise subprocess.CalledProcessError(rc,args)
         return types.SimpleNamespace(returncode=rc)
+
+    def factory_package(self):
+        """Exercise the new-module path even while release hashes are staged."""
+        package=self.root/'package';package.mkdir()
+        metadata=json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text())
+        for name,key in (('inventure_mcu.py','module_sha256'),
+                         ('inventure_oled.py','oled_module_sha256'),('serialhdl.py','serialhdl_sha256')):
+            data=(ROOT/'orange_pi'/name).read_bytes();(package/name).write_bytes(data)
+            metadata[key]=hashlib.sha256(data).hexdigest()
+        core=ROOT/'orange_pi/inventure_factory_core.py'
+        data=core.read_bytes() if core.is_file() else b'# isolated installer factory-core fixture\n'
+        (package/'inventure_factory_core.py').write_bytes(data)
+        metadata['factory_core_sha256']=hashlib.sha256(data).hexdigest()
+        old=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
+        metadata['allowed_existing_sha256'].append(hashlib.sha256(old).hexdigest())
+        (package/'THERMAL_HOST_MANIFEST.json').write_text(json.dumps(metadata))
+        return package
 
     def test_upgrade_targets_the_running_stage_and_preserves_config_and_backup(self):
         with patch('sys.stdout',new=io.StringIO()):update.update()
@@ -194,9 +213,73 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),self.original_config)
         self.assertTrue(self.active)
 
+    def test_T1_upgrade_adds_verified_factory_core_and_records_previous_absence(self):
+        previous=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
+        self.dest.write_bytes(previous);package=self.factory_package()
+        with patch.object(update.core,'ROOT',package),patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.factory_dest.read_bytes(),(package/'inventure_factory_core.py').read_bytes())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+        backups=list((self.live/'.inventure-thermal-test-r2-backups').glob('*/INSTALL_MANIFEST.json'))
+        self.assertEqual(len(backups),1)
+        state=json.loads(backups[0].read_text())['files']['inventure_factory_core.py']
+        self.assertEqual(state,{'exists':False,'sha256':None})
+        self.assertEqual((backups[0].parent/'inventure_mcu.py').read_bytes(),previous)
+        self.assertFalse((backups[0].parent/'inventure_factory_core.py').exists())
+
+    def test_factory_upgrade_rollback_restores_exact_previous_module_and_missing_core(self):
+        previous=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
+        self.dest.write_bytes(previous);package=self.factory_package();self.active=False
+        with patch.object(update.core,'ROOT',package),patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            self.assertTrue(self.factory_dest.is_file())
+            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
+        self.assertEqual(self.dest.read_bytes(),previous)
+        self.assertFalse(self.factory_dest.exists())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+
+    def test_existing_verified_factory_core_survives_rollback(self):
+        package=self.factory_package();expected=(package/'inventure_factory_core.py').read_bytes()
+        self.factory_dest.write_bytes(expected);self.active=False
+        with patch.object(update.core,'ROOT',package),patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertEqual(self.factory_dest.read_bytes(),expected)
+
+    def test_unknown_existing_factory_core_is_refused_before_stopping(self):
+        package=self.factory_package();self.factory_dest.write_text('# local change\n')
+        with patch.object(update.core,'ROOT',package):
+            with self.assertRaisesRegex(ValueError,'factory_core.py differs'):update.update()
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertEqual(self.factory_dest.read_text(),'# local change\n')
+        self.assertFalse(any('stop' in args for args in self.calls))
+
+    def test_interruption_at_factory_module_restores_old_files_and_previous_absence(self):
+        package=self.factory_package();original=Path.replace
+        def interrupt_core(path,other):
+            if path.name=='.inventure_factory_core.py.thermal-r2.new':raise KeyboardInterrupt()
+            return original(path,other)
+        with patch.object(update.core,'ROOT',package),patch.object(Path,'replace',interrupt_core):
+            with self.assertRaises(KeyboardInterrupt),patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertFalse(self.factory_dest.exists());self.assertTrue(self.active)
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+
+    def test_backup_absence_marker_cannot_hide_an_unexpected_core_file(self):
+        package=self.factory_package();self.active=False
+        with patch.object(update.core,'ROOT',package),patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            backup=Path(result['backup']);(backup.parent/'inventure_factory_core.py').write_bytes((package/'inventure_factory_core.py').read_bytes())
+            with self.assertRaisesRegex(ValueError,'Backup presence differs'):
+                update.core.install(self.live,apply=True,rollback=backup)
+        self.assertEqual(self.dest.read_bytes(),(package/'inventure_mcu.py').read_bytes())
+        self.assertEqual(self.factory_dest.read_bytes(),(package/'inventure_factory_core.py').read_bytes())
+
     def test_same_disk_version_restarts_python_without_rewriting_modules(self):
         expected=(ROOT/'orange_pi/inventure_mcu.py').read_bytes()
         self.dest.write_bytes(expected)
+        if 'factory_core_sha256' in json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text()):
+            self.factory_dest.write_bytes((ROOT/'orange_pi/inventure_factory_core.py').read_bytes())
         with patch('sys.stdout',new=io.StringIO()):update.update()
         self.assertEqual(self.dest.read_bytes(),expected)
         self.assertIn(('sudo','systemctl','stop','klipper'),self.calls)

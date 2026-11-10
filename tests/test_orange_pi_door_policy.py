@@ -12,7 +12,7 @@ import types
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
-package=types.ModuleType('door_test_host');package.__path__=[str(ROOT/'host'),str(ROOT/'tests/fixtures/host_dependencies')]
+package=types.ModuleType('door_test_host');package.__path__=[str(ROOT/'orange_pi'),str(ROOT/'host'),str(ROOT/'tests/fixtures/host_dependencies')]
 sys.modules[package.__name__]=package
 spec=importlib.util.spec_from_file_location('door_test_host.inventure_mcu',ROOT/'orange_pi/inventure_mcu.py')
 adapter=importlib.util.module_from_spec(spec);spec.loader.exec_module(adapter)

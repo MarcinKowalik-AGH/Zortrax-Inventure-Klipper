@@ -1,9 +1,45 @@
-# Zortrax Inventure — CONTROL-R6-SMOOTH
+# Zortrax Inventure — CONTROL-R7-FACTORY
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+
+## Ładowanie zależne od czujników — T0 i T1
+
+Nowe `INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0` albo `TOOL=T1` wykonuje
+odtworzony automat L1–L4: krótka próba przy działającym transporcie,
+odzyskanie podawania, dłuższy transport oraz końcowe wyciskanie/czyszczenie.
+Przygotowuje ruch, nagrzewa i mechanicznie przełącza właściwą dyszę.
+Progi impulsów, prawdziwych startów kasety, czasy, odcinki, prędkości oraz
+geometria są parametrami polecenia. Pierwsza fizyczna próba pełnego R7
+pozostaje do wykonania.
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T0
+```
+
+PARAMS jest tylko odczytem/walidacją. Właściwa próba wymaga nowej aplikacji
+MCU `RC8-CONTROL-R7-FACTORY`, z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip`,
+oraz aktualizacji hosta opisanej poniżej. Po instalacji IVB i hosta użyj
+`FIRMWARE_RESTART`; `INVENTURE_VERSION` ma pokazać `factory_abi: 1`.
+
+```gcode
+INVENTURE_STOP
+INVENTURE_CONTROL MODE=SERVICE
+INVENTURE_DOOR_POLICY ENABLE=0
+INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0 TARGET=230 MAX_POWER=40 DURATION=900 PROCEDURE_TIMEOUT=1800
+```
+
+Dla prawej kasety zamień `TOOL=T0` na `TOOL=T1`. Wykonuj jedną próbę naraz.
+Normalne zakończenie AUTO i błędy wyłączają grzanie oraz ruch. Ręczne
+przerwanie: `INVENTURE_STOP`. Prędkości XY domyślnie 20 mm/s mieszczą się
+w obecnym limicie DDA; nie są deklaracją odtworzenia szybszych przejazdów
+fabrycznych. Kaseta musi być już włożona; SERVICE nie wykonuje RFID.
+[Pełna instalacja, parametry, nominalna geometria i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
+
+Opisane dalej `ACTION=LOAD` i `ACTION=RETRACT` zachowują wcześniejsze próby
+stałego odcinka, niezależnie od nowego automatu AUTO.
 
 ## Aktualizacja Orange Pi
 
@@ -21,8 +57,9 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R6_SMOOTH_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
-Tryb płynnego ładowania wymaga tej aplikacji R6 oraz aktualnego hosta.
+`INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
+AUTO wymaga tej aplikacji R7 oraz aktualnego hosta; wcześniejsze próby
+stałego odcinka pozostają dostępne.
 
 ## Po aktualizacji hosta
 
@@ -33,9 +70,10 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R6-T1`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R7-FACTORY`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
+`factory_abi: 1` potwierdza nową sesję MCU dla automatu i ruchów XY/E.
 
 Ładowanie z prawej kasety do T1, na początek na tym samym odcinku co T0:
 

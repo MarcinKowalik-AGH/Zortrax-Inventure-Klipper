@@ -29,7 +29,13 @@ uint32_t timer_read_time(void){return mock_now;}
 uint32_t timer_from_us(uint32_t us){return us*120;}
 irqstatus_t irq_save(void){return 0;} void irq_restore(irqstatus_t x){(void)x;}
 void mock_shutdown(const char*s){last_failure=s;shutdown_count++;if(expect_failure)longjmp(failure,1);fprintf(stderr,"Unexpected shutdown: %s\n",s);assert(0);__builtin_unreachable();}
-void sendf(const char*f,...){(void)f;}
+static uint32_t factory_reply[15];
+void sendf(const char*f,...){
+    if(strncmp(f,"inventure_factory_state ",24))return;
+    va_list ap;va_start(ap,f);
+    for(unsigned i=0;i<15;i++)factory_reply[i]=va_arg(ap,unsigned int);
+    va_end(ap);
+}
 void*command_decode_ptr(uint32_t value){return (void*)(uintptr_t)value;}
 GPIO_TypeDef *gpio_pin_to_regs(uint32_t pin) {
     assert(pin < 112);

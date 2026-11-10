@@ -5,6 +5,7 @@ DECL_CONSTANT("INVENTURE_CONTROL_ABI",1);
 DECL_CONSTANT("INVENTURE_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_OUTPUT_ABI",1);
 DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
+DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",20000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_STEPS",2000000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_MS",600000);
@@ -35,6 +36,19 @@ static struct {
     uint8_t active,reason,tool,channel,e_direction,feeder_direction;
 } sl;
 static void sl_guard(uint32_t now);
+// A hot SERVICE procedure owns the existing DDA and P13 feeder kernel.
+// Host parameters describe geometry and stages; MCU owns the independent
+// lease, sensor checks, actual feeder starts and actual E accounting.
+static struct {
+    uint32_t token,sequence,deadline,lease_ms,duration_ms,budget_steps;
+    int16_t min_c,max_c;
+    uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor;
+} fs;
+static void fs_guard(uint32_t now);
+static void fs_age_update(uint32_t now);
+static uint8_t factory_transport_allowed(void) {
+    return fs.active && control_mode==CT_SERVICE;
+}
 static uint8_t control_guard_mask=127,control_fan_phase,control_heat_seen;
 static uint32_t control_cooldown_ms,control_cooldown_tick;
 static uint8_t control_tach_watch[4];
@@ -70,10 +84,10 @@ static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     return 1;
 }
 static uint8_t control_aux_allowed(void) {
-    return control_mode==CT_SERVICE && !sl.active && !fault && !control_latched && heartbeat_live;
+    return control_mode==CT_SERVICE && !sl.active && !fs.active && !fault && !control_latched && heartbeat_live;
 }
 static uint8_t control_busy(void) {
-    if(control_mode==CT_NATIVE || cm.active)return 1;
+    if(control_mode==CT_NATIVE || cm.active || fs.active)return 1;
     for(unsigned i=0;i<2;i++)if(feeder_running[i] || locks_on[i])return 1;
     for(unsigned i=0;i<10;i++)if(co[i].duty)return 1;
     return 0;
@@ -83,7 +97,10 @@ static void cm_clear_steps(void) {
     motor_test_write(GPIOB,BIT(8)|BIT(9),0);cm.high=0;
 }
 static void cm_end(uint8_t reason) {
-    motor_test_write(GPIOE,BIT(10),0);cm_clear_steps();
+    // Preserve established carriage position between factory segments.
+    // A failed/safety/global STOP path always releases the driver.
+    if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT)))motor_test_write(GPIOE,BIT(10),0);
+    cm_clear_steps();
     cm.active=0;cm.reason=reason;
     cm.phase=reason==CR_COMPLETE || reason==CR_INPUT?CM_DONE:reason==CR_STOP?CM_STOPPED:CM_FAILED;
 }
@@ -125,6 +142,8 @@ static uint_fast8_t cm_event(struct timer *timer) {
         }
         if(a)motor_test_write(GPIOA,a,1);
         if(b)motor_test_write(GPIOB,b,1);
+        if(fs.active && (b&BIT(9)))
+            ivt_e_step(&transport[fs.tool],!!(cm.direction&BIT(3))==fs.tool);
         cm.high=1;cm.done++;
         uint32_t ramp=cm.done<cm.master-cm.done?cm.done:cm.master-cm.done;
         uint32_t hz=400u+16u*ramp;if(hz>cm.rate)hz=cm.rate;
@@ -151,6 +170,7 @@ static void control_output_off(unsigned i) {
     }
 }
 static void control_stop_all(void) {
+    if(fs.active){fs.active=0;fs.reason=2;transport_live=0;}
     if(sl.active) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=2;
     }
@@ -175,6 +195,7 @@ static void control_stop_all(void) {
     cool_mask=control_cooling_mask();cool_applied=255;cooling_apply();
 }
 static void control_shutdown(void) {
+    if(fs.active){fs.active=0;fs.reason=7;transport_live=0;}
     if(sl.active) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=7;
     }
@@ -221,7 +242,9 @@ static uint8_t control_service_fan(unsigned i) {
     return control_mode==CT_SERVICE && i<6 && co[i].duty;
 }
 static void control_guard(uint32_t now) {
+    fs_age_update(now);
     sl_guard(now);
+    fs_guard(now);
     if(control_cooldown_ms) {
         uint32_t ms=(uint32_t)(now-control_cooldown_tick)/MS(1);
         if(ms){control_cooldown_tick+=ms*MS(1);control_cooldown_ms=ms>=control_cooldown_ms?0:control_cooldown_ms-ms;}
@@ -272,6 +295,9 @@ static void control_guard(uint32_t now) {
         }
         if(off){control_output_off(i);co[i].reason=off;}
     }
+    // Heater expiry and a failed DDA segment must abort the same owner on
+    // this sampler pass, not after another host renewal opportunity.
+    fs_guard(now);
 }
 void command_inventure_control(uint32_t *args) {
     unsigned action=args[0],mode=args[1];irqstatus_t flags=irq_save();uint8_t reject=0;
@@ -282,7 +308,7 @@ void command_inventure_control(uint32_t *args) {
         if(mode==CT_OFF){control_stop_all();control_mode=CT_OFF;}
         else if(mode==control_mode){} // idempotent; never renew any output timer
         else if(control_latched)reject=4;
-        else if(motor_test_busy() || t0_heat_busy() || fan_manual_active())reject=2;
+        else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active)reject=2;
         else if(!control_ready(now))reject=3;
         else if(mode==CT_NATIVE && (!control_sensors_valid(control_guard_mask|31,now)
              || (door_policy_enabled()&&door_closed_mask()!=3)))reject=5;
@@ -307,6 +333,10 @@ static uint8_t cm_request(uint32_t *args,uint32_t now) {
            || args[7]+2u>1000000u/args[6] || !args[8] || args[8]>600000
            || args[11]>60000 || !token)reject=1;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now)))reject=3;
+        if(!reject && fs.active && args[5]) {
+            uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
+            if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
+        }
         if(!reject && (sl.active || cm.active || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active()))reject=2;
         if(!reject) {
             cm.run++;cm.token=token;cm.master=master;cm.done=0;cm.direction=args[1];
@@ -360,7 +390,9 @@ void command_inventure_output(uint32_t *args) {
         if(duty!=co[i].requested_duty || duration!=co[i].requested_ms || limit!=co[i].limit)reject=1;
     } else if(action==1) {
         if(control_mode!=CT_SERVICE || !control_ready(now))reject=3;
-        else if((sl.active && i!=6+sl.tool) || (cm.active && !(sl.active && i==6+sl.tool && cm.token==sl.token))
+        else if((fs.active && i!=6+fs.tool) || (sl.active && i!=6+sl.tool)
+                || (cm.active && !(sl.active && i==6+sl.tool && cm.token==sl.token)
+                    && !(fs.active && i==6+fs.tool))
                 || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active())reject=2;
         else if(i>=6 && (limit<40 || limit>control_max[th_heaters[i-6].sensor]
                  || !control_sensors_valid(control_guard_mask|31,now)))reject=5;
@@ -445,7 +477,7 @@ void command_inventure_load_stream(uint32_t *args) {
                 || minimum_c<180 || minimum_c>230 || maximum_c<=minimum_c+5 || maximum_c>250)reject=1;
         if(!reject && token==cm.token)reject=4;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now) || !auxiliary_ready))reject=3;
-        if(!reject && (sl.active || cm.active || feeder_running[0] || feeder_running[1]
+        if(!reject && (sl.active || fs.active || cm.active || feeder_running[0] || feeder_running[1]
                 || locks_on[0] || locks_on[1]))reject=2;
         for(unsigned i=0;i<10;i++)if(!reject && i!=6+tool && co[i].duty)reject=2;
         uint8_t valid;int16_t t=control_temp(tool<2?tool:0,now,&valid);
@@ -479,3 +511,124 @@ void command_inventure_load_stream(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_load_stream,HF_IN_SHUTDOWN,
  "inventure_load_stream action=%c steps=%u rate=%u max_ms=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u tool=%c channel=%c e_direction=%c feeder_direction=%c");
+
+// Accumulate accepted-edge age in milliseconds even while no session exists.
+// CLOCK_FREQ wraps every ~36s; a cold warm-up must not make an old edge fresh.
+static struct {
+    uint32_t last_tick,fraction,age[2],count[2],stamp[2];uint8_t initialized;
+} fs_age;
+static void fs_age_update(uint32_t now) {
+    if(!fs_age.initialized) {
+        fs_age.initialized=1;fs_age.last_tick=now;
+        for(unsigned i=0;i<2;i++) {
+            fs_age.age[i]=pulses[i+4] || edge_time[i+4]?(uint32_t)(now-edge_time[i+4])/MS(1):0xffffffffu;
+            fs_age.count[i]=pulses[i+4];fs_age.stamp[i]=edge_time[i+4];
+        }
+        return;
+    }
+    uint32_t dt=now-fs_age.last_tick,f=fs_age.fraction+dt%MS(1);
+    uint32_t elapsed=dt/MS(1)+f/MS(1);fs_age.fraction=f%MS(1);fs_age.last_tick=now;
+    for(unsigned i=0;i<2;i++) {
+        if(pulses[i+4]!=fs_age.count[i] || edge_time[i+4]!=fs_age.stamp[i]) {
+            fs_age.age[i]=(uint32_t)(now-edge_time[i+4])/MS(1);
+            fs_age.count[i]=pulses[i+4];fs_age.stamp[i]=edge_time[i+4];
+        } else fs_age.age[i]=elapsed>0xffffffffu-fs_age.age[i]?0xffffffffu:fs_age.age[i]+elapsed;
+    }
+}
+static void fs_set_mode(unsigned mode,unsigned monitor,uint32_t now) {
+    struct ivt_state *s=&transport[fs.tool];
+    s->monitor=monitor;
+    if(mode!=s->mode) {
+        ivt_mode(s,mode);
+        if(mode==IVT_FORWARD || mode==IVT_REVERSE)ivt_start(s,now,mode==IVT_FORWARD,1);
+        if(mode!=IVT_AUTO)ivt_tick(s,now,transport_a(fs.tool),transport_b(fs.tool));
+        transport_output(fs.tool);
+    }
+    fs.mode=mode;fs.monitor=monitor;
+}
+static void fs_normal_stop(void) {
+    fs.active=0;fs.reason=2;transport_live=0;transport_selected=255;
+    control_motion_cancel();motor_test_write(GPIOE,BIT(10),0);
+    for(unsigned i=0;i<2;i++)transport_stop_channel(i);
+    // The selected heater's independent short lease remains owned by the
+    // host PID. Emergency/global STOP and faults always cut all outputs.
+}
+static void factory_external_stop(unsigned i) {
+    if(fs.active && i==fs.tool)control_stop_all();
+}
+static void fs_guard(uint32_t now) {
+    if(!fs.active)return;
+    uint8_t why=0,valid;int16_t t=control_temp(fs.tool,now,&valid);
+    if(!control_ready(now))why=6;
+    else if(iv9_due(now,fs.deadline))why=3;
+    else if(!valid || ((fs.mode!=IVT_STOP || (cm.active && cm.planned[3])) && t<fs.min_c) || t>=fs.max_c
+            || !control_sensors_valid(control_guard_mask|31,now) || co[6+fs.tool].reason>=3)why=4;
+    else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
+            || transport_selected!=fs.tool || transport[fs.tool].fault
+            || !transport[fs.tool].configured || cm.phase==CM_FAILED)why=5;
+    if(why){control_stop_all();fs.reason=why;}
+}
+void command_inventure_factory_session(uint32_t *args) {
+    unsigned action=args[0],tool=args[1],mode=args[2],monitor=args[3],duration=args[4];
+    uint32_t budget=args[5],lease=args[6],token=args[9],sequence=args[10];
+    int16_t minimum=args[7],maximum=args[8];
+    irqstatus_t irq=irq_save();uint32_t now=timer_read_time();uint8_t reject=0;
+    fs_age_update(now);fs_guard(now);
+    if(action>3)reject=1;
+    else if(action==3) {
+        if(!token || token!=fs.token)reject=4;
+        else if(fs.active)fs_normal_stop();
+    } else if(action==1 && token && token==fs.token) {
+        // An old START never renews or revives the previous session.
+        if(tool!=fs.tool || mode!=fs.start_mode || monitor!=fs.start_monitor
+                || duration!=fs.duration_ms || budget!=fs.budget_steps || lease!=fs.lease_ms
+                || minimum!=fs.min_c || maximum!=fs.max_c || sequence)reject=1;
+    } else if(action==1) {
+        if(tool>1 || mode>IVT_GATED || monitor>1 || !duration || duration>1500
+                || !budget || budget>960000 || lease<250 || lease>1500 || !token || sequence
+                || minimum<180 || minimum>230 || maximum<=minimum+5 || maximum>250)reject=1;
+        if(!reject && (fs.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
+                || t0_heat_busy() || fan_manual_active() || transport_live || assist_pending[0] || assist_pending[1]
+                || feeder_running[0] || feeder_running[1] || locks_on[0] || locks_on[1]))reject=2;
+        for(unsigned i=0;i<10;i++)if(!reject && i!=6+tool && co[i].duty)reject=2;
+        uint8_t valid;int16_t t=control_temp(tool<2?tool:0,now,&valid);
+        if(!reject && (control_mode!=CT_SERVICE || !control_ready(now) || !auxiliary_ready
+                || !valid || (mode!=IVT_STOP && t<minimum) || t>=maximum || co[6+tool].reason>=3
+                || !control_sensors_valid(control_guard_mask|31,now)
+                || (door_policy_enabled()&&door_closed_mask()!=3)))reject=3;
+        if(!reject) {
+            for(unsigned i=0;i<2;i++)transport_stop_channel(i);
+            fs.token=token;fs.sequence=0;fs.deadline=now+MS(lease);fs.lease_ms=lease;
+            fs.duration_ms=duration;fs.budget_steps=budget;fs.min_c=minimum;fs.max_c=maximum;
+            fs.tool=tool;fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
+            fs.start_mode=mode;fs.start_monitor=monitor;
+            transport_selected=tool;transport_live=1;
+            struct ivt_state *s=&transport[tool];
+            s->configured=s->cartridge=1;s->duration=MS(duration);
+            s->assigned_budget=budget;s->budget=budget;s->retry=s->fault=0;
+            cm.phase=CM_IDLE;cm.reason=CR_NONE;
+            fs_set_mode(mode,monitor,now);
+        }
+    } else if(action==2) {
+        uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
+        if(!fs.active || token!=fs.token || !sequence || sequence<fs.sequence)reject=4;
+        else if(tool!=fs.tool || mode>IVT_GATED || monitor>1 || duration!=fs.duration_ms
+                || budget!=fs.budget_steps || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
+        else if(mode!=IVT_STOP && (!valid || t<fs.min_c || t>=fs.max_c
+                || !control_sensors_valid(control_guard_mask|31,now)))reject=3;
+        else if(sequence==fs.sequence) {
+            if(mode!=fs.mode || monitor!=fs.monitor)reject=1;
+        } else {
+            fs.sequence=sequence;fs.deadline=now+MS(lease);fs_set_mode(mode,monitor,now);
+        }
+    }
+    unsigned i=fs.tool;struct ivt_state s=transport[i];
+    uint32_t remaining=fs.active?(uint32_t)(fs.deadline-now)/MS(1):0;
+    uint32_t current_token=fs.token,seq=fs.sequence,p=pulses[i+4],age=fs_age.age[i];
+    uint8_t active=fs.active,reason=fs.reason,a=transport_a(i),b=transport_b(i);
+    irq_restore(irq);
+    sendf("inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u",
+        current_token,active,reason,reject,i,s.mode,s.running,a,b,p,age,s.starts,s.fault,seq,remaining);
+}
+DECL_COMMAND_FLAGS(command_inventure_factory_session,HF_IN_SHUTDOWN,
+ "inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u");

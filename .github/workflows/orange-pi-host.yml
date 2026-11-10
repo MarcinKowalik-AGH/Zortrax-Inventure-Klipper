@@ -19,6 +19,9 @@ on:
       - 'tests/test_orange_pi_load_stream.py'
       - 'tests/test_orange_pi_retract.py'
       - 'tests/test_orange_pi_t1_load.py'
+      - 'tests/test_orange_pi_factory_core.py'
+      - 'tests/test_orange_pi_factory_host.py'
+      - 'tests/test_orange_pi_factory_protocol.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:

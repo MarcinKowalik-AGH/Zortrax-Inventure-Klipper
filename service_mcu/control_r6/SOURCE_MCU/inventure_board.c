@@ -63,6 +63,8 @@ static void transport_sample(uint32_t now);
 static void transport_gpio(void *r,uint32_t bit,uint32_t value);
 static void transport_shutdown(void);
 static void transport_legacy_stop(unsigned i,unsigned duration);
+static uint8_t factory_transport_allowed(void);
+static void factory_external_stop(unsigned i);
 #include "inventure_fans.inc"
 
 /* Raw GPIO helper: establish output latch before changing mode. SWD untouched. */

@@ -1,14 +1,14 @@
 {
-  "host_revision": "RC8-CONTROL-R6-T1",
-  "host_module_sha256": "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207",
+  "host_revision": "RC8-CONTROL-R7-FACTORY",
+  "host_module_sha256": "5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 157,
-  "previous_host_commit": "08cbd056d42a34b137d7f4c1bdcc1997f3ec2b8a",
+  "verified_public_host_tests": 213,
+  "previous_host_commit": "182681d18a70902c68a6863504398bf9d4e2bf97",
   "firmware": {
-    "release": "RC8-CONTROL-R6-SMOOTH",
+    "release": "RC8-CONTROL-R7-FACTORY",
     "bootloader": "InventureBoot 1.7",
-    "ivb_sha256": "e177fab3fdaa0a7a2e72d2cd4ebcb0699b698544604adea54fab819fb5c5986b",
+    "ivb_sha256": "6798927aa626231ae461abc610f8e791aaf0239a5350aa30d39e9b5b4e99128f",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "physical_R5_tests": true,
     "physical_qualification_complete": false,
@@ -111,12 +111,14 @@
         "last_transport_trial": "1500ms left DIR1 produced about 2mm by user observation; COMPARE rejected while still active; final pulse counts unavailable"
       }
     },
-    "previous_release": "RC8-CONTROL-R5",
+    "previous_release": "RC8-CONTROL-R6-SMOOTH",
     "physical_R6_smooth_test": "pending operator",
     "load_stream_abi": 1,
-    "package_sha256": "ca8b5e7d02eedd0a31fad64f8114d9cb78a930fbb0be235dda08de5e45f2dd93",
-    "package_filename": "INVENTURE_MCU_CONTROL_R6_SMOOTH_BOOT17.zip",
-    "ivb_bytes": 86544
+    "package_sha256": "00f63d6d7c02cca242079479cbe9bdf81d9c7dc2761d6fe2128ab1f42c904e01",
+    "package_filename": "INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip",
+    "ivb_bytes": 89532,
+    "factory_abi": 1,
+    "physical_R7_factory_test": "pending operator trial"
   },
   "control": {
     "abi": 1,
@@ -321,5 +323,24 @@
     "T1_E_direction": 0,
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
-  }
+  },
+  "release": "RC8-CONTROL-R7-FACTORY",
+  "factory_load": {
+    "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
+    "tools": [
+      "T0",
+      "T1"
+    ],
+    "MCU_required": "RC8-CONTROL-R7-FACTORY",
+    "factory_abi": 1,
+    "parameter_query": "INVENTURE_LOAD_TEST ACTION=PARAMS",
+    "homing": "cold Z bottom and XY, MCU owner holds enable",
+    "RFID": "preinserted cassette SERVICE workflow; no authentication/write",
+    "physical_test": "pending operator",
+    "independent_lease_ms": 1500,
+    "counter_basis": "MCU actual starts and accepted edges",
+    "normal_completion_heaters_off": true,
+    "monitor_default": 0
+  },
+  "motor_test_release": "RC8-CONTROL-R7-FACTORY"
 }

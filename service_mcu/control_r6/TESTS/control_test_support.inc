@@ -17,6 +17,7 @@ static void control_reset(uint32_t now) {
     memset(transport,0,sizeof(transport));memset(assist_pending,0,sizeof(assist_pending));
     transport_live=0;auxiliary_ready=0;
     memset(&motor_test,0,sizeof(motor_test));memset(&xy_seek,0,sizeof(xy_seek));
+    memset(&fs,0,sizeof(fs));memset(&fs_age,0,sizeof(fs_age));
     control_guard_mask=127;memset(control_tach_watch,0,sizeof(control_tach_watch));
     const int16_t caps[]={310,310,150,150,150,100,100,190};
     for(unsigned i=0;i<8;i++){control_min[i]=-20;control_max[i]=caps[i];}

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
-PROGRAMS=('test_control_board.c','test_t0_heat_board.c','test_motor_board.c','test_load_stream.c')
+PROGRAMS=('test_control_board.c','test_t0_heat_board.c','test_motor_board.c','test_load_stream.c','test_factory_session.c')
 def main():
     compiler=shutil.which('gcc')
     if not compiler:raise SystemExit('A C11 host compiler (gcc) is required for register mocks')

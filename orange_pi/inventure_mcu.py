@@ -10,7 +10,12 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R6-T1'
+HOST_REVISION = 'RC8-CONTROL-R7-FACTORY'
+FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
+    'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
+FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
+    'tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u '
+    'fault=%c sequence=%u remaining_ms=%u')
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -424,6 +429,9 @@ class InventureMCU:
         if self.load_stream_abi==1:
             if self.control_abi!=1:raise self.printer.config_error('Smooth load requires CONTROL ABI 1')
             self.commands['load_stream']=self.mcu.lookup_query_command(LOAD_STREAM_COMMAND,LOAD_STREAM_RESPONSE)
+        self.factory_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_ABI',0))
+        if self.factory_abi==1:
+            self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
         self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
@@ -1543,6 +1551,7 @@ class InventureMCU:
             'motion_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'load_stream_abi':getattr(self,'load_stream_abi',0),
+            'factory_abi':getattr(self,'factory_abi',0),
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -2070,6 +2079,14 @@ class InventureMCU:
                     feeder_elapsed_ms=(context.get('last_stream') or {}).get('elapsed_ms',0),
                     feeder_time_basis='continuous MCU-owned run; elapsed time is not measured filament travel')
         if context.get('last_stream') is not None:result['load_stream']=context['last_stream']
+        if context.get('factory') is not None:
+            f=context['factory']
+            result['factory']={k:f[k] for k in ('parameters','phase','history','position',
+                'reference_valid','snapshot','result','e_sent_steps','fallback_started')}
+            result['stage']='factory_cartridge_load'
+            result['cleaning_pending']=not f.get('cleaning_done',False)
+            result['heater_off_on_completion']=True
+            result['factory_transport_completed']=bool((f.get('result') or {}).get('success'))
         self.load_test_last=result
         return result
 
@@ -2169,6 +2186,7 @@ class InventureMCU:
         now=self.reactor.monotonic()
         if state is None:temperature,state=self.panel_temperature(context['tool'],now)
         return (getattr(self,'load_test_context',None) is context and self.connected
+            and context.get('factory') is None
             and now<context['deadline'] and context.get('ready_latched',False)
             and context.get('jog') is None and context.get('stream') is None and state=='valid'
             and max(180.,context['target']-15.)<=temperature<=context['target']+8.)
@@ -2222,6 +2240,7 @@ class InventureMCU:
         if context is None:return
         self.load_test_context=None
         self.reactor.unregister_timer(context['timer'])
+        if context.get('factory') is not None:context['factory']['reference_valid']=False
         context['duty']=0
         self._load_test_emit(context,phase,reason)
 
@@ -2254,7 +2273,7 @@ class InventureMCU:
         if max(values[:2])>40 or context['duty']:
             if now>=context['fan_deadline']:raise ValueError('No F0 hotend cooling fan pulses for 10 seconds')
         else:context['fan_deadline']=now+10.
-        if not context['reached_target']:
+        if not context['reached_target'] and not context.get('factory_preparing',False):
             if now-context['start']>=300.:raise ValueError('Nozzle did not reach target within 300 seconds')
             if now-context['start']>=60. and temperature<context['start_temperature']+5.:
                 raise ValueError('Nozzle temperature did not rise by 5C within 60 seconds')
@@ -2402,19 +2421,227 @@ class InventureMCU:
         if context['busy']:return self.reactor.monotonic()+.25
         context['busy']=True
         try:
-            self._load_test_step(context)
+            if context.get('factory') is not None:self._factory_tick(context)
+            else:self._load_test_step(context)
         except Exception as exc:
             if self.load_test_context is context:
+                if context.get('factory') is not None:
+                    context['factory']['result']=dict(success=False,reason=str(exc),details=getattr(exc,'details',{}))
                 self._load_test_cancel(str(exc),phase='done' if str(exc)=='hold_duration_finished' else 'failed')
                 self._control_abort()
         finally:context['busy']=False
-        return (self.reactor.monotonic()+(.1 if context.get('jog') is not None else .25)
+        return (self.reactor.monotonic()+(.1 if context.get('jog') is not None or context.get('factory') is not None else .25)
                 if self.load_test_context is context else self.reactor.NEVER)
+
+    def _factory_start(self,gcmd,read_only=False):
+        from .inventure_factory_core import parameters,FactoryProgram
+        try:
+            p=parameters(gcmd)
+            timeout=float(gcmd.get('PROCEDURE_TIMEOUT',1800.))
+            if not math.isfinite(timeout) or not 60<=timeout<=3600:
+                raise ValueError('PROCEDURE_TIMEOUT must be 60..3600 seconds')
+            if read_only:
+                gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,procedure_timeout=timeout),sort_keys=True));return
+            if 'factory_session' not in self.commands:
+                raise ValueError('ACTION=AUTO requires the RC8-CONTROL-R7-FACTORY MCU application')
+            if any(gcmd.get(k,None) is not None for k in ('STEPS','HEAD_STEPS','TUBE_SECONDS','PURGE_STEPS','SMOOTH','RATE')):
+                raise ValueError('AUTO uses L1/L3/L4 parameters; remove fixed-distance LOAD/RETRACT parameters')
+            if getattr(self,'load_test_context',None) is not None:
+                raise ValueError('Load test already active; use STATUS or STOP')
+        except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
+        class HeatCommand:
+            def get(self,key,default=None):
+                if key=='ACTION':return 'HEAT'
+                if key=='TOOL':return 'T%d'%p['tool']
+                return gcmd.get(key,default)
+            def get_int(self,*args,**kw):return gcmd.get_int(*args,**kw)
+            def error(self,message):return gcmd.error(message)
+            def respond_info(self,message):return gcmd.respond_info(message)
+        self.cmd_load_test(HeatCommand())
+        context=self.load_test_context;now=self.reactor.monotonic()
+        context['factory_preparing']=True;context['deadline']=now+timeout
+        context['factory']=dict(parameters=p,program=FactoryProgram(p).run(),action=None,move=None,
+            resume=None,phase='HOME',history=[],position=[0.,0.,0.],reference_valid=False,
+            homed=[],snapshot={},result=None,e_sent_steps=0,fallback_started=False,
+            cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
+            mode=0,monitor=0,total_deadline=now+timeout,heat_started=False)
+        self._load_test_emit(context)
+
+    def _factory_session(self,context,mode=None,monitor=None):
+        f=context['factory'];p=f['parameters'];starting=not f['session']
+        if mode is not None:f['mode']=mode
+        if monitor is not None:f['monitor']=monitor
+        seq=f['sequence']+1
+        from .inventure_factory_core import feeder_budget
+        budget=feeder_budget(p)
+        row=self._control_send('factory_session',[1 if starting else 2,context['tool'],
+            f['mode'],f['monitor'],p['feeder_ms'],budget,1500,
+            round(max(180.,context['target']-25.)),round(context['target']+10.),f['token'],seq],
+            mutate=True,owner=context)
+        if self.load_test_context is not context:raise ValueError('Factory load was stopped')
+        self._control_validate(row,{'token':(0,0xffffffff),'active':(0,1),'reason':(0,7),
+            'reject':(0,5),'tool':(0,1),'mode':(0,4),'running':(0,1),'a':(0,1),'b':(0,1),
+            'pulses':(0,0xffffffff),'pulse_age_ms':(0,0xffffffff),'starts':(0,0xffffffff),
+            'fault':(0,255),'sequence':(0,0xffffffff),'remaining_ms':(0,1500)})
+        if (row['token']!=f['token'] or not row['active'] or row['reject'] or row['reason']
+                or row['tool']!=context['tool'] or row['mode']!=f['mode']
+                or row['fault'] or row['sequence']!=seq or not row['remaining_ms']):
+            raise ValueError('MCU factory guard/ownership rejected: '+json.dumps(row,sort_keys=True))
+        if f['snapshot']:
+            from .inventure_factory_core import delta32
+            delta32(row['pulses'],f['snapshot']['pulses']);delta32(row['starts'],f['snapshot']['starts'])
+        f.update(session=True,sequence=seq,snapshot=dict(row))
+        return dict(row)
+
+    def _factory_begin_move(self,context,action):
+        f=context['factory'];p=f['parameters'];pos=f['position'];home=action['kind']=='home'
+        e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
+        z=pos[2];mask=0
+        if home:
+            axis=action['axis'];distance=-action['max_mm']
+            dx=distance if axis=='X' else 0.;dy=distance if axis=='Y' else 0.
+            dz=distance if axis=='Z' else 0.;length=abs(distance)
+            mask={'X':1,'Y':2,'Z':4}[axis]
+        else:
+            if not f['reference_valid']:raise ValueError('Factory motion has no owned homing reference')
+            if not p['min_x']<=x<=p['max_x'] or not p['min_y']<=y<=p['max_y']:
+                raise ValueError('Factory motion outside service envelope')
+            dx=x-pos[0];dy=y-pos[1];dz=0.;length=math.hypot(dx,dy) or abs(e)
+        counts=(round((dx+dy)*640),round((dx-dy)*640),round(dz*802),
+                round(e*960)*(1 if context['tool'] else -1))
+        master=max(map(abs,counts))
+        if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
+        rate=max(1,math.ceil(master*action['speed']/length))
+        if rate>20000:raise ValueError('Requested factory speed exceeds 20000 master steps/s')
+        maximum=math.ceil(master*1000./rate)+5000
+        if maximum>600000:raise ValueError('Factory segment exceeds 600 seconds')
+        row=self._motion_query(1,counts,rate,10,maximum,mask,mask,owner=context)
+        if self.load_test_context is not context:raise ValueError('Factory load was stopped')
+        if row['reject']:raise ValueError(row['reject'])
+        f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
+            accounted=0,deadline=self.reactor.monotonic()+maximum/1000.+.5,
+            target=[x,y,z],home=home,mask=mask,start=self.reactor.monotonic(),
+            pulse_base=f['snapshot']['pulses'],quiet_since=self.reactor.monotonic(),last_pulse=f['snapshot']['pulses'])
+        if action['kind']=='retract_until_quiet':
+            if action.get('reset_quiet') or 'unload_quiet' not in f:
+                f['unload_quiet']=[f['snapshot']['pulses'],self.reactor.monotonic()]
+        return None
+
+    def _factory_account(self,context,row):
+        f=context['factory'];m=f['move']
+        if row['reject'] or (row['run'],row['token'])!=m['identity']:
+            raise ValueError('Factory motion ownership changed')
+        for i,name in enumerate(('A','B','Z','E')):
+            if row['drivers'][name]['planned']!=abs(m['counts'][i]):
+                raise ValueError('Factory driver plan changed')
+        sent=row['drivers']['E']['sent'];delta=sent-m['accounted']
+        if delta<0:raise ValueError('Factory E counter moved backward')
+        m['accounted']=sent
+        if delta:
+            direction=int(m['counts'][3]>0)
+            context['measurement']['dir%d_steps'%direction]+=delta
+            f['e_sent_steps']+=delta*(1 if direction==context['tool'] else -1)
+        context['motion']=row
+
+    def _factory_poll_move(self,context):
+        from .inventure_factory_core import delta32
+        f=context['factory'];m=f['move'];a=m['action'];snap=f['snapshot'];now=self.reactor.monotonic()
+        row=self._motion_query();self._factory_account(context,row)
+        stop=False;ok=False;kind=a['kind']
+        if kind=='feed_until_edges':
+            if snap['pulse_age_ms']>a['quiet_s']*1000:m['pulse_base']=snap['pulses']
+            ok=delta32(snap['pulses'],m['pulse_base'])>=a['count'];stop=ok
+        elif kind=='retract_until_quiet':
+            quiet=f['unload_quiet']
+            if snap['pulses']!=quiet[0]:quiet[:]=[snap['pulses'],now-snap['pulse_age_ms']/1000.]
+            ok=now-quiet[1]>=a['quiet_s'];stop=ok
+        elif kind=='retract_until_a':
+            ok=not snap['a'];stop=ok or now-m['start']>=a['timeout_s']
+        if stop and row['active']:
+            row=self._motion_query(2,owner=context);self._factory_account(context,row)
+        if row['active']:
+            if now>=m['deadline']:raise ValueError('Factory motion deadline exceeded')
+            return None
+        if kind=='home':
+            if row['reason']!='stop_input' or not row['hit']&m['mask']:
+                raise ValueError('Factory '+a['axis']+' homing failed to reach its limit')
+            f['homed'].append(a['axis']);f['position']['XYZ'.index(a['axis'])]=0.
+            f['reference_valid']=len(set(f['homed']))==3
+            ok=True
+        elif row['reason']=='completed':
+            if any(row['drivers'][n]['sent']!=abs(m['counts'][i]) for i,n in enumerate(('A','B','Z','E'))):
+                raise ValueError('Factory move completed with missing steps')
+            f['position'][:]=m['target']
+            if kind=='move':ok=True
+        elif not stop or row['reason']!='operator_stop':
+            raise ValueError('Factory motion stopped: '+row['reason'])
+        f['move']=None
+        return dict(snap,ok=ok,sent_steps=m['accounted'])
+
+    def _factory_action(self,context,action):
+        f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
+        if kind=='phase':
+            f['phase']=action['name'];f['history'].append(action['name'])
+            if action['name'].startswith('U'):f['fallback_started']=True
+            self._load_test_emit(context);return dict(f['snapshot'])
+        if kind=='heat':
+            if not f['heat_started']:
+                temperature,state=self.panel_temperature(context['tool'],now)
+                context.update(factory_preparing=False,start=now,start_temperature=temperature,
+                    deadline=min(now+300.,f['total_deadline']))
+                context['pid'].update(time=now,temperature=temperature,derivative=0.,integral=0.)
+                f['heat_started']=True
+            self._load_test_readiness(context,self.panel_temperature(context['tool'],now)[0],now)
+            return dict(f['snapshot']) if context['ready_latched'] else None
+        if kind=='mode':return self._factory_session(context,action['mode'],action['monitor'])
+        if kind in ('home','move'):
+            return self._factory_poll_move(context) if f['move'] is not None else self._factory_begin_move(context,action)
+        if kind in ('wait_a','wait_unload'):
+            if 'until' not in action:action['until']=now+action['timeout_s']
+            snap=f['snapshot'];ok=bool(snap['a']) if kind=='wait_a' else not snap['a'] or bool(snap['b'])
+            return dict(snap,ok=ok) if ok or now>=action['until'] else None
+        if kind in ('feed_until_edges','retract_until_quiet','retract_until_a'):
+            if f['move'] is not None:return self._factory_poll_move(context)
+            if kind=='retract_until_a' and not f['snapshot']['a']:
+                return dict(f['snapshot'],ok=True,sent_steps=0)
+            mm=action.get('mm',action.get('timeout_s',0)*action['speed'])
+            action=dict(action,e=mm if kind=='feed_until_edges' else -mm)
+            return self._factory_begin_move(context,action)
+        if kind=='done':
+            f['result']=dict(action);f['cleaning_done']=action.get('terminal')=='L4'
+            self._load_test_cancel('factory_load_completed',phase='done');self._control_abort()
+            return None
+        raise ValueError('Unknown factory action '+kind)
+
+    def _factory_tick(self,context):
+        f=context['factory'];now=self.reactor.monotonic()
+        if now>=f['total_deadline']:raise ValueError('Factory procedure timeout')
+        temperature=self._load_test_safety(context)
+        if context['output_token'] is None:self._load_test_output(context,0)
+        self._load_test_check_output(context)
+        self._factory_session(context)
+        if f['heat_started']:
+            duty=self._load_test_pid(context,temperature,now)
+            if duty or context['duty']:self._load_test_output(context,duty)
+        for _ in range(12):
+            if self.load_test_context is not context:return
+            if f['action'] is None:
+                try:f['action']=f['program'].send(f['resume'])
+                except StopIteration:raise ValueError('Factory program ended without terminal result')
+                f['resume']=None
+            result=self._factory_action(context,f['action'])
+            if self.load_test_context is not context:return
+            if result is None:break
+            f['resume']=result;f['action']=None
+        if now>=context['next_report']:
+            context['next_report']=now+5.;self._load_test_emit(context)
 
     def cmd_load_test(self,gcmd):
         action=str(gcmd.get('ACTION','STATUS')).upper()
+        if action in ('AUTO','PARAMS'):
+            return self._factory_start(gcmd,read_only=action=='PARAMS')
         if action not in ('HEAT','LOAD','RETRACT','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
-            raise gcmd.error('Use ACTION=HEAT, LOAD, RETRACT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
+            raise gcmd.error('Use ACTION=AUTO, PARAMS, HEAT, LOAD, RETRACT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
         context=getattr(self,'load_test_context',None)
         if action=='STOP':
             self._load_test_cancel('operator_stop')
@@ -2489,6 +2716,8 @@ class InventureMCU:
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
         if context is None:raise gcmd.error('Start INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 or TOOL=T1 TARGET=230 first')
+        if context.get('factory') is not None:
+            raise gcmd.error('Factory AUTO owns the printer; use STATUS, PARAMS or STOP')
         deadline=self.reactor.monotonic()+1.
         while context['busy'] and self.load_test_context is context and self.reactor.monotonic()<deadline:
             self.reactor.pause(min(deadline,self.reactor.monotonic()+.025))
@@ -2601,6 +2830,9 @@ class InventureMCU:
 
     def _load_test_feeder_stop(self,channel=None):
         context=getattr(self,'load_test_context',None)
+        if context is not None and context.get('factory') is not None:
+            if channel is not None and channel!=context['tool']:return False
+            self._load_test_cancel('operator_feeder_stop');self._control_abort();return True
         if context is None or context.get('cassette_load') is None:return False
         if channel is not None and channel!=context['cassette_load']['channel']:return False
         self._load_test_cancel('operator_feeder_stop')

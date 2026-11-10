@@ -1,0 +1,314 @@
+"""Factory planner boundaries, OEM decision ordering and genuine feedback."""
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+spec = importlib.util.spec_from_file_location('factory_core',
+    Path(__file__).resolve().parents[1] / 'orange_pi/inventure_factory_core.py')
+core = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(core)
+
+
+class Command:
+    def __init__(self, **values):self.values = values
+    def get(self, key, default=None):return self.values.get(key, default)
+
+
+class Executor:
+    """Actions complete normally; hooks supply independent transport evidence."""
+    def __init__(self, p=None, hook=None):
+        self.p = core.defaults(0) if p is None else p
+        self.program = core.FactoryProgram(self.p)
+        self.generator = self.program.run()
+        self.hook = hook
+        self.actions = []
+        self.phase = None
+        self.snap = dict(a=1, b=1, pulses=100, pulse_age_ms=10., starts=100, fault=0)
+        self.done = None
+
+    def run(self):
+        result = None
+        while True:
+            try:action = self.generator.send(result)
+            except StopIteration:return self
+            self.actions.append(dict(action, phase=self.phase))
+            kind = action['kind']
+            if kind == 'phase':self.phase = action['name']
+            if kind == 'done':self.done = action
+            if kind in ('phase', 'home', 'heat', 'done'):
+                result = None
+            else:
+                result = dict(self.snap)
+                if kind.startswith(('wait_', 'feed_', 'retract_')):
+                    result.update(ok=True, sent_steps=0)
+                if kind == 'feed_until_edges':
+                    result['pulses'] += action['count']
+                    result['sent_steps'] = 12345
+                if kind == 'retract_until_quiet':
+                    result.update(ok=False, sent_steps=round(action['mm'] * 960))
+                if kind == 'retract_until_a':result['a'] = 0
+            if self.hook is not None:
+                changed = self.hook(self, action, result)
+                if changed is not None:result = changed
+            if isinstance(result, dict):
+                self.snap.update({k:result[k] for k in self.snap if k in result})
+            if len(self.actions) > 10000:raise AssertionError('Unbounded factory generator')
+
+    def in_phase(self, phase, kind=None):
+        return [a for a in self.actions if a['phase'] == phase
+                and (kind is None or a['kind'] == kind)]
+
+
+def short_feedback(ex, action, result):
+    if result is not None and ex.phase == 'L1':
+        result['pulse_age_ms'] = 3000.
+        if action['kind'] == 'move':result['starts'] = 106
+
+
+def long_feedback(ex, action, result):
+    if result is None:return
+    if ex.phase == 'L1':result.update(starts=106, pulse_age_ms=3000.01)
+    elif ex.phase == 'L3' and action['kind'] == 'feed_until_edges':
+        result['pulse_age_ms'] = 10.
+    elif ex.phase == 'L4' and action['kind'] == 'move' and action['e']:
+        result['starts'] = 109
+
+
+class FactoryCoreTests(unittest.TestCase):
+    def test_defaults_and_parameter_tool_mapping_are_independent(self):
+        a, b = core.defaults('T0'), core.parameters(Command(TOOL='T1'))
+        self.assertEqual((a['tool'], b['tool']), (0, 1))
+        self.assertEqual((a['approach_x'], a['switch_x'], a['service_x']), (135., 150., 135.))
+        self.assertEqual((b['approach_x'], b['switch_x'], b['service_x']), (10.5, -4.5, 0.))
+        a['l1_budget'] = 0
+        self.assertEqual(core.defaults(0)['l1_budget'], 500.)
+
+    def test_tuning_is_typed_and_frozen_as_a_per_program_snapshot(self):
+        p = core.parameters(Command(TOOL='T1', PULSE_COUNT='9', E_SPEED='2.5',
+            L1_PORTION='12', L1_BUDGET='120', FEEDER_MS='800', FEEDER_K='1.5', FALLBACK='0'))
+        plan = core.FactoryProgram(p)
+        p['e_speed'] = 9.
+        self.assertEqual(plan.p['e_speed'], 2.5)
+        self.assertEqual(plan.p['pulse_count'], 9)
+        self.assertIs(type(plan.p['pulse_count']), int)
+        self.assertEqual((plan.p['feeder_ms'], plan.p['fallback']), (800, 0))
+
+    def test_nonfinite_bad_integer_and_unsafe_parameters_refuse_before_yield(self):
+        for values in ({'TOOL':'T2'}, {'E_SPEED':'nan'}, {'TRAVEL_SPEED':float('inf')},
+                {'PURGE_SPEED':22.1}, {'PULSE_COUNT':1.5}, {'FEEDER_MS':1501},
+                {'FALLBACK':2}, {'MONITOR':2}, {'MONITOR':.5}, {'L1_PORTION':50, 'L1_BUDGET':20},
+                {'UNLOAD_L1':0, 'UNLOAD_L2':0}, {'MIN_X':0, 'TOOL':'T1'},
+                {'MAX_X':100}, {'CENTER_Y':156}, {'MIN_Y':1}, {'FEEDER_K':True}):
+            with self.subTest(values=values):
+                with self.assertRaises(core.FactoryError):core.parameters(Command(**values))
+
+    def test_all_possible_geometry_is_validated_before_first_action(self):
+        for key, value in (('switch_x', 156.), ('service_y', -1.), ('approach_x', 156.),
+                           ('center_x', 20.), ('switch_y', 156.)):
+            p = core.defaults(0);p[key] = value
+            with self.subTest(key=key):
+                with self.assertRaises(core.FactoryError):core.FactoryProgram(p)
+
+    def test_each_possible_trajectory_fits_MCU_duration_before_any_action(self):
+        for values in ({'HOME_Z_MAX':300, 'Z_SPEED':.1},
+                {'HOME_XY_MAX':250, 'HOME_SPEED':.1},
+                {'LONG_MM':500, 'E_SPEED':.1},
+                {'UNLOAD_L1':250, 'UNLOAD_SPEED1':.1},
+                {'UNLOAD_L2':250, 'UNLOAD_SPEED2':.1},
+                {'TRAVEL_SPEED':.1}, {'SWITCH_SPEED':.1, 'APPROACH_X':0}):
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(core.FactoryError, '595 seconds'):
+                    core.parameters(Command(**values))
+        # A 59.5mm pure feed at .1mm/s is exactly the reserved boundary.
+        p = core.parameters(Command(LONG_MM=59.5, E_SPEED=.1))
+        self.assertEqual(p['long_mm'] / p['e_speed'], 595.)
+
+    def test_feeder_budget_uses_float32_and_rejects_zero_before_any_action(self):
+        p = core.defaults(0)
+        self.assertEqual(core.feeder_budget(p), 20160)
+        p.update(feeder_ms=1500, feeder_k=3.)
+        self.assertEqual(core.feeder_budget(p), 51840)
+        with self.assertRaisesRegex(core.FactoryError, 'positive E budget'):
+            core.parameters(Command(FEEDER_MS=1, FEEDER_K=.01))
+
+    def test_full_homing_and_heat_precede_owned_modes_and_E_for_both_tools(self):
+        for tool in (0, 1):
+            ex = Executor(core.defaults(tool), short_feedback).run()
+            homes = [a for a in ex.actions if a['kind'] == 'home']
+            self.assertEqual([a['axis'] for a in homes], ['Z', 'X', 'Y'])
+            self.assertEqual((homes[0]['max_mm'], homes[0]['speed']), (250., 2.))
+            heat = next(i for i,a in enumerate(ex.actions) if a['kind'] == 'heat')
+            self.assertFalse(any(a['kind'] in ('mode', 'move') for a in ex.actions[:heat]))
+            switch = ex.in_phase('SWITCH', 'move')
+            self.assertEqual([(a['x'], a['y']) for a in switch],
+                [(67.5, 150.), (135. if tool == 0 else 10.5, 152.),
+                 (150. if tool == 0 else -4.5, 152.), (67.5, 150.)])
+            self.assertEqual(switch[2]['speed'], 4.)
+            self.assertFalse(any(a['e'] for a in switch))
+
+    def test_short_path_uses_exact_integer_kernel_and_stops_without_long_path(self):
+        for tool in (0, 1):
+            ex = Executor(core.defaults(tool), short_feedback).run()
+            moves = ex.in_phase('L1', 'move')
+            extrusions = [a for a in moves if a['e']]
+            self.assertEqual(len(extrusions), 10)
+            self.assertEqual([round(a['e'] * 960) for a in extrusions], [1036] + [2073] * 9)
+            self.assertEqual(sum(round(a['e'] * 960) for a in extrusions), 19693)
+            self.assertEqual(extrusions[0]['x'], 49.5 if tool == 0 else 85.5)
+            self.assertEqual(extrusions[1]['x'], 85.5 if tool == 0 else 49.5)
+            self.assertEqual((moves[-1]['x'], moves[-1]['y']), (67.5, 150.))
+            self.assertEqual(ex.done['terminal'], 'L1')
+            self.assertFalse(any(a['kind'] == 'feed_until_edges' for a in ex.actions))
+            self.assertFalse(any(a['phase'] == 'L4' for a in ex.actions))
+
+    def test_load_monitor_defaults_off_and_is_explicitly_tunable_in_both_AUTO_stages(self):
+        self.assertEqual(core.defaults(0)['monitor'], 0)
+        for monitor in (0, 1):
+            p = core.parameters(Command(MONITOR=str(monitor)))
+            ex = Executor(p, long_feedback).run()
+            automatic = [a for a in ex.actions if a['kind'] == 'mode' and a['mode'] == 1]
+            self.assertEqual([a['phase'] for a in automatic], ['L1', 'L4'])
+            self.assertEqual([a['monitor'] for a in automatic], [monitor, monitor])
+
+    def test_L1_six_actual_starts_win_over_budget_at_exact_quiet_boundary(self):
+        p = core.defaults(0);p.update(l1_portion=20., l1_budget=20.)
+        ex = Executor(p, short_feedback).run()
+        self.assertEqual(ex.done['terminal'], 'L1')
+
+    def test_L1_issued_steps_and_filament_pulses_cannot_replace_auxiliary_starts(self):
+        p = core.defaults(0);p.update(l1_portion=20., l1_budget=20.)
+        def feedback(ex, action, result):
+            if result is not None and ex.phase == 'L1':
+                result.update(pulses=1000000, starts=105, pulse_age_ms=10.)
+        ex = Executor(p, feedback)
+        with self.assertRaisesRegex(core.FactoryError, 'l1_budget_exhausted'):ex.run()
+        self.assertIsNone(ex.done)
+
+    def test_L1_quiet_recovery_has_priority_over_starts_and_budget(self):
+        p = core.defaults(0);p.update(l1_portion=20., l1_budget=20.)
+        ex = Executor(p, long_feedback).run()
+        self.assertIn('L2', ex.program.history)
+        self.assertEqual(ex.done['terminal'], 'L4')
+
+    def test_counter_wrap_is_supported_and_backward_reset_is_refused(self):
+        for backward in (False, True):
+            def feedback(ex, action, result):
+                if result is not None and ex.phase == 'L1':
+                    if action['kind'] == 'mode':result['starts'] = 0xfffffffc
+                    else:result['starts'] = 0xfffffffb if backward else 2
+                    result['pulse_age_ms'] = 1.
+            ex = Executor(hook=feedback)
+            if backward:
+                with self.assertRaisesRegex(core.FactoryError, 'Backward'):ex.run()
+            else:
+                ex.run();self.assertEqual(ex.done['terminal'], 'L1')
+
+    def test_long_path_moves_to_tool_specific_front_and_requires_verified_edges(self):
+        for tool in (0, 1):
+            p = core.defaults(tool);p.update(long_mm=180., e_speed=2., pulse_count=9, pulse_quiet=1.5)
+            ex = Executor(p, long_feedback).run()
+            front = [a for a in ex.in_phase('L2', 'move')]
+            self.assertEqual((front[-1]['x'], front[-1]['y']), (135. if tool == 0 else 0., 0.))
+            action = ex.in_phase('L3', 'feed_until_edges')[0]
+            self.assertEqual((action['mm'], action['speed'], action['count'], action['quiet_s']),
+                             (180., 2., 9, 1.5))
+            self.assertEqual(ex.done['terminal'], 'L4')
+
+    def test_L2_timeout_and_L3_budget_exhaustion_never_claim_success(self):
+        for failed_kind, code in (('wait_a', 'l2_a_timeout'), ('feed_until_edges', 'l3_no_transport')):
+            def feedback(ex, action, result):
+                long_feedback(ex, action, result)
+                if action['kind'] == failed_kind:result['ok'] = False
+            ex = Executor(hook=feedback)
+            with self.subTest(kind=failed_kind):
+                with self.assertRaisesRegex(core.FactoryError, code):ex.run()
+                self.assertIsNone(ex.done)
+                self.assertNotIn('L4', ex.program.history)
+
+    def test_failed_homing_or_partial_motion_never_reaches_extrusion(self):
+        for failure in ('home', 'move'):
+            def feedback(ex, action, result):
+                if action['kind'] == failure:
+                    return dict(ex.snap, ok=False)
+            ex = Executor(hook=feedback)
+            with self.subTest(kind=failure):
+                with self.assertRaises(core.FactoryError):ex.run()
+                self.assertFalse(any(a['kind'] == 'move' and a['e'] for a in ex.actions))
+                if failure == 'home':self.assertNotIn('HEAT', ex.program.history)
+
+    def test_L2_positive_ack_requires_actual_A_high(self):
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if action['kind'] == 'wait_a':result.update(ok=True, a=0)
+        ex = Executor(hook=feedback)
+        with self.assertRaisesRegex(core.FactoryError, 'l2_a_timeout'):ex.run()
+        self.assertNotIn('L3', ex.program.history)
+
+    def test_L3_ack_without_actual_edges_or_with_stale_edge_is_rejected(self):
+        for stale in (False, True):
+            def feedback(ex, action, result):
+                long_feedback(ex, action, result)
+                if action['kind'] == 'feed_until_edges':
+                    if stale:result['pulse_age_ms'] = 2000.01
+                    else:result['pulses'] = ex.snap['pulses']
+            ex = Executor(hook=feedback)
+            with self.assertRaisesRegex(core.FactoryError, 'l3_unverified_transport_result'):ex.run()
+
+    def test_final_clean_uses_remaining_oscillation_sign_including_tuned_budget_parity(self):
+        for tool, budget, expected in (
+                (0, 100., [117.5, 17.5, 44.5]), (1, 100., [17.5, 117.5, 90.5]),
+                (0, 50., [17.5, 117.5, 90.5]), (1, 50., [117.5, 17.5, 44.5])):
+            p = core.defaults(tool);p['final_mm'] = budget
+            ex = Executor(p, long_feedback).run()
+            moves = ex.in_phase('L4', 'move')
+            self.assertEqual([a['x'] for a in moves[-3:]], expected)
+            self.assertTrue(all(a['y'] == 152. and a['e'] == 0 for a in moves[-3:]))
+
+    def test_missing_final_starts_invokes_bounded_fallback_once_and_keeps_failure(self):
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if result is not None and ex.phase == 'L4':result['starts'] = 108
+        ex = Executor(hook=feedback)
+        with self.assertRaisesRegex(core.FactoryError, 'fallback_completed') as error:ex.run()
+        self.assertTrue(error.exception.details['sensor_empty_proven'])
+        self.assertIsNone(ex.done)
+        self.assertEqual(ex.program.history[-4:], ['U0', 'U1', 'U2', 'U3'])
+        portions = [a for a in ex.actions if a['kind'] == 'retract_until_quiet']
+        self.assertEqual([a['mm'] for a in portions], [30., 70.])
+        self.assertEqual([a['reset_quiet'] for a in portions], [True, False])
+        self.assertEqual(sum(a['kind'] == 'wait_unload' for a in ex.actions), 1)
+        self.assertEqual(ex.actions[-1]['mode'], 0)
+
+    def test_early_unload_quiet_skips_second_portion_and_A_timeout_does_not_prove_empty(self):
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if result is None:return
+            if ex.phase == 'L4':result['starts'] = 108
+            if action['kind'] == 'retract_until_quiet':result.update(ok=True, sent_steps=1)
+            if action['kind'] == 'retract_until_a':result.update(ok=False, a=1)
+        ex = Executor(hook=feedback)
+        with self.assertRaises(core.FactoryError) as error:ex.run()
+        self.assertFalse(error.exception.details['sensor_empty_proven'])
+        self.assertNotIn('U2', ex.program.history)
+        self.assertEqual(len([a for a in ex.actions if a['kind'] == 'retract_until_quiet']), 1)
+
+    def test_disabled_fallback_stops_at_final_verification(self):
+        p = core.defaults(0);p['fallback'] = 0
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if result is not None and ex.phase == 'L4':result['starts'] = 108
+        ex = Executor(p, feedback)
+        with self.assertRaisesRegex(core.FactoryError, '^l4_starts_missing$'):ex.run()
+        self.assertNotIn('U0', ex.program.history)
+
+    def test_invalid_or_faulted_fresh_snapshots_abort_instead_of_advancing(self):
+        for update in ({'fault':3}, {'starts':True}, {'a':None}, {'pulse_age_ms':-1},
+                       {'pulse_age_ms':float('nan')}, {'pulses':-1}, {'b':2}):
+            def feedback(ex, action, result):
+                if result is not None:result.update(update)
+            with self.subTest(update=update):
+                with self.assertRaises(core.FactoryError):Executor(hook=feedback).run()
+
+
+if __name__ == '__main__':unittest.main(verbosity=2)
