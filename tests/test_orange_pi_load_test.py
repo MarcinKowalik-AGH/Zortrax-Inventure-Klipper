@@ -201,20 +201,20 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(self.starts(h,'motion'),[]);self.assertIsNotNone(h.load_test_context)
         h.reactor.pause(101.);self.assertGreater(h.device.output(6)['duty'],0)
 
-    def test_both_E_directions_have_no_XYZ_steps_and_heat_is_off_until_motion_ends(self):
+    def test_both_E_directions_have_only_E_windows_and_finish_with_fresh_GPIO_comparison(self):
         for direction in (0,1):
             h,_,_=self.host();self.heat(h);self.ready(h)
             h.temperatures[0]=227.;h.reactor.pause(103.)
             h.cmd_load_test(Command(ACTION='JOG',DIR=direction,STEPS=960,RATE=960))
             starts=self.starts(h,'motion');self.assertEqual(len(starts),1)
-            p=starts[0];self.assertEqual(p[2:7],(8 if direction else 0,0,0,0,960))
-            self.assertEqual(h.device.output(6)['duty'],0)
-            before=len(self.starts(h));h.reactor.pause(103.75)
-            self.assertEqual(len(self.starts(h)),before)
+            p=starts[0];self.assertEqual(p[2:7],(8 if direction else 0,0,0,0,480))
+            self.assertGreater(h.device.output(6)['duty'],0)
+            h.reactor.pause(103.4)
             h.commands['sensor_inputs'].reply['raw']=1<<8;h.board_reply['p4']=9;h.status['p4']=9
             h.commands['gpio_read'].words[mod.GPIO_BASE+3*0x400+0x10]=1<<10
-            h.reactor.pause(104.5)
-            self.assertGreater(len(self.starts(h)),before)
+            h.reactor.pause(104.75)
+            self.assertEqual(sum(p[6] for p in self.starts(h,'motion')),960)
+            self.assertEqual(h.load_test_last['last_jog']['sent'],960)
             self.assertEqual(h.load_test_context['comparison']['pulse_delta']['t0_pb12'],7)
             self.assertEqual(h.load_test_context['comparison']['filament_after']['t0_a'],1)
             self.assertEqual(h.load_test_context['comparison']['changes'][0]['pin'],'PD10')
@@ -292,8 +292,9 @@ class LoadTests(unittest.TestCase):
     def test_fixed_total_timeout_cannot_be_extended_by_status_or_sampling(self):
         h,_,_=self.host();self.heat(h,DURATION=10);self.ready(h)
         h.cmd_load_test(Command(ACTION='BASELINE'));h.cmd_load_test(Command(ACTION='COMPARE'))
-        h.cmd_load_test(Command(ACTION='STATUS'));h.reactor.pause(111.)
-        self.assertIsNone(h.load_test_context);self.assertEqual(h.load_test_last['reason'],'duration_finished')
+        deadline=h.load_test_context['deadline']
+        h.cmd_load_test(Command(ACTION='STATUS'));h.reactor.pause(deadline+.25)
+        self.assertIsNone(h.load_test_context);self.assertEqual(h.load_test_last['reason'],'hold_duration_finished')
         self.assertFalse(h.device.active())
 
     def test_manual_flow_confirmation_preserves_pending_cleaning_and_does_not_claim_load_success(self):
@@ -325,7 +326,7 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(len(self.starts(h)),count);self.assertFalse(h.device.active())
 
     def test_limits_are_validated_before_actuation(self):
-        for params in (dict(TARGET='nan'),dict(TARGET=241),dict(MAX_POWER=51),dict(DURATION=601),dict(TOOL='PC9')):
+        for params in (dict(TARGET='nan'),dict(TARGET=241),dict(MAX_POWER=51),dict(DURATION=901),dict(TOOL='PC9')):
             h,_,_=self.host()
             with self.assertRaises(RuntimeError):h.cmd_load_test(Command(ACTION='HEAT',**params))
             self.assertEqual(h.device.packets,[])

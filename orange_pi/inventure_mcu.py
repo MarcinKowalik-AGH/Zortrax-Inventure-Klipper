@@ -10,12 +10,15 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-LOAD230-R3'
+HOST_REVISION = 'RC8-CONTROL-R5-LOAD15'
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
 LOAD_PID_KP, LOAD_PID_KI, LOAD_PID_KD = 25., .0005, 230.
 LOAD_PID_ALPHA, LOAD_PID_DT = .95, .1
+LOAD_HOLD_MAX_S = 900
+LOAD_E_STEPS_PER_MM = 960.
+LOAD_JOG_WINDOW_S = .5
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -210,6 +213,7 @@ class InventureMCU:
         self.fan_rejected=0
         self.commands = {}
         self.query_mutex = self.reactor.mutex()
+        self.motion_mutex = self.reactor.mutex()
         self.cassette_gpio_baseline = None
         self.feeder_test_pending_until = None
         self.feeder_run_context = None
@@ -1652,6 +1656,14 @@ class InventureMCU:
 
     def _motion_query(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
                       max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None):
+        # State plus four driver replies must describe one run. In particular,
+        # the next E window cannot start halfway through another reader's poll.
+        mutex=getattr(self,'motion_mutex',None)
+        with mutex if mutex is not None else nullcontext():
+            return self._motion_query_locked(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold_ms,owner)
+
+    def _motion_query_locked(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
+                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None):
         directions=sum(1<<i for i,n in enumerate(counts) if n>0)
         token=self._control_next_token() if action==1 else 0
         p=self._control_send('motion',[action,directions,*[abs(n) for n in counts],
@@ -1995,15 +2007,25 @@ class InventureMCU:
             maximum_power_pct=context['power'],duty_pct=round(context['duty']*100/256.,2),
             overheat_limit_c=context['limit'],elapsed_s=round(max(0.,now-context['start']),2),
             remaining_s=round(max(0.,context['deadline']-now),2),
+            timer_phase='heatup' if context['hold_started'] is None else 'hold',
+            hold_duration_s=context['hold_duration'],
+            hold_remaining_s=round(context['hold_duration'] if context['hold_started'] is None
+                else max(0.,context['deadline']-now),2),
             ready_for_jog=self._load_test_jog_ready(context,temperature,state),
             control_mode='pid_r0323_nozzle',
             jog_min_c=max(180.,context['target']-15.),jog_max_c=context['target']+8.,
             flow_confirmed_by_operator=context['flow_confirmed'],
             head_filament_sensor_identified=False,load_completed=False,
             cleaning_pending=True,position_established=False,
-            heater_lease_ms=1500,heater_off_during_jog=True)
+            heater_lease_ms=1500,heater_off_during_jog=False,
+            jog_window_max_s=LOAD_JOG_WINDOW_S,
+            measurement=self._load_test_measurement(context))
+        result['motion_scope']='latest_MCU_window; last_jog and measurement contain totals'
         if context.get('comparison') is not None:result.update(context['comparison'])
         if context.get('motion') is not None:result['motion']=context['motion']
+        if context.get('jog') is not None:
+            result['jog']={k:context['jog'][k] for k in ('steps','sent','direction','rate','windows')}
+        elif context.get('last_jog') is not None:result['last_jog']=context['last_jog']
         self.load_test_last=result
         return result
 
@@ -2025,6 +2047,8 @@ class InventureMCU:
                 if context['ready_since'] is None:context['ready_since']=now
                 if now-context['ready_since']>=2.:
                     context['ready_latched']=True;context['reached_target']=True
+                    if context['hold_started'] is None:
+                        context['hold_started']=now;context['deadline']=now+context['hold_duration']
             else:context['ready_since']=None
 
     @staticmethod
@@ -2069,7 +2093,9 @@ class InventureMCU:
         self._feeder_service_preflight(allow_active=True,allow_load=True)
         if self.load_test_context is not context:raise ValueError('Load test was stopped')
         now=self.reactor.monotonic()
-        if now>=context['deadline']:raise ValueError('duration_finished')
+        if now>=context['deadline']:
+            raise ValueError('Nozzle did not reach target within 300 seconds'
+                             if context['hold_started'] is None else 'hold_duration_finished')
         received=getattr(self,'status_received',None)
         if received is None or not 0<=now-received<.75:
             raise ValueError('Board/cable status is stale')
@@ -2119,43 +2145,90 @@ class InventureMCU:
             filament_after=current['filament'],gpio_snapshot_fresh=True)
         context['comparison']=comparison
 
-    def _load_test_step(self,context):
-        temperature=self._load_test_safety(context)
-        now=self.reactor.monotonic()
-        self._load_test_readiness(context,temperature,now)
-        duty=self._load_test_pid(context,temperature,now,integrate=context.get('jog') is None)
-        if context.get('jog') is not None:
-            if temperature<max(170.,context['target']-25.):
-                raise ValueError('Nozzle cooled below the extrusion limit during the jog')
-            motion=self._motion_query();expected=context['jog']
-            if motion['reject'] or (motion['run'],motion['token'])!=expected['identity']:
-                raise ValueError('Extruder motion ownership changed')
-            if now>=expected['deadline'] and motion['active']:
-                raise ValueError('Extruder jog exceeded its bounded duration')
-            context['motion']=motion
-            if motion['active']:return
-            if motion['reason']!='completed' or motion['drivers']['E']['sent']!=expected['steps']:
-                raise ValueError('Extruder jog stopped before completion')
-            context['jog']=None
-            self._load_test_capture(context)
-            if self.load_test_context is not context:return
-            self._load_test_emit(context,'jog_done')
-        starting=context['output_token'] is None
-        if starting:
-            # R5 retains the last shutdown/heartbeat/guard reason while OFF.
-            # After current SERVICE/cable/sensor checks, explicitly confirm OFF
-            # once. A guard raised after this acknowledgement remains fatal.
-            self._load_test_output(context,0)
+    @staticmethod
+    def _load_test_measurement(context):
+        m=context['measurement'];net=m['dir0_steps']-m['dir1_steps']
+        return dict(m,net_dir0_steps=net,nominal_steps_per_mm=LOAD_E_STEPS_PER_MM,
+            dir0_mm=round(m['dir0_steps']/LOAD_E_STEPS_PER_MM,3),
+            dir1_mm=round(m['dir1_steps']/LOAD_E_STEPS_PER_MM,3),
+            net_dir0_mm=round(net/LOAD_E_STEPS_PER_MM,3),
+            basis='MCU-confirmed steps; not measured filament travel',
+            T0_dir0_is_feed=True,has_unfinished_jog=context.get('jog') is not None,
+            flow_mark=context.get('flow_mark'))
+
+    def _load_test_check_output(self,context):
         output=self._output_query(context['tool']+6)
-        if self.load_test_context is not context:return
+        if self.load_test_context is not context:raise ValueError('Load test was stopped')
         if output['reject'] or output['reason'] in ('temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown'):
             raise ValueError('MCU heater guard: '+str(output['reason']))
         if context['duty'] and (output['duty']!=context['duty'] or not output['remaining_ms']
                 or output['token']!=context['output_token']):
             raise ValueError('Heater power lease expired or changed; restart the test explicitly')
-        # Smooth PWM replaces the old 0 / MAX_POWER thermostat. MCU guards
-        # and the independent 1.5-second power lease stay in force.
+
+    def _load_test_start_window(self,context):
+        jog=context['jog'];steps=min(jog['steps']-jog['sent'],max(1,int(jog['rate']*LOAD_JOG_WINDOW_S)))
+        max_ms=math.ceil(steps*1000./jog['rate'])+250
+        counts=(0,0,0,steps if jog['direction'] else -steps)
+        motion=self._motion_query(1,counts,jog['rate'],10,max_ms,owner=context)
+        if self.load_test_context is not context:return
+        if motion['reject']:raise ValueError(motion['reject'])
+        context['motion']=motion
+        jog.update(identity=(motion['run'],motion['token']),window_steps=steps,window_accounted=0,
+            window_deadline=self.reactor.monotonic()+max_ms/1000.+.25)
+
+    def _load_test_account_window(self,context,motion):
+        jog=context['jog']
+        if motion['reject'] or (motion['run'],motion['token'])!=jog['identity']:
+            raise ValueError('Extruder motion ownership changed')
+        sent=motion['drivers']['E']['sent']
+        if sent<jog['window_accounted'] or sent>jog['window_steps']:
+            raise ValueError('Invalid extruder step accounting')
+        delta=sent-jog['window_accounted'];jog['window_accounted']=sent;jog['sent']+=delta
+        context['measurement']['dir%d_steps'%jog['direction']]+=delta
+
+    def _load_test_step(self,context):
+        temperature=self._load_test_safety(context)
+        now=self.reactor.monotonic()
+        self._load_test_readiness(context,temperature,now)
+        starting=context['output_token'] is None
+        if starting:self._load_test_output(context,0)
+        self._load_test_check_output(context)
+        jog=context.get('jog')
+        if jog is not None:
+            if temperature<max(170.,context['target']-25.):
+                raise ValueError('Nozzle cooled below the extrusion limit during the jog')
+            if now>=jog['deadline']:raise ValueError('Extruder jog exceeded its bounded duration')
+            if jog['identity'] is not None:
+                motion=self._motion_query()
+                if self.load_test_context is not context:return
+                self._load_test_account_window(context,motion);context['motion']=motion
+                if now>=jog['window_deadline'] and motion['active']:
+                    raise ValueError('Extruder window exceeded its bounded duration')
+                if motion['active']:
+                    self._load_test_pid(context,temperature,now,integrate=False)
+                    return
+                if motion['reason']!='completed' or motion['drivers']['E']['sent']!=jog['window_steps']:
+                    raise ValueError('Extruder jog stopped before completion')
+                jog['windows']+=1;jog['identity']=None
+            if jog['sent']==jog['steps']:
+                context['last_jog']=dict(steps=jog['steps'],sent=jog['sent'],direction=jog['direction'],
+                    rate=jog['rate'],windows=jog['windows'],elapsed_s=round(now-jog['started'],3))
+                context['measurement']['completed_jogs']+=1;context['jog']=None
+                self._load_test_capture(context)
+                if self.load_test_context is not context:return
+                self._load_test_emit(context,'jog_done')
+        duty=self._load_test_pid(context,temperature,now)
         if duty or context['duty']:self._load_test_output(context,duty)
+        if self.load_test_context is not context:return
+        if context.get('jog') is not None:
+            if context['ready_latched'] and max(180.,context['target']-15.)<=temperature<=context['target']+8.:
+                self._load_test_start_window(context)
+                if self.load_test_context is not context:return
+                context['phase']='jogging'
+            else:context['phase']='reheating'
+            if now>=context['next_report']:
+                context['next_report']=now+5.;self._load_test_emit(context)
+            return
         ready=self._load_test_jog_ready(context,temperature,'valid')
         phase='ready' if ready else 'heating'
         if context['flow_confirmed']:phase='flow_confirmed_cleaning_pending'
@@ -2171,15 +2244,16 @@ class InventureMCU:
             self._load_test_step(context)
         except Exception as exc:
             if self.load_test_context is context:
-                self._load_test_cancel(str(exc),phase='failed')
+                self._load_test_cancel(str(exc),phase='done' if str(exc)=='hold_duration_finished' else 'failed')
                 self._control_abort()
         finally:context['busy']=False
-        return self.reactor.monotonic()+.25 if self.load_test_context is context else self.reactor.NEVER
+        return (self.reactor.monotonic()+(.1 if context.get('jog') is not None else .25)
+                if self.load_test_context is context else self.reactor.NEVER)
 
     def cmd_load_test(self,gcmd):
         action=str(gcmd.get('ACTION','STATUS')).upper()
-        if action not in ('HEAT','JOG','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
-            raise gcmd.error('Use ACTION=HEAT, JOG, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
+        if action not in ('HEAT','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
+            raise gcmd.error('Use ACTION=HEAT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
         context=getattr(self,'load_test_context',None)
         if action=='STOP':
             self._load_test_cancel('operator_stop')
@@ -2193,13 +2267,13 @@ class InventureMCU:
             tool=str(gcmd.get('TOOL','T0')).upper()
             if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
             try:
-                target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',600.))
+                target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
                 power=float(gcmd.get('MAX_POWER',40.))
                 if not math.isfinite(target) or not 180<=target<=240:raise ValueError()
-                if not math.isfinite(duration) or not 10<=duration<=600:raise ValueError()
+                if not math.isfinite(duration) or not 10<=duration<=LOAD_HOLD_MAX_S:raise ValueError()
                 if not math.isfinite(power) or not 1<=power<=50:raise ValueError()
             except (TypeError,ValueError):
-                raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..600 seconds')
+                raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..900 seconds of hold')
             try:
                 self._feeder_service_preflight()
                 baseline=self._cassette_gpio_snapshot()
@@ -2208,12 +2282,13 @@ class InventureMCU:
             except Exception as exc:raise gcmd.error(str(exc))
             now=self.reactor.monotonic()
             context=dict(tool=int(tool[1]),target=target,power=power,limit=round(target+20),
-                start=now,deadline=now+duration,start_temperature=temperature,
+                start=now,deadline=now+300.,hold_duration=duration,hold_started=None,start_temperature=temperature,
                 duty=0,output_token=None,ready_since=None,ready_latched=False,reached_target=False,
                 pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.),
                 fan_counter=self.status['p0'],fan_deadline=now+10.,phase='heating',
                 flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
-                jog=None,next_report=now+5.,busy=False)
+                jog=None,last_jog=None,next_report=now+5.,busy=False,flow_mark=None,
+                measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False))
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
@@ -2242,18 +2317,19 @@ class InventureMCU:
                     raise gcmd.error('Wait for ready_for_jog=true at the requested nozzle temperature')
                 self._load_test_capture(context,baseline=True)
                 self._load_test_safety(context)
-                counts=(0,0,0,steps if direction else -steps)
-                max_ms=math.ceil(steps*1000./rate)+250
-                motion=self._motion_query(1,counts,rate,10,max_ms,owner=context)
-                if motion['reject']:raise ValueError(motion['reject'])
-                context['motion']=motion
-                context['jog']=dict(identity=(motion['run'],motion['token']),steps=steps,
-                    deadline=self.reactor.monotonic()+max_ms/1000.+.75)
+                now=self.reactor.monotonic();windows=math.ceil(steps/max(1,int(rate*LOAD_JOG_WINDOW_S)))
+                context['jog']=dict(identity=None,steps=steps,sent=0,direction=direction,rate=rate,
+                    started=now,windows=0,deadline=now+steps/rate+windows*.5+30.)
                 context['phase']='jogging'
+                self._load_test_step(context)
                 self._control_schedule()
             elif action in ('BASELINE','COMPARE'):
                 self._load_test_capture(context,baseline=action=='BASELINE')
+            elif action=='ZERO':
+                context['measurement']=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=True)
+                context['flow_mark']=None;context['flow_confirmed']=False;context['last_jog']=None
             else:
+                context['flow_mark']={k:v for k,v in self._load_test_measurement(context).items() if k!='flow_mark'}
                 context['flow_confirmed']=True
                 context['phase']='flow_confirmed_cleaning_pending'
             if self.load_test_context is context:self._load_test_emit(context)

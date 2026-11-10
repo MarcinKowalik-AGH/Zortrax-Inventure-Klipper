@@ -32,7 +32,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD230-R3`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD15`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
@@ -41,7 +41,7 @@ oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontro
 Etap przejęcia filamentu przez ekstruder przy regulowanych 230°C:
 
 ```gcode
-INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230
+INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 DURATION=900
 ```
 
 Po `ready_for_jog: true`, jeden krótki ruch głównego E:
@@ -60,8 +60,13 @@ Po pierwszym osiągnięciu obszaru celu przez 2 s gotowość E pozostaje aktywna
 w osobnym zakresie: dla celu 230°C jest to 215..238°C. Wahanie do 224°C
 nie zeruje ponownie gotowości. Przekroczenie zakresu odbiera pozwolenie,
 a do jego odzyskania trzeba ponownie osiągnąć obszar celu. Kontrole przegrzania,
-czujników, tachometru i STOP pozostają aktywne. PID wstrzymuje całkowanie
-podczas krótkiego JOG, gdy grzałka jest wyłączona przez zasady SERVICE.
+czujników, tachometru i STOP pozostają aktywne.
+
+LOAD15 podtrzymuje temperaturę przez 15 minut od pierwszej gotowości,
+a grzanie działa również w krótkich oknach E. PID jest aktualizowany między
+oknami, z zachowaniem dzierżawy mocy 1500 ms. `ACTION=ZERO` zaczyna pomiar
+od chwili chwycenia filamentu; STATUS pokazuje sumę potwierdzonych kroków
+i nominalną różnicę długości. [Polecenia pomiaru i zasady podtrzymania](docs/LOAD15_MEASUREMENT_2026-11-10.md).
 
 Aktualizacja SENSORS wykorzystuje już wgrane CONTROL-R5. `INVENTURE_SENSORS`
 i `INVENTURE_INPUTS` czekają na odpowiedź MCU. Nowe

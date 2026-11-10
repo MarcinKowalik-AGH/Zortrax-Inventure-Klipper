@@ -1,0 +1,29 @@
+{
+  "result": "PASS register-mock execution of actual CONTROL-R5 C source",
+  "physical_test": false,
+  "MCU_changed": false,
+  "rates_hz": [
+    160,
+    600,
+    2000,
+    4000,
+    4800
+  ],
+  "nominal_window_s": 0.5,
+  "MCU_window_deadline_ms": 750,
+  "heater_lease_ms": 1500,
+  "checks": [
+    "E starts while heater PWM is active",
+    "PWM renewal during active E is rejected without changing current duty/token",
+    "E completes exact requested steps before window deadline",
+    "PWM can be renewed when E is idle",
+    "heater turns OFF after its unrenewed lease"
+  ],
+  "source_sha256": {
+    "SOURCE_MCU/inventure_board.c": "2c9069ef0652a208a996e5195556f91d6f97aafa8f55992e23c56eed723eb5ac",
+    "SOURCE_MCU/inventure_control.inc": "7607584e3aad8f56eb756aa6bcc25736fdf4816aa19fcbee80cac72190b922ea",
+    "TESTS/support/inventure_pwm.inc": "35791b6929dfdda13888dac09cac15c7e21cd07067ee187565c1c6c8b81fe751"
+  },
+  "compiler_command": "gcc -std=c11 -O2 -Wno-pointer-to-int-cast -I TESTS/mock -I SOURCE_MCU -I TESTS/support -I TESTS TESTS/test_load15_joint.c -o /tmp/inventure_load15_joint",
+  "probe_body": "int main(void) {\n    unsigned rates[]={160,600,2000,4000,4800};\n    for(unsigned k=0;k<5;k++) {\n        unsigned rate=rates[k],steps=rate/2;\n        control_reset(0);\n        output(1,6,64,1500,250,9001);\n        assert(co[6].duty==64);\n        motion(1,0,0,0,0,steps,rate,10,750,0,0,0,9002);\n        assert(cm.active && co[6].duty==64);\n        output(1,6,65,1500,250,9003);\n        assert(co[6].token==9001 && co[6].duty==64);\n        while(cm.active){motion_tick();control_guard(mock_now);cooling_update();}\n        assert(cm.phase==CM_DONE && cm.sent[3]==steps);\n        assert(co[6].duty==64 && co[6].remaining>0);\n        output(1,6,65,1500,250,9004);\n        assert(co[6].token==9004 && co[6].duty==65);\n        advance(1500);assert(co[6].duty==0);\n    }\n    puts(\"PASS actual R5: heated E windows at 160/600/2000/4000/4800 Hz, max750ms, renewal between windows, 1500ms expiry\");\n    return 0;\n}\n"
+}

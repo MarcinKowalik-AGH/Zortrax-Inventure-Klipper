@@ -113,14 +113,14 @@ class TemperatureTests(unittest.TestCase):
         h.temperatures[0]=238.1;h.reactor.pause(h.reactor.now+.25)
         self.assertFalse(h._load_test_jog_ready(context))
 
-    def test_hot_jogs_recover_in_the_thermal_plant_without_integral_windup(self):
+    def test_hot_jogs_keep_heating_between_windows_in_the_thermal_plant(self):
         h=self.host();plant=ThermalPlant(h)
         h.cmd_load_test(Command(ACTION='HEAT'));h.reactor.pause(300.)
         context=h.load_test_context;initial=context['pid']['integral']
         h.cmd_load_test(Command(ACTION='JOG',DIR=1,STEPS=2880,RATE=960))
         h.reactor.pause(302.)
-        self.assertEqual(context['pid']['integral'],initial)
-        self.assertEqual(h.device.output(6)['duty'],0)
+        self.assertLess(context['pid']['integral']-initial,.1)
+        self.assertGreater(h.device.output(6)['duty'],0)
         h.reactor.pause(306.)
         self.assertIsNotNone(h.load_test_context);self.assertIsNone(context['jog'])
         self.assertTrue(h._load_test_jog_ready(context))
