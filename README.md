@@ -33,9 +33,18 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R6-SMOOTH`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R6-RETRACT`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
+
+Nagrzanie i cofnięcie około 75% poprzedniego pełnego ładowania:
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=RETRACT TOOL=T0 TARGET=230 STEPS=128850 SMOOTH=1
+```
+
+Oba napędy cofają ciągle, po czym grzanie automatycznie się wyłącza.
+[Podstawa długości, polecenia, wynik i STOP](docs/RETRACT_2026-11-10.md).
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
 oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.

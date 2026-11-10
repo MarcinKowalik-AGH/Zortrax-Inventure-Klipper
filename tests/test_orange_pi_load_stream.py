@@ -36,11 +36,11 @@ class StreamDevice(cassette_support.JointDevice):
         return super().control(args)
     def query_stream(self,args):
         action,steps,rate,maximum,lease,low,high,token,sequence=args[:9]
-        assert args[9:]==[0,0,0,1]
+        assert args[9:11]==[0,0] and args[11:] in ([0,1],[1,0])
         self.stream_packets.append(tuple(args));self.guard();reject=0
         if action==1:
             if self.stream is None or token!=self.stream['token']:
-                self.move((1,0,0,0,0,steps,rate,10,maximum,0,0,0,token))
+                self.move((1,8 if args[11] else 0,0,0,0,steps,rate,10,maximum,0,0,0,token))
                 self.stream=dict(token=token,active=1,reason=0,planned=steps,sent=0,
                     elapsed_ms=0,remaining_ms=lease,sequence=0,feeder=1,
                     start=self.now(),rate=rate,deadline=self.now()+lease/1000.)

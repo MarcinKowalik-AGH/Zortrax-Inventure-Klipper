@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R6-SMOOTH",
+  "release": "RC8-CONTROL-R6-RETRACT",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "387eef6866228cf57ef1accfa6b9517c57b420abadd8fe07e4a2b112d1a6fc57",
+  "module_sha256": "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -26,9 +26,10 @@
     "e55495d26e9a14c43214c3daaf4788740187bc8993d10d37848aab723de1987f",
     "0e0aa574c47748647e4f4d713508fd1bd299a0b8200e46eca44ccd46a118e255",
     "b733ef5df40002a18f0e9845eebeca5aaca39b71bd97c17a8027fadae7b24bbe",
-    "05d8b4a28a9056d9db39cbc275c3ad02bbe58702c03975b31b56db0e9e2bf7e2"
+    "05d8b4a28a9056d9db39cbc275c3ad02bbe58702c03975b31b56db0e9e2bf7e2",
+    "387eef6866228cf57ef1accfa6b9517c57b420abadd8fe07e4a2b112d1a6fc57"
   ],
-  "host_revision": "RC8-CONTROL-R6-SMOOTH",
+  "host_revision": "RC8-CONTROL-R6-RETRACT",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -142,5 +143,19 @@
     "old_MCU_explicit_SMOOTH_1_refuses_before_heating": true,
     "default_total_E_steps": 171800,
     "smooth_requires_separate_MCU_upgrade": true
+  },
+  "retraction": {
+    "action": "INVENTURE_LOAD_TEST ACTION=RETRACT",
+    "default_steps": 128850,
+    "reference_full_load_steps": 171800,
+    "percent_of_reference": 75,
+    "nominal_mm": 134.21875,
+    "nominal_steps_per_mm": 960,
+    "tool": "T0",
+    "E_direction": 1,
+    "cassette_direction": 0,
+    "MCU_changed": false,
+    "required_MCU": "RC8-CONTROL-R6-SMOOTH",
+    "heater_off_on_completion": true
   }
 }

@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R6-SMOOTH'
+HOST_REVISION = 'RC8-CONTROL-R6-RETRACT'
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -2049,7 +2049,7 @@ class InventureMCU:
                 else 'tube' if sent<plan['tube_steps']
                 else 'head' if sent<plan['tube_steps']+plan['head_steps'] else 'purge')
             result['cassette_load']=dict(plan,stage=stage,
-                e_direction=0,cassette_direction=1,channel=0,
+                e_direction=plan.get('direction',0),cassette_direction=1-plan.get('direction',0),channel=0,
                 nominal_steps_per_mm=LOAD_E_STEPS_PER_MM,
                 nominal_E_mm=round(plan['total_steps']/LOAD_E_STEPS_PER_MM,3),
                 nominal_E_sent_mm=round(sent/LOAD_E_STEPS_PER_MM,3),
@@ -2057,6 +2057,12 @@ class InventureMCU:
                 distance_calibrated=False,head_observed_mm_approx=90,
                 head_observation_steps=95000,
                 feeder_time_basis='requested MCU timer windows; not measured travel')
+            if plan.get('operation')=='retract':
+                result['stage']='heated_cassette_retraction'
+                result['cassette_load'].update(stage='complete' if plan['feed_completed']
+                    else 'retracting' if plan['started'] else 'heating',
+                    percent_of_reference=round(100.*plan['total_steps']/171800.,3),
+                    reference_steps=171800,heater_off_on_completion=True)
             if plan.get('smooth'):
                 result['cassette_load'].update(continuous_motion=True,
                     feeder_windows_requested=None,feeder_ms_requested=None,
@@ -2113,7 +2119,8 @@ class InventureMCU:
             stream['steps'] if starting else 0,stream['rate'] if starting else 0,
             stream['max_ms'] if starting else 0,1500,
             round(max(180.,context['target']-25.)),round(context['target']+10.),
-            stream['token'],sequence,context['tool'],0,0,1],mutate=True,owner=context)
+            stream['token'],sequence,context['tool'],0,plan.get('direction',0),
+            1-plan.get('direction',0)],mutate=True,owner=context)
         if self.load_test_context is not context:return
         self._control_validate(row,{'token':(0,0xffffffff),'active':(0,1),'reason':(0,7),
             'reject':(0,4),'planned':(0,400000),'sent':(0,400000),'elapsed_ms':(0,600100),
@@ -2123,7 +2130,7 @@ class InventureMCU:
         if not stream['sent']<=row['sent']<=stream['steps']:
             raise ValueError('Invalid continuous extruder step accounting')
         delta=row['sent']-stream['sent'];stream['sent']=row['sent']
-        context['measurement']['dir0_steps']+=delta;plan['sent']=row['sent']
+        context['measurement']['dir%d_steps'%plan.get('direction',0)]+=delta;plan['sent']=row['sent']
         context['last_stream']=dict(row,reason=LOAD_STREAM_REASONS[row['reason']])
         completed=not row['active'] and row['reason']==1 and row['sent']==stream['steps']
         # The last steps can finish between a renewal request and its reply.
@@ -2133,11 +2140,16 @@ class InventureMCU:
         if completed:
             if row['feeder']:raise ValueError('MCU did not stop the cassette at completion')
             plan['feed_completed']=True
-            context['last_jog']=dict(steps=stream['steps'],sent=stream['sent'],direction=0,
+            context['last_jog']=dict(steps=stream['steps'],sent=stream['sent'],direction=plan.get('direction',0),
                 rate=stream['rate'],windows=1,elapsed_s=round(now-stream['start'],3),continuous=True)
             context['measurement']['completed_jogs']+=1;context['stream']=None
             self._load_test_capture(context)
             if self.load_test_context is not context:return
+            if plan.get('operation')=='retract':
+                self._load_test_emit(context,'retract_done')
+                self._load_test_cancel('retraction_finished',phase='done')
+                self._control_abort()
+                return
             context['phase']='awaiting_flow_confirmation';self._load_test_emit(context,'feed_done')
             return
         if (not row['active'] or row['reason'] or not row['remaining_ms'] or not row['feeder']
@@ -2148,7 +2160,7 @@ class InventureMCU:
             duty=self._load_test_pid(context,temperature,now)
             if duty or context['duty']:self._load_test_output(context,duty)
         if self.load_test_context is not context:return
-        context['phase']='loading'
+        context['phase']='retracting' if plan.get('operation')=='retract' else 'loading'
         if now>=context['next_report']:
             context['next_report']=now+5.;self._load_test_emit(context)
 
@@ -2394,8 +2406,8 @@ class InventureMCU:
 
     def cmd_load_test(self,gcmd):
         action=str(gcmd.get('ACTION','STATUS')).upper()
-        if action not in ('HEAT','LOAD','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
-            raise gcmd.error('Use ACTION=HEAT, LOAD, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
+        if action not in ('HEAT','LOAD','RETRACT','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
+            raise gcmd.error('Use ACTION=HEAT, LOAD, RETRACT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
         context=getattr(self,'load_test_context',None)
         if action=='STOP':
             self._load_test_cancel('operator_stop')
@@ -2404,21 +2416,26 @@ class InventureMCU:
         if action=='STATUS':
             result=self._load_test_report(context) if context is not None else getattr(self,'load_test_last',{'phase':'idle'})
             gcmd.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True));return
-        if action in ('HEAT','LOAD'):
+        if action in ('HEAT','LOAD','RETRACT'):
             if context is not None:raise gcmd.error('Load test already active; use STATUS or STOP')
             tool=str(gcmd.get('TOOL','T0')).upper()
             if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
             plan=None
-            if action=='LOAD':
+            if action in ('LOAD','RETRACT'):
                 if tool!='T0':raise gcmd.error('Cassette loading currently uses the physically checked left/T0 directions')
+                if action=='RETRACT' and any(gcmd.get(k,None) is not None
+                        for k in ('TUBE_SECONDS','HEAD_STEPS','PURGE_STEPS')):
+                    raise gcmd.error('RETRACT uses STEPS; remove TUBE_SECONDS, HEAD_STEPS and PURGE_STEPS')
                 try:
-                    tube_seconds=float(gcmd.get('TUBE_SECONDS',50.))
+                    tube_seconds=0. if action=='RETRACT' else float(gcmd.get('TUBE_SECONDS',50.))
                     if not math.isfinite(tube_seconds) or not 0<=tube_seconds<=FEEDER_RUN_MAX_S:raise ValueError()
                 except (TypeError,ValueError):raise gcmd.error('TUBE_SECONDS must be 0..50 motor seconds')
-                head_steps=gcmd.get_int('HEAD_STEPS',95000,minval=1,maxval=192000)
-                purge_steps=gcmd.get_int('PURGE_STEPS',0,minval=0,maxval=96000)
+                head_steps=(gcmd.get_int('STEPS',128850,minval=1,maxval=192000) if action=='RETRACT'
+                    else gcmd.get_int('HEAD_STEPS',95000,minval=1,maxval=192000))
+                purge_steps=0 if action=='RETRACT' else gcmd.get_int('PURGE_STEPS',0,minval=0,maxval=96000)
                 rate=gcmd.get_int('RATE',LOAD_CASSETTE_RATE,minval=960,maxval=LOAD_CASSETTE_RATE)
-                smooth=gcmd.get_int('SMOOTH',int('load_stream' in self.commands),minval=0,maxval=1)
+                smooth=gcmd.get_int('SMOOTH',1 if action=='RETRACT' else int('load_stream' in self.commands),minval=0,maxval=1)
+                if action=='RETRACT' and not smooth:raise gcmd.error('RETRACT requires SMOOTH=1 and the R6 MCU')
                 if smooth and 'load_stream' not in self.commands:
                     raise gcmd.error('SMOOTH=1 requires the RC8-CONTROL-R6-SMOOTH MCU application')
                 if smooth and rate!=LOAD_CASSETTE_RATE:
@@ -2426,7 +2443,8 @@ class InventureMCU:
                 tube_steps=round(tube_seconds*LOAD_CASSETTE_RATE)
                 plan=dict(tube_seconds=tube_seconds,tube_steps=tube_steps,head_steps=head_steps,
                     purge_steps=purge_steps,total_steps=tube_steps+head_steps+purge_steps,sent=0,
-                    rate=rate,smooth=bool(smooth),started=False,feed_completed=False,
+                    rate=rate,smooth=bool(smooth),operation='retract' if action=='RETRACT' else 'load',
+                    direction=int(action=='RETRACT'),started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
