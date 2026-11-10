@@ -4,6 +4,7 @@ on:
     branches: [orange-pi]
     paths:
       - 'orange_pi/**'
+      - 'service_mcu/control_r6/**'
       - 'install-orange-pi.py'
       - 'tests/test_orange_pi_update.py'
       - 'tests/test_orange_pi_door_policy.py'
@@ -15,6 +16,7 @@ on:
       - 'tests/test_orange_pi_load_temperature.py'
       - 'tests/test_orange_pi_load15.py'
       - 'tests/test_orange_pi_cassette_load.py'
+      - 'tests/test_orange_pi_load_stream.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:
@@ -31,3 +33,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_orange_pi*.py' -v
+      - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py

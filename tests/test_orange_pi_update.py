@@ -173,6 +173,13 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),self.original_config)
         self.assertTrue(self.active)
 
+    def test_installed_CASSETTE1_upgrades_to_smooth_host_without_config_or_MCU_changes(self):
+        self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_cassette1.py').read_bytes())
+        with patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.dest.read_bytes(),(ROOT/'orange_pi/inventure_mcu.py').read_bytes())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+        self.assertTrue(self.active)
+
     def test_same_disk_version_restarts_python_without_rewriting_modules(self):
         expected=(ROOT/'orange_pi/inventure_mcu.py').read_bytes()
         self.dest.write_bytes(expected)

@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-CASSETTE1'
+HOST_REVISION = 'RC8-CONTROL-R6-SMOOTH'
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -23,6 +23,13 @@ LOAD_JOG_WINDOW_S = .5
 # This is a rate-matching estimate, not a calibrated distance measurement.
 LOAD_CASSETTE_MM_S = 1.6
 LOAD_CASSETTE_RATE = round(LOAD_E_STEPS_PER_MM*LOAD_CASSETTE_MM_S)
+LOAD_STREAM_COMMAND = ('inventure_load_stream action=%c steps=%u rate=%u max_ms=%u '
+    'lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u '
+    'tool=%c channel=%c e_direction=%c feeder_direction=%c')
+LOAD_STREAM_RESPONSE = ('inventure_load_stream_state token=%u active=%c reason=%c reject=%c '
+    'planned=%u sent=%u elapsed_ms=%u remaining_ms=%u sequence=%u feeder=%c')
+LOAD_STREAM_REASONS = ('none','completed','operator_stop','lease_expired',
+    'temperature_or_heater_guard','motion_ownership_lost','heartbeat_or_cable_lost','mcu_shutdown')
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -413,6 +420,10 @@ class InventureMCU:
                 ('output','inventure_output action=%c channel=%c duty=%hu duration_ms=%u limit_c=%hi token=%u',OUTPUT_RESPONSE),
                 ('guard','inventure_control_guard sensor=%c enabled=%c min_c=%hi max_c=%hi',GUARD_RESPONSE)):
                 self.commands[key]=self.mcu.lookup_query_command(command,response)
+        self.load_stream_abi=int(self.mcu.get_constants().get('INVENTURE_LOAD_STREAM_ABI',0))
+        if self.load_stream_abi==1:
+            if self.control_abi!=1:raise self.printer.config_error('Smooth load requires CONTROL ABI 1')
+            self.commands['load_stream']=self.mcu.lookup_query_command(LOAD_STREAM_COMMAND,LOAD_STREAM_RESPONSE)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
         self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
@@ -1531,6 +1542,7 @@ class InventureMCU:
             'control_abi':getattr(self,'control_abi',0),
             'motion_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
+            'load_stream_abi':getattr(self,'load_stream_abi',0),
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -2045,6 +2057,12 @@ class InventureMCU:
                 distance_calibrated=False,head_observed_mm_approx=90,
                 head_observation_steps=95000,
                 feeder_time_basis='requested MCU timer windows; not measured travel')
+            if plan.get('smooth'):
+                result['cassette_load'].update(continuous_motion=True,
+                    feeder_windows_requested=None,feeder_ms_requested=None,
+                    feeder_elapsed_ms=(context.get('last_stream') or {}).get('elapsed_ms',0),
+                    feeder_time_basis='continuous MCU-owned run; elapsed time is not measured filament travel')
+        if context.get('last_stream') is not None:result['load_stream']=context['last_stream']
         self.load_test_last=result
         return result
 
@@ -2070,18 +2088,76 @@ class InventureMCU:
         self._load_test_safety(context)
         if self.load_test_context is not context:return
         steps=plan['total_steps'];rate=plan['rate']
+        if plan.get('smooth'):
+            context['stream']=dict(token=self._control_next_token(),sequence=0,sent=0,
+                steps=steps,rate=rate,started=False,start=now,
+                max_ms=math.ceil(steps*1000./rate)+2000)
+            plan['started']=True;context['phase']='loading'
+            return
         windows=math.ceil(steps/(rate*LOAD_JOG_WINDOW_S))+2
         context['jog']=dict(identity=None,steps=steps,sent=0,direction=0,rate=rate,
             started=now,windows=0,deadline=now+steps/rate+windows*.5+30.,coupled=True)
         plan['started']=True
         context['phase']='loading'
 
+    def _load_test_stream_step(self,context,temperature,now):
+        stream=context['stream'];plan=context['cassette_load']
+        if temperature<max(180.,context['target']-25.):raise ValueError('Nozzle cooled below the extrusion limit')
+        if now-stream['start']>=stream['max_ms']/1000.+1.:
+            raise ValueError('Continuous load exceeded its bounded duration')
+        starting=not stream['started'];sequence=0 if starting else stream['sequence']+1
+        if starting:
+            duty=self._load_test_pid(context,temperature,now)
+            if duty or context['duty']:self._load_test_output(context,duty)
+        row=self._control_send('load_stream',[1 if starting else 2,
+            stream['steps'] if starting else 0,stream['rate'] if starting else 0,
+            stream['max_ms'] if starting else 0,1500,
+            round(max(180.,context['target']-25.)),round(context['target']+10.),
+            stream['token'],sequence,context['tool'],0,0,1],mutate=True,owner=context)
+        if self.load_test_context is not context:return
+        self._control_validate(row,{'token':(0,0xffffffff),'active':(0,1),'reason':(0,7),
+            'reject':(0,4),'planned':(0,400000),'sent':(0,400000),'elapsed_ms':(0,600100),
+            'remaining_ms':(0,1500),'sequence':(0,0xffffffff),'feeder':(0,1)})
+        if row['token']!=stream['token'] or row['planned']!=stream['steps']:
+            raise ValueError('Continuous load ownership changed')
+        if not stream['sent']<=row['sent']<=stream['steps']:
+            raise ValueError('Invalid continuous extruder step accounting')
+        delta=row['sent']-stream['sent'];stream['sent']=row['sent']
+        context['measurement']['dir0_steps']+=delta;plan['sent']=row['sent']
+        context['last_stream']=dict(row,reason=LOAD_STREAM_REASONS[row['reason']])
+        completed=not row['active'] and row['reason']==1 and row['sent']==stream['steps']
+        # The last steps can finish between a renewal request and its reply.
+        # A completed token is accepted, but can never renew or restart motion.
+        if row['reject'] and not (completed and row['reject']==4):
+            raise ValueError('MCU refused continuous load: '+str(row['reject']))
+        if completed:
+            if row['feeder']:raise ValueError('MCU did not stop the cassette at completion')
+            plan['feed_completed']=True
+            context['last_jog']=dict(steps=stream['steps'],sent=stream['sent'],direction=0,
+                rate=stream['rate'],windows=1,elapsed_s=round(now-stream['start'],3),continuous=True)
+            context['measurement']['completed_jogs']+=1;context['stream']=None
+            self._load_test_capture(context)
+            if self.load_test_context is not context:return
+            context['phase']='awaiting_flow_confirmation';self._load_test_emit(context,'feed_done')
+            return
+        if (not row['active'] or row['reason'] or not row['remaining_ms'] or not row['feeder']
+                or row['sequence']!=sequence):
+            raise ValueError('Continuous load stopped: '+LOAD_STREAM_REASONS[row['reason']])
+        stream['started']=True;stream['sequence']=sequence
+        if not starting:
+            duty=self._load_test_pid(context,temperature,now)
+            if duty or context['duty']:self._load_test_output(context,duty)
+        if self.load_test_context is not context:return
+        context['phase']='loading'
+        if now>=context['next_report']:
+            context['next_report']=now+5.;self._load_test_emit(context)
+
     def _load_test_jog_ready(self,context,temperature=None,state=None):
         now=self.reactor.monotonic()
         if state is None:temperature,state=self.panel_temperature(context['tool'],now)
         return (getattr(self,'load_test_context',None) is context and self.connected
             and now<context['deadline'] and context.get('ready_latched',False)
-            and context.get('jog') is None and state=='valid'
+            and context.get('jog') is None and context.get('stream') is None and state=='valid'
             and max(180.,context['target']-15.)<=temperature<=context['target']+8.)
 
     def _load_test_readiness(self,context,temperature,now):
@@ -2200,7 +2276,7 @@ class InventureMCU:
             dir1_mm=round(m['dir1_steps']/LOAD_E_STEPS_PER_MM,3),
             net_dir0_mm=round(net/LOAD_E_STEPS_PER_MM,3),
             basis='MCU-confirmed steps; not measured filament travel',
-            T0_dir0_is_feed=True,has_unfinished_jog=context.get('jog') is not None,
+            T0_dir0_is_feed=True,has_unfinished_jog=context.get('jog') is not None or context.get('stream') is not None,
             flow_mark=context.get('flow_mark'))
 
     def _load_test_check_output(self,context):
@@ -2253,6 +2329,9 @@ class InventureMCU:
         if (plan is not None and not plan['started']
                 and self._load_test_jog_ready(context,temperature,'valid')):
             self._load_test_begin_cassette(context,now)
+        if context.get('stream') is not None:
+            self._load_test_stream_step(context,temperature,now)
+            return
         jog=context.get('jog')
         if jog is not None:
             if temperature<max(170.,context['target']-25.):
@@ -2339,10 +2418,15 @@ class InventureMCU:
                 head_steps=gcmd.get_int('HEAD_STEPS',95000,minval=1,maxval=192000)
                 purge_steps=gcmd.get_int('PURGE_STEPS',0,minval=0,maxval=96000)
                 rate=gcmd.get_int('RATE',LOAD_CASSETTE_RATE,minval=960,maxval=LOAD_CASSETTE_RATE)
+                smooth=gcmd.get_int('SMOOTH',int('load_stream' in self.commands),minval=0,maxval=1)
+                if smooth and 'load_stream' not in self.commands:
+                    raise gcmd.error('SMOOTH=1 requires the RC8-CONTROL-R6-SMOOTH MCU application')
+                if smooth and rate!=LOAD_CASSETTE_RATE:
+                    raise gcmd.error('Continuous paired loading uses RATE=1536 to match the fixed cassette speed')
                 tube_steps=round(tube_seconds*LOAD_CASSETTE_RATE)
                 plan=dict(tube_seconds=tube_seconds,tube_steps=tube_steps,head_steps=head_steps,
                     purge_steps=purge_steps,total_steps=tube_steps+head_steps+purge_steps,sent=0,
-                    rate=rate,started=False,feed_completed=False,
+                    rate=rate,smooth=bool(smooth),started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
@@ -2354,7 +2438,8 @@ class InventureMCU:
                 raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..900 seconds of hold')
             if plan is not None:
                 windows=math.ceil(plan['total_steps']/(plan['rate']*LOAD_JOG_WINDOW_S))+2
-                if duration<plan['total_steps']/plan['rate']+windows*.5+30.:
+                margin=5. if plan['smooth'] else windows*.5+30.
+                if duration<plan['total_steps']/plan['rate']+margin:
                     raise gcmd.error('DURATION is too short for this cassette feed; use DURATION=900')
             try:
                 self._feeder_service_preflight()
@@ -2371,7 +2456,7 @@ class InventureMCU:
                 flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
                 jog=None,last_jog=None,next_report=now+5.,busy=False,flow_mark=None,
                 measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False),
-                cassette_load=plan)
+                cassette_load=plan,stream=None,last_stream=None)
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return

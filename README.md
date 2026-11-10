@@ -1,4 +1,4 @@
-# Zortrax Inventure — CONTROL-R5
+# Zortrax Inventure — CONTROL-R6-SMOOTH
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
@@ -21,7 +21,8 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R5_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
+`INVENTURE_MCU_CONTROL_R6_SMOOTH_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
+Tryb płynnego ładowania wymaga tej aplikacji R6 oraz aktualnego hosta.
 
 ## Po aktualizacji hosta
 
@@ -32,8 +33,9 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-CASSETTE1`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R6-SMOOTH`, `mcu_release` = `RC8-CONTROL-R6-SMOOTH`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
+Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
 oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
@@ -41,7 +43,7 @@ oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontro
 Pierwsza wspólna próba ładowania z lewej kasety, z podłączoną rurką i wybranym T0:
 
 ```gcode
-INVENTURE_LOAD_TEST ACTION=LOAD TOOL=T0 TARGET=230 DURATION=900 TUBE_SECONDS=50 HEAD_STEPS=95000
+INVENTURE_LOAD_TEST ACTION=LOAD TOOL=T0 TARGET=230 DURATION=900 TUBE_SECONDS=50 HEAD_STEPS=95000 SMOOTH=1
 ```
 
 Host sam nagrzewa T0, czeka na gotowość i podaje oboma napędami w kierunku
@@ -49,7 +51,9 @@ Host sam nagrzewa T0, czeka na gotowość i podaje oboma napędami w kierunku
 podawania, drugi — pięć sprawdzonych odcinków E po 19000 kroków, około 90 mm
 według pomiaru użytkownika. Są to parametry robocze do korekty; wcześniejsze
 80 mm nie oznacza pomiaru pełnej długości rurki. Po podawaniu napędy stają,
-a temperatura jest podtrzymywana. [Procedura, postęp, potwierdzenie wypływu i STOP](docs/CASSETTE_LOAD_2026-11-10.md).
+a temperatura jest podtrzymywana. R6 wykonuje cały odcinek w jednym ruchu,
+z ciągłą pracą podajnika oraz regulacją mocy w trakcie ruchu E.
+[Instalacja, krótka próba z już załadowanym filamentem i STOP](docs/SMOOTH_LOAD_2026-11-10.md).
 
 Osobne grzanie i ręczny etap przejęcia filamentu przez ekstruder przy regulowanych 230°C:
 

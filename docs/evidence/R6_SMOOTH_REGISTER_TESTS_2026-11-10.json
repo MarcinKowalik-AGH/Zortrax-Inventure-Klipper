@@ -1,0 +1,94 @@
+{
+  "date": "2026-11-10",
+  "MCU_release": "RC8-CONTROL-R6-SMOOTH",
+  "MCU_stream_abi": 1,
+  "actual_C_sources": true,
+  "physical_test": "pending operator",
+  "register_test_result": {
+    "status": "PASS_CONTROL_R6_REGISTER_TESTS",
+    "programs": [
+      {
+        "program": "test_control_board.c",
+        "status": "PASS",
+        "output": "PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP\n"
+      },
+      {
+        "program": "test_t0_heat_board.c",
+        "status": "PASS",
+        "output": "PASS R7.1: rolling OFF windows, coast-down to stop, rejection of new pulses, six channels, heater locks and heartbeat\nPASS T0 HEAT: exact ISR 20s and 25% duty, wrap, target, both nozzle limits, ADC freshness, heartbeat, stop/cancel, shutdown cooling, no restart, PC4-independent and other outputs locked\nPASS R3: separate nozzle/chamber profiles, no 45C chamber regulation, OEM LUT bounds, chamber cross-sensor cutoff, stale ADC, acquisition peaks through cooling, shutdown and no cross-channel activation\nPASS CHAMBER75: exact 180s and 75% across repeated timer wraps, old START refused, all five overheat inputs, STOP, stale ADC, lost heartbeat and retained cooling\n"
+      },
+      {
+        "program": "test_motor_board.c",
+        "status": "PASS",
+        "output": "PASS R7.1: rolling OFF windows, coast-down to stop, rejection of new pulses, six channels, heater locks and heartbeat\nPASS T0 HEAT: exact ISR 20s and 25% duty, wrap, target, both nozzle limits, ADC freshness, heartbeat, stop/cancel, shutdown cooling, no restart, PC4-independent and other outputs locked\nPASS R3: separate nozzle/chamber profiles, no 45C chamber regulation, OEM LUT bounds, chamber cross-sensor cutoff, stale ADC, acquisition peaks through cooling, shutdown and no cross-channel activation\nPASS CHAMBER75: exact 180s and 75% across repeated timer wraps, old START refused, all five overheat inputs, STOP, stale ADC, lost heartbeat and retained cooling\nPASS XY REPEAT R4: existing first approach, exact 1280-pair backoff, 5ms switch release, 640Hz slow approach, retained enable between stages, both axes/initial states/edge phases, stuck/early/missing target failures, cross-mode duplicate tokens, STOP, heartbeat, unrelated switch, shutdown and thermal exclusion\nPASS XY SEEK R3: paired edges, 100us HIGH, both target switches on HIGH/LOW, wrap, exact 102400 pulse limit, 40s timeout, no retract, already-active, X-held/Y-seek, unexpected switch, duplicate START, mutual exclusion, both STOP commands, shutdown and native STEP locks\nPASS MOTOR R2: exact round trips with both door policies, OEM bit3/masks, default ON, rejected policy changes, 100us pulses, timer wrap, duplicate START, STOP, XY/Z limits, heartbeat, deadline, shutdown, heat exclusion and native STEP locks\n"
+      },
+      {
+        "program": "test_load_stream.c",
+        "status": "PASS",
+        "output": "PASS continuous E=171800, one run, elapsed_ms=111942, max_step_gap_us=2403, renewals=447\nPASS continuous E=171800, one run, elapsed_ms=111942, max_step_gap_us=2403, renewals=447\nPASS configurable stream: both nozzle outputs, both cassette channels, both directions; shared TIM9 clock preserved during T1 PID updates\nPASS R6 stream: continuous paired load; PID while E active; no motion restart on renew; all independent guards, replay and STOP\n"
+      }
+    ]
+  },
+  "ARM_build": {
+    "motor_release": "RC8-CONTROL-R6-SMOOTH",
+    "motor_test_abi": 2,
+    "xy_seek_abi": 1,
+    "xy_repeat_abi": 1,
+    "load_stream_abi": 1,
+    "door_policy_abi": 1,
+    "oem_door_disable_bit": 3,
+    "release": "RC8-THERMAL-R3-CHAMBER75",
+    "baud_mode": "InventureBoot_journal",
+    "fallback_baud": 250000,
+    "forced_baud": 0,
+    "boot17_abi": 1,
+    "compiler": "arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119",
+    "fan_manual_response": "inventure_fan_manual_state run=%u channel=%c phase=%c reject=%c reason=%c required=%c applied=%c on_edges=%hu off_edges=%hu pcb_adc=%hu pcb_temp=%hi passed=%c failed=%c",
+    "heat_response": "inventure_heat_state run=%u heater=%c phase=%c reason=%c reject=%c elapsed_ms=%u remaining_ms=%u target_c=%hi duty=%c applied=%c cooling_mask=%c",
+    "sensor_response": "inventure_heat_sensor run=%u sensor=%c adc=%hu start_adc=%hu peak_adc=%hu heating_peak_adc=%hu age_ms=%u",
+    "sources_sha256": {
+      "inventure_board.c": "2c9069ef0652a208a996e5195556f91d6f97aafa8f55992e23c56eed723eb5ac",
+      "inventure_control.inc": "f1656effdc4d09f12c5f8bf70a142f3a786c75049732c78af873ea7aabc2749a",
+      "inventure_motor_test.inc": "d2b58f2d50d45b2bdb0c978d2d44f362f697cb5583b1909cdc9568e165f6d147",
+      "inventure_xy_seek.inc": "d1d2372fb2080eec88f7646ec095ad2bbbadd9e6872a6e80567ce61aa8c95d6a",
+      "inventure_cooling.inc": "755590cbc02eb9dc1dca6b47481184c1a2184cadcd6865aed8a1cd3fd919c62b",
+      "inventure_fan_manual.inc": "e68ed721ef8e6121f203dd89951d2202681cfc56fd28266286c06d303367972b",
+      "inventure_heat_test.inc": "8c6908a761cbf03f960c62406350a3f529f450228b703e0e74c7980df4373563",
+      "inventure_panel.c": "a462836d6773cd0f6ddf49fe2ed53deae0556e34d050e2b11ebc9f5029d98172",
+      "inventure_fans.inc": "ebffdd5a3bcc93a9046145e3ffd4a9d85aa1b9200c2dfa6e7ab8ef901290948e",
+      "gpioperiph.c": "c738606d0485021059921824c649b70173c0d0b0ae4dde589b2ccd11fedea0ae",
+      "inventure_p4_baud.c": "42f41e5038196bd0511b61a3fd6c64da23db116029e34bb674be478097dc7ef3",
+      "inventure_p4_baud.h": "642f9b62f92a16e847ad158d3cdbb80a71de804aafc636a2ca8a7a336592e7e6",
+      "serial.c": "87eb6c7d6a293ce87dcb19e4d1f2dabe2d0717931a1485e211287663e86e9b7e",
+      "inventure_oled_local.inc": "a7f9eb687d11d35c9a01f1c8cd3331d3b862109c1575546c5d137b242658f797"
+    },
+    "ivb_bytes": 86544,
+    "ivb_sha256": "e177fab3fdaa0a7a2e72d2cd4ebcb0699b698544604adea54fab819fb5c5986b",
+    "application_sha256": "55a35dad38aa713be2a2c670d3b85a310fd08fe890a1bd019bf731ba49c6debc",
+    "tested_on_printer": false
+  },
+  "comparison": {
+    "CASSETTE1_physical": {
+      "E_steps": 171800,
+      "windows": 224,
+      "elapsed_s": 150.005
+    },
+    "R6_register_model": {
+      "E_steps": 171800,
+      "runs": 1,
+      "elapsed_ms": 111942,
+      "maximum_STEP_gap_us": 2403,
+      "renewals": 447
+    },
+    "comparison_caveat": "Measured printer time and simulated R6 time are different evidence; actual R6 duration is pending"
+  },
+  "unchanged_safety_and_boot_sources": {
+    "inventure_board.c": "2c9069ef0652a208a996e5195556f91d6f97aafa8f55992e23c56eed723eb5ac",
+    "inventure_p4_baud.c": "42f41e5038196bd0511b61a3fd6c64da23db116029e34bb674be478097dc7ef3",
+    "inventure_p4_baud.h": "642f9b62f92a16e847ad158d3cdbb80a71de804aafc636a2ca8a7a336592e7e6",
+    "serial.c": "87eb6c7d6a293ce87dcb19e4d1f2dabe2d0717931a1485e211287663e86e9b7e",
+    "gpioperiph.c": "c738606d0485021059921824c649b70173c0d0b0ae4dde589b2ccd11fedea0ae",
+    "inventure_cooling.inc": "755590cbc02eb9dc1dca6b47481184c1a2184cadcd6865aed8a1cd3fd919c62b",
+    "inventure_heat_test.inc": "8c6908a761cbf03f960c62406350a3f529f450228b703e0e74c7980df4373563"
+  }
+}

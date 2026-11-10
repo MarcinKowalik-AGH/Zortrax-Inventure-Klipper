@@ -1,0 +1,3 @@
+#pragma once
+#define CONFIG_CLOCK_FREQ 120000000u
+#define CONFIG_INVENTURE_V9 1
