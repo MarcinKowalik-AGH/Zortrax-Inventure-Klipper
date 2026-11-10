@@ -29,7 +29,20 @@
         "DIR0_response_confirmed": true,
         "pulses": 96,
         "elapsed_ms": 613,
-        "feed_retract_direction": "deferred_by_user"
+        "feed_retract_direction": "T0 service setup: DIR0 feed confirmed by user; DIR1 physical retraction and T1 direction pending",
+        "T0_DIR0_feed_observation": {
+          "date": "2026-11-10",
+          "command": "INVENTURE_LOAD_TEST ACTION=JOG DIR=0 STEPS=19000 RATE=2000",
+          "requested_steps": 19000,
+          "requested_rate_hz": 2000,
+          "nominal_duration_s": 9.5,
+          "user_observed_feed_mm_approx": 20,
+          "nominal_steps_per_mm": 960,
+          "nominal_command_distance_mm": 19.792,
+          "precise_scale_calibrated": false,
+          "completion_and_counter_telemetry": "not supplied for this command",
+          "nozzle_flow_confirmed": false
+        }
       },
       "cassette_feeders": {
         "channel0": {
@@ -178,6 +191,7 @@
     ],
     "bounded_sampling_wait_s": 1,
     "R2_observed_PB12_delta": 3,
-    "integral_frozen_during_jog": true
+    "integral_frozen_during_jog": true,
+    "T0_DIR0_feed_physically_reported": true
   }
 }
