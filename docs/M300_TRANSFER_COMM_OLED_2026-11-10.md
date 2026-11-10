@@ -43,6 +43,9 @@ Dotychczasowy odstęp powtórzenia przy trzymaniu UP/DOWN wynosi około 100 ms
 i pozostaje taki sam. Osobne krótkie naciśnięcia mają filtr 30 ms.
 UP+DOWN nie przesuwa kursora i nie tworzy pętli z minionym terminem timera.
 POWER i zatrzymanie mają dotychczasową obsługę.
+Odrzucony OK pozostaje zablokowany do jego rzeczywistego puszczenia.
+Równoczesna strzałka i OK przesuwa kursor, a potwierdzenie wymaga kolejnego
+osobnego naciśnięcia po wyświetleniu wybranego wiersza.
 
 Nie odtwarza się pakietu pikseli po utracie ACK. Udane późniejsze ACK
 w tej samej kolejce FIFO może potwierdzić poprzednie operacje. Utrata

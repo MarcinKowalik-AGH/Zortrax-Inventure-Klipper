@@ -3,7 +3,7 @@
   "host_module_sha256": "91bfe12c6ca6e4686cb7f376fc1c02b56948207d7ab70b06dbae32f368a4a32b",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 302,
+  "verified_public_host_tests": 304,
   "previous_host_commit": "1a908e48317699e4955c9f56e84a0071ccef7d9b",
   "firmware": {
     "release": "RC8-CONTROL-R7-FACTORY",
@@ -409,6 +409,7 @@
     "pending_frame_queue_bound": 1,
     "offline_cursor_transitions": 500,
     "offline_window_uart_reduction_percent": 7.58,
-    "physical_test": "pending operator"
+    "physical_test": "pending operator",
+    "held_OK_requires_physical_release": true
   }
 }

@@ -783,6 +783,7 @@ class InventureOLED:
         self.render_at=0.;self._user_refresh_pending=True
 
     def _buttons(self,now,mask,sequence,received_at=None,receipt=None):
+        raw_mask=mask
         received=now if received_at is None else received_at
         fresh=(isinstance(received,(int,float)) and not isinstance(received,bool)
                and math.isfinite(received) and 0.<=now-received<=.750)
@@ -798,8 +799,16 @@ class InventureOLED:
         elif receipt is not None and (receipt!=current or not acknowledged):
             mask&=~4
             self._stale_button_events=getattr(self,'_stale_button_events',0)+1
+        # A discarded OK remains physically held. An unrelated button edge
+        # must not turn it into a new OK press on the now-confirmed screen.
+        if raw_mask&4 and not mask&4:self._ok_blocked_until_release=True
+        if getattr(self,'_ok_blocked_until_release',False):mask&=~4
+        pressed=mask&~self.last_buttons
+        if pressed&3 and pressed&4:
+            self._ok_blocked_until_release=True;mask&=~4
         zortrax=getattr(getattr(self,'board',None),'zortrax',None)
         if zortrax is not None and not zortrax.observe_buttons(mask,sequence):return
+        if fresh and not raw_mask&4:self._ok_blocked_until_release=False
         if not self.connected or mask==self.last_buttons:return
         pressed=mask&~self.last_buttons; released=self.last_buttons&~mask
         self._display_activity(now)

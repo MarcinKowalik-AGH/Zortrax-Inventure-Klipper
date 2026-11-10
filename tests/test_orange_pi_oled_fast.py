@@ -386,6 +386,26 @@ class AdapterTests(unittest.TestCase):
         x._buttons(10.3,4,3,10.3,x._input_receipt())
         self.assertEqual(calls,[10.3])
 
+    def test_discarded_held_OK_cannot_reappear_when_an_arrow_changes(self):
+        p,x=oled();calls=[];x._select=calls.append
+        receipt=x._input_receipt()+(False,)
+        x._buttons(10.,4,1,10.,receipt)
+        current=x._input_receipt()+(True,)
+        x._buttons(10.1,5,2,10.1,current)
+        x._buttons(10.2,4,3,10.2,x._input_receipt()+(True,))
+        self.assertEqual(calls,[])
+        x._buttons(10.3,0,4,10.3,x._input_receipt()+(True,))
+        x._buttons(10.4,4,5,10.4,x._input_receipt()+(True,))
+        self.assertEqual(calls,[10.4])
+
+    def test_arrow_and_OK_chord_navigates_but_requires_a_new_released_confirmation(self):
+        p,x=oled();calls=[];x._select=calls.append
+        x._buttons(10.,6,1,10.,x._input_receipt()+(True,))
+        self.assertEqual(calls,[]);self.assertTrue(x._ok_blocked_until_release)
+        x._buttons(10.1,0,2,10.1,x._input_receipt()+(True,))
+        x._buttons(10.3,4,3,10.3,x._input_receipt()+(True,))
+        self.assertEqual(calls,[10.3])
+
     def test_serial_receipt_age_not_callback_time_controls_acceptance(self):
         p,x=oled();calls=[];x._select=calls.append
         for stamp in (9.,float('nan'),True,11.):
