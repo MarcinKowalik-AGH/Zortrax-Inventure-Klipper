@@ -1,0 +1,57 @@
+{
+  "source_repository": "MarcinKowalik-AGH/Zortrax-m300-Klipper",
+  "source_main_commit": "6c359c8b301bf8dd3c0e3e4ec69382c6be324cad",
+  "source_orange_pi_commit": "c82d785736cf2241b4a4d0bf3328205a5a5b8076",
+  "target_repository": "MarcinKowalik-AGH/Zortrax-Inventure-Klipper",
+  "target_parent_commit": "1a908e48317699e4955c9f56e84a0071ccef7d9b",
+  "target_revision": "RC8-CONTROL-R7-UIFAST",
+  "MCU_changed": false,
+  "boot_journal_read_only": true,
+  "source_files": [
+    {
+      "path": "docs/pl/RELEASE_v1.0.0-beta.16.md",
+      "bytes": 4883,
+      "git_blob": "f6fc342ed39c1ce6bc55ebb182bc8ce2ad5f0938",
+      "sha256": "37aadd6cd9d7ecf126fd2c17d8561ca00732668c0ec1f2bbfc18e72827dc97ea"
+    },
+    {
+      "path": "docs/pl/RELEASE_v1.0.0-beta.17.md",
+      "bytes": 3574,
+      "git_blob": "f5fbbacbbc5f76d4b8e3877b411773c2e5ef9a30",
+      "sha256": "87b0b1b6bc92a5c82c66b7e44eb3353c264bfa8ae79ecc3a64358ff08860dc73"
+    },
+    {
+      "path": "host/klippy/extras/m300_oled.py",
+      "bytes": 71498,
+      "git_blob": "1b947a4528da0fab98acf097b9f835e259c936d4",
+      "sha256": "0d486bf479dc4bb079c5528bad0232fe3ce0f63e6ffa3a31cd0a2434f4e05ac3"
+    },
+    {
+      "path": "host/klippy/extras/m300_oled_transport.py",
+      "bytes": 28804,
+      "git_blob": "a9215ed119262c73c4ca8af199d650a3eee01e76",
+      "sha256": "2703aa3e0627f40a0327de61faadb558956a067af76d22ed4d52e46afe3a5b55"
+    },
+    {
+      "path": "host/update_template/tests/test_oled_navigation.py",
+      "bytes": 11597,
+      "git_blob": "984194e667a48431cec63093bc7958930e5b7229",
+      "sha256": "8833f9706ab0f165bdf69d4b4f9c07e94b4ac3f1ac9db010ef3143adc749586a"
+    }
+  ],
+  "port_scope": [
+    "encoded dirty-window planning",
+    "single-pass bounded PackBits",
+    "ACK scheduling and native background priority",
+    "latest pending view",
+    "timestamp and presentation-bound panel input",
+    "work UART budget including SERVICE"
+  ],
+  "not_ported": [
+    "M300 GPIO and clock map",
+    "M300Boot persistent UART layout",
+    "M300 rotary encoder",
+    "M300 Fluidd frontend and icons"
+  ],
+  "physical_test": "pending operator"
+}

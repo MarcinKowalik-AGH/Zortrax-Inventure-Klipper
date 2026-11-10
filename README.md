@@ -1,9 +1,23 @@
-# Zortrax Inventure — host CONTROL-R7-MENU / MCU CONTROL-R7-FACTORY
+# Zortrax Inventure — host CONTROL-R7-UIFAST / MCU CONTROL-R7-FACTORY
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+
+## Płynność menu i komunikacja — transfer z M300
+
+`RC8-CONTROL-R7-UIFAST` przenosi dobór okien po kompresji, kolejkę
+DMA budzoną przez ACK i priorytet tła z aktualnego M300. Najnowsze
+zaznaczenie zastępuje oczekujący obraz. Nawigacja w procedurach jest
+pilna; ruch i grzałki zachowują pierwszeństwo przed pikselami. Podczas
+grzania/ruchu obowiązuje budżet UART, również dla prób SERVICE.
+Przycisk OK jest związany z widokiem potwierdzonym przed jego odebraniem.
+
+Aktualizacja dotyczy tylko hosta: zachowuje MCU R7, bootloader 1.7,
+zapisane UART (750000 w obecnej konfiguracji), SPI i geometrię. Nowy
+transport OLED jest objęty instalacją i przywracaniem wraz z menu.
+[Źródła M300, opis zmian, wyniki i próba na drukarce](docs/M300_TRANSFER_COMM_OLED_2026-11-10.md).
 
 ## Menu Zortrax na OLED i w konsoli
 
@@ -106,7 +120,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R7-MENU`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R7-UIFAST`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza nową sesję MCU dla automatu i ruchów XY/E.

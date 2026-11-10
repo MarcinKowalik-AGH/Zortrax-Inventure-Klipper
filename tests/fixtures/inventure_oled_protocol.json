@@ -1,0 +1,21 @@
+{
+  "commands": {
+    "inventure_oled_begin generation_hi=%u generation_lo=%u token=%u": 157,
+    "inventure_oled_burst generation_hi=%u generation_lo=%u token=%u dc=%c encoding=%c length=%hu data=%*s": 160,
+    "inventure_oled_control generation_hi=%u generation_lo=%u token=%u reset=%c gate=%c": 156
+  },
+  "responses": {
+    "inventure_oled_ack generation_hi=%u generation_lo=%u token=%u result=%c": 212
+  },
+  "config": {
+    "INVENTURE_OLED_ABI": 2,
+    "INVENTURE_OLED_FAST_ABI": 1,
+    "INVENTURE_OLED_FAST_QUEUE": 4,
+    "INVENTURE_OLED_FAST_WIRE": 256,
+    "INVENTURE_OLED_MAX_CHUNK": 32,
+    "INVENTURE_OLED_REPLAY_ABI": 1,
+    "INVENTURE_OLED_SPI_BURST_ABI": 1
+  },
+  "source_sha256": "8a2662bf1d38607f7047511c780e3b396d2d57bbdc2e38d0a84aca91073bfa0b",
+  "source_release": "RC8-CONTROL-R7-FACTORY"
+}

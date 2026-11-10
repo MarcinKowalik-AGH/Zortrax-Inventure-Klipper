@@ -24,6 +24,8 @@ on:
       - 'tests/test_orange_pi_factory_protocol.py'
       - 'tests/test_orange_pi_procedures.py'
       - 'tests/test_orange_pi_zortrax_menu.py'
+      - 'tests/test_orange_pi_oled_fast.py'
+      - 'ci/benchmark_inventure_oled.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:
@@ -41,3 +43,4 @@ jobs:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_orange_pi*.py' -v
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
+      - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json

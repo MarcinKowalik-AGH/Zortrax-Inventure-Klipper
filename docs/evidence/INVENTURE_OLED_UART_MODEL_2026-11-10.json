@@ -1,0 +1,590 @@
+{
+  "model": "OFFLINE_UART_COST_ONLY",
+  "host_revision": "RC8-CONTROL-R7-UIFAST",
+  "reference": "same reference OLED pixels, same single-pass PackBits; vary only window planning",
+  "m300_source_commit": "6c359c8b301bf8dd3c0e3e4ec69382c6be324cad",
+  "mcu_dictionary_source_sha256": "8a2662bf1d38607f7047511c780e3b396d2d57bbdc2e38d0a84aca91073bfa0b",
+  "physical_latency_measured": false,
+  "physical_UART_errors_measured": false,
+  "transitions": 500,
+  "improved_transitions": 28,
+  "fixed_dirty_regions_uart_bytes": 210728,
+  "encoded_window_plan_uart_bytes": 194746,
+  "uart_reduction_percent": 7.58,
+  "pages": [
+    {
+      "language": "en",
+      "page": "launcher",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "en",
+      "page": "klipper_main",
+      "transitions": 12,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "klipper_control",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "en",
+      "page": "klipper_settings",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "klipper_information",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "en",
+      "page": "service_tests",
+      "transitions": 14,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "root",
+      "transitions": 10,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "models",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "maintenance",
+      "transitions": 12,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "heads",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "model_material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "support_material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "load_model",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 5864,
+      "encoded_window_plan_uart_bytes": 4490
+    },
+    {
+      "language": "en",
+      "page": "load_support",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 5864,
+      "encoded_window_plan_uart_bytes": 4490
+    },
+    {
+      "language": "en",
+      "page": "spool_model",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "spool_support",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "settings",
+      "transitions": 10,
+      "fixed_dirty_regions_uart_bytes": 21094,
+      "encoded_window_plan_uart_bytes": 15851
+    },
+    {
+      "language": "en",
+      "page": "language",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "sorting",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "doorlock",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "filecheck",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "information",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "en",
+      "page": "pause",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "stop_confirm",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "pause_material",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "en",
+      "page": "cancel",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "question",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "en",
+      "page": "model_details",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "bench_fans",
+      "transitions": 18,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "bench_heat",
+      "transitions": 14,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_0",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_1",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_2",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_3",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_4",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_fan_5",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "en",
+      "page": "bench_heat_T0",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "bench_heat_T1",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "bench_heat_LEFT",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "en",
+      "page": "bench_heat_RIGHT",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "launcher",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "pl",
+      "page": "klipper_main",
+      "transitions": 12,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "klipper_control",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "pl",
+      "page": "klipper_settings",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "klipper_information",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "pl",
+      "page": "service_tests",
+      "transitions": 14,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "root",
+      "transitions": 10,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "models",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "maintenance",
+      "transitions": 12,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "heads",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "model_material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "support_material",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "load_model",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 5864,
+      "encoded_window_plan_uart_bytes": 4490
+    },
+    {
+      "language": "pl",
+      "page": "load_support",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 5864,
+      "encoded_window_plan_uart_bytes": 4490
+    },
+    {
+      "language": "pl",
+      "page": "spool_model",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "spool_support",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "settings",
+      "transitions": 10,
+      "fixed_dirty_regions_uart_bytes": 21094,
+      "encoded_window_plan_uart_bytes": 15851
+    },
+    {
+      "language": "pl",
+      "page": "language",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "sorting",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "doorlock",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "filecheck",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "information",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "pl",
+      "page": "pause",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "stop_confirm",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "pause_material",
+      "transitions": 6,
+      "fixed_dirty_regions_uart_bytes": 2066,
+      "encoded_window_plan_uart_bytes": 2066
+    },
+    {
+      "language": "pl",
+      "page": "cancel",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "question",
+      "transitions": 4,
+      "fixed_dirty_regions_uart_bytes": 1378,
+      "encoded_window_plan_uart_bytes": 1378
+    },
+    {
+      "language": "pl",
+      "page": "model_details",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "bench_fans",
+      "transitions": 18,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "bench_heat",
+      "transitions": 14,
+      "fixed_dirty_regions_uart_bytes": 3365,
+      "encoded_window_plan_uart_bytes": 3365
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_0",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_1",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_2",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_3",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_4",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_fan_5",
+      "transitions": 8,
+      "fixed_dirty_regions_uart_bytes": 2754,
+      "encoded_window_plan_uart_bytes": 2754
+    },
+    {
+      "language": "pl",
+      "page": "bench_heat_T0",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "bench_heat_T1",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "bench_heat_LEFT",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    },
+    {
+      "language": "pl",
+      "page": "bench_heat_RIGHT",
+      "transitions": 2,
+      "fixed_dirty_regions_uart_bytes": 690,
+      "encoded_window_plan_uart_bytes": 690
+    }
+  ]
+}

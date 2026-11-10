@@ -341,6 +341,24 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.dest.read_bytes(),modified)
         self.assertFalse(any('stop' in a for a in self.calls))
 
+    def test_known_transport_upgrade_and_rollback_preserve_the_exact_previous_dependency(self):
+        previous=(ROOT/'host/inventure_oled_transport.py').read_bytes()
+        dest=self.extras/'inventure_oled_transport.py';dest.write_bytes(previous)
+        self.active=False
+        with patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            self.assertEqual(dest.read_bytes(),(ROOT/'orange_pi/inventure_oled_transport.py').read_bytes())
+            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
+        self.assertEqual(dest.read_bytes(),previous)
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+
+    def test_unknown_transport_is_refused_before_stopping_the_running_service(self):
+        dest=self.extras/'inventure_oled_transport.py';dest.write_text('# unknown local edits\n')
+        with self.assertRaisesRegex(ValueError,'inventure_oled_transport.py differs'),patch('sys.stdout',new=io.StringIO()):
+            update.update()
+        self.assertFalse(any('stop' in a for a in self.calls))
+        self.assertEqual(dest.read_text(),'# unknown local edits\n')
+
     def test_print_in_progress_fails_before_stopping(self):
         with patch.object(update,'check_print_job',side_effect=ValueError('current print')):
             with self.assertRaisesRegex(ValueError,'current print'),patch('sys.stdout',new=io.StringIO()):update.update()

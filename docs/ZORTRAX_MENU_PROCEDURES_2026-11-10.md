@@ -1,12 +1,15 @@
-# Menu Zortrax Inventure na Klipperze — CONTROL-R7-MENU
+# Menu Zortrax Inventure na Klipperze — CONTROL-R7
 
-Host `RC8-CONTROL-R7-MENU` łączy istniejące menu OLED ze wspólnymi
+Host `RC8-CONTROL-R7-UIFAST` łączy istniejące menu OLED ze wspólnymi
 procedurami Klippera. Zachowuje launcher M300 i pięć gałęzi oryginalnego
 Inventure: **Models, Maintenance, Material, Settings, Information**.
 Oryginalne obiekty menu identyfikują intencję operatora. Jedna warstwa
 `ZortraxMenuService` obsługuje tę samą intencję z OLED i G-code/Fluidd.
 Właścicielem ruchu, temperatury, kalibracji i zadania pozostaje wykonawca
 R7 albo właściwy natywny moduł Inventure.
+
+Wersja UIFAST zachowuje procedury MENU i dodaje
+[optymalizację komunikacji i nawigacji przeniesioną z M300](M300_TRANSFER_COMM_OLED_2026-11-10.md).
 
 ## Instalacja i pierwszy odczyt
 
@@ -33,7 +36,7 @@ INVENTURE_MENU_STATUS
 INVENTURE_ZORTRAX OP=STATUS
 ```
 
-Oczekiwane: host `RC8-CONTROL-R7-MENU`, MCU `RC8-CONTROL-R7-FACTORY`,
+Oczekiwane: host `RC8-CONTROL-R7-UIFAST`, MCU `RC8-CONTROL-R7-FACTORY`,
 `procedure_api=1`, `zortrax_menu_api=1`. Zostają dotychczasowe ustawienia
 `oem_menu`, `menu_profile` i ekran startowy. Dla `menu_profile: m300`
 obowiązują angielskie etykiety. OK na ekranie Klippera otwiera launcher;

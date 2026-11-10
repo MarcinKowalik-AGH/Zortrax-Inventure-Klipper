@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-MENU'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
@@ -1507,15 +1507,20 @@ class InventureMCU:
                    'up','down','ok','power')
     def _inputs(self, params):
         self.inputs_received = self.reactor.monotonic()
+        received_at=params.get('#receive_time',self.inputs_received)
+        receipt=getattr(self,'_oled_input_receipt',None)
+        generation=self.adc_generation
         self.inputs = {'raw_mask': params['raw'], 'buttons': params['buttons'],
                        'sequence': params['sequence'],
                        'raw': {name: (params['raw'] >> i) & 1
                                for i, name in enumerate(self.INPUT_NAMES)}}
         buttons, sequence = params['buttons'], params['sequence']
         def deliver(eventtime):
+            if generation!=self.adc_generation:return
             menu=getattr(self,'zortrax',None)
             if menu is not None:
-                self.printer.send_event('inventure:menu_buttons',eventtime,buttons,sequence)
+                self.printer.send_event('inventure:menu_buttons',eventtime,buttons,sequence,
+                                        received_at,receipt)
                 legacy=menu.legacy_buttons(buttons)
             else:legacy=buttons
             self.printer.send_event('inventure:buttons',eventtime,legacy,sequence)
