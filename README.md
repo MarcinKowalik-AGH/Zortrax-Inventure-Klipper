@@ -32,11 +32,28 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-FEED50`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD230`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
 oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
+
+Etap przejęcia filamentu przez ekstruder przy regulowanych 230°C:
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230
+```
+
+Po `ready_for_jog: true`, jeden krótki ruch głównego E:
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=JOG DIR=0 STEPS=960 RATE=960
+```
+
+Program porównuje wejścia przed i po zakończeniu ruchu. Przeciwny DIR=1
+można wydać jako osobne polecenie po `jog_done`. Wspólny `INVENTURE_STOP`
+kończy też regulator temperatury. [Miejsce etapu w pełnym load, potwierdzenia
+fabrycznego firmware, parametry i procedura](docs/LOAD_STAGE_230_2026-11-10.md).
 
 Aktualizacja SENSORS wykorzystuje już wgrane CONTROL-R5. `INVENTURE_SENSORS`
 i `INVENTURE_INPUTS` czekają na odpowiedź MCU. Nowe

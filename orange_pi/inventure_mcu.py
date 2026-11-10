@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-FEED50'
+HOST_REVISION = 'RC8-CONTROL-R5-LOAD230'
 FEEDER_RUN_MAX_S = 50
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
@@ -210,6 +210,8 @@ class InventureMCU:
         self.feeder_test_pending_until = None
         self.feeder_run_context = None
         self.feeder_run_last = {'phase':'idle'}
+        self.load_test_context = None
+        self.load_test_last = {'phase':'idle','load_completed':False}
         self.connected = False
         self.fan_group = 0
         self.fan_batch = False
@@ -304,6 +306,7 @@ class InventureMCU:
             self.gcode.register_command(name,callback,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_LOAD_TEST',self.cmd_load_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -519,6 +522,7 @@ class InventureMCU:
         self.adc_accepting = False
         self.adc_generation += 1
         self.connected = False
+        self._load_test_cancel('mcu_shutdown',phase='failed')
         self._feeder_run_cancel('mcu_shutdown',phase='failed',stop=False)
         self.feeder_test_pending_until = None
         self.cassette_gpio_baseline = None
@@ -659,11 +663,19 @@ class InventureMCU:
                 setter(hold)
         self.thermal_display_held=bool(hold)
 
-    def _thermal_query_send(self, command, data, start=False):
+    def _thermal_query_send(self, command, data, start=False, owner=None):
         # Timer jobs and console commands must not replace each other's
         # SerialRetryCommand callback while either waits for the same reply.
         mutex=getattr(self,'query_mutex',None)
         with mutex if mutex is not None else nullcontext():
+            context=getattr(self,'load_test_context',None)
+            if start and context is not None and owner is not context:
+                raise ValueError('Load test owns the actuators; use INVENTURE_LOAD_TEST or INVENTURE_STOP')
+            if owner is not None:
+                if context is not owner or not self.connected:
+                    raise ValueError('Load test was stopped before the actuator request')
+                if start and self.reactor.monotonic()>=owner['deadline']:
+                    raise ValueError('Load test duration finished before the actuator request')
             heartbeat=self.commands.get('heartbeat')
             if self.connected and heartbeat is not None:
                 # Preface and read share a queue; no actuator window is renewed.
@@ -1557,13 +1569,13 @@ class InventureMCU:
             raise ValueError('Invalid R5 MCU response')
         return p
 
-    def _control_send(self, key, args, mutate=False):
+    def _control_send(self, key, args, mutate=False, owner=None):
         command=self.commands.get(key)
         if command is None:
             raise ValueError('Install the RC8-CONTROL-R5 MCU application first')
         if mutate and not self.connected:
             raise ValueError('MCU is disconnected')
-        return self._thermal_query_send(command,args,start=mutate)
+        return self._thermal_query_send(command,args,start=mutate,owner=owner)
 
     def _control_next_token(self):
         self.control_token=(getattr(self,'control_token',0)+1)&0xffffffff or 1
@@ -1579,6 +1591,8 @@ class InventureMCU:
         return self.control_last
 
     def _control_service(self):
+        if getattr(self,'load_test_context',None) is not None:
+            raise ValueError('Load test is active; use INVENTURE_LOAD_TEST or INVENTURE_STOP')
         if getattr(self,'feeder_run_context',None) is not None:
             raise ValueError('Feeder run is active; use INVENTURE_STOP first')
         state=self._control_query()
@@ -1586,6 +1600,7 @@ class InventureMCU:
             raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
 
     def _control_abort(self):
+        self._load_test_cancel('control_abort',phase='failed')
         self._feeder_run_cancel('control_abort')
         try: self._control_query(2)
         except Exception: logging.exception('R5 STOP response unavailable; MCU heartbeat remains authoritative')
@@ -1598,6 +1613,9 @@ class InventureMCU:
         if mode is not None:
             mode=str(mode).upper()
             if mode not in CONTROL_MODES: raise gcmd.error('MODE must be OFF, SERVICE or NATIVE')
+        if mode is not None and getattr(self,'load_test_context',None) is not None:
+            if mode!='OFF':raise gcmd.error('Load test is active; use INVENTURE_STOP first')
+            self._load_test_cancel('mode_off')
         if mode is not None and getattr(self,'feeder_run_context',None) is not None:
             if mode!='OFF':raise gcmd.error('Feeder run is active; use INVENTURE_STOP first')
             self._feeder_run_cancel('mode_off')
@@ -1619,6 +1637,7 @@ class InventureMCU:
             guards=getattr(self,'guard_last',{})),sort_keys=True))
 
     def cmd_control_stop(self,gcmd):
+        self._load_test_cancel('operator_stop')
         self._feeder_run_cancel('operator_stop')
         self.feeder_test_pending_until = None
         try: state=self._control_query(2)
@@ -1628,11 +1647,11 @@ class InventureMCU:
         gcmd.respond_info('V9_CONTROL '+json.dumps(state,sort_keys=True))
 
     def _motion_query(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
-                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0):
+                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None):
         directions=sum(1<<i for i,n in enumerate(counts) if n>0)
         token=self._control_next_token() if action==1 else 0
         p=self._control_send('motion',[action,directions,*[abs(n) for n in counts],
-            rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token],mutate=action==1)
+            rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token],mutate=action==1,owner=owner)
         self._control_validate(p,{'run':(0,0xffffffff),'token':(0,0xffffffff),'phase':(0,5),
             'reason':(0,7),'reject':(0,5),'active':(0,1),'events':(0,2000000),
             'elapsed_ms':(0,600100),'hit':(0,65535)})
@@ -1739,9 +1758,9 @@ class InventureMCU:
         mask=(1 if axis=='X' else 2) if axis in ('X','Y') and steps<0 else 0
         self._motion_execute(gcmd,action,counts,rate,mask,mask)
 
-    def _output_query(self,channel,action=0,duty=0,duration=0,limit=0):
+    def _output_query(self,channel,action=0,duty=0,duration=0,limit=0,owner=None):
         token=self._control_next_token() if action==1 else 0
-        p=self._control_send('output',[action,channel,duty,duration,limit,token],mutate=action==1)
+        p=self._control_send('output',[action,channel,duty,duration,limit,token],mutate=action==1,owner=owner)
         self._control_validate(p,{'channel':(0,9),'duty':(0,256),'remaining_ms':(0,600000),
             'token':(0,0xffffffff),'reject':(0,5),'reason':(0,6)})
         if p['channel']!=channel:raise ValueError('R5 output channel mismatch')
@@ -1959,7 +1978,235 @@ class InventureMCU:
             self._control_abort();logging.exception('R5 control polling failed; outputs stopped')
             return self.reactor.NEVER
 
+    def _load_test_report(self,context,phase=None,reason=None):
+        now=self.reactor.monotonic()
+        temperature,state=self.panel_temperature(context['tool'],now)
+        result=dict(phase=phase or context['phase'],reason=reason,
+            stage='extruder_capture_and_flow_check',tool='T%d'%context['tool'],
+            target_c=context['target'],temperature_c=temperature,temperature_state=state,
+            maximum_power_pct=context['power'],duty_pct=round(context['duty']*100/256.,2),
+            overheat_limit_c=context['limit'],elapsed_s=round(max(0.,now-context['start']),2),
+            remaining_s=round(max(0.,context['deadline']-now),2),
+            ready_for_jog=context.get('ready_since') is not None
+                and now-context['ready_since']>=2. and state=='valid'
+                and abs(temperature-context['target'])<=5.,
+            flow_confirmed_by_operator=context['flow_confirmed'],
+            head_filament_sensor_identified=False,load_completed=False,
+            cleaning_pending=True,position_established=False,
+            heater_lease_ms=1500,heater_off_during_jog=True)
+        if context.get('comparison') is not None:result.update(context['comparison'])
+        if context.get('motion') is not None:result['motion']=context['motion']
+        self.load_test_last=result
+        return result
+
+    def _load_test_emit(self,context,phase=None,reason=None):
+        result=self._load_test_report(context,phase,reason)
+        self.gcode.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True))
+        return result
+
+    def _load_test_cancel(self,reason,phase='stopped'):
+        # Invalidate before any serial wait. A queued timer cannot renew power
+        # or issue another STEP request after the common STOP takes ownership.
+        context=getattr(self,'load_test_context',None)
+        if context is None:return
+        self.load_test_context=None
+        self.reactor.unregister_timer(context['timer'])
+        context['duty']=0
+        self._load_test_emit(context,phase,reason)
+
+    def _load_test_safety(self,context):
+        self._feeder_service_preflight(allow_active=True,allow_load=True)
+        if self.load_test_context is not context:raise ValueError('Load test was stopped')
+        now=self.reactor.monotonic()
+        if now>=context['deadline']:raise ValueError('duration_finished')
+        received=getattr(self,'status_received',None)
+        if received is None or not 0<=now-received<.75:
+            raise ValueError('Board/cable status is stale')
+        if self.status.get('cable')!=0 or self.status.get('fault')!=0:
+            raise ValueError('Extruder cable or MCU fault')
+        values=[]
+        for i in range(7):
+            value,state=self.panel_temperature(i,now)
+            maximum=(310,310,150,150,150,100,100)[i]
+            if state!='valid' or not -20<=value<maximum:
+                raise ValueError('Required temperature '+self.ADC_PINS[i]+' is '+state)
+            values.append(value)
+        temperature=values[context['tool']]
+        if temperature>=min(context['limit'],context['target']+10.):
+            raise ValueError('Nozzle overtemperature')
+        counter=self.status.get('p0')
+        if type(counter) is not int:raise ValueError('Missing F0 hotend fan tachometer')
+        if counter!=context['fan_counter']:
+            context['fan_counter']=counter;context['fan_deadline']=now+10.
+        if max(values[:2])>40 or context['duty']:
+            if now>=context['fan_deadline']:raise ValueError('No F0 hotend cooling fan pulses for 10 seconds')
+        else:context['fan_deadline']=now+10.
+        if not context['reached_target']:
+            if now-context['start']>=300.:raise ValueError('Nozzle did not reach target within 300 seconds')
+            if now-context['start']>=60. and temperature<context['start_temperature']+5.:
+                raise ValueError('Nozzle temperature did not rise by 5C within 60 seconds')
+        return temperature
+
+    def _load_test_output(self,context,duty):
+        state=self._output_query(context['tool']+6,1 if duty else 2,duty,
+            1500 if duty else 0,context['limit'],owner=context)
+        if state['reject']:raise ValueError(state['reject'])
+        if state['duty']!=duty:raise ValueError('MCU did not apply the requested heater power')
+        context['duty']=duty;context['output_token']=state['token']
+        return state
+
+    def _load_test_capture(self,context,baseline=False):
+        self._load_test_output(context,0)
+        if self.load_test_context is not context:raise ValueError('Load test was stopped')
+        current=self._cassette_gpio_snapshot()
+        if self.load_test_context is not context:raise ValueError('Load test was stopped')
+        if baseline:context['baseline']=current
+        comparison=self._cassette_difference(context['baseline'],current)
+        comparison.update(filament_before=context['baseline']['filament'],
+            filament_after=current['filament'],gpio_snapshot_fresh=True)
+        context['comparison']=comparison
+
+    def _load_test_step(self,context):
+        temperature=self._load_test_safety(context)
+        now=self.reactor.monotonic()
+        if context.get('jog') is not None:
+            motion=self._motion_query();expected=context['jog']
+            if motion['reject'] or (motion['run'],motion['token'])!=expected['identity']:
+                raise ValueError('Extruder motion ownership changed')
+            if now>=expected['deadline'] and motion['active']:
+                raise ValueError('Extruder jog exceeded its bounded duration')
+            context['motion']=motion
+            if motion['active']:return
+            if motion['reason']!='completed' or motion['drivers']['E']['sent']!=expected['steps']:
+                raise ValueError('Extruder jog stopped before completion')
+            context['jog']=None
+            self._load_test_capture(context)
+            if self.load_test_context is not context:return
+            self._load_test_emit(context,'jog_done')
+        output=self._output_query(context['tool']+6)
+        if self.load_test_context is not context:return
+        if output['reject'] or output['reason'] in ('temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown'):
+            raise ValueError('MCU heater guard: '+str(output['reason']))
+        if context['duty'] and (output['duty']!=context['duty'] or not output['remaining_ms']
+                or output['token']!=context['output_token']):
+            raise ValueError('Heater power lease expired or changed; restart the test explicitly')
+        # Deliberately use a bounded hysteresis thermostat, not untuned PID.
+        # MCU guards and the independent 1.5-second power lease stay in force.
+        if temperature>=context['target']:context['heating']=False
+        elif temperature<=context['target']-2.:context['heating']=True
+        duty=round(context['power']*256./100.) if context['heating'] else 0
+        if duty or context['duty']:self._load_test_output(context,duty)
+        if abs(temperature-context['target'])<=5.:
+            if context['ready_since'] is None:context['ready_since']=now
+        else:context['ready_since']=None
+        ready=context['ready_since'] is not None and now-context['ready_since']>=2.
+        if ready:context['reached_target']=True
+        phase='ready' if ready else 'heating'
+        if context['flow_confirmed']:phase='flow_confirmed_cleaning_pending'
+        if phase!=context['phase'] or now>=context['next_report']:
+            context['phase']=phase;context['next_report']=now+5.
+            self._load_test_emit(context)
+
+    def _load_test_tick(self,context,eventtime):
+        if getattr(self,'load_test_context',None) is not context:return self.reactor.NEVER
+        if context['busy']:return self.reactor.monotonic()+.25
+        context['busy']=True
+        try:
+            self._load_test_step(context)
+        except Exception as exc:
+            if self.load_test_context is context:
+                self._load_test_cancel(str(exc),phase='failed')
+                self._control_abort()
+        finally:context['busy']=False
+        return self.reactor.monotonic()+.25 if self.load_test_context is context else self.reactor.NEVER
+
+    def cmd_load_test(self,gcmd):
+        action=str(gcmd.get('ACTION','STATUS')).upper()
+        if action not in ('HEAT','JOG','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
+            raise gcmd.error('Use ACTION=HEAT, JOG, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
+        context=getattr(self,'load_test_context',None)
+        if action=='STOP':
+            self._load_test_cancel('operator_stop')
+            self._control_abort()
+            gcmd.respond_info('V9_LOAD_TEST '+json.dumps(self.load_test_last,sort_keys=True));return
+        if action=='STATUS':
+            result=self._load_test_report(context) if context is not None else getattr(self,'load_test_last',{'phase':'idle'})
+            gcmd.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True));return
+        if action=='HEAT':
+            if context is not None:raise gcmd.error('Load test already active; use STATUS or STOP')
+            tool=str(gcmd.get('TOOL','T0')).upper()
+            if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
+            try:
+                target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',600.))
+                power=float(gcmd.get('MAX_POWER',40.))
+                if not math.isfinite(target) or not 180<=target<=240:raise ValueError()
+                if not math.isfinite(duration) or not 10<=duration<=600:raise ValueError()
+                if not math.isfinite(power) or not 1<=power<=50:raise ValueError()
+            except (TypeError,ValueError):
+                raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..600 seconds')
+            try:
+                self._feeder_service_preflight()
+                baseline=self._cassette_gpio_snapshot()
+                temperature,state=self.panel_temperature(int(tool[1]),self.reactor.monotonic())
+                if state!='valid' or temperature>=target+10:raise ValueError('Nozzle is not ready for controlled heating')
+            except Exception as exc:raise gcmd.error(str(exc))
+            now=self.reactor.monotonic()
+            context=dict(tool=int(tool[1]),target=target,power=power,limit=round(target+20),
+                start=now,deadline=now+duration,start_temperature=temperature,
+                heating=True,duty=0,output_token=None,ready_since=None,reached_target=False,
+                fan_counter=self.status['p0'],fan_deadline=now+10.,phase='heating',
+                flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
+                jog=None,next_report=now+5.,busy=False)
+            self.load_test_context=context
+            context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
+            self._load_test_emit(context);return
+        if context is None:raise gcmd.error('Start INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 first')
+        if context['busy']:raise gcmd.error('Load test is sampling; retry this command after the current response')
+        if context.get('jog') is not None:raise gcmd.error('Wait for jog_done before another load-test action')
+        if action=='JOG':
+            steps=gcmd.get_int('STEPS',960,minval=1,maxval=19200)
+            direction=gcmd.get_int('DIR',minval=0,maxval=1)
+            rate=gcmd.get_int('RATE',960,minval=160,maxval=4800)
+            if steps/rate>10.:raise gcmd.error('One extruder jog must take at most 10 seconds')
+            temperature,state=self.panel_temperature(context['tool'],self.reactor.monotonic())
+            if (context['ready_since'] is None or self.reactor.monotonic()-context['ready_since']<2.
+                    or state!='valid' or abs(temperature-context['target'])>5.):
+                raise gcmd.error('Wait for ready_for_jog=true at the requested nozzle temperature')
+        elif action=='CONFIRM' and gcmd.get_int('FLOW',minval=1,maxval=1)!=1:
+            raise gcmd.error('Use FLOW=1 only after observing material leave the selected nozzle')
+        context['busy']=True
+        try:
+            temperature=self._load_test_safety(context)
+            if action=='JOG':
+                if (context['ready_since'] is None or self.reactor.monotonic()-context['ready_since']<2.
+                        or abs(temperature-context['target'])>5.):
+                    raise gcmd.error('Wait for ready_for_jog=true at the requested nozzle temperature')
+                self._load_test_capture(context,baseline=True)
+                self._load_test_safety(context)
+                counts=(0,0,0,steps if direction else -steps)
+                max_ms=math.ceil(steps*1000./rate)+250
+                motion=self._motion_query(1,counts,rate,10,max_ms,owner=context)
+                if motion['reject']:raise ValueError(motion['reject'])
+                context['motion']=motion
+                context['jog']=dict(identity=(motion['run'],motion['token']),steps=steps,
+                    deadline=self.reactor.monotonic()+max_ms/1000.+.75)
+                context['phase']='jogging'
+                self._control_schedule()
+            elif action in ('BASELINE','COMPARE'):
+                self._load_test_capture(context,baseline=action=='BASELINE')
+            else:
+                context['flow_confirmed']=True
+                context['phase']='flow_confirmed_cleaning_pending'
+            if self.load_test_context is context:self._load_test_emit(context)
+        except Exception as exc:
+            if self.load_test_context is context:
+                self._load_test_cancel(str(exc),phase='failed');self._control_abort()
+            raise gcmd.error(str(exc))
+        finally:context['busy']=False
+
     def _require_permission(self, gcmd):
+        if getattr(self,'load_test_context',None) is not None:
+            raise gcmd.error('Load test owns the actuators; use INVENTURE_STOP first')
         if 'control' in self.commands:
             try:
                 state=self._control_query()
@@ -1992,8 +2239,10 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
-    def _feeder_service_preflight(self,allow_run=False,allow_active=False):
+    def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False):
         if not self.connected:raise ValueError('MCU is disconnected')
+        if getattr(self,'load_test_context',None) is not None and not allow_load:
+            raise ValueError('Load test is active; use INVENTURE_STOP first')
         if getattr(self,'feeder_run_context',None) is not None and not allow_run:
             raise ValueError('Feeder run is active; use INVENTURE_STOP first')
         state=self._control_query()
