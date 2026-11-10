@@ -10,8 +10,12 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-LOAD230-R2'
+HOST_REVISION = 'RC8-CONTROL-R5-LOAD230-R3'
 FEEDER_RUN_MAX_S = 50
+# r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
+# Keep the original 0..255 output units here, not Klipper's PID parameters.
+LOAD_PID_KP, LOAD_PID_KI, LOAD_PID_KD = 25., .0005, 230.
+LOAD_PID_ALPHA, LOAD_PID_DT = .95, .1
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -1991,9 +1995,9 @@ class InventureMCU:
             maximum_power_pct=context['power'],duty_pct=round(context['duty']*100/256.,2),
             overheat_limit_c=context['limit'],elapsed_s=round(max(0.,now-context['start']),2),
             remaining_s=round(max(0.,context['deadline']-now),2),
-            ready_for_jog=context.get('ready_since') is not None
-                and now-context['ready_since']>=2. and state=='valid'
-                and abs(temperature-context['target'])<=5.,
+            ready_for_jog=self._load_test_jog_ready(context,temperature,state),
+            control_mode='pid_r0323_nozzle',
+            jog_min_c=max(180.,context['target']-15.),jog_max_c=context['target']+8.,
             flow_confirmed_by_operator=context['flow_confirmed'],
             head_filament_sensor_identified=False,load_completed=False,
             cleaning_pending=True,position_established=False,
@@ -2002,6 +2006,49 @@ class InventureMCU:
         if context.get('motion') is not None:result['motion']=context['motion']
         self.load_test_last=result
         return result
+
+    def _load_test_jog_ready(self,context,temperature=None,state=None):
+        now=self.reactor.monotonic()
+        if state is None:temperature,state=self.panel_temperature(context['tool'],now)
+        return (getattr(self,'load_test_context',None) is context and self.connected
+            and now<context['deadline'] and context.get('ready_latched',False)
+            and context.get('jog') is None and state=='valid'
+            and max(180.,context['target']-15.)<=temperature<=context['target']+8.)
+
+    def _load_test_readiness(self,context,temperature,now):
+        # Acquire close to target once; release only outside the wider hot-jog
+        # band. A thermal ripple must not restart the two-second warm-up gate.
+        if not max(180.,context['target']-15.)<=temperature<=context['target']+8.:
+            context['ready_latched']=False;context['ready_since']=None
+        if not context['ready_latched']:
+            if abs(temperature-context['target'])<=5.:
+                if context['ready_since'] is None:context['ready_since']=now
+                if now-context['ready_since']>=2.:
+                    context['ready_latched']=True;context['reached_target']=True
+            else:context['ready_since']=None
+
+    @staticmethod
+    def _load_test_pid(context,temperature,now,integrate=True):
+        pid=context['pid'];dt=now-pid['time']
+        if not math.isfinite(dt) or dt<0:raise ValueError('Invalid load regulator clock')
+        if dt>0:
+            # .95 at 100 ms is preserved for the actual elapsed interval.
+            alpha=LOAD_PID_ALPHA**(dt/LOAD_PID_DT)
+            slope=(temperature-pid['temperature'])/dt
+            pid['derivative']=alpha*pid['derivative']+(1.-alpha)*slope
+            pid['temperature']=temperature;pid['time']=now
+        error=context['target']-temperature
+        maximum=context['power']*255./100.
+        raw=LOAD_PID_KP*error+pid['integral']-LOAD_PID_KD*pid['derivative']
+        # Bounded conditional integration; don't integrate while E has the
+        # heater intentionally OFF, or farther into either output saturation.
+        if integrate and dt>0 and (0<=raw<=maximum or raw>maximum and error<0
+                                  or raw<0 and error>0):
+            pid['integral']=min(maximum,max(0.,pid['integral']+LOAD_PID_KI*error*dt))
+        raw=LOAD_PID_KP*error+pid['integral']-LOAD_PID_KD*pid['derivative']
+        raw=min(maximum,max(0.,raw))
+        if temperature>=context['target']+2.:raw=0.
+        return round(raw*256./255.)
 
     def _load_test_emit(self,context,phase=None,reason=None):
         result=self._load_test_report(context,phase,reason)
@@ -2075,6 +2122,8 @@ class InventureMCU:
     def _load_test_step(self,context):
         temperature=self._load_test_safety(context)
         now=self.reactor.monotonic()
+        self._load_test_readiness(context,temperature,now)
+        duty=self._load_test_pid(context,temperature,now,integrate=context.get('jog') is None)
         if context.get('jog') is not None:
             if temperature<max(170.,context['target']-25.):
                 raise ValueError('Nozzle cooled below the extrusion limit during the jog')
@@ -2104,17 +2153,10 @@ class InventureMCU:
         if context['duty'] and (output['duty']!=context['duty'] or not output['remaining_ms']
                 or output['token']!=context['output_token']):
             raise ValueError('Heater power lease expired or changed; restart the test explicitly')
-        # Deliberately use a bounded hysteresis thermostat, not untuned PID.
-        # MCU guards and the independent 1.5-second power lease stay in force.
-        if temperature>=context['target']:context['heating']=False
-        elif temperature<=context['target']-2.:context['heating']=True
-        duty=round(context['power']*256./100.) if context['heating'] else 0
+        # Smooth PWM replaces the old 0 / MAX_POWER thermostat. MCU guards
+        # and the independent 1.5-second power lease stay in force.
         if duty or context['duty']:self._load_test_output(context,duty)
-        if abs(temperature-context['target'])<=5.:
-            if context['ready_since'] is None:context['ready_since']=now
-        else:context['ready_since']=None
-        ready=context['ready_since'] is not None and now-context['ready_since']>=2.
-        if ready:context['reached_target']=True
+        ready=self._load_test_jog_ready(context,temperature,'valid')
         phase='ready' if ready else 'heating'
         if context['flow_confirmed']:phase='flow_confirmed_cleaning_pending'
         if starting or phase!=context['phase'] or now>=context['next_report']:
@@ -2167,7 +2209,8 @@ class InventureMCU:
             now=self.reactor.monotonic()
             context=dict(tool=int(tool[1]),target=target,power=power,limit=round(target+20),
                 start=now,deadline=now+duration,start_temperature=temperature,
-                heating=True,duty=0,output_token=None,ready_since=None,reached_target=False,
+                duty=0,output_token=None,ready_since=None,ready_latched=False,reached_target=False,
+                pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.),
                 fan_counter=self.status['p0'],fan_deadline=now+10.,phase='heating',
                 flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
                 jog=None,next_report=now+5.,busy=False)
@@ -2175,7 +2218,11 @@ class InventureMCU:
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
         if context is None:raise gcmd.error('Start INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 first')
-        if context['busy']:raise gcmd.error('Load test is sampling; retry this command after the current response')
+        deadline=self.reactor.monotonic()+1.
+        while context['busy'] and self.load_test_context is context and self.reactor.monotonic()<deadline:
+            self.reactor.pause(min(deadline,self.reactor.monotonic()+.025))
+        if self.load_test_context is not context:raise gcmd.error('Load test was stopped')
+        if context['busy']:raise gcmd.error('Load test communication is busy; use STATUS or STOP')
         if context.get('jog') is not None:raise gcmd.error('Wait for jog_done before another load-test action')
         if action=='JOG':
             steps=gcmd.get_int('STEPS',960,minval=1,maxval=19200)
@@ -2183,8 +2230,7 @@ class InventureMCU:
             rate=gcmd.get_int('RATE',960,minval=160,maxval=4800)
             if steps/rate>10.:raise gcmd.error('One extruder jog must take at most 10 seconds')
             temperature,state=self.panel_temperature(context['tool'],self.reactor.monotonic())
-            if (context['ready_since'] is None or self.reactor.monotonic()-context['ready_since']<2.
-                    or state!='valid' or abs(temperature-context['target'])>5.):
+            if not self._load_test_jog_ready(context,temperature,state):
                 raise gcmd.error('Wait for ready_for_jog=true at the requested nozzle temperature')
         elif action=='CONFIRM' and gcmd.get_int('FLOW',minval=1,maxval=1)!=1:
             raise gcmd.error('Use FLOW=1 only after observing material leave the selected nozzle')
@@ -2192,8 +2238,7 @@ class InventureMCU:
         try:
             temperature=self._load_test_safety(context)
             if action=='JOG':
-                if (context['ready_since'] is None or self.reactor.monotonic()-context['ready_since']<2.
-                        or abs(temperature-context['target'])>5.):
+                if not self._load_test_jog_ready(context,temperature,'valid'):
                     raise gcmd.error('Wait for ready_for_jog=true at the requested nozzle temperature')
                 self._load_test_capture(context,baseline=True)
                 self._load_test_safety(context)

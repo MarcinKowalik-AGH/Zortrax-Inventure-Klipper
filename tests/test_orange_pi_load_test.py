@@ -102,7 +102,12 @@ class LoadTests(unittest.TestCase):
 
     def heat(self,h,**params):h.cmd_load_test(Command(ACTION='HEAT',**params));h.reactor.pause(100.25)
     def ready(self,h):
-        h.temperatures[0]=230.;h.reactor.pause(h.reactor.now+2.5)
+        h.temperatures[0]=230.
+        # Unit cases inject an already settled measurement. Full warm-up and
+        # derivative history are exercised by the thermal plant/replay tests.
+        if 'pid' in h.load_test_context:
+            h.load_test_context['pid'].update(time=h.reactor.now,temperature=230.,derivative=0.,integral=0.)
+        h.reactor.pause(h.reactor.now+2.5)
         self.assertTrue(h.load_test_last['ready_for_jog'])
     def starts(self,h,kind='output'):
         return [p for p in h.device.packets if p[0]==kind and p[1]==1]
@@ -183,8 +188,11 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(self.starts(h)[0][2:6],(6,102,1500,250))
         self.assertEqual(h.load_test_last['target_c'],230.)
         self.ready(h);self.assertEqual(h.device.output(6)['duty'],0)
-        h.temperatures[0]=229.;h.reactor.pause(103.);self.assertEqual(h.device.output(6)['duty'],0)
-        h.temperatures[0]=227.;h.reactor.pause(103.25);self.assertGreater(h.device.output(6)['duty'],0)
+        h.temperatures[0]=229.
+        h.load_test_context['pid'].update(temperature=229.,time=h.reactor.now,derivative=0.)
+        h.reactor.pause(103.)
+        self.assertGreater(h.device.output(6)['duty'],0)
+        self.assertLess(h.device.output(6)['duty'],102)
         self.assertTrue(all(p[4]==1500 and p[5]==250 for p in self.starts(h)))
 
     def test_jog_requires_hot_stable_nozzle_and_refusal_keeps_heating(self):

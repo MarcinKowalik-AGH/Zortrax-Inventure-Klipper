@@ -1,0 +1,286 @@
+{
+  "source": "User log 2026-11-10 09:00:04 to 09:04:11",
+  "note": "Periodic observations; intermediate values in replay are linearly interpolated, not measured",
+  "samples": [
+    {
+      "elapsed_s": 0.0,
+      "temperature_c": 26.754578754578755,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 0.26,
+      "temperature_c": 26.754578754578755,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 5.42,
+      "temperature_c": 33.684981684981686,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 10.55,
+      "temperature_c": 49.479853479853475,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 15.73,
+      "temperature_c": 66.88644688644689,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 20.87,
+      "temperature_c": 83.00366300366301,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 25.96,
+      "temperature_c": 98.63736263736264,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 31.1,
+      "temperature_c": 113.46520146520147,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 36.23,
+      "temperature_c": 127.32600732600733,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 41.4,
+      "temperature_c": 141.1868131868132,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 46.53,
+      "temperature_c": 152.7912087912088,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 51.65,
+      "temperature_c": 164.0732600732601,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 56.82,
+      "temperature_c": 175.51648351648353,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 61.92,
+      "temperature_c": 185.50915750915752,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 67.04,
+      "temperature_c": 194.37362637362637,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 72.19,
+      "temperature_c": 202.5934065934066,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 77.31,
+      "temperature_c": 211.7802197802198,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 82.44,
+      "temperature_c": 219.67765567765568,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 87.66,
+      "temperature_c": 226.93040293040295,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 88.93,
+      "temperature_c": 229.02564102564102,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 94.02,
+      "temperature_c": 232.57142857142858,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 99.1,
+      "temperature_c": 228.05860805860806,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 100.92,
+      "temperature_c": 224.6739926739927,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 106.09,
+      "temperature_c": 223.7069597069597,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 110.44,
+      "temperature_c": 226.60805860805863,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 115.58,
+      "temperature_c": 232.24908424908426,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 120.66,
+      "temperature_c": 229.50915750915752,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 123.73,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 128.84,
+      "temperature_c": 223.86813186813188,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 133.45,
+      "temperature_c": 227.73626373626377,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 138.54,
+      "temperature_c": 231.76556776556777,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 143.63,
+      "temperature_c": 229.02564102564102,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 146.69,
+      "temperature_c": 224.83516483516482,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 151.8,
+      "temperature_c": 224.83516483516482,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 154.1,
+      "temperature_c": 227.09157509157507,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 159.18,
+      "temperature_c": 232.4102564102564,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 164.25,
+      "temperature_c": 229.6703296703297,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 167.3,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 172.47,
+      "temperature_c": 224.35164835164838,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 175.53,
+      "temperature_c": 227.09157509157507,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 180.61,
+      "temperature_c": 232.4102564102564,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 185.69,
+      "temperature_c": 229.02564102564102,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 189.28,
+      "temperature_c": 224.83516483516482,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 194.39,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 197.46,
+      "temperature_c": 227.09157509157507,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 202.57,
+      "temperature_c": 232.7326007326007,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 207.65,
+      "temperature_c": 230.15384615384613,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 211.72,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 216.89,
+      "temperature_c": 224.6739926739927,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 220.75,
+      "temperature_c": 227.89743589743588,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 225.87,
+      "temperature_c": 231.92673992673994,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 230.94,
+      "temperature_c": 229.34798534798534,
+      "reported_power_pct": 0.0
+    },
+    {
+      "elapsed_s": 233.75,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 238.87,
+      "temperature_c": 224.996336996337,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 241.45,
+      "temperature_c": 227.09157509157507,
+      "reported_power_pct": 39.84
+    },
+    {
+      "elapsed_s": 246.55,
+      "temperature_c": 232.4102564102564,
+      "reported_power_pct": 0.0
+    }
+  ]
+}
