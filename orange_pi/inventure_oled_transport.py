@@ -613,5 +613,3 @@ class FastOledStream(OledStream):
         if self.requested_mode!='off' and self.previous!=self.latest:
             return max(now+.0001,self.next_interactive if self.urgent_refresh else self.next_frame)
         return now+1.
-
-

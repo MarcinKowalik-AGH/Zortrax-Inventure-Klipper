@@ -238,11 +238,12 @@
       ]
     },
     "inventure_oled_transport.py": {
-      "sha256": "ad6a429ef32bce930f2aece1b615cff5ac259a0cb5541086df997a310dcd4071",
+      "sha256": "40c9e9182baaba159d0d5c26699c036393db03bad947cf017e2fc243c0167a19",
       "allowed_existing_sha256": [
         "c605681bb3406c76a5bb9540bb859118e844e3404f92dab18ee7e28513adba42",
         "2112bc6e438d90437637633301c3eacd52648a53dd033849828824dfbe63feaf",
-        "c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6"
+        "c5e9fd6abd697c79add5716683c20548db58f9a0c38d4e193283cf2509bc27d6",
+        "ad6a429ef32bce930f2aece1b615cff5ac259a0cb5541086df997a310dcd4071"
       ]
     }
   }
