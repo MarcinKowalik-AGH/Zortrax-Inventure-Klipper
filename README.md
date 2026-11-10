@@ -32,7 +32,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD230`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD230-R2`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach

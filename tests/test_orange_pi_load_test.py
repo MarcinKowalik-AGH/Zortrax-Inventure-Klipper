@@ -1,6 +1,8 @@
 """Hot load-stage behavior: bounded heat leases, E ownership and GPIO evidence."""
 from contextlib import contextmanager
+import importlib.util
 import json
+from pathlib import Path
 import unittest
 import test_orange_pi_control as control
 import test_orange_pi_feeder_run as feeder
@@ -104,6 +106,77 @@ class LoadTests(unittest.TestCase):
         self.assertTrue(h.load_test_last['ready_for_jog'])
     def starts(self,h,kind='output'):
         return [p for p in h.device.packets if p[0]==kind and p[1]==1]
+
+    def test_previous_host_reproduces_reported_historical_heartbeat_stop_before_first_power(self):
+        path=Path(__file__).with_name('fixtures')/'inventure_mcu_control_r5_load230.py'
+        spec=importlib.util.spec_from_file_location('door_test_host.previous_load230',path)
+        previous=importlib.util.module_from_spec(spec);spec.loader.exec_module(previous)
+        h,_,_=self.host();h.__class__=previous.InventureMCU
+        h.device.outputs[6]=dict(duty=0,until=0.,token=12345,reason=5)
+        self.heat(h)
+        self.assertEqual(h.load_test_last['phase'],'failed')
+        self.assertEqual(h.load_test_last['reason'],'MCU heater guard: heartbeat_or_cable_lost')
+        self.assertEqual(self.starts(h),[])
+
+    def test_new_attempt_confirms_OFF_before_heating_after_historical_stop_for_either_tool(self):
+        for tool in (0,1):
+            for reason in (4,5,6):
+                h,_,_=self.host();i=tool+6
+                h.device.outputs[i]=dict(duty=0,until=0.,token=12345,reason=reason)
+                self.heat(h,TOOL='T%d'%tool)
+                self.assertIsNotNone(h.load_test_context)
+                self.assertEqual(h.load_test_last['phase'],'heating')
+                self.assertEqual(h.device.packets[0][0:3],('output',2,i))
+                self.assertEqual(self.starts(h)[0][2:6],(i,102,1500,250))
+                self.assertNotEqual(self.starts(h)[0][-1],12345)
+
+    def test_current_MCU_guard_after_start_aborts_without_resetting_or_retrying_power(self):
+        for reason in (4,5,6):
+            h,_,_=self.host();self.heat(h);old=h.device.output(6)
+            h.device.outputs[6]=dict(old,duty=0,reason=reason)
+            h.reactor.pause(102.)
+            self.assertIsNone(h.load_test_context)
+            self.assertEqual(h.load_test_last['phase'],'failed')
+            self.assertEqual(len(self.starts(h)),1)
+            self.assertEqual(sum(p[:3]==('output',2,6) for p in h.device.packets),1)
+
+    def test_failed_start_after_OFF_is_not_retried(self):
+        h,_,_=self.host();original=h.device.out
+        def reject(args):
+            if args[0]==1:
+                row=original(args);h.device.outputs[6].update(duty=0,reason=5)
+                return dict(row,duty=0,remaining_ms=0,reason=5,reject=3)
+            return original(args)
+        h.commands['output']=Wire(reject);self.heat(h);h.reactor.pause(105.)
+        self.assertIsNone(h.load_test_context);self.assertEqual(len(self.starts(h)),1)
+        self.assertIn('mcu_not_ready',h.load_test_last['reason'])
+        self.assertFalse(h.device.active())
+
+    def test_invalid_OFF_acknowledgement_cannot_be_followed_by_heating(self):
+        h,_,_=self.host();original=h.device.out
+        def bad_off(args):
+            row=original(args)
+            return dict(row,duty=102,remaining_ms=1500,reason=1) if args[0]==2 else row
+        h.commands['output']=Wire(bad_off);self.heat(h)
+        self.assertIsNone(h.load_test_context);self.assertEqual(self.starts(h),[])
+        self.assertIn('did not apply',h.load_test_last['reason'])
+
+    def test_current_safety_failure_precedes_any_reset_of_the_historical_reason(self):
+        h,_,_=self.host();h.device.outputs[6]=dict(duty=0,until=0.,token=12345,reason=5)
+        h.cmd_load_test(Command(ACTION='HEAT'))
+        h.status['cable']=1;h.reactor.pause(100.25)
+        self.assertIsNone(h.load_test_context);self.assertEqual(self.starts(h),[])
+        self.assertFalse(any(p[:3]==('output',2,6) for p in h.device.packets))
+        self.assertIn('cable',h.load_test_last['reason'])
+
+    def test_a_stale_OFF_response_cannot_acknowledge_the_new_attempt(self):
+        h,_,_=self.host();original=h.device.out
+        def stale_off(args):
+            row=original(args)
+            return dict(row,reason=5) if args[0]==2 else row
+        h.commands['output']=Wire(stale_off);self.heat(h)
+        self.assertIsNone(h.load_test_context);self.assertEqual(self.starts(h),[])
+        self.assertIn('fresh heater OFF',h.load_test_last['reason'])
 
     def test_temperature_target_uses_short_power_leases_and_a_separate_250C_cutoff(self):
         h,_,_=self.host();self.heat(h)

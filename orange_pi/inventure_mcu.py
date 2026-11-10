@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-LOAD230'
+HOST_REVISION = 'RC8-CONTROL-R5-LOAD230-R2'
 FEEDER_RUN_MAX_S = 50
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
@@ -2056,6 +2056,8 @@ class InventureMCU:
             1500 if duty else 0,context['limit'],owner=context)
         if state['reject']:raise ValueError(state['reject'])
         if state['duty']!=duty:raise ValueError('MCU did not apply the requested heater power')
+        if not duty and (state['reason']!='operator_off' or state['remaining_ms']):
+            raise ValueError('MCU did not confirm a fresh heater OFF')
         context['duty']=duty;context['output_token']=state['token']
         return state
 
@@ -2089,6 +2091,12 @@ class InventureMCU:
             self._load_test_capture(context)
             if self.load_test_context is not context:return
             self._load_test_emit(context,'jog_done')
+        starting=context['output_token'] is None
+        if starting:
+            # R5 retains the last shutdown/heartbeat/guard reason while OFF.
+            # After current SERVICE/cable/sensor checks, explicitly confirm OFF
+            # once. A guard raised after this acknowledgement remains fatal.
+            self._load_test_output(context,0)
         output=self._output_query(context['tool']+6)
         if self.load_test_context is not context:return
         if output['reject'] or output['reason'] in ('temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown'):
@@ -2109,7 +2117,7 @@ class InventureMCU:
         if ready:context['reached_target']=True
         phase='ready' if ready else 'heating'
         if context['flow_confirmed']:phase='flow_confirmed_cleaning_pending'
-        if phase!=context['phase'] or now>=context['next_report']:
+        if starting or phase!=context['phase'] or now>=context['next_report']:
             context['phase']=phase;context['next_report']=now+5.
             self._load_test_emit(context)
 
