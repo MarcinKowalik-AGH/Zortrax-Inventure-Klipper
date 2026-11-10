@@ -1,5 +1,10 @@
 # Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY
 
+Aktualny host `RC8-CONTROL-R7-MODULAR` składa AUTO z tych samych modułów
+co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne.
+MCU pozostaje `RC8-CONTROL-R7-FACTORY`; ponowne wgrywanie R7 nie jest
+potrzebne. [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
+
 `INVENTURE_LOAD_TEST ACTION=AUTO` wykonuje odtworzony automat ładowania
 r0323: przygotowanie ruchu, grzanie, mechaniczne przełączenie dyszy, próbę
 krótką L1 oraz, jeśli potrzebne, odzyskanie podawania L2, długi transport
@@ -41,7 +46,8 @@ Po ponownym połączeniu:
 INVENTURE_VERSION
 ```
 
-Oczekiwane: host i MCU `RC8-CONTROL-R7-FACTORY`, `factory_abi: 1`,
+Oczekiwane: host `RC8-CONTROL-R7-MODULAR`, MCU `RC8-CONTROL-R7-FACTORY`,
+`procedure_api: 1`, `factory_abi: 1`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki

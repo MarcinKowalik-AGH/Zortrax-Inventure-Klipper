@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-FACTORY",
-  "host_module_sha256": "5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e",
+  "host_revision": "RC8-CONTROL-R7-MODULAR",
+  "host_module_sha256": "0a1a53fe6977cac1c35fb0cd437c130283ab55c7b94c5bfb5fb08cec65c386ec",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 213,
-  "previous_host_commit": "182681d18a70902c68a6863504398bf9d4e2bf97",
+  "verified_public_host_tests": 232,
+  "previous_host_commit": "01a0b87c4a73a0066019d57b43f7452f70f4dd31",
   "firmware": {
     "release": "RC8-CONTROL-R7-FACTORY",
     "bootloader": "InventureBoot 1.7",
@@ -324,7 +324,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-FACTORY",
+  "release": "RC8-CONTROL-R7-MODULAR",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -342,5 +342,33 @@
     "normal_completion_heaters_off": true,
     "monitor_default": 0
   },
-  "motor_test_release": "RC8-CONTROL-R7-FACTORY"
+  "motor_test_release": "RC8-CONTROL-R7-FACTORY",
+  "procedures": {
+    "api": 1,
+    "command": "INVENTURE_PROCEDURE",
+    "actions": [
+      "LIST",
+      "PARAMS",
+      "STATUS",
+      "STOP",
+      "AUTO",
+      "HOME",
+      "SELECT",
+      "PURGE",
+      "CLEAN",
+      "MANUAL",
+      "UNLOAD"
+    ],
+    "MCU_required": "RC8-CONTROL-R7-FACTORY",
+    "MCU_update_from_R7_required": false,
+    "config_layers": [
+      "builtin",
+      "procedure_defaults",
+      "procedure_t0_or_t1",
+      "command"
+    ],
+    "standalone_homes": true,
+    "physical_test": "pending operator",
+    "AUTO_R7_hardware_trace_regression": true
+  }
 }

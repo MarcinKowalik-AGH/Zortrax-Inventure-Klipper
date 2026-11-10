@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-FACTORY'
+HOST_REVISION = 'RC8-CONTROL-R7-MODULAR'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
@@ -207,6 +207,7 @@ class InventureMCU:
         self.gcode = self.printer.lookup_object('gcode')
         self.allow_actuators = config.getboolean('allow_actuators', False)
         self.diag_adc = config.getboolean('diagnostic_adc', True)
+        self._configure_procedures(config)
         self.status = {}
         self.status_received = None
         self.inputs_received = None
@@ -331,6 +332,7 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
         self.gcode.register_command('INVENTURE_LOAD_TEST',self.cmd_load_test,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_PROCEDURE',self.cmd_procedure,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -1551,7 +1553,7 @@ class InventureMCU:
             'motion_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'load_stream_abi':getattr(self,'load_stream_abi',0),
-            'factory_abi':getattr(self,'factory_abi',0),
+            'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1,
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -2082,11 +2084,13 @@ class InventureMCU:
         if context.get('factory') is not None:
             f=context['factory']
             result['factory']={k:f[k] for k in ('parameters','phase','history','position',
-                'reference_valid','snapshot','result','e_sent_steps','fallback_started')}
-            result['stage']='factory_cartridge_load'
+                'reference_valid','snapshot','result','e_sent_steps','fallback_started',
+                'operation','module_stack','module_history','selection_commanded')}
+            result['stage']='factory_cartridge_load' if f['operation']=='AUTO' else 'factory_procedure'
             result['cleaning_pending']=not f.get('cleaning_done',False)
             result['heater_off_on_completion']=True
-            result['factory_transport_completed']=bool((f.get('result') or {}).get('success'))
+            result['factory_transport_completed']=(f['operation']=='AUTO'
+                and bool((f.get('result') or {}).get('success')))
         self.load_test_last=result
         return result
 
@@ -2433,26 +2437,48 @@ class InventureMCU:
         return (self.reactor.monotonic()+(.1 if context.get('jog') is not None or context.get('factory') is not None else .25)
                 if self.load_test_context is context else self.reactor.NEVER)
 
-    def _factory_start(self,gcmd,read_only=False):
-        from .inventure_factory_core import parameters,FactoryProgram
+    def _configure_procedures(self,config):
+        from .inventure_factory_core import profiles
         try:
-            p=parameters(gcmd)
-            timeout=float(gcmd.get('PROCEDURE_TIMEOUT',1800.))
-            if not math.isfinite(timeout) or not 60<=timeout<=3600:
-                raise ValueError('PROCEDURE_TIMEOUT must be 60..3600 seconds')
+            self.procedure_profiles=profiles(config.get('procedure_defaults','{}'),
+                config.get('procedure_t0','{}'),config.get('procedure_t1','{}'))
+        except ValueError as exc:raise config.error(str(exc))
+
+    def cmd_procedure(self,gcmd):
+        from .inventure_factory_core import PROCEDURES
+        action=str(gcmd.get('ACTION','STATUS')).upper()
+        if action in ('STATUS','STOP'):return self.cmd_load_test(gcmd)
+        if action=='LIST':
+            gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,procedures=PROCEDURES,
+                precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
+                standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY'),sort_keys=True));return
+        operation=str(gcmd.get('PROCEDURE','AUTO')).upper() if action=='PARAMS' else action
+        if operation not in PROCEDURES:
+            raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+', '.join(PROCEDURES))
+        return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
+
+    def _factory_start(self,gcmd,read_only=False,operation='AUTO'):
+        from .inventure_factory_core import parameters,FactoryProgram,PROCEDURES
+        try:
+            if operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
+            p=parameters(gcmd,getattr(self,'procedure_profiles',None))
+            timeout=p['procedure_timeout']
             if read_only:
-                gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,procedure_timeout=timeout),sort_keys=True));return
+                gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
+                    modules=PROCEDURES[operation]),sort_keys=True));return
             if 'factory_session' not in self.commands:
-                raise ValueError('ACTION=AUTO requires the RC8-CONTROL-R7-FACTORY MCU application')
+                raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
             if any(gcmd.get(k,None) is not None for k in ('STEPS','HEAD_STEPS','TUBE_SECONDS','PURGE_STEPS','SMOOTH','RATE')):
                 raise ValueError('AUTO uses L1/L3/L4 parameters; remove fixed-distance LOAD/RETRACT parameters')
             if getattr(self,'load_test_context',None) is not None:
                 raise ValueError('Load test already active; use STATUS or STOP')
+            program=FactoryProgram(p).run(operation)
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
             def get(self,key,default=None):
                 if key=='ACTION':return 'HEAT'
                 if key=='TOOL':return 'T%d'%p['tool']
+                if key in ('TARGET','MAX_POWER','DURATION'):return p[key.lower()]
                 return gcmd.get(key,default)
             def get_int(self,*args,**kw):return gcmd.get_int(*args,**kw)
             def error(self,message):return gcmd.error(message)
@@ -2460,11 +2486,12 @@ class InventureMCU:
         self.cmd_load_test(HeatCommand())
         context=self.load_test_context;now=self.reactor.monotonic()
         context['factory_preparing']=True;context['deadline']=now+timeout
-        context['factory']=dict(parameters=p,program=FactoryProgram(p).run(),action=None,move=None,
+        context['factory']=dict(parameters=p,program=program,action=None,move=None,
             resume=None,phase='HOME',history=[],position=[0.,0.,0.],reference_valid=False,
             homed=[],snapshot={},result=None,e_sent_steps=0,fallback_started=False,
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
-            mode=0,monitor=0,total_deadline=now+timeout,heat_started=False)
+            mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
+            operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
         self._load_test_emit(context)
 
     def _factory_session(self,context,mode=None,monitor=None):
@@ -2580,9 +2607,19 @@ class InventureMCU:
 
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
+        if kind=='module':
+            name=action['name']
+            if action['state']=='start':f['module_stack'].append(name)
+            elif action['state']=='done' and f['module_stack'] and f['module_stack'][-1]==name:
+                f['module_stack'].pop()
+                if name=='select_tool':f['selection_commanded']=True
+            else:raise ValueError('Factory module sequence is invalid')
+            f['module_history'].append(dict(name=name,state=action['state'],time_s=round(now-f['started'],3)))
+            f['module_history'][:]=f['module_history'][-64:]
+            return dict(f['snapshot'])
         if kind=='phase':
             f['phase']=action['name'];f['history'].append(action['name'])
-            if action['name'].startswith('U'):f['fallback_started']=True
+            if f['operation']=='AUTO' and action['name'].startswith('U'):f['fallback_started']=True
             self._load_test_emit(context);return dict(f['snapshot'])
         if kind=='heat':
             if not f['heat_started']:
@@ -2608,8 +2645,10 @@ class InventureMCU:
             action=dict(action,e=mm if kind=='feed_until_edges' else -mm)
             return self._factory_begin_move(context,action)
         if kind=='done':
-            f['result']=dict(action);f['cleaning_done']=action.get('terminal')=='L4'
-            self._load_test_cancel('factory_load_completed',phase='done');self._control_abort()
+            if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')
+            f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
+            self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
+                else 'factory_procedure_completed',phase='done');self._control_abort()
             return None
         raise ValueError('Unknown factory action '+kind)
 

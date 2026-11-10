@@ -1,9 +1,27 @@
-# Zortrax Inventure — CONTROL-R7-FACTORY
+# Zortrax Inventure — host CONTROL-R7-MODULAR / MCU CONTROL-R7-FACTORY
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+
+## Wspólne procedury T0/T1
+
+`INVENTURE_PROCEDURE` udostępnia osobno `HOME`, `SELECT`, `PURGE`, `CLEAN`,
+`MANUAL`, `UNLOAD` i pełne `AUTO`. Korzystają z tych samych modułów,
+geometrii, PID i nadzoru MCU. AUTO bazuje raz na początku, a następnie
+składa moduły pod jednym właścicielem. Samodzielna procedura również
+zaczyna od bazowania, ponieważ po zakończeniu zwalnia napędy.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=LIST
+INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T1 PROCEDURE=SELECT
+```
+
+Nastawy: wartości wbudowane → opcjonalne `procedure_defaults` →
+`procedure_t0`/`procedure_t1` w `[inventure_mcu]` → argumenty polecenia.
+Zmiana hosta wystarcza, jeśli MCU ma już `RC8-CONTROL-R7-FACTORY`.
+[Moduły, osobne polecenia, profile i diagnostyka](docs/MODULAR_PROCEDURES_2026-11-10.md).
 
 ## Ładowanie zależne od czujników — T0 i T1
 
@@ -70,10 +88,11 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R7-FACTORY`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R7-MODULAR`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza nową sesję MCU dla automatu i ruchów XY/E.
+`procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
 
 Ładowanie z prawej kasety do T1, na początek na tym samym odcinku co T0:
 

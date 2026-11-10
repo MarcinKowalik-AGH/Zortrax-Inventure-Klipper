@@ -17,10 +17,10 @@ class Command:
 
 class Executor:
     """Actions complete normally; hooks supply independent transport evidence."""
-    def __init__(self, p=None, hook=None):
+    def __init__(self, p=None, hook=None, operation='AUTO', planner=None):
         self.p = core.defaults(0) if p is None else p
-        self.program = core.FactoryProgram(self.p)
-        self.generator = self.program.run()
+        self.program = (planner or core).FactoryProgram(self.p)
+        self.generator = self.program.run() if operation=='AUTO' else self.program.run(operation)
         self.hook = hook
         self.actions = []
         self.phase = None
@@ -278,7 +278,7 @@ class FactoryCoreTests(unittest.TestCase):
         self.assertEqual([a['mm'] for a in portions], [30., 70.])
         self.assertEqual([a['reset_quiet'] for a in portions], [True, False])
         self.assertEqual(sum(a['kind'] == 'wait_unload' for a in ex.actions), 1)
-        self.assertEqual(ex.actions[-1]['mode'], 0)
+        self.assertEqual([a for a in ex.actions if a['kind']=='mode'][-1]['mode'], 0)
 
     def test_early_unload_quiet_skips_second_portion_and_A_timeout_does_not_prove_empty(self):
         def feedback(ex, action, result):

@@ -66,7 +66,8 @@ def install(target,apply=False,rollback=None,service='klipper'):
               'serialhdl.py':{*meta['serialhdl_allowed_sha256'],expected['serialhdl.py']}}
     if optional:
         expected['inventure_factory_core.py']=meta['factory_core_sha256']
-        accepted['inventure_factory_core.py']={expected['inventure_factory_core.py']}
+        accepted['inventure_factory_core.py']={expected['inventure_factory_core.py'],
+            *meta.get('factory_core_allowed_existing_sha256',[])}
     before={};modes={}
     for name in names:
         dest=dest_path(name)

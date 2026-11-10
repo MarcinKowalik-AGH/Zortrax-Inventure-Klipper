@@ -7,11 +7,21 @@ STEP counts. Coordinates are nominal service coordinates, before calibration.
 """
 import math
 import struct
+import json
 
 
 E_STEPS_PER_MM = 960
 XY_STEPS_PER_MM = 640
 UINT32 = 0xffffffff
+PROCEDURES = {
+    'AUTO': ('home', 'heat', 'select_tool', 'load_l1_l4'),
+    'HOME': ('home',),
+    'SELECT': ('home', 'select_tool'),
+    'PURGE': ('home', 'heat', 'select_tool', 'position_bin', 'purge', 'optional_clean'),
+    'CLEAN': ('home', 'heat', 'select_tool', 'position_bin', 'clean'),
+    'MANUAL': ('home', 'heat', 'select_tool', 'position_bin', 'manual_feed'),
+    'UNLOAD': ('home', 'heat', 'select_tool', 'position_bin', 'unload'),
+}
 
 
 class FactoryError(ValueError):
@@ -41,7 +51,11 @@ def defaults(tool=0):
         approach_x=135. if tool == 0 else 10.5,
         switch_x=150. if tool == 0 else -4.5, switch_y=152.,
         service_x=135. if tool == 0 else 0., service_y=0.,
-        min_x=-5., max_x=155., min_y=0., max_y=155.)
+        min_x=-5., max_x=155., min_y=0., max_y=155.,
+        purge_span=36., purge_e_steps=2073, purge_mm=20., clean_after=1,
+        wipe_y=152., wipe_span=100., wipe_exit=23., manual_mm=20.,
+        manual_dir='LOAD', feeder=0, target=230., max_power=40., duration=900.,
+        procedure_timeout=1800.)
 
 
 _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
@@ -57,9 +71,16 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     center_x=(-50., 250.), center_y=(-50., 250.),
     approach_x=(-50., 250.), switch_x=(-50., 250.), switch_y=(-50., 250.),
     service_x=(-50., 250.), service_y=(-50., 250.),
-    min_x=(-50., 250.), max_x=(-50., 250.), min_y=(-50., 250.), max_y=(-50., 250.))
+    min_x=(-50., 250.), max_x=(-50., 250.), min_y=(-50., 250.), max_y=(-50., 250.),
+    purge_span=(1., 100.), purge_e_steps=(2, 96000), purge_mm=(.1, 250.),
+    clean_after=(0, 1), wipe_y=(-50., 250.), wipe_span=(1., 200.),
+    wipe_exit=(0., 100.), manual_mm=(.1, 250.), feeder=(0, 1),
+    target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
+    procedure_timeout=(60., 3600.))
+_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD')}
 _INTEGERS = frozenset(('l1_starts', 'pulse_count', 'final_starts',
-                      'feeder_ms', 'monitor', 'fallback'))
+                      'feeder_ms', 'monitor', 'fallback', 'purge_e_steps',
+                      'clean_after', 'feeder'))
 
 
 def feeder_budget(p):
@@ -84,6 +105,11 @@ def _validated(values):
                 raise FactoryError(key.upper() + ' must be an integer')
             number = int(number)
         p[key] = number
+    for key, choices in _CHOICES.items():
+        value = str(p[key]).upper()
+        if value not in choices:
+            raise FactoryError(key.upper() + ' must be ' + ' or '.join(choices))
+        p[key] = value
     if p['l1_budget'] < p['l1_portion']:
         raise FactoryError('L1_BUDGET must cover at least one L1_PORTION')
     if p['unload_l1'] + p['unload_l2'] <= 0:
@@ -100,8 +126,9 @@ def _validated(values):
               (p['approach_x'], p['switch_y']),
               (p['switch_x'], p['switch_y']),
               (p['service_x'], p['service_y']),
-              (cx - 18., cy), (cx + 18., cy)]
-    points += [(cx + dx, p['switch_y']) for dx in (-50., 50., -23., 23.)]
+              (cx - p['purge_span']/2., cy), (cx + p['purge_span']/2., cy)]
+    points += [(cx + dx, p['wipe_y']) for dx in
+               (-p['wipe_span']/2., p['wipe_span']/2., -p['wipe_exit'], p['wipe_exit'])]
     if any(not p['min_x'] <= x <= p['max_x']
            or not p['min_y'] <= y <= p['max_y'] for x, y in points):
         raise FactoryError('Factory service geometry exceeds MIN/MAX_X/Y')
@@ -119,21 +146,57 @@ def _validated(values):
         SWITCH=abs(p['switch_x'] - p['approach_x']) / p['switch_speed'],
         SWITCH_RETURN=travel(p['switch_x'], p['switch_y'], cx, cy),
         SERVICE=travel(cx, cy, p['service_x'], p['service_y']),
-        PURGE=36. / p['purge_speed'], PURGE_RETURN=18. / p['travel_speed'],
-        CLEAN_Y=abs(p['switch_y'] - cy) / p['travel_speed'],
-        CLEAN_X=100. / p['travel_speed'],
+        PURGE=p['purge_span'] / p['purge_speed'],
+        PURGE_RETURN=p['purge_span']/2. / p['travel_speed'],
+        CLEAN_Y=abs(p['wipe_y'] - cy) / p['travel_speed'],
+        CLEAN_X=max(p['wipe_span'], p['wipe_span']/2.+p['purge_span']/2.,
+                    p['wipe_span']/2.+p['wipe_exit']) / p['travel_speed'],
         LONG_MM=p['long_mm'] / p['e_speed'],
+        MANUAL_MM=p['manual_mm'] / p['e_speed'],
         UNLOAD_L1=p['unload_l1'] / p['unload_speed1'],
         UNLOAD_L2=p['unload_l2'] / p['unload_speed2'])
     for label, duration in seconds.items():
         if duration > 595.:
             raise FactoryError(label + ' trajectory exceeds 595 seconds; increase speed or shorten travel')
+    # Coordinated purge ties E to XY. A narrow span with excessive E must be
+    # refused before even cold homing, not only when that later leg starts.
+    for span, steps in ((p['purge_span'], p['purge_e_steps']),
+                        (p['purge_span']/2., p['purge_e_steps']//2)):
+        master = max(round(span * XY_STEPS_PER_MM), steps)
+        if math.ceil(master * p['purge_speed'] / span) > 20000:
+            raise FactoryError('PURGE trajectory exceeds 20000 master steps/s')
     return p
 
 
-def parameters(gcmd):
+def profiles(common='{}', t0='{}', t1='{}'):
+    """Persistent config layers; reject typos instead of silently ignoring them."""
+    layers = []
+    for name, raw in (('procedure_defaults', common), ('procedure_t0', t0), ('procedure_t1', t1)):
+        try:
+            values = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (TypeError, ValueError) as exc:
+            raise FactoryError(name + ' must be a JSON object') from exc
+        if not isinstance(values, dict):
+            raise FactoryError(name + ' must be a JSON object')
+        layer = {}
+        for key, value in values.items():
+            normalized = str(key).lower()
+            if normalized not in _LIMITS and normalized not in _CHOICES:
+                raise FactoryError(name + ': unknown parameter ' + str(key))
+            if normalized in layer:
+                raise FactoryError(name + ': duplicate parameter ' + normalized)
+            layer[normalized] = value
+        layers.append(layer)
+    for tool in (0, 1):
+        _validated(dict(defaults(tool), **dict(layers[0], **layers[tool+1])))
+    return tuple(layers)
+
+
+def parameters(gcmd, configured=None):
     p = defaults(gcmd.get('TOOL', 'T0'))
-    for key in _LIMITS:
+    if configured is not None:
+        p.update(configured[0]);p.update(configured[p['tool']+1])
+    for key in (*_LIMITS, *_CHOICES):
         p[key] = gcmd.get(key.upper(), p[key])
     return _validated(p)
 
@@ -192,38 +255,69 @@ class FactoryProgram:
         return snap
 
     def _center(self):
-        return (yield from self._move(self.p['center_x'], self.p['center_y']))
+        return (yield from self.position_bin())
+
+    def _module(self, name, body):
+        yield dict(kind='module', name=name, state='start')
+        result = yield from body
+        yield dict(kind='module', name=name, state='done')
+        return result
+
+    def position_bin(self):
+        return (yield from self._module('position_bin',
+            self._move(self.p['center_x'], self.p['center_y'])))
+
+    def purge(self, mm, clean=False):
+        return (yield from self._module('purge', self._purge_steps(mm, clean)))
 
     def _purge(self, mm, clean=False):
+        # Compatibility for callers of the original R7 internal helper.
+        return (yield from self.purge(mm, clean))
+
+    def _purge_steps(self, mm, clean):
         p = self.p
         entry = self.xy
         # Exact r0323 integer arithmetic: 36*640=23040 raw X units;
         # trunc(float32(23040*.09))=2073 raw E units, first half=1036.
-        dx = -36. if p['tool'] == 0 else 36.
+        dx = -p['purge_span'] if p['tool'] == 0 else p['purge_span']
         issued = 0
         target = round(mm * E_STEPS_PER_MM)
         first = True
         snap = None
         while issued < target:
             step_x = dx / 2. if first else dx
-            step_e = 1036 if first else 2073
+            step_e = p['purge_e_steps']//2 if first else p['purge_e_steps']
             snap = yield from self._move(self.xy[0] + step_x, self.xy[1],
                 step_e / E_STEPS_PER_MM, p['purge_speed'])
             issued += step_e
             dx = -dx
             first = False
         if clean:
-            snap = yield from self._move(self.xy[0], p['switch_y'])
-            # The kernel chooses the finish from the *remaining oscillation
-            # sign*. E=100mm has a different parity than the E=50mm wrapper.
-            offsets = (-50., 50., 23.) if dx < 0 else (50., -50., -23.)
-            for offset in offsets:
-                snap = yield from self._move(p['center_x'] + offset, p['switch_y'])
+            snap = yield from self.clean(dx)
         else:
             snap = yield from self._move(*entry)
         return issued, snap
 
-    def _fallback(self):
+    def clean(self, next_direction=None):
+        return (yield from self._module('clean', self._clean_steps(next_direction)))
+
+    def _clean_steps(self, next_direction):
+        p = self.p
+        if next_direction is None:
+            next_direction = -1 if p['tool'] == 0 else 1
+        snap = yield from self._move(self.xy[0], p['wipe_y'])
+        # Preserve the OEM parity of the remaining purge oscillation; a
+        # standalone clean chooses its direction from the selected tool.
+        half = p['wipe_span']/2.
+        offsets = (-half, half, p['wipe_exit']) if next_direction < 0 else (half, -half, -p['wipe_exit'])
+        for offset in offsets:
+            snap = yield from self._move(p['center_x'] + offset, p['wipe_y'])
+        return snap
+
+    def unload(self):
+        return (yield from self._module('unload', self._unload_steps()))
+
+    def _unload_steps(self):
         p = self.p
         yield from self._phase('U0')
         yield from self._mode(3)
@@ -247,10 +341,17 @@ class FactoryProgram:
             timeout_s=p['unload_a_timeout'], speed=p['unload_speed2'])
         snap = _snapshot(result)
         yield from self._mode(0)
-        raise FactoryError('l4_starts_missing_fallback_completed',
-                           sensor_empty_proven=snap['a'] == 0)
+        return dict(sensor_empty_proven=snap['a'] == 0)
 
-    def run(self):
+    def _fallback(self):
+        result = yield from self.unload()
+        raise FactoryError('l4_starts_missing_fallback_completed',
+                           **result)
+
+    def home(self):
+        return (yield from self._module('home', self._home_steps()))
+
+    def _home_steps(self):
         p = self.p
         yield from self._phase('HOME')
         for axis, maximum, speed in (('Z', p['home_z_max'], p['z_speed']),
@@ -260,14 +361,39 @@ class FactoryProgram:
             if isinstance(result, dict) and result.get('ok') is False:
                 raise FactoryError('homing_' + axis.lower() + '_failed')
         self.xy = (0., 0.)
+
+    def heat(self):
+        yield from self._module('heat', self._heat_steps())
+
+    def _heat_steps(self):
         yield from self._phase('HEAT')
         yield dict(kind='heat')
+
+    def select_tool(self):
+        yield from self._module('select_tool', self._select_steps())
+
+    def _select_steps(self):
+        p = self.p
         yield from self._mode(0)
         yield from self._phase('SWITCH')
         yield from self._center()
         yield from self._move(p['approach_x'], p['switch_y'])
         yield from self._move(p['switch_x'], p['switch_y'], speed=p['switch_speed'])
         yield from self._center()
+
+    def manual_feed(self):
+        yield from self._module('manual_feed', self._manual_steps())
+
+    def _manual_steps(self):
+        p = self.p
+        forward = p['manual_dir'] == 'LOAD'
+        yield from self._mode((2 if forward else 3) if p['feeder'] else 0)
+        yield from self._move(*self.xy, e=p['manual_mm']*(1 if forward else -1),
+                              speed=p['e_speed'])
+        yield from self._mode(0)
+
+    def _load_l1(self):
+        p = self.p
         yield from self._phase('L1')
         baseline = (yield from self._mode(1, monitor=p['monitor']))['starts']
         total = 0
@@ -279,11 +405,13 @@ class FactoryProgram:
                 break
             if starts >= p['l1_starts']:
                 yield from self._mode(0)
-                yield from self._phase('DONE')
-                yield dict(kind='done', success=True, terminal='L1')
-                return
+                return True
             if total >= round(p['l1_budget'] * E_STEPS_PER_MM):
                 raise FactoryError('l1_budget_exhausted')
+        return False
+
+    def _load_l2(self):
+        p = self.p
         yield from self._phase('L2')
         yield from self._mode(2)
         result = yield dict(kind='wait_a', timeout_s=p['a_timeout'])
@@ -292,6 +420,9 @@ class FactoryProgram:
         if not result.get('ok') or not result['a']:
             raise FactoryError('l2_a_timeout')
         yield from self._move(p['service_x'], p['service_y'])
+
+    def _load_l3(self):
+        p = self.p
         yield from self._phase('L3')
         baseline = (yield from self._mode(2))['pulses']
         result = yield dict(kind='feed_until_edges', mm=p['long_mm'],
@@ -304,6 +435,9 @@ class FactoryProgram:
         yield from self._center()
         if not result.get('ok'):
             raise FactoryError('l3_no_transport')
+
+    def _load_l4(self):
+        p = self.p
         yield from self._phase('L4')
         baseline = (yield from self._mode(1, monitor=p['monitor']))['starts']
         issued, snap = yield from self._purge(p['final_mm'], clean=True)
@@ -312,5 +446,48 @@ class FactoryProgram:
                 yield from self._fallback()
             raise FactoryError('l4_starts_missing')
         yield from self._mode(0)
+
+    def load(self):
+        short = yield from self._module('load_l1', self._load_l1())
+        if short:
+            return 'L1'
+        yield from self._module('load_l2', self._load_l2())
+        yield from self._module('load_l3', self._load_l3())
+        yield from self._module('load_l4', self._load_l4())
+        return 'L4'
+
+    def run(self, operation='AUTO'):
+        """Compose shared modules once under one lease and homing reference."""
+        operation = str(operation).upper()
+        if operation not in PROCEDURES:
+            raise FactoryError('Unknown procedure ' + operation)
+        p = self.p
+        yield from self.home()
+        terminal = operation
+        cleaned = False
+        if operation not in ('HOME', 'SELECT'):
+            yield from self.heat()
+        if operation != 'HOME':
+            yield from self.select_tool()
+        if operation == 'AUTO':
+            terminal = yield from self.load()
+            cleaned = terminal == 'L4'
+        elif operation in ('PURGE', 'CLEAN', 'MANUAL', 'UNLOAD'):
+            yield from self.position_bin()
+            yield from self._phase(operation)
+            if operation == 'PURGE':
+                yield from self._mode(1 if p['feeder'] else 0, monitor=p['monitor'])
+                yield from self.purge(p['purge_mm'], clean=bool(p['clean_after']))
+                cleaned = bool(p['clean_after'])
+            elif operation == 'CLEAN':
+                yield from self.clean()
+                cleaned = True
+            elif operation == 'MANUAL':
+                yield from self.manual_feed()
+            else:
+                result = yield from self.unload()
+                if not result['sensor_empty_proven']:
+                    raise FactoryError('unload_sensor_still_present', **result)
+            yield from self._mode(0)
         yield from self._phase('DONE')
-        yield dict(kind='done', success=True, terminal='L4')
+        yield dict(kind='done', success=True, terminal=terminal, cleaning_done=cleaned)

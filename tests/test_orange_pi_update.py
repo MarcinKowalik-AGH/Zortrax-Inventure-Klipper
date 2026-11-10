@@ -246,6 +246,32 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.dest.read_bytes(),self.old)
         self.assertEqual(self.factory_dest.read_bytes(),expected)
 
+    def test_published_R7_core_upgrades_and_rollback_restores_the_exact_previous_core(self):
+        previous=(ROOT/'tests/fixtures/factory_r7_core.py').read_bytes()
+        self.factory_dest.write_bytes(previous);self.active=False
+        self.assertIn('5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e',
+            json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text())['allowed_existing_sha256'])
+        with patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            self.assertEqual(self.factory_dest.read_bytes(),(ROOT/'orange_pi/inventure_factory_core.py').read_bytes())
+            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
+        self.assertEqual(self.factory_dest.read_bytes(),previous)
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+
+    def test_failed_modular_install_restores_the_existing_R7_core(self):
+        previous=(ROOT/'tests/fixtures/factory_r7_core.py').read_bytes()
+        self.factory_dest.write_bytes(previous);original=Path.replace
+        def interrupt_core(path,other):
+            if path.name=='.inventure_factory_core.py.thermal-r2.new':raise KeyboardInterrupt()
+            return original(path,other)
+        with patch.object(Path,'replace',interrupt_core):
+            with self.assertRaises(KeyboardInterrupt),patch('sys.stdout',new=io.StringIO()):update.update()
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertEqual(self.factory_dest.read_bytes(),previous)
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+        self.assertTrue(self.active)
+
     def test_unknown_existing_factory_core_is_refused_before_stopping(self):
         package=self.factory_package();self.factory_dest.write_text('# local change\n')
         with patch.object(update.core,'ROOT',package):
