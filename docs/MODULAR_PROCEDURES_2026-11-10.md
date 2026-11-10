@@ -1,5 +1,9 @@
 # Wspólne procedury T0/T1 — host CONTROL-R7-MODULAR
 
+Aktualny `RC8-CONTROL-R7-MENU` zachowuje opisany interfejs modułów i dodaje
+[wspólne sterowanie z menu Zortrax](ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
+Po aktualizacji VERSION pokazuje host R7-MENU i ten sam MCU R7-FACTORY.
+
 Host `RC8-CONTROL-R7-MODULAR` korzysta z tego samego MCU
 `RC8-CONTROL-R7-FACTORY`, `factory_abi=1`. Jeśli aplikacja R7 jest już
 wgrana, wystarcza aktualizacja hosta z gałęzi `orange-pi`. Nie trzeba

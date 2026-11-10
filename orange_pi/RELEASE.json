@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-MODULAR",
-  "host_module_sha256": "0a1a53fe6977cac1c35fb0cd437c130283ab55c7b94c5bfb5fb08cec65c386ec",
+  "host_revision": "RC8-CONTROL-R7-MENU",
+  "host_module_sha256": "63c8473e1b6dcdf84fd0ba832ccc2064cee8a67e4ee16bd41a47ec8309553e9d",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 232,
-  "previous_host_commit": "01a0b87c4a73a0066019d57b43f7452f70f4dd31",
+  "verified_public_host_tests": 269,
+  "previous_host_commit": "e442db291cb2341ae22022542c48160869f64a1e",
   "firmware": {
     "release": "RC8-CONTROL-R7-FACTORY",
     "bootloader": "InventureBoot 1.7",
@@ -324,7 +324,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-MODULAR",
+  "release": "RC8-CONTROL-R7-MENU",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -370,5 +370,26 @@
     "standalone_homes": true,
     "physical_test": "pending operator",
     "AUTO_R7_hardware_trace_regression": true
+  },
+  "zortrax_menu": {
+    "api": 1,
+    "command": "INVENTURE_ZORTRAX",
+    "backend": "shared_R7_service_and_existing_native_P09_P10_P13_P15_P17",
+    "MCU_required_for_service": "RC8-CONTROL-R7-FACTORY",
+    "MCU_changed": false,
+    "operator_profile": "English M300 launcher / five Zortrax branches",
+    "hardware_qualified_by_menu": false,
+    "physical_test": "pending operator",
+    "source_audits": [
+      "r0323 OLED/menu 2026-10-06",
+      "Inventure menu port M300 R16.12 2026-11-03",
+      "P09/P10/P13 contracts 2026-10-25"
+    ],
+    "unavailable_without_owner": [
+      "MCU card reader",
+      "checkpoint recovery",
+      "filecheck policy override",
+      "ignore filament endstops"
+    ]
   }
 }

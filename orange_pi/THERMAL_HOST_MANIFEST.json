@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-MODULAR",
+  "release": "RC8-CONTROL-R7-MENU",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "0a1a53fe6977cac1c35fb0cd437c130283ab55c7b94c5bfb5fb08cec65c386ec",
+  "module_sha256": "63c8473e1b6dcdf84fd0ba832ccc2064cee8a67e4ee16bd41a47ec8309553e9d",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -30,11 +30,12 @@
     "387eef6866228cf57ef1accfa6b9517c57b420abadd8fe07e4a2b112d1a6fc57",
     "c61a284475286be14db1b6bb3adccea73c983dea2cae3727bd71fa6f308c7207",
     "da971f5c9196cef9f981095b2a19c6fd378f6e3c92048d8ce0e89ba1e8f93a1c",
-    "5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e"
+    "5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e",
+    "0a1a53fe6977cac1c35fb0cd437c130283ab55c7b94c5bfb5fb08cec65c386ec"
   ],
-  "host_revision": "RC8-CONTROL-R7-MODULAR",
+  "host_revision": "RC8-CONTROL-R7-MENU",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
-  "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
+  "oled_module_sha256": "651d9e365c58c19c275ede1dc999b972cd3eb8edf19709e8de870e82bf6203c4",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
   "serialhdl_allowed_sha256": [
     "0d1990c4539c7d90b4664b5aea811dc4847457e683fc49e28ea7651bd98b0121",
@@ -52,7 +53,8 @@
   },
   "motor_test_release": "RC8-CONTROL-R7-FACTORY",
   "oled_allowed_existing_sha256": [
-    "e539ced0f43aae32fd064ea59b48ab8d46e80cbb9f7237a5cd2bf1dd2a8a89c8"
+    "e539ced0f43aae32fd064ea59b48ab8d46e80cbb9f7237a5cd2bf1dd2a8a89c8",
+    "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646"
   ],
   "door_policy": {
     "abi": 1,
@@ -215,5 +217,23 @@
   "factory_core_allowed_existing_sha256": [
     "3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9"
   ],
-  "procedure_api": 1
+  "procedure_api": 1,
+  "zortrax_menu_api": 1,
+  "extra_modules": {
+    "inventure_menu_core.py": {
+      "sha256": "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f",
+      "allowed_existing_sha256": []
+    },
+    "inventure_menu_service.py": {
+      "sha256": "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
+      "allowed_existing_sha256": []
+    },
+    "inventure_oem_menu.py": {
+      "sha256": "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54",
+      "allowed_existing_sha256": [
+        "5917dd4e9cf326501f8ab32e4b5bb60e47faf057743f7cb1dd2b05b34ce40795",
+        "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad"
+      ]
+    }
+  }
 }

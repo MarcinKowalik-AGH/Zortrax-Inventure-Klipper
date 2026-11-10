@@ -1,9 +1,27 @@
-# Zortrax Inventure — host CONTROL-R7-MODULAR / MCU CONTROL-R7-FACTORY
+# Zortrax Inventure — host CONTROL-R7-MENU / MCU CONTROL-R7-FACTORY
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+
+## Menu Zortrax na OLED i w konsoli
+
+Pięć oryginalnych gałęzi Inventure korzysta teraz ze wspólnej warstwy
+procedur: `INVENTURE_ZORTRAX`. OLED i G-code otwierają te same widoki,
+potwierdzenia, postęp oraz anulowanie. Czynności serwisowe wykonuje R7;
+poziomowanie, alignment, szpule i wydruk korzystają z dostępnych natywnych
+właścicieli P09/P10/P11/P13/P15/P17. Nieobecny lub wyłączony wykonawca daje
+konkretną informację, bez zmiany flag kwalifikacji.
+
+```gcode
+INVENTURE_ZORTRAX OP=STATUS
+INVENTURE_ZORTRAX OP=CATALOG
+```
+
+Otwarcie czynności nie rozpoczyna ruchu/grzania. Potwierdzenie jest
+jednorazowe i związane z bieżącym widokiem/operacją. Jeśli MCU ma już R7,
+wystarczy aktualizacja hosta. [Obsługa menu, procedury i rzeczywista dostępność](docs/ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
 
 ## Wspólne procedury T0/T1
 
@@ -88,11 +106,12 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R7-MODULAR`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R7-MENU`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza nową sesję MCU dla automatu i ruchów XY/E.
 `procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
+`zortrax_menu_api: 1` potwierdza wspólny sterownik procedur menu OLED/G-code.
 
 Ładowanie z prawej kasety do T1, na początek na tym samym odcinku co T0:
 

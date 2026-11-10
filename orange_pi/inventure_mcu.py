@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-MODULAR'
+HOST_REVISION = 'RC8-CONTROL-R7-MENU'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
@@ -351,6 +351,8 @@ class InventureMCU:
                                     when_not_ready=True)
         self.gcode.register_command('INVENTURE_SENSOR_TEST', self.cmd_sensor_test,
                                     when_not_ready=True)
+        from .inventure_menu_service import ZortraxMenuService
+        self.zortrax=ZortraxMenuService(self,config)
     def _build_config(self):
         if self.mcu.get_constant_float('INVENTURE_ABI') != 3:
             raise self.printer.config_error('Inventure MCU ABI must be 3')
@@ -1510,8 +1512,14 @@ class InventureMCU:
                        'raw': {name: (params['raw'] >> i) & 1
                                for i, name in enumerate(self.INPUT_NAMES)}}
         buttons, sequence = params['buttons'], params['sequence']
-        self.reactor.register_async_callback(lambda eventtime:
-            self.printer.send_event('inventure:buttons', eventtime, buttons, sequence))
+        def deliver(eventtime):
+            menu=getattr(self,'zortrax',None)
+            if menu is not None:
+                self.printer.send_event('inventure:menu_buttons',eventtime,buttons,sequence)
+                legacy=menu.legacy_buttons(buttons)
+            else:legacy=buttons
+            self.printer.send_event('inventure:buttons',eventtime,legacy,sequence)
+        self.reactor.register_async_callback(deliver)
     def _uart_status(self, params):
         channel=params['channel'];generation=self.adc_generation
         sample={k:v for k,v in params.items() if not k.startswith('#')}
@@ -1553,7 +1561,7 @@ class InventureMCU:
             'motion_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'load_stream_abi':getattr(self,'load_stream_abi',0),
-            'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1,
+            'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1, 'zortrax_menu_api':1,
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -2843,6 +2851,11 @@ class InventureMCU:
 
     def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False):
         if not self.connected:raise ValueError('MCU is disconnected')
+        sd=self.printer.lookup_object('virtual_sdcard',None)
+        stats=self.printer.lookup_object('print_stats',None)
+        if (sd is not None and sd.is_active() or stats is not None
+                and stats.get_status(self.reactor.monotonic()).get('state') in ('printing','paused')):
+            raise ValueError('Service transport requires an idle printer; finish the native print first')
         if getattr(self,'load_test_context',None) is not None and not allow_load:
             raise ValueError('Load test is active; use INVENTURE_STOP first')
         if getattr(self,'feeder_run_context',None) is not None and not allow_run:

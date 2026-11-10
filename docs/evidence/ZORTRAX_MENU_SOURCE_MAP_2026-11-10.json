@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "release": "RC8-CONTROL-R7-MENU",
+  "MCU_changed": false,
+  "source_documents": [
+    {
+      "filename": "INVENTURE_KLIPPER_KONTRAKT_P09_0.3.12_2026-10-25.md",
+      "retrieved_text_sha256": "02a092ee4bc39d4eb56d4be9e4b1354e63fca9bf0b4b000ef364feeaa915002d"
+    },
+    {
+      "filename": "INVENTURE_KLIPPER_KONTRAKT_P10_0.3.13_2026-10-25.md",
+      "retrieved_text_sha256": "1e41327ca1ce9abda537ccca058edbafc4950e75681ec76e7ffd1ff6fc866067"
+    },
+    {
+      "filename": "INVENTURE_KLIPPER_KONTRAKT_P13_0.3.16_2026-10-25.md",
+      "retrieved_text_sha256": "5d7c171310bdad13280ca330d04db5729da3be6fec44999018aeff41d68b021a"
+    },
+    {
+      "filename": "INVENTURE_KLIPPER_P01_P13_AUDYT_0.3.16_2026-10-25.md",
+      "retrieved_text_sha256": "97caa88879089277806687c34ca6175c2aceee344d30e36510831a1c436dab95"
+    },
+    {
+      "filename": "INVENTURE_MENU_PORT_M300_R16.12_2026-11-03.md",
+      "retrieved_text_sha256": "bba176049d575c5ef4be680e027fa341f994492ccabb8ab29cb32e7d069284fe"
+    },
+    {
+      "filename": "ZORTRAX_INVENTURE_AUDYT_KALIBRACJI_WYSOKOSCI_GLOWIC_2026-10-23.md",
+      "retrieved_text_sha256": "bf2c28fc9e421f03b2162bf4ffd30dd10365b0f291b8b74a23d4e32fe3b381b2"
+    },
+    {
+      "filename": "ZORTRAX_INVENTURE_AUDYT_WYROWNANIA_XYZ_2026-10-23.md",
+      "retrieved_text_sha256": "82b78b4e367e1e0f070960d528b3e0edb3a6c6ec07b5d2cde2e944c6f2b60bc5"
+    },
+    {
+      "filename": "ZORTRAX_INVENTURE_r0323_OLED_MENU_POWER_RGB_BUZZER_FINAL_2026-10-06.md",
+      "retrieved_text_sha256": "63b52cea887da7c5e7d3b2e5e078fabf26e2117ce6fe35cf02c256f8b365ce6b"
+    }
+  ],
+  "M300_reference_commit": "d5a040f22dccfe45380f9550080fd224f15f2ff4",
+  "operator_branches": [
+    "Models",
+    "Maintenance",
+    "Material",
+    "Settings",
+    "Information"
+  ],
+  "host_tests": 269,
+  "native_execution_not_auto_qualified": true,
+  "physical_menu_acceptance": "pending operator",
+  "retrieval_mode": "Google Drive readable text, normalized LF scratch copies"
+}

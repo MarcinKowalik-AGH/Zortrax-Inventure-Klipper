@@ -70,6 +70,8 @@ class OrangePiUpdateTests(unittest.TestCase):
         data=core.read_bytes() if core.is_file() else b'# isolated installer factory-core fixture\n'
         (package/'inventure_factory_core.py').write_bytes(data)
         metadata['factory_core_sha256']=hashlib.sha256(data).hexdigest()
+        for name in metadata.get('extra_modules',{}):
+            (package/name).write_bytes((ROOT/'orange_pi'/name).read_bytes())
         old=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
         metadata['allowed_existing_sha256'].append(hashlib.sha256(old).hexdigest())
         (package/'THERMAL_HOST_MANIFEST.json').write_text(json.dumps(metadata))
@@ -272,6 +274,25 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(),self.original_config)
         self.assertTrue(self.active)
 
+    def test_menu_dependencies_upgrade_together_and_rollback_preserves_existing_OEM_menu(self):
+        previous=(ROOT/'tests/fixtures/inventure_oem_menu_bench.py').read_bytes()
+        dest=self.extras/'inventure_oem_menu.py';dest.write_bytes(previous);self.active=False
+        with patch('sys.stdout',new=io.StringIO()):
+            result=update.core.install(self.live,apply=True)
+            for name in ('inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py'):
+                self.assertEqual((self.extras/name).read_bytes(),(ROOT/'orange_pi'/name).read_bytes())
+            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
+        self.assertEqual(dest.read_bytes(),previous)
+        self.assertFalse((self.extras/'inventure_menu_core.py').exists())
+        self.assertFalse((self.extras/'inventure_menu_service.py').exists())
+        self.assertEqual(self.config.read_bytes(),self.original_config)
+
+    def test_unknown_installed_menu_is_not_overwritten_or_stopped(self):
+        dest=self.extras/'inventure_oem_menu.py';dest.write_text('# local menu change\n')
+        with self.assertRaisesRegex(ValueError,'inventure_oem_menu.py differs'):update.update()
+        self.assertEqual(dest.read_text(),'# local menu change\n')
+        self.assertFalse(any('stop' in args for args in self.calls))
+
     def test_unknown_existing_factory_core_is_refused_before_stopping(self):
         package=self.factory_package();self.factory_dest.write_text('# local change\n')
         with patch.object(update.core,'ROOT',package):
@@ -306,6 +327,8 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.dest.write_bytes(expected)
         if 'factory_core_sha256' in json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text()):
             self.factory_dest.write_bytes((ROOT/'orange_pi/inventure_factory_core.py').read_bytes())
+        for name in json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text()).get('extra_modules',{}):
+            (self.extras/name).write_bytes((ROOT/'orange_pi'/name).read_bytes())
         with patch('sys.stdout',new=io.StringIO()):update.update()
         self.assertEqual(self.dest.read_bytes(),expected)
         self.assertIn(('sudo','systemctl','stop','klipper'),self.calls)

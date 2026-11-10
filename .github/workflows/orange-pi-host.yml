@@ -23,6 +23,7 @@ on:
       - 'tests/test_orange_pi_factory_host.py'
       - 'tests/test_orange_pi_factory_protocol.py'
       - 'tests/test_orange_pi_procedures.py'
+      - 'tests/test_orange_pi_zortrax_menu.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:

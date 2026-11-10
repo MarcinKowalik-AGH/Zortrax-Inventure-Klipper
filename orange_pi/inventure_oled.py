@@ -26,7 +26,8 @@ class InventureOLED:
         if self.menu_profile not in ('m300','zortrax'):
             raise config.error('menu_profile must be m300 or zortrax')
         root_page='launcher' if self.menu_profile=='m300' else 'root'
-        self.oem_menu=OEMMenu(config.get('oem_language','en'),root_page=root_page,bench=True) if self.oem_ui_enabled else None
+        self.oem_menu=OEMMenu(config.get('oem_language','en'),root_page=root_page,bench=True,
+            operational=True) if self.oem_ui_enabled else None
         self.native_status=KlipperStatus(config) if self.oem_menu is not None else None
         self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
         if self.oem_start_screen not in ('klipper','menu'):
@@ -80,7 +81,7 @@ class InventureOLED:
         self.printer.register_event_handler('klippy:shutdown',self._shutdown)
         self.printer.register_event_handler('klippy:disconnect',self._disconnect)
         self.printer.register_event_handler('gcode:request_restart',self._restart)
-        self.printer.register_event_handler('inventure:buttons',self._buttons)
+        self.printer.register_event_handler('inventure:menu_buttons',self._buttons)
         self.gcode.register_command('INVENTURE_OLED_REINIT',self.cmd_reinit)
         self.gcode.register_command('INVENTURE_OLED_TEXT',self.cmd_text)
         self.gcode.register_command('INVENTURE_OLED_WAKE',self.cmd_wake)
@@ -325,6 +326,9 @@ class InventureOLED:
         self.activity_hook_installed=True
 
     def _display_working(self,now):
+        if getattr(self.board,'load_test_context',None) is not None:return True
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        if zortrax is not None and zortrax.active is not None:return True
         if self._active_work(now):return True
         for name,key,values in (
                 ('print_stats','state',('paused',)),
@@ -529,8 +533,13 @@ class InventureOLED:
         snapshot=None
         menu_view=None
         native_wire=None
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        procedure_view=None if zortrax is None else zortrax.view_status()
         if self.oem_menu is not None and not measuring and not self.message:
-            if self.oem_display_mode=='status':
+            if procedure_view is not None:
+                menu_view=procedure_view
+                snapshot=('zortrax',menu_view['page'],menu_view['generation'],menu_view['selected'])
+            elif self.oem_display_mode=='status':
                 native_wire=self.native_status.render(now,self.board)
                 snapshot=('status',native_wire)
             else:
@@ -562,6 +571,8 @@ class InventureOLED:
             frame.menu(title,[r[0] for r in rows],self.selection,self.page!='home')
         if frame is not None:wire=frame.wire_bytes()
         self.stream.request(wire,urgent=self._user_refresh_pending)
+        self._zortrax_frame=(procedure_view['page'],procedure_view['generation'],wire,
+            self.stream.generation) if procedure_view is not None and menu_view is procedure_view else None
         if measuring:self._rendered_screen='calibration'
         elif self.message:self._rendered_screen='message'
         elif native_wire is not None:self._rendered_screen='klipper_status'
@@ -648,6 +659,14 @@ class InventureOLED:
         if self.message:
             self.message=None;self._user_refresh_pending=True;self.render_at=0.
             return
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        if zortrax is not None and zortrax.view is not None:
+            try:
+                command=zortrax.panel_select_command(self._zortrax_acknowledged())
+                if command:self._script(command)
+            except ValueError as exc:self.message=('Wait / release OK',str(exc)[:40])
+            self.render_at=0.;self._user_refresh_pending=True
+            return
         if self.oem_menu is not None:
             if self.oem_display_mode=='status':
                 self.oem_menu.home()
@@ -658,6 +677,11 @@ class InventureOLED:
                     self.oem_display_mode='status'
                 elif selected == 'bench':
                     self._bench_action(self.oem_menu.last_action,now)
+                elif selected in ('inert','language') and zortrax is not None:
+                    try:
+                        zortrax.open(self.oem_menu.last_action)
+                        self.oem_menu.notice=None
+                    except ValueError as exc:self.message=('Operation unavailable',str(exc)[:40])
                 elif selected == 'inert' and self.oem_menu.last_action in ('door_unlock','door_lock'):
                     enabled=int(self.oem_menu.last_action == 'door_lock')
                     self._script('INVENTURE_DOOR_POLICY ENABLE=%d' % enabled)
@@ -680,6 +704,8 @@ class InventureOLED:
         self.render_at=0.;self._user_refresh_pending=True
 
     def _buttons(self,now,mask,sequence):
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        if zortrax is not None and not zortrax.observe_buttons(mask,sequence):return
         if not self.connected or mask==self.last_buttons:return
         pressed=mask&~self.last_buttons; released=self.last_buttons&~mask
         self._display_activity(now)
@@ -707,7 +733,9 @@ class InventureOLED:
                 else:self.power_fired=False
             if released&key:
                 if bit==3 and not self.power_fired:
-                    if self.oem_menu is not None:
+                    if zortrax is not None and zortrax.view is not None:
+                        zortrax.panel_back()
+                    elif self.oem_menu is not None:
                         if self.oem_display_mode=='menu':
                             if not self.oem_menu.back():
                                 self.oem_display_mode='status'
@@ -720,6 +748,9 @@ class InventureOLED:
 
     def _navigate(self,direction,now):
         self.message=None
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        if zortrax is not None and zortrax.view is not None:
+            zortrax.panel_move(direction);return
         if self.oem_menu is not None:
             if self.oem_display_mode=='menu':
                 self.oem_menu.move(direction)
@@ -727,6 +758,15 @@ class InventureOLED:
             return
         _,rows=self._rows(now);self.selection=(self.selection+direction)%len(rows)
         self.render_at=0.;self._user_refresh_pending=True
+
+    def _zortrax_acknowledged(self):
+        view=getattr(getattr(self,'board',None),'zortrax',None)
+        frame=getattr(self,'_zortrax_frame',None)
+        if view is None or view.view is None or frame is None:return False
+        current=view.view.render()
+        return bool(self.sleep_phase=='awake' and not self.message and self.stream.ready
+            and frame[0]==current['page'] and frame[1]==current['generation']
+            and frame[2]==self.stream.last_frame_bytes and frame[3]==self.stream.generation)
 
     def _held_keys(self,now):
         for bit in (0,1):
@@ -757,6 +797,12 @@ class InventureOLED:
         self._display_activity(self.reactor.monotonic())
     def cmd_menu_status(self,gcmd):
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
+        zortrax=getattr(getattr(self,'board',None),'zortrax',None)
+        if zortrax is not None:
+            details['zortrax_menu_api']=1
+            details['procedure']=None if zortrax.active is None else {
+                'backend':zortrax.active['backend'],'action':zortrax.active['action']}
+            details['procedure_view']=None if zortrax.view is None else zortrax.view.status()
         details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
         details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
         details['menu_profile']=self.menu_profile

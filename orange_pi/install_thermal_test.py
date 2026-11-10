@@ -56,6 +56,11 @@ def install(target,apply=False,rollback=None,service='klipper'):
     optional=set()
     if 'factory_core_sha256' in meta:
         names.append('inventure_factory_core.py');optional.add('inventure_factory_core.py')
+    extra_modules=meta.get('extra_modules',{})
+    allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py'}
+    if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras:
+        raise ValueError('Unexpected menu module manifest')
+    names.extend(extra_modules);optional.update(extra_modules)
     def dest_path(name):return target/'klippy/serialhdl.py' if name=='serialhdl.py' else extras/name
     def digest(data):return None if data is None else sha(data)
     incoming={name:(ROOT/name).read_bytes() for name in names}
@@ -64,10 +69,13 @@ def install(target,apply=False,rollback=None,service='klipper'):
     accepted={'inventure_mcu.py':{meta['baseline_sha256'],*meta.get('allowed_existing_sha256',[]),expected['inventure_mcu.py']},
               'inventure_oled.py':{meta['oled_baseline_sha256'],expected['inventure_oled.py'],*meta.get('oled_allowed_existing_sha256',[])},
               'serialhdl.py':{*meta['serialhdl_allowed_sha256'],expected['serialhdl.py']}}
-    if optional:
+    if 'inventure_factory_core.py' in optional:
         expected['inventure_factory_core.py']=meta['factory_core_sha256']
         accepted['inventure_factory_core.py']={expected['inventure_factory_core.py'],
             *meta.get('factory_core_allowed_existing_sha256',[])}
+    for name,record in extra_modules.items():
+        expected[name]=record['sha256']
+        accepted[name]={record['sha256'],*record.get('allowed_existing_sha256',[])}
     before={};modes={}
     for name in names:
         dest=dest_path(name)
