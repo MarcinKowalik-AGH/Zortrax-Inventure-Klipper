@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-10",
+  "MCU_release": "RC8-CONTROL-R5",
+  "MCU_modified": false,
+  "validation": "Actual board/control/PWM sources executed against register/timer mocks; no physical cassette calibration",
+  "source_sha256": {
+    "SOURCE_MCU/inventure_board.c": "2c9069ef0652a208a996e5195556f91d6f97aafa8f55992e23c56eed723eb5ac",
+    "SOURCE_MCU/inventure_control.inc": "7607584e3aad8f56eb756aa6bcc25736fdf4816aa19fcbee80cac72190b922ea",
+    "TESTS/support/inventure_pwm.inc": "35791b6929dfdda13888dac09cac15c7e21cd07067ee187565c1c6c8b81fe751",
+    "TESTS/test_cassette_load_joint.c": "c43e5aaa3fdcef5ceaa3a168f3a250aee6ee64f312b0f6f5af034d036cc68cc1"
+  },
+  "rates_hz": [
+    960,
+    1280,
+    1536
+  ],
+  "E_direction": 0,
+  "cassette_channel": 0,
+  "cassette_direction": 1,
+  "heater": "T0",
+  "heater_lease_ms": 1500,
+  "feeder_window_max_ms": 500,
+  "E_window_max_ms": 750,
+  "result": "PASS",
+  "checks": [
+    "Simultaneous T0 PWM + E steps + left cassette run",
+    "Actual directions E DIR0 and cassette DIR1",
+    "Zero A/B/Z pulses",
+    "Independent cassette timer expiry",
+    "Heater renewal allowed between E windows; independent heater lease expiry",
+    "Common STOP, heartbeat failure and cable loss stop both motors and heater",
+    "Independent MCU temperature guard cuts heater; host common STOP also stops both motors"
+  ],
+  "compile_command": "gcc -std=c11 -O2 -Wno-pointer-to-int-cast -I TESTS/mock -I SOURCE_MCU -I TESTS/support -I TESTS TESTS/test_cassette_load_joint.c -o /tmp/inventure_cassette_joint",
+  "probe_extension": "static void cassette_on(unsigned milliseconds) {\n    uint32_t args[]={0,1,milliseconds};command_inventure_feeder(args);\n}\nstatic void cassette_timer_poll(void) {\n    if(feeder_running[0] && (int32_t)(mock_now-feeder_until[0])>=0) {\n        sched_del_timer(&feeder_timer[0]);\n        assert(feeder_end(&feeder_timer[0])==SF_DONE);\n    }\n}\nint main(void) {\n    unsigned rates[]={960,1280,1536};\n    for(unsigned k=0;k<3;k++) {\n        unsigned rate=rates[k],steps=rate/2;\n        control_reset(0);output(1,6,64,1500,250,9001);\n        assert(co[6].duty==64);\n        motion(1,0,0,0,0,steps,rate,10,750,0,0,0,9002);\n        assert(cm.active);\n        cassette_on((steps*1000+1535)/1536);\n        assert(feeder_running[0] && cm.active && co[6].duty==64);\n        assert(outputs[GPIO('A',8)]==1 && !(cm.direction&BIT(3)));\n        while(cm.active){motion_tick();cassette_timer_poll();control_guard(mock_now);cooling_update();}\n        cassette_timer_poll();\n        assert(!feeder_running[0]);assert(cm.phase==CM_DONE && cm.sent[3]==steps);\n        assert(cm.sent[0]==0 && cm.sent[1]==0 && cm.sent[2]==0 && co[6].duty==64);\n        output(1,6,65,1500,250,9003);assert(co[6].token==9003 && co[6].duty==65);\n        advance(1500);assert(co[6].duty==0);\n    }\n    for(unsigned cause=0;cause<4;cause++) {\n        control_reset(0);output(1,6,64,1500,250,9001);\n        motion(1,0,0,0,0,768,1536,10,750,0,0,0,9002);cassette_on(500);\n        assert(feeder_running[0] && cm.active && co[6].duty);\n        if(cause==0)control_command(2,0);\n        if(cause==1){heartbeat_live=0;control_guard(mock_now);}\n        if(cause==2){GPIOD->IDR|=BIT(11);control_guard(mock_now);}\n        if(cause==3){\n            inventure_adc_observe(ADC1,10,1800);control_guard(mock_now);\n            // SERVICE independently cuts the heater at its hardware limit.\n            // The host's next checked sample issues the common STOP for motion.\n            assert(!co[6].duty && co[6].reason==4 && cm.active && feeder_running[0]);\n            control_command(2,0);\n        }\n        assert(!feeder_running[0] && !cm.active && !co[6].duty);\n        assert(outputs[GPIO('C',5)]==0);\n    }\n    puts(\"PASS actual R5: simultaneous T0 heat, E DIR0 and left cassette DIR1 at 960/1280/1536 Hz; feeder expiry; heater renewal/expiry; STOP/heartbeat/cable stop all three; independent overheat cuts heat, host STOP stops motion\");\n    return 0;\n}\n"
+}

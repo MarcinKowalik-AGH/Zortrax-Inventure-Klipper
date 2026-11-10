@@ -32,13 +32,26 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-LOAD15`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-CASSETTE1`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
 oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
 
-Etap przejęcia filamentu przez ekstruder przy regulowanych 230°C:
+Pierwsza wspólna próba ładowania z lewej kasety, z podłączoną rurką i wybranym T0:
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=LOAD TOOL=T0 TARGET=230 DURATION=900 TUBE_SECONDS=50 HEAD_STEPS=95000
+```
+
+Host sam nagrzewa T0, czeka na gotowość i podaje oboma napędami w kierunku
+ładowania: kaseta DIR1, E DIR0. Pierwszy budżet odtwarza poprzednie 50 s
+podawania, drugi — pięć sprawdzonych odcinków E po 19000 kroków, około 90 mm
+według pomiaru użytkownika. Są to parametry robocze do korekty; wcześniejsze
+80 mm nie oznacza pomiaru pełnej długości rurki. Po podawaniu napędy stają,
+a temperatura jest podtrzymywana. [Procedura, postęp, potwierdzenie wypływu i STOP](docs/CASSETTE_LOAD_2026-11-10.md).
+
+Osobne grzanie i ręczny etap przejęcia filamentu przez ekstruder przy regulowanych 230°C:
 
 ```gcode
 INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 DURATION=900

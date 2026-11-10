@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-LOAD15'
+HOST_REVISION = 'RC8-CONTROL-R5-CASSETTE1'
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -19,6 +19,10 @@ LOAD_PID_ALPHA, LOAD_PID_DT = .95, .1
 LOAD_HOLD_MAX_S = 900
 LOAD_E_STEPS_PER_MM = 960.
 LOAD_JOG_WINDOW_S = .5
+# Provisional cassette speed: the operator observed ~80 mm in 50 motor seconds.
+# This is a rate-matching estimate, not a calibrated distance measurement.
+LOAD_CASSETTE_MM_S = 1.6
+LOAD_CASSETTE_RATE = round(LOAD_E_STEPS_PER_MM*LOAD_CASSETTE_MM_S)
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -2002,7 +2006,8 @@ class InventureMCU:
         now=self.reactor.monotonic()
         temperature,state=self.panel_temperature(context['tool'],now)
         result=dict(phase=phase or context['phase'],reason=reason,
-            stage='extruder_capture_and_flow_check',tool='T%d'%context['tool'],
+            stage='cassette_transport_and_flow_check' if context.get('cassette_load')
+                else 'extruder_capture_and_flow_check',tool='T%d'%context['tool'],
             target_c=context['target'],temperature_c=temperature,temperature_state=state,
             maximum_power_pct=context['power'],duty_pct=round(context['duty']*100/256.,2),
             overheat_limit_c=context['limit'],elapsed_s=round(max(0.,now-context['start']),2),
@@ -2026,8 +2031,50 @@ class InventureMCU:
         if context.get('jog') is not None:
             result['jog']={k:context['jog'][k] for k in ('steps','sent','direction','rate','windows')}
         elif context.get('last_jog') is not None:result['last_jog']=context['last_jog']
+        if context.get('cassette_load') is not None:
+            plan=context['cassette_load'];sent=plan['sent']
+            stage=('complete' if plan['feed_completed'] else 'heating' if not plan['started']
+                else 'tube' if sent<plan['tube_steps']
+                else 'head' if sent<plan['tube_steps']+plan['head_steps'] else 'purge')
+            result['cassette_load']=dict(plan,stage=stage,
+                e_direction=0,cassette_direction=1,channel=0,
+                nominal_steps_per_mm=LOAD_E_STEPS_PER_MM,
+                nominal_E_mm=round(plan['total_steps']/LOAD_E_STEPS_PER_MM,3),
+                nominal_E_sent_mm=round(sent/LOAD_E_STEPS_PER_MM,3),
+                feeder_speed_estimate_mm_s=LOAD_CASSETTE_MM_S,
+                distance_calibrated=False,head_observed_mm_approx=90,
+                head_observation_steps=95000,
+                feeder_time_basis='requested MCU timer windows; not measured travel')
         self.load_test_last=result
         return result
+
+    def _load_test_feeder_window(self,context,milliseconds):
+        # A queued STOP must invalidate the owner before another raw feeder
+        # packet. Feeder writes and the heartbeat use the same serial queue.
+        mutex=getattr(self,'query_mutex',None)
+        with mutex if mutex is not None else nullcontext():
+            if self.load_test_context is not context or not self.connected:
+                raise ValueError('Load test was stopped before the cassette request')
+            if milliseconds and self.reactor.monotonic()>=context['deadline']:
+                raise ValueError('Load test duration finished before the cassette request')
+            self.commands['heartbeat'].send([])
+            self.commands['feeder'].send([0,1,milliseconds])
+            if milliseconds:
+                plan=context['cassette_load']
+                plan['feeder_windows_requested']+=1
+                plan['feeder_ms_requested']+=milliseconds
+
+    def _load_test_begin_cassette(self,context,now):
+        plan=context['cassette_load']
+        self._load_test_capture(context,baseline=True)
+        self._load_test_safety(context)
+        if self.load_test_context is not context:return
+        steps=plan['total_steps'];rate=plan['rate']
+        windows=math.ceil(steps/(rate*LOAD_JOG_WINDOW_S))+2
+        context['jog']=dict(identity=None,steps=steps,sent=0,direction=0,rate=rate,
+            started=now,windows=0,deadline=now+steps/rate+windows*.5+30.,coupled=True)
+        plan['started']=True
+        context['phase']='loading'
 
     def _load_test_jog_ready(self,context,temperature=None,state=None):
         now=self.reactor.monotonic()
@@ -2167,6 +2214,10 @@ class InventureMCU:
 
     def _load_test_start_window(self,context):
         jog=context['jog'];steps=min(jog['steps']-jog['sent'],max(1,int(jog['rate']*LOAD_JOG_WINDOW_S)))
+        if jog.get('coupled'):
+            plan=context['cassette_load']
+            boundaries=(plan['tube_steps'],plan['tube_steps']+plan['head_steps'],plan['total_steps'])
+            steps=min(steps,next(n for n in boundaries if n>jog['sent'])-jog['sent'])
         max_ms=math.ceil(steps*1000./jog['rate'])+250
         counts=(0,0,0,steps if jog['direction'] else -steps)
         motion=self._motion_query(1,counts,jog['rate'],10,max_ms,owner=context)
@@ -2175,6 +2226,10 @@ class InventureMCU:
         context['motion']=motion
         jog.update(identity=(motion['run'],motion['token']),window_steps=steps,window_accounted=0,
             window_deadline=self.reactor.monotonic()+max_ms/1000.+.25)
+        if jog.get('coupled'):
+            # Start the cassette only after the E START and driver parameters
+            # have been acknowledged. Both directions were physically checked.
+            self._load_test_feeder_window(context,math.ceil(steps*1000./LOAD_CASSETTE_RATE))
 
     def _load_test_account_window(self,context,motion):
         jog=context['jog']
@@ -2185,6 +2240,7 @@ class InventureMCU:
             raise ValueError('Invalid extruder step accounting')
         delta=sent-jog['window_accounted'];jog['window_accounted']=sent;jog['sent']+=delta
         context['measurement']['dir%d_steps'%jog['direction']]+=delta
+        if jog.get('coupled'):context['cassette_load']['sent']=jog['sent']
 
     def _load_test_step(self,context):
         temperature=self._load_test_safety(context)
@@ -2193,6 +2249,10 @@ class InventureMCU:
         starting=context['output_token'] is None
         if starting:self._load_test_output(context,0)
         self._load_test_check_output(context)
+        plan=context.get('cassette_load')
+        if (plan is not None and not plan['started']
+                and self._load_test_jog_ready(context,temperature,'valid')):
+            self._load_test_begin_cassette(context,now)
         jog=context.get('jog')
         if jog is not None:
             if temperature<max(170.,context['target']-25.):
@@ -2209,14 +2269,16 @@ class InventureMCU:
                     return
                 if motion['reason']!='completed' or motion['drivers']['E']['sent']!=jog['window_steps']:
                     raise ValueError('Extruder jog stopped before completion')
+                if jog.get('coupled'):self._load_test_feeder_window(context,0)
                 jog['windows']+=1;jog['identity']=None
             if jog['sent']==jog['steps']:
                 context['last_jog']=dict(steps=jog['steps'],sent=jog['sent'],direction=jog['direction'],
                     rate=jog['rate'],windows=jog['windows'],elapsed_s=round(now-jog['started'],3))
                 context['measurement']['completed_jogs']+=1;context['jog']=None
+                if jog.get('coupled'):plan['feed_completed']=True
                 self._load_test_capture(context)
                 if self.load_test_context is not context:return
-                self._load_test_emit(context,'jog_done')
+                self._load_test_emit(context,'feed_done' if jog.get('coupled') else 'jog_done')
         duty=self._load_test_pid(context,temperature,now)
         if duty or context['duty']:self._load_test_output(context,duty)
         if self.load_test_context is not context:return
@@ -2224,13 +2286,14 @@ class InventureMCU:
             if context['ready_latched'] and max(180.,context['target']-15.)<=temperature<=context['target']+8.:
                 self._load_test_start_window(context)
                 if self.load_test_context is not context:return
-                context['phase']='jogging'
+                context['phase']='loading' if context['jog'].get('coupled') else 'jogging'
             else:context['phase']='reheating'
             if now>=context['next_report']:
                 context['next_report']=now+5.;self._load_test_emit(context)
             return
         ready=self._load_test_jog_ready(context,temperature,'valid')
         phase='ready' if ready else 'heating'
+        if plan is not None and plan['feed_completed']:phase='awaiting_flow_confirmation'
         if context['flow_confirmed']:phase='flow_confirmed_cleaning_pending'
         if starting or phase!=context['phase'] or now>=context['next_report']:
             context['phase']=phase;context['next_report']=now+5.
@@ -2252,8 +2315,8 @@ class InventureMCU:
 
     def cmd_load_test(self,gcmd):
         action=str(gcmd.get('ACTION','STATUS')).upper()
-        if action not in ('HEAT','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
-            raise gcmd.error('Use ACTION=HEAT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
+        if action not in ('HEAT','LOAD','JOG','ZERO','BASELINE','COMPARE','CONFIRM','STATUS','STOP'):
+            raise gcmd.error('Use ACTION=HEAT, LOAD, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
         context=getattr(self,'load_test_context',None)
         if action=='STOP':
             self._load_test_cancel('operator_stop')
@@ -2262,10 +2325,25 @@ class InventureMCU:
         if action=='STATUS':
             result=self._load_test_report(context) if context is not None else getattr(self,'load_test_last',{'phase':'idle'})
             gcmd.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True));return
-        if action=='HEAT':
+        if action in ('HEAT','LOAD'):
             if context is not None:raise gcmd.error('Load test already active; use STATUS or STOP')
             tool=str(gcmd.get('TOOL','T0')).upper()
             if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
+            plan=None
+            if action=='LOAD':
+                if tool!='T0':raise gcmd.error('Cassette loading currently uses the physically checked left/T0 directions')
+                try:
+                    tube_seconds=float(gcmd.get('TUBE_SECONDS',50.))
+                    if not math.isfinite(tube_seconds) or not 0<=tube_seconds<=FEEDER_RUN_MAX_S:raise ValueError()
+                except (TypeError,ValueError):raise gcmd.error('TUBE_SECONDS must be 0..50 motor seconds')
+                head_steps=gcmd.get_int('HEAD_STEPS',95000,minval=1,maxval=192000)
+                purge_steps=gcmd.get_int('PURGE_STEPS',0,minval=0,maxval=96000)
+                rate=gcmd.get_int('RATE',LOAD_CASSETTE_RATE,minval=960,maxval=LOAD_CASSETTE_RATE)
+                tube_steps=round(tube_seconds*LOAD_CASSETTE_RATE)
+                plan=dict(tube_seconds=tube_seconds,tube_steps=tube_steps,head_steps=head_steps,
+                    purge_steps=purge_steps,total_steps=tube_steps+head_steps+purge_steps,sent=0,
+                    rate=rate,started=False,feed_completed=False,
+                    feeder_windows_requested=0,feeder_ms_requested=0)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
                 power=float(gcmd.get('MAX_POWER',40.))
@@ -2274,6 +2352,10 @@ class InventureMCU:
                 if not math.isfinite(power) or not 1<=power<=50:raise ValueError()
             except (TypeError,ValueError):
                 raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..900 seconds of hold')
+            if plan is not None:
+                windows=math.ceil(plan['total_steps']/(plan['rate']*LOAD_JOG_WINDOW_S))+2
+                if duration<plan['total_steps']/plan['rate']+windows*.5+30.:
+                    raise gcmd.error('DURATION is too short for this cassette feed; use DURATION=900')
             try:
                 self._feeder_service_preflight()
                 baseline=self._cassette_gpio_snapshot()
@@ -2288,7 +2370,8 @@ class InventureMCU:
                 fan_counter=self.status['p0'],fan_deadline=now+10.,phase='heating',
                 flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
                 jog=None,last_jog=None,next_report=now+5.,busy=False,flow_mark=None,
-                measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False))
+                measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False),
+                cassette_load=plan)
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
@@ -2298,6 +2381,8 @@ class InventureMCU:
             self.reactor.pause(min(deadline,self.reactor.monotonic()+.025))
         if self.load_test_context is not context:raise gcmd.error('Load test was stopped')
         if context['busy']:raise gcmd.error('Load test communication is busy; use STATUS or STOP')
+        if context.get('cassette_load') is not None and not context['cassette_load']['feed_completed']:
+            raise gcmd.error('Cassette load is heating or feeding; use STATUS or STOP')
         if context.get('jog') is not None:raise gcmd.error('Wait for jog_done before another load-test action')
         if action=='JOG':
             steps=gcmd.get_int('STEPS',960,minval=1,maxval=19200)
@@ -2368,6 +2453,7 @@ class InventureMCU:
         i=gcmd.get_int('CHANNEL',minval=0,maxval=1)
         direction=gcmd.get_int('DIRECTION',1,minval=0,maxval=1)
         duration=gcmd.get_int('DURATION_MS',0,minval=0,maxval=1500)
+        if not duration and self._load_test_feeder_stop(i):return
         if duration:self._require_permission(gcmd)
         filament=self.printer.lookup_object('inventure_filament',None)
         if filament is not None and filament.enabled:raise gcmd.error('P13 owns feeder transport; use dedicated filament commands')
@@ -2400,6 +2486,13 @@ class InventureMCU:
             raise ValueError('Finish or cancel the active filament procedure before a service test')
         return state
 
+    def _load_test_feeder_stop(self,channel=0):
+        context=getattr(self,'load_test_context',None)
+        if channel!=0 or context is None or context.get('cassette_load') is None:return False
+        self._load_test_cancel('operator_feeder_stop')
+        self._control_abort()
+        return True
+
     def cmd_feeder_test(self,gcmd):
         # The legacy INVENTURE_FEEDER command is intercepted by the global
         # operation owner. This bounded service entrypoint owns its own checks
@@ -2409,6 +2502,7 @@ class InventureMCU:
         if action not in ('START','STOP'):raise gcmd.error('ACTION must be START or STOP')
         direction=0 if action=='STOP' else gcmd.get_int('DIRECTION',0,minval=0,maxval=1)
         duration=0 if action=='STOP' else gcmd.get_int('DURATION_MS',100,minval=0,maxval=1500)
+        if not duration and self._load_test_feeder_stop(channel):return
         if duration:
             try:self._feeder_service_preflight()
             except Exception as exc:raise gcmd.error(str(exc))
@@ -2490,6 +2584,7 @@ class InventureMCU:
         action=str(gcmd.get('ACTION','START')).upper()
         if action not in ('START','STATUS','STOP'):
             raise gcmd.error('ACTION must be START, STATUS or STOP')
+        if action=='STOP' and self._load_test_feeder_stop():return
         if action=='STOP' and getattr(self,'feeder_run_context',None) is not None:
             self._feeder_run_cancel('operator_stop');return
         if action!='START':

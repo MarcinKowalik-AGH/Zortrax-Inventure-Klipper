@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R5-LOAD15",
+  "release": "RC8-CONTROL-R5-CASSETTE1",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "b733ef5df40002a18f0e9845eebeca5aaca39b71bd97c17a8027fadae7b24bbe",
+  "module_sha256": "05d8b4a28a9056d9db39cbc275c3ad02bbe58702c03975b31b56db0e9e2bf7e2",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -24,9 +24,10 @@
     "c35152ca3f9e8034eb1e4b1353655d428693a0f9c18617311b122c203240b6a7",
     "236c18e30b476771de2b1e6d758aa138abadc1d4a2f7c8b1be1b696cd319dcb5",
     "e55495d26e9a14c43214c3daaf4788740187bc8993d10d37848aab723de1987f",
-    "0e0aa574c47748647e4f4d713508fd1bd299a0b8200e46eca44ccd46a118e255"
+    "0e0aa574c47748647e4f4d713508fd1bd299a0b8200e46eca44ccd46a118e255",
+    "b733ef5df40002a18f0e9845eebeca5aaca39b71bd97c17a8027fadae7b24bbe"
   ],
-  "host_revision": "RC8-CONTROL-R5-LOAD15",
+  "host_revision": "RC8-CONTROL-R5-CASSETTE1",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -113,5 +114,24 @@
     "maximum_duration_s": 50,
     "default_duration_s": 10,
     "limit_status": "provisional user limit; about 80mm at 50s, to refine later"
+  },
+  "cassette_load": {
+    "command": "INVENTURE_LOAD_TEST ACTION=LOAD",
+    "qualified_tool": "T0",
+    "aux_channel": 0,
+    "aux_direction": 1,
+    "E_direction": 0,
+    "default_tube_motor_seconds": 50,
+    "default_head_steps": 95000,
+    "operator_head_length_mm_approx": 90,
+    "default_extra_purge_steps": 0,
+    "default_E_rate_hz": 1536,
+    "maximum_E_rate_hz": 1536,
+    "maximum_feeder_window_ms": 500,
+    "maximum_E_window_ms": 750,
+    "asynchronous": true,
+    "load_completed": false,
+    "cleaning_pending": true,
+    "MCU_changed": false
   }
 }

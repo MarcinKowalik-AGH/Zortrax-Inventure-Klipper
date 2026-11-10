@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R5-LOAD15",
-  "host_module_sha256": "b733ef5df40002a18f0e9845eebeca5aaca39b71bd97c17a8027fadae7b24bbe",
+  "host_revision": "RC8-CONTROL-R5-CASSETTE1",
+  "host_module_sha256": "05d8b4a28a9056d9db39cbc275c3ad02bbe58702c03975b31b56db0e9e2bf7e2",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 130,
-  "previous_host_commit": "7e77b6e75aa2d900495e7305db0c691e80d2ff27",
+  "verified_public_host_tests": 142,
+  "previous_host_commit": "c626760d77fe24dfe5de7cd45b80c72f8ed35753",
   "firmware": {
     "release": "RC8-CONTROL-R5",
     "bootloader": "InventureBoot 1.7",
@@ -61,7 +61,15 @@
           "rate_hz": null,
           "rate_note": "START command and RATE are absent; do not combine this timing with the earlier 19000/RATE=2000 user observation"
         },
-        "T0_DIR1_retract_confirmation": "User reports both directions and RATE checked while requesting repeated DIR1 and load-direction moves; separate reverse log not provided"
+        "T0_DIR1_retract_confirmation": "Latest LOAD15 log confirms completed DIR1 jogs at RATE=4300 and RATE=3000; operator confirms reverse direction",
+        "T0_capture_to_nozzle_flow": {
+          "observed_length_mm_approx": 90,
+          "reported_jogs": 5,
+          "steps_per_jog": 19000,
+          "reproduction_steps": 95000,
+          "exact_steps_per_mm_calibrated": false,
+          "nozzle_flow_observed_by_operator": true
+        }
       },
       "cassette_feeders": {
         "channel0": {
@@ -97,9 +105,9 @@
         },
         "T0_B_PF1": "physical switch assignment pending",
         "T1_B_PG10": "physical switch assignment pending",
-        "PB12_PD14_transport": "unqualified: manual tube trials produce no counter increments; baseline 2/1",
+        "PB12_PD14_transport": "Pulses observed during heated E operation (prior completed R3 motion PB12 +23); not calibrated as physical mm or nozzle flow",
         "cassette_mounted_button_pressed_13_34_35": "all four A/B low; counters 2/1; RFID UART sent/received 0; prior telemetry was cached",
-        "current_mechanics": "cassette now inserted; downstream PTFE disconnected from head for dry transport",
+        "current_mechanics": "Operator will insert the left cassette and connect the tube for the first coupled heat/E/feeder trial; prior dry tube and separate E flow tests are recorded separately",
         "last_transport_trial": "1500ms left DIR1 produced about 2mm by user observation; COMPARE rejected while still active; final pulse counts unavailable"
       }
     }
@@ -190,7 +198,7 @@
     "heater_off_during_jog": false,
     "load_completed": false,
     "cleaning_pending": true,
-    "physical_230C_test": "R3 log confirms T0 227.575..229.670C with ready state over 25.57s; full E=19000 and PB12 +23; long-duration qualification pending",
+    "physical_230C_test": "Latest LOAD15 log holds temperature during 22 E jogs; after 190s reported range 224.835..230.637C across 213 samples; 900s hold ends normally",
     "startup_OFF_acknowledged_before_power": true,
     "historical_reason_regression": "exact previous LOAD230 reproduces heartbeat_or_cable_lost before first power; R2 acknowledges OFF once and preserves current guards",
     "control_mode": "pid_r0323_nozzle",
@@ -226,7 +234,31 @@
       "CONFIRM FLOW=1"
     ],
     "measurement_basis": "actual MCU-confirmed steps, nominal 960 steps/mm; not physical filament travel",
-    "LOAD15_physical_joint_heating_test": "pending; actual R5 register-mock and host thermal model validated",
-    "motion_state_and_drivers_snapshot_atomic": true
+    "LOAD15_physical_joint_heating_test": "User log confirms 22 completed heated E jogs in both directions and full 900s hold; separate first cassette+E+heater trial pending",
+    "motion_state_and_drivers_snapshot_atomic": true,
+    "latest_physical_observation_evidence": "docs/evidence/CASSETTE_LOAD_MEASUREMENT_2026-11-10.json"
+  },
+  "cassette_load": {
+    "command": "INVENTURE_LOAD_TEST ACTION=LOAD",
+    "qualified_tool": "T0",
+    "aux_channel": 0,
+    "aux_direction": 1,
+    "E_direction": 0,
+    "default_tube_motor_seconds": 50,
+    "default_head_steps": 95000,
+    "operator_head_length_mm_approx": 90,
+    "default_extra_purge_steps": 0,
+    "default_E_rate_hz": 1536,
+    "maximum_E_rate_hz": 1536,
+    "maximum_feeder_window_ms": 500,
+    "maximum_E_window_ms": 750,
+    "asynchronous": true,
+    "load_completed": false,
+    "cleaning_pending": true,
+    "MCU_changed": false,
+    "default_total_E_steps": 171800,
+    "measurement_evidence": "docs/evidence/CASSETTE_LOAD_MEASUREMENT_2026-11-10.json",
+    "MCU_register_validation": "docs/evidence/CASSETTE1_R5_JOINT_VALIDATION.json",
+    "physical_joint_test": "pending first operator trial; E heating and measured capture-to-flow independently confirmed"
   }
 }

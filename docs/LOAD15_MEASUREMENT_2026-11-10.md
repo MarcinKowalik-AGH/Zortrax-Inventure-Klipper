@@ -1,5 +1,11 @@
 # LOAD15 — 15 minut podtrzymania i pomiar toru filamentu
 
+**Aktualizacja pomiaru:** użytkownik potwierdził około 90 mm od chwytu E do
+wypływu po pięciu ruchach po 19000 kroków. Log potwierdził podtrzymanie 900 s
+i zakończone ruchy obu kierunków. Do odtworzenia przyjęto 95000 kroków;
+nie zmieniono nominalnej skali na podstawie przybliżonego pomiaru.
+[Nowa wspólna próba ładowania kasetą i E](CASSETTE_LOAD_2026-11-10.md).
+
 Host `RC8-CONTROL-R5-LOAD15` korzysta z obecnego MCU `RC8-CONTROL-R5`.
 Nie wymaga nowego wsadu ani zmian `printer.cfg`.
 

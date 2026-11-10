@@ -1,0 +1,396 @@
+{
+  "date": "2026-11-10",
+  "source": "klippy(1).log.zip / klippy(1).log",
+  "log_sha256": "0a838dd3f33e421aee2452556da4b246a6e9fb0df8c4388cffa16e3ada772cf3",
+  "host_revision": "RC8-CONTROL-R5-LOAD15",
+  "MCU": "RC8-CONTROL-R5",
+  "bootloader": "InventureBoot 1.7",
+  "baud": 750000,
+  "operator_observation": {
+    "head_capture_to_first_flow_mm_approx": 90,
+    "forward_jogs_reported": 5,
+    "steps_per_jog": 19000,
+    "total_steps_for_reproduction": 95000,
+    "nominal_steps_per_mm": 960,
+    "nominal_command_mm": 98.958333,
+    "physical_steps_per_mm_calibrated": false,
+    "nozzle_flow_observed_by_operator": true
+  },
+  "caveat": "ZERO was repeated between later jogs; the last flow mark contains only one 19000-step jog, not the full physical insertion distance. Do not infer an exact scale from the approximate 90 mm.",
+  "completed_jogs": [
+    {
+      "time_UTC": "2026-11-10T09:24:05.390446+00:00",
+      "elapsed_s": 110.54,
+      "temperature_c": 229.02564102564102,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.472,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:24:05.390446+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:24:29.035214+00:00",
+      "elapsed_s": 134.19,
+      "temperature_c": 227.73626373626377,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 6.978,
+        "rate": 4300,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 9
+      },
+      "cumulative_steps_since_last_ZERO": 0,
+      "time_Europe_Warsaw": "2026-11-10T10:24:29.035214+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:24:38.493886+00:00",
+      "elapsed_s": 143.63,
+      "temperature_c": 228.38095238095238,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 6.983,
+        "rate": 4300,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 9
+      },
+      "cumulative_steps_since_last_ZERO": -19000,
+      "time_Europe_Warsaw": "2026-11-10T10:24:38.493886+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:25:24.993758+00:00",
+      "elapsed_s": 190.14,
+      "temperature_c": 229.50915750915752,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.181,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": -38000,
+      "time_Europe_Warsaw": "2026-11-10T10:25:24.993758+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:25:37.824996+00:00",
+      "elapsed_s": 202.97,
+      "temperature_c": 229.992673992674,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.17,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": -19000,
+      "time_Europe_Warsaw": "2026-11-10T10:25:37.824996+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:25:52.008938+00:00",
+      "elapsed_s": 217.19,
+      "temperature_c": 228.05860805860806,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.377,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 0,
+      "time_Europe_Warsaw": "2026-11-10T10:25:52.008938+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:26:04.352225+00:00",
+      "elapsed_s": 229.5,
+      "temperature_c": 227.73626373626377,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.341,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:26:04.352225+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:26:17.927582+00:00",
+      "elapsed_s": 243.08,
+      "temperature_c": 227.4139194139194,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.352,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 38000,
+      "time_Europe_Warsaw": "2026-11-10T10:26:17.927582+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:26:29.303557+00:00",
+      "elapsed_s": 254.44,
+      "temperature_c": 228.2197802197802,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.119,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 57000,
+      "time_Europe_Warsaw": "2026-11-10T10:26:29.303557+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:26:40.774078+00:00",
+      "elapsed_s": 265.92,
+      "temperature_c": 229.34798534798534,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.322,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 76000,
+      "time_Europe_Warsaw": "2026-11-10T10:26:40.774078+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:26:52.506758+00:00",
+      "elapsed_s": 277.65,
+      "temperature_c": 227.89743589743588,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 9.189,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 95000,
+      "time_Europe_Warsaw": "2026-11-10T10:26:52.506758+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:27:17.183620+00:00",
+      "elapsed_s": 302.32,
+      "temperature_c": 228.05860805860806,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.405,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 76000,
+      "time_Europe_Warsaw": "2026-11-10T10:27:17.183620+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:27:28.789261+00:00",
+      "elapsed_s": 313.93,
+      "temperature_c": 228.2197802197802,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.086,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 57000,
+      "time_Europe_Warsaw": "2026-11-10T10:27:28.789261+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:27:39.997737+00:00",
+      "elapsed_s": 325.17,
+      "temperature_c": 228.2197802197802,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.511,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 38000,
+      "time_Europe_Warsaw": "2026-11-10T10:27:39.997737+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:27:51.134593+00:00",
+      "elapsed_s": 336.28,
+      "temperature_c": 228.86446886446888,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.525,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:27:51.134593+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:28:02.759642+00:00",
+      "elapsed_s": 347.9,
+      "temperature_c": 229.1868131868132,
+      "jog": {
+        "direction": 1,
+        "elapsed_s": 9.476,
+        "rate": 3000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 13
+      },
+      "cumulative_steps_since_last_ZERO": 0,
+      "time_Europe_Warsaw": "2026-11-10T10:28:02.759642+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:28:43.934136+00:00",
+      "elapsed_s": 389.07,
+      "temperature_c": 227.89743589743588,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.402,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:28:43.934136+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:28:55.814763+00:00",
+      "elapsed_s": 400.97,
+      "temperature_c": 229.34798534798534,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.419,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:28:55.814763+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:29:05.500984+00:00",
+      "elapsed_s": 410.64,
+      "temperature_c": 228.86446886446888,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.568,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:29:05.500984+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:29:16.521192+00:00",
+      "elapsed_s": 421.66,
+      "temperature_c": 228.38095238095238,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.543,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:29:16.521192+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:29:26.551043+00:00",
+      "elapsed_s": 431.69,
+      "temperature_c": 227.89743589743588,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.348,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:29:26.551043+01:00"
+    },
+    {
+      "time_UTC": "2026-11-10T09:29:37.848095+00:00",
+      "elapsed_s": 442.99,
+      "temperature_c": 224.83516483516482,
+      "jog": {
+        "direction": 0,
+        "elapsed_s": 7.416,
+        "rate": 4000,
+        "sent": 19000,
+        "steps": 19000,
+        "windows": 10
+      },
+      "cumulative_steps_since_last_ZERO": 19000,
+      "time_Europe_Warsaw": "2026-11-10T10:29:37.848095+01:00"
+    }
+  ],
+  "first_operator_FLOW_confirmation": {
+    "elapsed_s": 454.47,
+    "measurement": {
+      "T0_dir0_is_feed": true,
+      "basis": "MCU-confirmed steps; not measured filament travel",
+      "completed_jogs": 1,
+      "dir0_mm": 19.792,
+      "dir0_steps": 19000,
+      "dir1_mm": 0.0,
+      "dir1_steps": 0,
+      "flow_mark": {
+        "T0_dir0_is_feed": true,
+        "basis": "MCU-confirmed steps; not measured filament travel",
+        "completed_jogs": 1,
+        "dir0_mm": 19.792,
+        "dir0_steps": 19000,
+        "dir1_mm": 0.0,
+        "dir1_steps": 0,
+        "has_unfinished_jog": false,
+        "net_dir0_mm": 19.792,
+        "net_dir0_steps": 19000,
+        "nominal_steps_per_mm": 960.0,
+        "zeroed_by_operator": true
+      },
+      "has_unfinished_jog": false,
+      "net_dir0_mm": 19.792,
+      "net_dir0_steps": 19000,
+      "nominal_steps_per_mm": 960.0,
+      "zeroed_by_operator": true
+    }
+  },
+  "temperature_after_elapsed_190s": {
+    "minimum_c": 224.83516483516482,
+    "maximum_c": 230.63736263736263,
+    "samples": 213
+  },
+  "session_end": {
+    "phase": "done",
+    "reason": "hold_duration_finished",
+    "elapsed_s": 993.44,
+    "temperature_c": 228.2197802197802,
+    "hold_remaining_s": 0.0
+  },
+  "time_basis": "Wall times derived from the host boot epoch/monotonic anchor; local zone Europe/Warsaw"
+}

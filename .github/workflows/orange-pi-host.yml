@@ -14,6 +14,7 @@ on:
       - 'tests/test_orange_pi_load_test.py'
       - 'tests/test_orange_pi_load_temperature.py'
       - 'tests/test_orange_pi_load15.py'
+      - 'tests/test_orange_pi_cassette_load.py'
       - 'tests/fixtures/**'
       - '.github/workflows/orange-pi-host.yml'
   workflow_dispatch:
