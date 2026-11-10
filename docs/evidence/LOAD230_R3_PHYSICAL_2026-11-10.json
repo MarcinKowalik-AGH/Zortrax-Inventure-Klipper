@@ -1,0 +1,115 @@
+{
+  "date": "2026-11-10",
+  "source": "User-supplied physical printer log, 09:44:32 to 09:45:10",
+  "control_mode": "pid_r0323_nozzle",
+  "tool": "T0",
+  "target_c": 230.0,
+  "ready_observation": {
+    "first_time": "09:44:32",
+    "last_time": "09:44:57",
+    "sample_count": 6,
+    "span_s": 25.57,
+    "minimum_c": 227.57509157509156,
+    "maximum_c": 229.6703296703297,
+    "peak_to_peak_c": 2.0952380952381304,
+    "all_ready_for_jog": true,
+    "samples": [
+      {
+        "time": "09:44:32",
+        "temperature_c": 227.89743589743588,
+        "duty_pct": 16.41
+      },
+      {
+        "time": "09:44:37",
+        "temperature_c": 228.05860805860806,
+        "duty_pct": 30.86
+      },
+      {
+        "time": "09:44:42",
+        "temperature_c": 229.6703296703297,
+        "duty_pct": 0.0
+      },
+      {
+        "time": "09:44:47",
+        "temperature_c": 228.2197802197802,
+        "duty_pct": 25.39
+      },
+      {
+        "time": "09:44:52",
+        "temperature_c": 229.34798534798534,
+        "duty_pct": 0.0
+      },
+      {
+        "time": "09:44:57",
+        "temperature_c": 227.57509157509156,
+        "duty_pct": 39.84
+      }
+    ]
+  },
+  "latest_motion": {
+    "run": 36,
+    "phase": "done",
+    "reason": "completed",
+    "elapsed_s": 4.98,
+    "E": {
+      "direction": 0,
+      "planned": 19000,
+      "sent": 19000
+    },
+    "other_driver_steps_sent": {
+      "A": 0,
+      "B": 0,
+      "Z": 0
+    },
+    "rate_hz": null,
+    "rate_note": "START command and RATE are absent; do not combine this timing with the earlier 19000/RATE=2000 user observation"
+  },
+  "filament_before": {
+    "t0_a": 1,
+    "t0_b": 1,
+    "t0_pb12": 153,
+    "t1_a": 0,
+    "t1_b": 0,
+    "t1_pd14": 5
+  },
+  "filament_after": {
+    "t0_a": 1,
+    "t0_b": 1,
+    "t0_pb12": 176,
+    "t1_a": 0,
+    "t1_b": 0,
+    "t1_pd14": 5
+  },
+  "pulse_delta": {
+    "t0_pb12": 23,
+    "t1_pd14": 0
+  },
+  "single_move_delta_repeated_in_periodic_reports": true,
+  "gpio_changes": [
+    {
+      "after": 1,
+      "before": 0,
+      "name": "t0_pulse_level",
+      "pin": "PB12"
+    }
+  ],
+  "stop": {
+    "time": "09:45:02",
+    "reason": "operator_stop",
+    "heater_duty_pct": 0.0,
+    "ready_for_jog": false,
+    "control": {
+      "mode": "SERVICE",
+      "active": 0,
+      "armed": 0,
+      "fault": 0,
+      "latched": 0,
+      "guard_mask": 127
+    },
+    "status_note": "09:45:10 repeats the stopped snapshot from 09:45:02; its temperature is not a fresh post-stop measurement"
+  },
+  "nozzle_flow_confirmed": false,
+  "head_filament_sensor_identified": false,
+  "long_duration_thermal_qualification": false,
+  "precise_filament_distance_calibration": false
+}

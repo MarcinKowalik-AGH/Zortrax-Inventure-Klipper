@@ -42,6 +42,24 @@
           "precise_scale_calibrated": false,
           "completion_and_counter_telemetry": "not supplied for this command",
           "nozzle_flow_confirmed": false
+        },
+        "latest_completed_motion": {
+          "run": 36,
+          "phase": "done",
+          "reason": "completed",
+          "elapsed_s": 4.98,
+          "E": {
+            "direction": 0,
+            "planned": 19000,
+            "sent": 19000
+          },
+          "other_driver_steps_sent": {
+            "A": 0,
+            "B": 0,
+            "Z": 0
+          },
+          "rate_hz": null,
+          "rate_note": "START command and RATE are absent; do not combine this timing with the earlier 19000/RATE=2000 user observation"
         }
       },
       "cassette_feeders": {
@@ -171,7 +189,7 @@
     "heater_off_during_jog": true,
     "load_completed": false,
     "cleaning_pending": true,
-    "physical_230C_test": "R2 log confirms heating and 960 E steps; R3 PID physical stability pending",
+    "physical_230C_test": "R3 log confirms T0 227.575..229.670C with ready state over 25.57s; full E=19000 and PB12 +23; long-duration qualification pending",
     "startup_OFF_acknowledged_before_power": true,
     "historical_reason_regression": "exact previous LOAD230 reproduces heartbeat_or_cable_lost before first power; R2 acknowledges OFF once and preserves current guards",
     "control_mode": "pid_r0323_nozzle",
@@ -192,6 +210,7 @@
     "bounded_sampling_wait_s": 1,
     "R2_observed_PB12_delta": 3,
     "integral_frozen_during_jog": true,
-    "T0_DIR0_feed_physically_reported": true
+    "T0_DIR0_feed_physically_reported": true,
+    "physical_observation_evidence": "docs/evidence/LOAD230_R3_PHYSICAL_2026-11-10.json"
   }
 }
