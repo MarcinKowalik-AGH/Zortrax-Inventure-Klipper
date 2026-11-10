@@ -32,7 +32,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R5-FEEDRUN`, `mcu_release` = `RC8-CONTROL-R5`,
+Oczekiwane: `host_revision` = `RC8-CONTROL-R5-FEED50`, `mcu_release` = `RC8-CONTROL-R5`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
@@ -47,10 +47,13 @@ konfiguracji pinów. [Warunki startu kasety, dowody z binarki i próba przycisku
 Dłuższy suchy transport, z zamontowaną kasetą i odłączonym wylotem rurki:
 
 ```gcode
-INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=1 DURATION=150
+INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=1 DURATION=50
 ```
 
-`DURATION` jest w sekundach. Host sam czeka na zakończenie kolejnych okien
+`DURATION` jest w sekundach, maksymalnie 50 s na jedną próbę. Użytkownik
+zaobserwował około 8 cm wysunięcia w 50 s; to pomiar roboczy do ustalenia
+ostatniego odcinka wejścia do ekstrudera, bez przelicznika mm w sterowaniu.
+Host sam czeka na zakończenie kolejnych okien
 MCU i na końcu porównuje wejścia oraz liczniki. `INVENTURE_STOP` anuluje
 również dalsze okna zadania. [Zasady próby, postęp, STOP i poprawka G4](docs/FEEDER_RUN_2026-11-09.md).
 

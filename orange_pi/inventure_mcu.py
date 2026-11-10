@@ -10,7 +10,8 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R5-FEEDRUN'
+HOST_REVISION = 'RC8-CONTROL-R5-FEED50'
+FEEDER_RUN_MAX_S = 50
 
 INPUT_RESPONSE = 'inventure_inputs clock=%u raw=%hu buttons=%c sequence=%u'
 BOARD_RESPONSE = ('inventure_status armed=%c fault=%c seen=%c cable=%c '
@@ -2045,6 +2046,7 @@ class InventureMCU:
             completed_windows_s=context['completed_ms']/1000.,
             remaining_requested_s=(context['total_ms']-context['completed_ms'])/1000.,
             windows_sent=context['windows'],maximum_mcu_window_ms=1500,
+            maximum_duration_s=FEEDER_RUN_MAX_S,
             filament_before=context['initial']['filament'],
             physical_motion_confirmed=False)
 
@@ -2114,8 +2116,8 @@ class InventureMCU:
         direction=gcmd.get_int('DIRECTION',1,minval=0,maxval=1)
         try:
             seconds=float(gcmd.get('DURATION',10.))
-            if not math.isfinite(seconds) or not .001<=seconds<=600:
-                raise ValueError('DURATION must be .001..600 seconds')
+            if not math.isfinite(seconds) or not .001<=seconds<=FEEDER_RUN_MAX_S:
+                raise ValueError('DURATION must be .001..50 seconds')
             self._feeder_service_preflight()
             initial=self._cassette_gpio_snapshot()
         except Exception as exc:raise gcmd.error(str(exc))

@@ -1,6 +1,10 @@
 # Dłuższa próba podajnika kasety — FEEDRUN
 
-`RC8-CONTROL-R5-FEEDRUN` dotyczy hosta Orange Pi. Korzysta z istniejącego
+**Aktualizacja 10 listopada 2026:** roboczy limit `DURATION` wynosi 50 s.
+Użytkownik zgłosił około 8 cm wysunięcia w tym czasie — tyle co pozostały
+odcinek wejścia do ekstrudera. Czas i droga pozostają do dalszego ustalenia.
+
+`RC8-CONTROL-R5-FEED50` dotyczy hosta Orange Pi. Korzysta z istniejącego
 MCU CONTROL-R5 i jego komendy `inventure_feeder` z limitem 1500 ms na żądanie.
 Nie zmienia firmware MCU, parametrów elektrycznych napędu, geometrii ani UART 750000.
 
@@ -40,10 +44,11 @@ Po aktualizacji hosta, z kasetą zamontowaną i wolnym wylotem rurki:
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=1 DURATION=150
+INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=1 DURATION=50
 ```
 
-`DURATION` podaje się w sekundach, zakres 0,001–600; domyślnie 10 s.
+`DURATION` podaje się w sekundach, zakres 0,001–50; domyślnie 10 s.
+Wartości większe niż 50 s są odrzucane przed uruchomieniem napędu.
 Kanał 0 to lewy, kanał 1 — prawy. Komenda wraca po rozpoczęciu zadania,
 dzięki czemu można wykonywać STOP z konsoli. Co około 5 s pojawia się postęp.
 
@@ -90,32 +95,34 @@ Kolejne próby serwisowego ruchu/wyjść i drugi RUN odrzuca się podczas zadani
 Zapytania timerów i konsoli są serializowane wspólnym mutexem, żeby nie
 nadpisywały sobie callbacku oczekiwanej odpowiedzi UART.
 
-## Oszacowanie 20 cm
+## Roboczy limit i ostatni odcinek do ekstrudera
 
-Z obserwacji około 2 mm / 1,5 s wynika orientacyjnie:
+Nowsza obserwacja użytkownika zastępuje wcześniejsze oszacowanie 150 s:
 
 ```text
-200 mm / (2 mm / 1,5 s) ≈ 150 s czasu podawania
+50 s podawania → około 80 mm wysunięcia
 ```
 
-To punkt wyjścia do próby. Po wysunięciu około 20 cm można zatrzymać ją
-wcześniej. Nie zapisano tego oszacowania jako kalibracji napędu i nie
+Przyjęto maksymalnie 50 s na jedną próbę. Około 80 mm to zgłoszona przez
+użytkownika pozostała droga wejścia do ekstrudera, do doprecyzowania w
+dalszych pracach. Nie zapisano tego wyniku jako kalibracji napędu i nie
 przypisano impulsom wartości mm. Grzałki oraz silniki głowicy pozostają
 poza procedurą suchego transportu.
 
 ## Walidacja
 
-84 testy hosta obejmują m.in.:
+85 testów hosta obejmuje m.in.:
 
 - odtworzenie dokładnego zgłoszonego skryptu z rzeczywistymi metodami G4/dwell
   pinned Klippera: poprzednia metoda daje zgłoszony błąd, nowa czeka do idle;
-- 150 s jako 100 żądań po 1500 ms, bez zwiększenia limitu MCU;
-- brak oczekiwania 150 s wewnątrz handlera G-code;
+- 50 s jako 33 żądania po 1500 ms i jedno 500 ms, bez zwiększenia limitu MCU;
+- odrzucanie czasu większego niż 50 s przed ruchem;
+- brak oczekiwania całego testu wewnątrz handlera G-code;
 - automatyczny końcowy odczyt i różnicę liczników;
 - wspólny STOP i brak późniejszego wznowienia, STOP kanału i shutdown;
 - zmianę właściciela/P13, błąd, rozłączenie i timeout aktywnego MCU;
 - nowy timer po ponownym starcie: stary callback nie może wznowić napędu;
-- aktualizację dokładnego hosta SENSORS bez ingerencji w konfigurację MCU.
+- aktualizację dokładnych hostów SENSORS i FEEDRUN bez ingerencji w konfigurację MCU.
 
-To walidacja oprogramowania. Fizyczna próba dłuższego transportu i kwalifikacja
-PB12/PD14 oczekują na odczyty użytkownika.
+To walidacja oprogramowania. Użytkownik zgłosił około 8 cm wysunięcia w 50 s;
+kwalifikacja PB12/PD14 nadal wymaga końcowych odczytów liczników.

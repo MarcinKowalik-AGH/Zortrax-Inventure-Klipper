@@ -82,18 +82,20 @@ class FeederRunTests(unittest.TestCase):
         self.assertFalse(h.feeder_run_last['physical_motion_confirmed'])
         self.assertEqual(h.commands['motion'].calls,[]);self.assertEqual(h.commands['output'].calls,[])
 
-    def test_150_seconds_is_one_hundred_bounded_requests_and_reports_progress(self):
-        h,_,_=self.host();h.cmd_feeder_run(Command(CHANNEL=0,DURATION=150))
-        h.reactor.pause(300.)
+    def test_50_seconds_is_thirty_four_bounded_requests_and_reports_progress(self):
+        h,_,_=self.host();h.cmd_feeder_run(Command(CHANNEL=0,DURATION=50))
+        h.reactor.pause(160.)
         packets=self.starts(h)
-        self.assertEqual(len(packets),100);self.assertEqual(sum(p[2] for p in packets),150000)
-        self.assertTrue(all(p==(0,1,1500) for p in packets))
+        self.assertEqual(len(packets),34);self.assertEqual(sum(p[2] for p in packets),50000)
+        self.assertEqual(packets[:-1],[(0,1,1500)]*33)
+        self.assertEqual(packets[-1],(0,1,500))
         self.assertEqual(h.feeder_run_last['phase'],'done')
+        self.assertEqual(h.feeder_run_last['maximum_duration_s'],50)
         reports=[json.loads(s.split(' ',1)[1]) for s in h.gcode.lines]
-        self.assertGreater(sum(r['phase']=='running' for r in reports),20)
+        self.assertGreater(sum(r['phase']=='running' for r in reports),8)
 
     def test_global_stop_cancels_the_job_and_prevents_any_later_restart(self):
-        h,_,_=self.host();h.cmd_feeder_run(Command(CHANNEL=0,DURATION=150))
+        h,_,_=self.host();h.cmd_feeder_run(Command(CHANNEL=0,DURATION=50))
         h.reactor.pause(100.25);h.cmd_control_stop(Command())
         self.assertEqual(h.feeder_run_last['phase'],'stopped')
         self.assertEqual(h.device_until,[0.,0.])
@@ -159,7 +161,7 @@ class FeederRunTests(unittest.TestCase):
 
     def test_status_and_duration_validation_do_not_energize_anything(self):
         h,_,_=self.host();h.cmd_feeder_run(Command(ACTION='STATUS'))
-        for duration in ('nan','inf',0,-1,601):
+        for duration in ('nan','inf',0,-1,50.0001,50.001,51,150,601):
             with self.assertRaises(RuntimeError):h.cmd_feeder_run(Command(CHANNEL=0,DURATION=duration))
         self.assertEqual(self.starts(h),[])
 
@@ -216,7 +218,7 @@ class FeederRunTests(unittest.TestCase):
         dispatch.register_command('INVENTURE_FEEDER_RUN',handler,True);dispatch._handle_ready()
         ops.state.owner=types.SimpleNamespace(kind='print')
         with self.assertRaisesRegex(control.gcode.CommandError,'idle operations'):
-            dispatch.run_script_from_command('INVENTURE_FEEDER_RUN CHANNEL=0 DURATION=150')
+            dispatch.run_script_from_command('INVENTURE_FEEDER_RUN CHANNEL=0 DURATION=50')
         self.assertEqual(self.starts(h),[])
 
 if __name__=='__main__':unittest.main()
