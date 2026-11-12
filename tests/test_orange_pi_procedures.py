@@ -28,7 +28,10 @@ class ProcedureCoreTests(unittest.TestCase):
             actions=[]
             for raw in ex.actions:
                 if raw['kind']=='module':continue
-                action=dict(raw);action.pop('cleaning_done',None);actions.append(action)
+                action=dict(raw)
+                action.pop('cleaning_done',None)
+                action.pop('leg',None)  # selector diagnostics do not change the actuator request
+                actions.append(action)
             return actions,error
         for hook in (short_feedback,long_feedback,no_final_starts):
             for final_mm in (50.,100.):
@@ -51,9 +54,20 @@ class ProcedureCoreTests(unittest.TestCase):
         for tool in (0,1):
             ex=Executor(core.defaults(tool),operation='SELECT').run()
             self.assertFalse(any(a['kind']=='heat' or a.get('e') for a in ex.actions))
-            self.assertEqual([a['axis'] for a in ex.actions if a['kind']=='home'],['Z','X','Y'])
+            home=[(a['kind'],a['axis']) for a in ex.actions if a['kind'] in ('home','home_release')]
+            if tool==0:
+                self.assertEqual(home,[('home','Z'),('home','Y'),('home_release','Y'),
+                                       ('home','X'),('home_release','X')])
+            else:
+                self.assertEqual(home,[('home','Z'),('home','X'),('home','Y')])
             select=[a for a in ex.actions if a['kind']=='move']
-            self.assertEqual(select[2]['x'],150. if tool==0 else -4.5)
+            approach,press=select[1:3]
+            if tool==0:
+                self.assertEqual((approach['x'],approach['y']),(139.5,154.5))
+                self.assertEqual((press['x'],press['y']),(154.5,154.5))
+                self.assertEqual(press['speed'],250./60.)
+            else:
+                self.assertEqual((press['x'],press['y']),(-4.5,152.))
             self.assertEqual(ex.done['terminal'],'SELECT')
             self.assertFalse(ex.done['cleaning_done'])
 
@@ -72,7 +86,8 @@ class ProcedureCoreTests(unittest.TestCase):
                 PURGE_MM=4,CLEAN_AFTER=clean))
             ex=Executor(p,operation='PURGE').run()
             moves=[a for a in ex.in_phase('PURGE','move') if a['e']]
-            self.assertEqual([a['x'] for a in moves],[52.5,82.5,52.5])
+            self.assertEqual([(a['x'],a['y']) for a in moves],
+                             [(67.8,152.5),(97.8,152.5),(67.8,152.5)])
             self.assertEqual([round(a['e']*960) for a in moves],[960,1920,1920])
             self.assertEqual(ex.done['cleaning_done'],bool(clean))
             self.assertEqual(any(a['kind']=='module' and a['name']=='clean' for a in ex.actions),bool(clean))
@@ -84,7 +99,7 @@ class ProcedureCoreTests(unittest.TestCase):
                 ex=Executor(p,operation='MANUAL').run()
                 extrusions=[a for a in ex.actions if a.get('e')]
                 self.assertEqual(len(extrusions),1);self.assertEqual(extrusions[0]['e'],sign*12)
-                self.assertEqual((extrusions[0]['x'],extrusions[0]['y']),(67.5,150.))
+                self.assertEqual((extrusions[0]['x'],extrusions[0]['y']),(82.8,152.5))
                 modes=[a['mode'] for a in ex.actions if a['kind']=='mode']
                 self.assertIn((2 if sign>0 else 3) if assist else 0,modes)
                 self.assertEqual(ex.done['terminal'],'MANUAL')
@@ -139,7 +154,7 @@ class ProcedureHostTests(unittest.TestCase):
         for action in ('LIST','PARAMS'):
             h.cmd_procedure(Command(ACTION=action,TOOL='T1',PROCEDURE='CLEAN'))
         self.assertIsNone(h.load_test_context);self.assertEqual(h.device.packets,[])
-        for action in ('SELECT','CLEAN','PURGE','MANUAL','UNLOAD','AUTO','HOME','BOGUS'):
+        for action in ('SELECT','CLEAN','PURGE','MANUAL','UNLOAD','AUTO','HOME','PARK','SWEEP','BOGUS'):
             with self.assertRaises(RuntimeError):h.cmd_procedure(Command(ACTION=action))
         self.assertEqual(h.device.packets,[])
 
@@ -162,7 +177,7 @@ class ProcedureHostTests(unittest.TestCase):
         last=self.fixture.finish(h)
         f=last['factory']
         self.assertEqual(f['history'],['HOME','PARK','DONE'])
-        self.assertEqual(f['position'],[67.5,150.,0.])
+        self.assertEqual(f['position'],[82.8,152.5,0.])
         self.assertEqual(f['e_steps_by_phase'],{})
         self.assertFalse(f['selection_commanded'])
         self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
@@ -174,7 +189,7 @@ class ProcedureHostTests(unittest.TestCase):
                 h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T0',MATERIAL=name))
                 last=self.fixture.finish(h)
                 self.assertEqual(last['phase'],'done',last)
-                self.assertEqual(last['factory']['position'],[67.5,150.,0.])
+                self.assertEqual(last['factory']['position'],[82.8,152.5,0.])
                 self.assertEqual(last['factory']['e_steps_by_phase'],
                                  dict(U1=-steps[0],U2=-steps[1]))
 

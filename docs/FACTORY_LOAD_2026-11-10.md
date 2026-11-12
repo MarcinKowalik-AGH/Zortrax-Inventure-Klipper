@@ -1,6 +1,6 @@
 # Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-FEED
 
-Host `RC8-CONTROL-R7-UIFAST-FEED-T0` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne.
 Procedury używające kasety wymagają MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
@@ -16,9 +16,10 @@ stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 
 To procedura SERVICE dla już zamontowanej kasety i podłączonej rurki.
 Nie wykonuje autoryzacji RFID ani zapisu salda kasety. External/szpula
-pozostaje osobną procedurą. Pierwsze wykonanie całego R7 na drukarce
-pozostaje próbą fizyczną; zgodność programu i testów nie jest pomiarem
-geometrii, długości filamentu ani działania mechanizmu.
+pozostaje osobną procedurą. Fizyczne potwierdzenie poprawionego docisku
+i trasy pozostaje do wykonania na drukarce. Testy programu sprawdzają
+żądane kroki. Pozycję karetki, długość filamentu i zadziałanie dźwigni
+weryfikuje próba mechaniczna.
 
 ## Instalacja
 
@@ -48,7 +49,8 @@ Po ponownym połączeniu:
 INVENTURE_VERSION
 ```
 
-Oczekiwane host `RC8-CONTROL-R7-UIFAST-FEED-T0`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION` i MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+W raporcie powinny być też widoczne
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
@@ -66,6 +68,19 @@ INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T1
 
 PARAMS pokazuje parametry planera dla podanych wartości/wartości domyślnych.
 STATUS podczas pracy pokazuje wartości rzeczywiście używane przez próbę.
+
+T0 można najpierw sprawdzić na zimno. W trybie SERVICE wykonaj osobno SELECT,
+a po jego zakończeniu SWEEP. SELECT bazuje osie, wykonuje docisk selektora
+i wraca nad kosz. SWEEP bazuje osie, parkuje nad koszem i wykonuje trasę X
+jednej porcji L1 z wyłączonym grzaniem, E i podajnikiem.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SELECT TOOL=T0
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0
+```
 
 Wariant dla lewej kasety i T0:
 
@@ -95,19 +110,20 @@ INVENTURE_LOAD_TEST ACTION=STATUS
 INVENTURE_STOP
 ```
 
-T0 opuszcza stół do dolnej krańcówki, bazuje Y i X i jedzie przez
-X17,5 Y150 do X67,5 Y150 przed grzaniem. Punkt startu SERVICE wynika
-z krańcówek i nominalnych nastaw. Na normalnym zakończeniu AUTO oraz po błędzie
+T0 opuszcza stół do dolnej krańcówki, najeżdża na krańcówki Y i X i po
+każdym najeździe wyznacza zero osi na zwolnionym wejściu. Przed grzaniem
+jedzie przez X32,8 Y152,5 do X82,8 Y152,5 w układzie SERVICE.
+Na normalnym zakończeniu AUTO oraz po błędzie
 wyłącza grzanie i napędy; chłodzenie gorącej głowicy pozostaje automatyczne.
 
 ## Etapy i sprzężenie zwrotne
 
 | Etap | Domyślne działanie | Warunek wyjścia |
 |---|---|---|
-| L1 | T0 wykonuje porcję 20 mm przy każdym wejściu. Porcja kończy się po pełnym ruchu X, domyślnie po 19 693 krokach E. Próg łączny wynosi 500 mm. | Dla T0 świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
+| L1 | T0 wykonuje porcję 20 mm z oscylacjami X przy stałym Y152,5 nad koszem. Porcja kończy się po pełnym ruchu X, domyślnie po 19 693 krokach E. Próg łączny wynosi 500 mm. | Dla T0 świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
 | L2 | Podajnik do przodu, oczekiwanie na wejście A | A musi pojawić się w ciągu 5 s; A już aktywne pozwala przejść dalej. |
-| L3 | Głowica T0 stoi w X135 Y0. Kaseta i E podają do 250 mm E (240 000 kroków). | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę liczenia. T0 wraca przez X117,5 Y150 do X67,5 Y150. |
-| L4 | AUTO kasety i budżet 100 mm E. Domyślnie 96 394 kroki E i 3 przejazdy czyszczące dla T0. | Po co najmniej 3 startach podajnika T0 parkuje w X67,5 Y150. Brak startów uruchamia skonfigurowane wycofanie lub kończy błędem. |
+| L3 | Głowica T0 stoi w X150,3 Y2,5 podczas podawania kasetą i E do 250 mm E (240 000 kroków). | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę liczenia. T0 wraca przez X132,8 Y152,5 do X82,8 Y152,5. |
+| L4 | AUTO kasety i oscylacje X nad koszem z budżetem 100 mm E. Domyślnie 96 394 kroki E i 3 przejazdy czyszczące dla T0. | Po co najmniej 3 startach podajnika T0 parkuje w X82,8 Y152,5. Brak startów uruchamia skonfigurowane wycofanie lub kończy błędem. |
 
 L1 sprawdza ciszę przed licznikiem startów i budżetem. Spełnienie progu
 startów przy nieaktualnych impulsach nie oznacza sukcesu. Budżety 20/100 mm
@@ -140,9 +156,9 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `FINAL_MM`, `FINAL_STARTS` | 100, 3 | Końcowe wyciskanie i potwierdzenie L4 |
 | `FEEDER_MS`, `FEEDER_K` | 1000, 1,75 | Czas pojedynczego doładowania AUTO i materiałowy współczynnik budżetu |
 | `E_SPEED` | 1,6 | Prędkość osobnego E w długim podawaniu |
-| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | 20, 20, 4 | Ruch XY z wyciskaniem, przejazdy i powolny docisk przełączający |
+| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | T0 30, 30, 250/60. T1 20, 20, 4 | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
-| `HOME_SPEED`, `Z_SPEED` | 5, 2 | Prędkości bazowania XY i opuszczania stołu |
+| `HOME_SPEED`, `Z_SPEED` | T0 10, 2. T1 5, 2 | Prędkości najazdu XY i opuszczania stołu. T0 odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
 | `TARGET`, `MAX_POWER` | 230°C, 40% | Cel PID wybranej dyszy i limit mocy |
 | `MATERIAL` | UNKNOWN | Profil transportu kasety T0 z r0323. Ustawia budżety U1/U2 i parametry napędu kasety. Temperaturę dobiera `TARGET`. |
 | `DURATION` | 900 | Ograniczenie czasu od pierwszej gotowości termicznej; AUTO kończy grzanie wcześniej po zakończeniu procedury |
@@ -154,12 +170,14 @@ doładowania, z zaokrąglaniem float32 na etapach mnożenia:
 Przy 1000 ms i 1,75 wynik to 20160 jednostek E. To model sterownika,
 nie zmierzona długość filamentu ani dowód równej prędkości obu napędów.
 
-R7 zachowuje limit DDA 20000 zdarzeń głównych/s. Dlatego domyślne
-przejazdy i oscylacje są wolniejsze od fabrycznych. Prędkości XY można
-ustawiać do 22 mm/s, przy czym host przelicza również przekątne CoreXY
-i odmawia trajektorii przekraczającej limit. `E_SPEED` nie ustawia
-prędkości E podczas oscylacji: wtedy wynika ona z ruchu XY i proporcji
-fabrycznej, około 2,159 mm E na pełny odcinek 36 mm X.
+R7 zachowuje limit 20 000 zdarzeń DDA/s. Host ogranicza tempo każdego
+odcinka według przełożenia CoreXY. Odpowiada to maksymalnie 31,25 mm/s
+wzdłuż pojedynczej osi i około 22,1 mm/s na przekątnej 45°. Przy żądanych
+30 mm/s pełne oscylacje T0 w osi X są szybsze od poprzednich 20 mm/s,
+a nadal wolniejsze od fabrycznego F3000 (50 mm/s). Fabryczne przejazdy
+F8000 również przekraczają limit SERVICE. Podczas oscylacji prędkość E
+wynika z ruchu XY i proporcji około 2,159 mm E na pełny odcinek 36 mm X.
+`E_SPEED` steruje osobnym podawaniem ekstrudera.
 
 Przykład regulacji osobnego podawania i doładowania bez zmiany progów:
 
@@ -169,35 +187,55 @@ INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0 TARGET=230 E_SPEED=1.6 FEEDER_MS=1000 FE
 
 ## Geometria i przełączanie
 
-Wartości są nominalne z audytu, przed indywidualną korektą drukarki.
-Zmiana parametrów jest walidowana przed pierwszym żądaniem ruchu/grzania.
-Pierwsza próba sprawdza fizycznie tę geometrię, w szczególności docisk T1
-przy ujemnym X. `ACTION=AUTO` wykonuje przejazd przełączający; stare LOAD
-pozostaje próbą podawania bez przełączania.
+R0323 zapisuje pozycję po zwolnieniu krańcówek X/Y. Nominalne współrzędne
+zwolnienia w ramie T1 wynoszą X−4,5 Y−2,5. W ramie T0 firmware uwzględnia
+również nominalne przesunięcie dysz X10,8 i korektę egzemplarza.
+Dla punktów selektora 1–4 korekty narzędzia są częścią zarówno punktu,
+jak i zera, więc znoszą się w układzie od zwolnionych krańcówek.
+Stałe punkty T0 nad koszem i z przodu mają nominalne przesunięcie
+X15,3 Y2,5. Poniższe wartości T0 są podane dla zerowej korekty egzemplarza.
+Wartości T1 są w dotychczasowym układzie SERVICE.
 
 | Parametr | T0 | T1 |
 |---|---:|---:|
-| `CENTER_X`, `CENTER_Y` | 67,5; 150 | 67,5; 150 |
-| `APPROACH_X` | 135 | 10,5 |
-| `SWITCH_X`, `SWITCH_Y` | 150; 152 | −4,5; 152 |
-| `SERVICE_X`, `SERVICE_Y` | 135; 0 | 0; 0 |
+| `CENTER_X`, `CENTER_Y` | X82,8 Y152,5 | X67,5 Y150 |
+| `APPROACH_X` | 139,5 | 10,5 |
+| `SWITCH_X`, `SWITCH_Y` | X154,5 Y154,5 | X−4,5 Y152 |
+| `SERVICE_X`, `SERVICE_Y` | X150,3 Y2,5 | X0 Y0 |
 | `MIN_X`, `MAX_X`, `MIN_Y`, `MAX_Y` | −5; 155; 0; 155 | −5; 155; 0; 155 |
 
-Parkowanie T0 wybiera najbliższy z punktów X17,5 i X117,5 na Y150,
-po czym jedzie do X67,5 Y150. `PARK_SPAN` określa rozstaw punktów,
+Docisk T0 biegnie od X139,5 do X154,5 przy stałym Y154,5 i żądanej
+prędkości F250/60, czyli około 4,17 mm/s. Odpowiada to 9600 krokom
+każdego silnika A/B. `factory.motion_legs` w STATUS pokazuje punkty,
+prędkości i liczniki dla `selector_approach`, `selector_press`
+i `selector_return`. Fizyczne trafienie dźwigni wymaga obserwacji na drukarce.
+
+Parkowanie T0 wybiera najbliższy z punktów X32,8 i X132,8 na Y152,5,
+po czym jedzie do X82,8 Y152,5. `PARK_SPAN` określa rozstaw punktów,
 domyślnie 100 mm. `ACTION=PARK TOOL=T0` pozwala sprawdzić ten moduł na zimno.
-Przy domyślnym L4 czyszczenie T0 biegnie po X117,5, X17,5 i X44,5 na Y152.
+Przed dociskiem parkowanie także używa nominalnego punktu docelowej dyszy
+T0, ponieważ aktualne położenie mechanizmu przed wyborem jest nieznane.
+Przy domyślnym L4 czyszczenie T0 biegnie po X132,8, X32,8 i X59,8 na Y154,5.
 Pierwszy przejazd jednocześnie zmienia X i Y.
 
-Oscylacje X mają pierwszy odcinek ±18 mm, kolejne ±36 mm. Ruchy E używają
+Oscylacja T0 zaczyna od −18 mm w X, następnie zmienia kierunek co 36 mm.
+Ruchy E używają
 fabrycznego zaokrąglenia: 1036 kroków dla pierwszego i 2073 dla kolejnych
 odcinków. Koniec czyszczenia jest wybierany ze znaku następnej oscylacji,
 więc zależy również od liczby wykonanych odcinków/budżetu E. Nie jest
-sztywną, zawsze tą samą sekwencją X dla danej dyszy.
+sztywną, zawsze tą samą sekwencją X dla danej dyszy. W r0323 oscylacje
+występują w L1 i L4 (`0x08012168`). L3 wykonuje dojazd i podawanie
+przy nieruchomej głowicy (`0x08014694–0x08014746`).
+
+T0 przyjmuje nadpisania współrzędnych domyślnie w układzie OEM
+(`XY_INPUT_FRAME=OEM`) i przelicza je na układ od zwolnionych krańcówek.
+`XY_INPUT_FRAME=RAW` dotyczy współrzędnych podanych w całym efektywnym
+profilu, włącznie z odziedziczonymi. PARAMS pokazuje współrzędne po przeliczeniu.
+MIN/MAX są zawsze granicami w układzie SERVICE.
 
 ## Wyładowanie i cofanie po nieudanym L4
 
-Głowica T0 stoi nad koszem w X67,5 Y150. W r0323 Z-PLA i profil
+Głowica T0 stoi nad koszem w X82,8 Y152,5 w układzie SERVICE. W r0323 Z-PLA i profil
 Unknown mają limity U1/U2 30 i 70 mm, a Z-PETG 50 i 50 mm. W SERVICE
 wybierz profil transportu przez `MATERIAL`.
 

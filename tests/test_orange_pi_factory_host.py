@@ -14,6 +14,7 @@ class FactoryDevice(support.Device):
         self.pulses=0;self.starts=0;self.auto_entries=0;self.mode_history=[]
         self.running=False;self.run_end=0.;self.next_auto=0.
         self.a=0 if scenario=='wait_a' else 1;self.b=1;self.home_fail=None
+        self.release_fail=None
 
     def active_motion(self):
         return not self.allow_output and super().active_motion()
@@ -53,10 +54,11 @@ class FactoryDevice(support.Device):
             self.packets.append(('motion',*args));self.run+=1
             counts=(a,b,z,e);duration=max(counts)/rate+.02
             home=bool(mask)
-            if home and self.home_fail!=mask:duration=.05
+            failed=self.home_fail if value else self.release_fail
+            if home and failed!=mask:duration=.05
             self.motion=dict(token=token,counts=counts,directions=directions,
                 until=self.now()+duration,started=self.now(),duration=duration,
-                stopped=False,home=home,hit=mask if home and self.home_fail!=mask else 0)
+                stopped=False,home=home,hit=mask if home and failed!=mask else 0)
         elif action==2:self.stop_motion()
         if self.motion is None:
             return dict(run=0,token=0,phase=0,reason=0,reject=0,active=0,events=0,elapsed_ms=0,hit=0)
@@ -255,11 +257,97 @@ class FactoryHostTests(unittest.TestCase):
                 packets=h.device.packets
                 heat=next(i for i,p in enumerate(packets) if p[:2]==('output',1))
                 homes=[p for p in packets[:heat] if p[0]=='motion' and p[1]==1 and p[10]]
-                self.assertEqual([p[10] for p in homes],[4,2,1] if tool==0 else [4,1,2])
+                hits=[p[10] for p in homes if p[10]==p[11]]
+                self.assertEqual(hits,[4,2,1] if tool==0 else [4,1,2])
+                releases=[(p[10],p[11],p[2],p[3:7]) for p in homes if not p[11]]
+                self.assertCountEqual(releases,[(1,0,3,(5000,5000,0,0)),
+                                                (2,0,1,(5000,5000,0,0))] if tool==0 else [])
                 self.assertTrue(all(p[2]==6+tool for p in packets if p[:2]==('output',1)))
                 self.assertEqual(h.device.session['tool'],tool)
                 self.assertEqual(h.temperatures[1-tool],25.)
                 h.cmd_control_stop(Command())
+
+    def test_cold_T0_selector_dispatches_full_positive_X_press(self):
+        h,_,_=self.host()
+        h.cmd_procedure(Command(ACTION='SELECT', TOOL='T0'))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and not p[10]]
+        approach,press,return_move=moves[-3:]
+        self.assertEqual(approach[2:7],(3,37568,35008,0,0))
+        self.assertEqual(press[2:8],(3,9600,9600,0,0,2667))
+        self.assertEqual(return_move[2:7],(0,47168,44608,0,0))
+        self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
+        factory=last['factory']
+        self.assertTrue(factory['selection_commanded'])
+        self.assertEqual(factory['position'][:2],[82.8,152.5])
+        legs=factory['motion_legs']
+        self.assertEqual(legs['selector_approach']['target'],[139.5,154.5])
+        self.assertEqual(legs['selector_return']['target'],[82.8,152.5])
+        stroke=legs['selector_press']
+        self.assertEqual(stroke['start'],[139.5,154.5])
+        self.assertEqual(stroke['target'],[154.5,154.5])
+        self.assertAlmostEqual(stroke['requested_speed'],250/60,places=3)
+        self.assertAlmostEqual(stroke['effective_speed'],2667/640,places=3)
+        self.assertEqual(stroke['rate'],2667)
+        for driver in ('A','B'):
+            self.assertEqual(stroke['drivers'][driver],dict(planned=9600,sent=9600,direction=1))
+
+    def test_cold_T0_diagonal_uses_the_MCU_rate_cap(self):
+        h,_,_=self.host()
+        h.cmd_procedure(Command(ACTION='SELECT', TOOL='T0', XY_INPUT_FRAME='RAW',
+                                CENTER_X=60, CENTER_Y=60))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and not p[10]]
+        diagonal=moves[0]
+        self.assertEqual(diagonal[3:8],(76800,0,0,0,20000))
+        self.assertEqual(diagonal[9],8840)
+
+    def test_cold_T0_sweep_uses_load_oscillation_without_E_heat_or_feeder(self):
+        h,_,_=self.host()
+        h.cmd_procedure(Command(ACTION='SWEEP', TOOL='T0'))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'SWEEP')
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and not p[10]]
+        sweeps=[p for p in moves if p[3]==p[4] and p[3] in (11520,23040)]
+        self.assertEqual([p[2:7] for p in sweeps[:3]],[
+            (0,11520,11520,0,0),(3,23040,23040,0,0),(0,23040,23040,0,0)])
+        self.assertTrue(all(not p[6] for p in moves))
+        self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
+        self.assertEqual(h.device.mode_history,[0])
+
+    def test_T0_home_requires_both_limits_to_release_before_heat(self):
+        for mask in (1,2):
+            with self.subTest(mask=mask):
+                h,_,_=self.host();h.device.release_fail=mask
+                self.start(h)
+                last=self.finish(h)
+                self.assertEqual(last['phase'],'failed',last)
+                self.assertIn('release',last['reason'].lower())
+                self.assertFalse(last['factory']['reference_valid'])
+                self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
+                self.assertFalse(h.device.active())
+
+    def test_incomplete_T0_press_cannot_claim_selection_or_start_loading(self):
+        h,_,_=self.host()
+        original=h.device.driver
+        def omit_press_step(args):
+            row=original(args)
+            move=h.device.motion
+            if move['directions']==3 and move['counts']==(9600,9600,0,0):
+                if args[0]==0 and h.device.now()>=move['until']:
+                    row['sent']-=1
+            return row
+        h.commands['motion_driver']=support.Wire(omit_press_step)
+        self.start(h)
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'failed',last)
+        self.assertIn('missing steps',last['reason'])
+        self.assertFalse(last['factory']['selection_commanded'])
+        self.assertNotIn('L1',last['factory']['history'])
+        self.assertFalse(any(p[:2]==('motion',1) and p[6] for p in h.device.packets))
 
     def test_short_path_uses_real_AUTO_start_counter_not_number_of_renewals(self):
         h,_,_=self.host();self.start(h);last=self.finish(h)
@@ -268,6 +356,12 @@ class FactoryHostTests(unittest.TestCase):
         self.assertGreater(sum(p[0]==2 for p in h.device.factory_packets),h.device.starts)
         self.assertEqual(h.device.auto_entries,1)
         self.assertNotIn(2,h.device.mode_history)
+        feed=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        self.assertEqual([p[2:8] for p in feed[:3]],[
+            (0,11520,11520,0,1036,19200),
+            (3,23040,23040,0,2073,19200),
+            (0,23040,23040,0,2073,19200)])
+        self.assertEqual(last['factory']['motion_legs']['selector_press']['drivers']['A']['sent'],9600)
         self.assertEqual(h.device.output(6)['duty'],0);self.assertFalse(h.device.active())
 
     def test_factory_owner_refuses_manual_actions_and_hot_E_has_tool_specific_direction(self):

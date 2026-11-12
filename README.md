@@ -1,13 +1,14 @@
-# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED-T0 / MCU CONTROL-R7-FACTORY-FEED
+# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED-T0-MOTION / MCU CONTROL-R7-FACTORY-FEED
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
 
-Kaseta T0 korzysta z kolejności i nominalnych punktów r0323. AUTO zaczyna
-od L1, UNLOAD dobiera budżety U1/U2 przez `MATERIAL`, a `ACTION=PARK`
-odtwarza przejazd przez boczny punkt do środka kosza.
+T0 wyznacza współrzędne od zwolnionych krańcówek X/Y. Docisk selektora
+biegnie od X139,5 do X154,5 przy stałym Y154,5. AUTO wykonuje oscylacje
+w L1 i L4 nad koszem. UNLOAD dobiera budżety U1/U2 przez `MATERIAL`.
+Host T0-MOTION można zaktualizować na już zainstalowanym MCU FACTORY-FEED.
 [Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
@@ -43,16 +44,22 @@ kasety wymagają MCU R7-FACTORY-FEED. [Obsługa menu, procedury i rzeczywista do
 
 ## Wspólne procedury T0/T1
 
-`INVENTURE_PROCEDURE` udostępnia osobno `HOME`, `SELECT`, `PURGE`, `CLEAN`,
-`MANUAL`, `UNLOAD` i pełne `AUTO`. Korzystają z tych samych modułów,
+`INVENTURE_PROCEDURE` udostępnia osobno `HOME`, `PARK`, `SELECT`, `SWEEP`,
+`PURGE`, `CLEAN`, `MANUAL`, `UNLOAD` i pełne `AUTO`. Korzystają z tych samych modułów,
 geometrii, PID i nadzoru MCU. AUTO bazuje raz na początku, a następnie
 składa moduły pod jednym właścicielem. Samodzielna procedura również
 zaczyna od bazowania, ponieważ po zakończeniu zwalnia napędy.
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=LIST
-INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T1 PROCEDURE=SELECT
+INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T0 PROCEDURE=SELECT
 ```
+
+W trybie SERVICE `INVENTURE_PROCEDURE ACTION=SELECT TOOL=T0` sprawdza
+docisk bez grzania i E. W STATUS można odczytać kroki A/B docisku
+w `factory.motion_legs.selector_press`. Osobne
+`INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0` wykonuje ruchy X jednej
+porcji L1 bez grzania, E i podajnika.
 
 Nastawy: wartości wbudowane → opcjonalne `procedure_defaults` →
 `procedure_t0`/`procedure_t1` w `[inventure_mcu]` → argumenty polecenia.
@@ -87,9 +94,10 @@ INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0 TARGET=230 MAX_POWER=40 DURATION=900 PRO
 
 Dla prawej kasety zamień `TOOL=T0` na `TOOL=T1`. Wykonuj jedną próbę naraz.
 Normalne zakończenie AUTO i błędy wyłączają grzanie oraz ruch. Ręczne
-przerwanie: `INVENTURE_STOP`. Prędkości XY domyślnie 20 mm/s mieszczą się
-w obecnym limicie DDA; nie są deklaracją odtworzenia szybszych przejazdów
-fabrycznych. Kaseta musi być już włożona; SERVICE nie wykonuje RFID.
+przerwanie: `INVENTURE_STOP`. T0 żąda 30 mm/s dla przejazdów i oscylacji.
+Przekątne są ograniczane do limitu 20 000 zdarzeń DDA/s. Fabryczne F8000
+na przejazdach i F3000 podczas oscylacji wykraczają poza limit SERVICE.
+Kasetę włóż przed rozpoczęciem procedury. SERVICE pomija RFID.
 [Pełna instalacja, parametry, nominalna geometria i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
 
 Opisane dalej `ACTION=LOAD` i `ACTION=RETRACT` zachowują wcześniejsze próby
@@ -124,7 +132,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED-T0`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.

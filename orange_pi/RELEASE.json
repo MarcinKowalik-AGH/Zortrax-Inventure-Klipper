@@ -1,6 +1,6 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-FEED-T0",
-  "host_module_sha256": "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION",
+  "host_module_sha256": "8bded1c780f38a254e6611d1212150b70e027dc0380a2e9f261388ed2c341874",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
   "verified_public_host_tests": 311,
@@ -325,7 +325,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-FEED-T0",
+  "release": "RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -335,7 +335,7 @@
     "MCU_required": "RC8-CONTROL-R7-FACTORY-FEED",
     "factory_abi": 1,
     "parameter_query": "INVENTURE_LOAD_TEST ACTION=PARAMS",
-    "homing": "cold Z bottom; T0 Y/X and park, T1 X/Y; MCU owner holds enable",
+    "homing": "cold Z bottom; T0 Y/X release reference and park, T1 X/Y; MCU owner holds enable",
     "RFID": "preinserted cassette SERVICE workflow; no authentication/write",
     "physical_test": "pending operator",
     "independent_lease_ms": 1500,
@@ -367,6 +367,7 @@
       "HOME",
       "PARK",
       "SELECT",
+      "SWEEP",
       "PURGE",
       "CLEAN",
       "MANUAL",
@@ -381,7 +382,7 @@
     ],
     "standalone_homes": true,
     "physical_test": "pending operator",
-    "AUTO_R7_hardware_trace_regression": "T0 r0323 park and L1 entry; T1 retains the established trace",
+    "AUTO_R7_hardware_trace_regression": "T0 released-switch reference and original L1/L4 sweep; T1 retains its actuator trace",
     "MCU_required_for_feeder": "RC8-CONTROL-R7-FACTORY-FEED"
   },
   "zortrax_menu": {

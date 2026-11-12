@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED-T0'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION'
 FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
@@ -2101,7 +2101,7 @@ class InventureMCU:
             f=context['factory']
             result['factory']={k:f[k] for k in ('parameters','phase','history','position',
                 'reference_valid','snapshot','result','e_sent_steps','e_steps_by_phase','fallback_started',
-                'operation','module_stack','module_history','selection_commanded')}
+                'operation','module_stack','module_history','selection_commanded','motion_legs')}
             result['stage']='factory_cartridge_load' if f['operation']=='AUTO' else 'factory_procedure'
             result['cleaning_pending']=not f.get('cleaning_done',False)
             result['heater_off_on_completion']=True
@@ -2514,7 +2514,7 @@ class InventureMCU:
         context['factory']=dict(parameters=p,program=program,action=None,move=None,
             resume=None,phase='HOME',history=[],position=[0.,0.,0.],reference_valid=False,
             homed=[],snapshot={},result=None,e_sent_steps=0,fallback_started=False,
-            e_steps_by_phase={},
+            e_steps_by_phase={},motion_legs={},
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
@@ -2549,11 +2549,14 @@ class InventureMCU:
         return dict(row)
 
     def _factory_begin_move(self,context,action):
-        f=context['factory'];p=f['parameters'];pos=f['position'];home=action['kind']=='home'
+        from .inventure_factory_core import MAX_MASTER_RATE
+        f=context['factory'];p=f['parameters'];pos=f['position']
+        releasing=action['kind']=='home_release'
+        home=action['kind']=='home' or releasing
         e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
         z=pos[2];mask=0
         if home:
-            axis=action['axis'];distance=-action['max_mm']
+            axis=action['axis'];distance=action['max_mm'] if releasing else -action['max_mm']
             dx=distance if axis=='X' else 0.;dy=distance if axis=='Y' else 0.
             dz=distance if axis=='Z' else 0.;length=abs(distance)
             mask={'X':1,'Y':2,'Z':4}[axis]
@@ -2566,17 +2569,21 @@ class InventureMCU:
                 round(e*960)*(1 if context['tool'] else -1))
         master=max(map(abs,counts))
         if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
-        rate=max(1,math.ceil(master*action['speed']/length))
-        if rate>20000:raise ValueError('Requested factory speed exceeds 20000 master steps/s')
+        rate=min(MAX_MASTER_RATE,max(1,math.ceil(master*action['speed']/length)))
         maximum=math.ceil(master*1000./rate)+5000
         if maximum>600000:raise ValueError('Factory segment exceeds 600 seconds')
-        row=self._motion_query(1,counts,rate,10,maximum,mask,mask,owner=context)
+        row=self._motion_query(1,counts,rate,10,maximum,mask,0 if releasing else mask,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
             accounted=0,deadline=self.reactor.monotonic()+maximum/1000.+.5,
             target=[x,y,z],home=home,mask=mask,start=self.reactor.monotonic(),
             pulse_base=f['snapshot']['pulses'],quiet_since=self.reactor.monotonic(),last_pulse=f['snapshot']['pulses'])
+        leg=action.get('leg')
+        if leg:
+            f['motion_legs'][leg]=dict(start=pos[:2],target=[x,y],
+                requested_speed=action['speed'],effective_speed=round(rate*length/master,6),
+                rate=rate,reason=row['reason'],drivers=row['drivers'])
         if action['kind']=='retract_until_quiet':
             if action.get('reset_quiet') or 'unload_quiet' not in f:
                 f['unload_quiet']=[f['snapshot']['pulses'],self.reactor.monotonic()]
@@ -2600,6 +2607,9 @@ class InventureMCU:
             phase=f['phase'];by_phase=f['e_steps_by_phase']
             by_phase[phase]=by_phase.get(phase,0)+steps
         context['motion']=row
+        leg=m['action'].get('leg')
+        if leg:
+            f['motion_legs'][leg].update(reason=row['reason'],drivers=row['drivers'])
 
     def _factory_poll_move(self,context):
         from .inventure_factory_core import delta32
@@ -2620,11 +2630,14 @@ class InventureMCU:
         if row['active']:
             if now>=m['deadline']:raise ValueError('Factory motion deadline exceeded')
             return None
-        if kind=='home':
+        if m['home']:
             if row['reason']!='stop_input' or not row['hit']&m['mask']:
-                raise ValueError('Factory '+a['axis']+' homing failed to reach its limit')
-            f['homed'].append(a['axis']);f['position']['XYZ'.index(a['axis'])]=0.
-            f['reference_valid']=len(set(f['homed']))==3
+                message=('failed to release its limit' if kind=='home_release'
+                         else 'failed to reach its limit')
+                raise ValueError('Factory '+a['axis']+' homing '+message)
+            if context['tool']==1 or a['axis']=='Z' or kind=='home_release':
+                f['homed'].append(a['axis']);f['position']['XYZ'.index(a['axis'])]=0.
+                f['reference_valid']=len(set(f['homed']))==3
             ok=True
         elif row['reason']=='completed':
             if any(row['drivers'][n]['sent']!=abs(m['counts'][i]) for i,n in enumerate(('A','B','Z','E'))):
@@ -2662,7 +2675,7 @@ class InventureMCU:
             self._load_test_readiness(context,self.panel_temperature(context['tool'],now)[0],now)
             return dict(f['snapshot']) if context['ready_latched'] else None
         if kind=='mode':return self._factory_session(context,action['mode'],action['monitor'])
-        if kind in ('home','move'):
+        if kind in ('home','home_release','move'):
             return self._factory_poll_move(context) if f['move'] is not None else self._factory_begin_move(context,action)
         if kind in ('wait_a','wait_unload'):
             if 'until' not in action:action['until']=now+action['timeout_s']
