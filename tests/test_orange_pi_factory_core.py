@@ -139,27 +139,58 @@ class FactoryCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(core.FactoryError, 'negative X'):
             core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', SWITCH_X=10.5))
 
-    def test_t1_oem_uses_cassette_temperature_and_unload_records(self):
+    def test_both_tools_use_shared_cassette_material_records_in_each_speed_profile(self):
         records = (
-            ('UNKNOWN', 230, 30, 70), ('Z-SUPPORT', 235, 50, 50),
-            ('Z-SUPPORT-PLUS', 240, 30, 70), ('Z-SUPPORT PREMIUM', 230, 30, 70),
-            ('BASF Ultrafuse BVOH', 230, 30, 70),
+            # Name, stock/effective target, U1/U2, feeder duration and multiplier.
+            ('UNKNOWN', 230, 230, 30, 70, 1000, 1.75),
+            ('Z-PLA', 230, 230, 30, 70, 1000, 1.75),
+            ('Z-PLA Pro', 200, 200, 30, 70, 1000, 1.75),
+            ('Z-PETG', 245, 230, 50, 50, 1000, 1.75),
+            ('Z-ABS', 275, 230, 30, 70, 1000, 1.75),
+            ('Z-SEMIFLEX', 240, 240, 30, 70, 1500, 3.),
+            ('Z-SUPPORT', 235, 235, 50, 50, 1000, 1.75),
+            ('Z-SUPPORT-PLUS', 240, 240, 30, 70, 1000, 1.75),
+            ('Z-SUPPORT PREMIUM', 230, 230, 30, 70, 1000, 1.75),
+            ('BASF Ultrafuse BVOH', 230, 230, 30, 70, 1000, 1.75),
         )
-        for name, target, u1, u2 in records:
-            with self.subTest(material=name):
-                p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL=name))
-                self.assertEqual((p['target'], p['unload_l1'], p['unload_l2']), (target, u1, u2))
-                self.assertEqual((p['feeder_ms'], p['feeder_k']), (1000, 1.75))
-        overridden = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='Z-SUPPORT',
-                                             TARGET=220, UNLOAD_L2=45))
-        self.assertEqual((overridden['target'], overridden['unload_l2']), (220, 45))
-        for params in (dict(TOOL='T0', MATERIAL='Z-SUPPORT'),
-                       dict(TOOL='T1', MATERIAL='Z-SUPPORT'),
-                       dict(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='Z-PLA'),
-                       dict(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='EXTERNAL-SUPPORT')):
-            with self.subTest(params=params):
-                with self.assertRaisesRegex(core.FactoryError, 'MATERIAL'):
-                    core.parameters(Command(**params))
+        for tool in ('T0', 'T1'):
+            for profile in ('SERVICE', 'OEM'):
+                baseline = core.parameters(Command(TOOL=tool, SPEED_PROFILE=profile))
+                for name, stock, target, u1, u2, feeder_ms, feeder_k in records:
+                    with self.subTest(tool=tool, profile=profile, material=name):
+                        p = core.parameters(Command(TOOL=tool, SPEED_PROFILE=profile, MATERIAL=name))
+                        self.assertEqual((p['oem_material_target_c'], p['target']), (stock, target))
+                        self.assertEqual((p['unload_l1'], p['unload_l2']), (u1, u2))
+                        self.assertEqual((p['feeder_ms'], p['feeder_k']), (feeder_ms, feeder_k))
+                        for field in ('tool', 'speed_profile', 'switch_x', 'service_x', 'travel_speed'):
+                            self.assertEqual(p[field], baseline[field], field)
+
+    def test_shared_material_allows_explicit_overrides_and_retains_cassette_boundaries(self):
+        profiles = core.profiles(common={'MATERIAL': 'Z-SUPPORT', 'TARGET': 223},
+                                 t1={'UNLOAD_L1': 45, 'FEEDER_MS': 900})
+        overridden = core.parameters(Command(TOOL='T1', TARGET=220, UNLOAD_L2=45), profiles)
+        self.assertEqual((overridden['oem_material_target_c'], overridden['target']), (235, 220))
+        self.assertEqual((overridden['unload_l1'], overridden['unload_l2']), (45, 45))
+        self.assertEqual(overridden['feeder_ms'], 900)
+        for invalid in (dict(MATERIAL='EXTERNAL-SUPPORT'), dict(MATERIAL='not a cartridge'),
+                        dict(MATERIAL='Z-ABS', TARGET=275)):
+            with self.subTest(invalid=invalid), self.assertRaises(core.FactoryError):
+                core.parameters(Command(**invalid))
+
+    def test_cross_slot_material_runs_load_and_unload_with_selected_tool_path(self):
+        for tool, name, unload in (('T0', 'Z-SUPPORT', (50, 50)),
+                                   ('T1', 'Z-PLA', (30, 70))):
+            with self.subTest(tool=tool, material=name):
+                p = core.parameters(Command(TOOL=tool, SPEED_PROFILE='OEM', MATERIAL=name))
+                loaded = Executor(p, hook=short_feedback).run()
+                self.assertEqual(loaded.done['terminal'], 'L1')
+                selector = next(action for action in loaded.actions
+                                if action.get('leg') == 'selector_press')
+                self.assertEqual(selector['x'], p['switch_x'])
+                unloaded = Executor(p, operation='UNLOAD').run()
+                self.assertEqual(unloaded.done['terminal'], 'UNLOAD')
+                self.assertEqual(tuple(unloaded.in_phase(phase,'retract_until_quiet')[0]['mm']
+                                       for phase in ('U1','U2')), unload)
 
     def test_t0_legacy_tuned_points_translate_to_raw_release_coordinates(self):
         configured = core.profiles(t0={'APPROACH_X': 135, 'SWITCH_X': 150,

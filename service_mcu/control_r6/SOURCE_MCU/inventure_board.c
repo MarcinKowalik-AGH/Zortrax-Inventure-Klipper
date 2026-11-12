@@ -44,6 +44,7 @@ static volatile uint8_t control_mode,control_latched,control_pwm_bypass;
 static volatile uint16_t control_heater_duty[4];
 static uint8_t control_aux_allowed(void);
 static uint8_t control_busy(void);
+static uint8_t control_door_policy_busy(void);
 static void control_guard(uint32_t now);
 static void control_fan_tick(void);
 static uint8_t control_service_fan(unsigned i);
@@ -57,6 +58,8 @@ static uint8_t t0_heat_busy(void);
 static void t0_heat_manual_cancel(void);
 static uint8_t motor_test_busy(void);
 static void motor_test_end(uint8_t reason);
+static uint8_t door_policy_enabled(void);
+static void lock_release(unsigned i);
 static uint8_t xy_seek_busy(void);
 static void xy_seek_cancel(void);
 static void transport_sample(uint32_t now);
@@ -113,6 +116,8 @@ uint8_t inventure_is_armed(void) { return control_mode==1 && !fault && !control_
 
 /* Standard GPIO/software-PWM requests remain unable to energize while unarmed. */
 uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
+    if (r == GPIOA && (bit == BIT(2) || bit == BIT(3)) && !door_policy_enabled())
+        return 0;
     if (inventure_is_armed()) {
         int fi=fan_index(r,bit);
         if(fi>=0)fan_gpio_observe(r,bit,value);
@@ -163,6 +168,9 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
 }
 
 uint32_t inventure_filter_pwm(void *reg, uint32_t value, uint32_t maximum) {
+    if ((reg == (void*)&TIM5->CCR3 || reg == (void*)&TIM5->CCR4)
+        && !door_policy_enabled())
+        return 0;
     value = iv9_clamp(value, maximum);
     int hi=-1;
     if(reg==(void*)&TIM5->CCR1)hi=0;
@@ -235,7 +243,7 @@ static void force_safe(void) {
     control_shutdown();
     if (xy_seek_busy()) xy_seek_end(XS_SHUTDOWN);
     if (motor_test.running) motor_test_end(MT_SHUTDOWN);
-    door_policy_flags=0;
+    door_policy_flags=DOOR_POLICY_DEFAULT_FLAGS;
     t0_heat_end(TH_SHUTDOWN, timer_read_time());
     fan_manual_abort();
     cool_mask=0;cool_applied=255;cool_policy_started=0;
@@ -271,11 +279,20 @@ static uint_fast8_t feeder_end(struct timer *t) {
     gpio_out_write(feeder_run[i],0); feeder_running[i]=0;
     return SF_DONE;
 }
+// Called with IRQs excluded, including by the timer dispatcher.
+static void lock_release(unsigned i) {
+    if (locks_pulling[i]) sched_del_timer(&lock_timer[i]);
+    locks_on[i]=locks_pulling[i]=0;
+    if (auxiliary_ready) gpio_pwm_write(locks[i],0);
+    GPIOA->BSRR=BIT(i ? 2 : 3)<<16;
+}
+
 static uint_fast8_t lock_hold(struct timer *t) {
     unsigned i = t == &lock_timer[0] ? 0:1;
-    if(locks_on[i] && (inventure_is_armed() || control_aux_allowed())) gpio_pwm_write(locks[i],60);
-    else gpio_pwm_write(locks[i],0);
     locks_pulling[i]=0;
+    if (locks_on[i] && door_policy_enabled()
+        && (inventure_is_armed() || control_aux_allowed())) gpio_pwm_write(locks[i],60);
+    else lock_release(i);
     return SF_DONE;
 }
 
@@ -395,13 +412,13 @@ DECL_COMMAND(command_inventure_feeder,"inventure_feeder channel=%c direction=%c 
 void command_inventure_lock(uint32_t *args) {
     unsigned i=args[0], on=args[1];
     if(i>1 || on>1 || !auxiliary_ready) shutdown("Inventure invalid lock request");
-    if(on && !inventure_is_armed() && !control_aux_allowed()) shutdown("Inventure lock not armed");
     irqstatus_t flag=irq_save();
-    if(!on) {
-        gpio_pwm_write(locks[i],0);
-        if(locks_pulling[i]) sched_del_timer(&lock_timer[i]);
-        locks_on[i]=locks_pulling[i]=0;
+    if(!on || !door_policy_enabled()) {
+        lock_release(i);
         irq_restore(flag);return;
+    }
+    if(!inventure_is_armed() && !control_aux_allowed()) {
+        irq_restore(flag);shutdown("Inventure lock not armed");
     }
     if(locks_on[i]) {irq_restore(flag);return;} // duplicate never extends pull
     locks_on[i]=locks_pulling[i]=1;

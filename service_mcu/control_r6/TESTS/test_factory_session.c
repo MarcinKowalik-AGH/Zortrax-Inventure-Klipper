@@ -125,7 +125,9 @@ static void mixed_motion_and_PID(void) {
 }
 static void guards_and_STOP(void) {
     for(unsigned why=0;why<10;why++) {
-        factory_reset(0,1);factory_input(0,1,1);output(1,6,64,5000,250,101);
+        factory_reset(0,1);
+        if(why==7)control_set_door_policy(1);
+        factory_input(0,1,1);output(1,6,64,5000,250,101);
         factory(1,0,IVT_FORWARD,1,1000,1500,501,0);
         assert(TIM9->CCR2==1);
         if(why==0){mock_now=fs.deadline;command_inventure_heartbeat(NULL);factory_adc(1);control_guard(mock_now);assert(fs.reason==3);}
@@ -176,9 +178,30 @@ static void fast_dispatch(uint32_t late,uint8_t hardware_finishes) {
 
 static void fast_start(unsigned tool,unsigned rate,unsigned b,unsigned e) {
     factory_reset(0xffff0000u,1);
+    control_set_door_policy(1);
     factory(1,tool,IVT_STOP,0,1000,1500,501,0);
     motion(1,tool?8:0,24000,b,0,e,rate,2,2000,0,0,0,601);
     assert(fs.active && cm.active && cm.fast_mask);
+}
+static void factory_with_open_doors(void) {
+    for(unsigned tool=0;tool<2;tool++) {
+        factory_reset(0,1);
+        GPIOB->IDR&=~BIT(10);GPIOE->IDR&=~BIT(15);
+        assert(!door_policy_enabled() && !door_closed_mask());
+        factory_input(tool,1,1);
+        output(1,6+tool,64,5000,250,101);
+        factory(1,tool,IVT_FORWARD,1,1000,1500,501,0);
+        assert(fs.active && !factory_reply[3] && transport[tool].running);
+        motion(1,tool?8:0,640,640,0,64,32000,2,500,0,0,0,601);
+        assert(cm.active && cm.fast_mask);
+        while(cm.active)fast_dispatch(0,1);
+        assert(cm.reason==CR_COMPLETE && cm.sent[0]==640 && cm.sent[3]==64);
+        control_guard(mock_now);
+        assert(fs.active && !TIM5->CCR3 && !TIM5->CCR4);
+        control_command(2,0);
+        assert(!fs.active && !TIM9->CCR2 && !co[6+tool].duty);
+    }
+    puts("PASS both FACTORY cassette paths with both doors open, selected heater and STEP, no coil engagement");
 }
 
 static void fast_factory_cadence(void) {
@@ -478,7 +501,7 @@ static void axis_thermal_guard(void) {
 
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
-    fast_factory_cadence();fast_factory_guards();fast_factory_right_cassette();
+    fast_factory_cadence();fast_factory_guards();fast_factory_right_cassette();factory_with_open_doors();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

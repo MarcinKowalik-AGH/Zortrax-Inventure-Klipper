@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-DUAL'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -273,6 +273,8 @@ class InventureMCU:
         self.motor_test_last = {}
         self.motor_test_token = int(self.reactor.monotonic()*1000000) & 0xffffffff
         self.door_policy_abi = 0
+        self.door_policy_global = False
+        self.door_policy_default_enabled = True
         self.door_policy_last = {}
         self.xy_seek_abi = 0
         self.xy_seek_token = self.motor_test_token
@@ -486,6 +488,11 @@ class InventureMCU:
         if self.door_policy_abi == 1:
             if int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_DISABLE_BIT', -1)) != 3:
                 raise self.printer.config_error('Door policy MCU flag does not match this host')
+            self.door_policy_global = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_GLOBAL', 0)) == 1
+            default_enabled = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_DEFAULT_ENABLED', 1))
+            if default_enabled not in (0,1):
+                raise self.printer.config_error('Invalid MCU door policy default')
+            self.door_policy_default_enabled = bool(default_enabled)
             self.commands['door_policy'] = self.mcu.lookup_query_command(
                 'inventure_door_policy action=%c enabled=%c', DOOR_POLICY_RESPONSE)
         if self.motor_test_abi in (1, 2):
@@ -1103,19 +1110,22 @@ class InventureMCU:
         if enabled is not None and not self.connected:
             raise ValueError('MCU is not connected')
         action=int(enabled is not None)
+        self.door_policy_last={}
         p=self._thermal_query_send(wire,[action,1 if enabled is None else enabled],start=bool(action))
+        global_policy=getattr(self,'door_policy_global',False)
         bounds={'enabled':1,'disable_bit':1,'closed_mask':3,'lock_command_mask':3,
                 'motor_busy':1,'reject':3}
         if (any(type(p.get(k)) is not int or not 0<=p[k]<=v for k,v in bounds.items())
             or p['enabled']+p['disable_bit'] != 1
-            or (action and not p['reject'] and p['enabled'] != enabled)):
-            self.door_policy_last={}
+            or (action and not p['reject'] and p['enabled'] != enabled)
+            or (global_policy and not p['enabled'] and p['lock_command_mask'])):
             raise ValueError('Invalid MCU door policy response')
         state=dict(enabled=bool(p['enabled']),oem_disable_bit=p['disable_bit'],
             oem_disable_bit_index=3,front_door_closed=bool(p['closed_mask']&2),
             lid_closed=bool(p['closed_mask']&1),lock_command_mask=p['lock_command_mask'],
             physical_lock_position_verified=False,motor_busy=bool(p['motor_busy']),
-            reject=DOOR_POLICY_REJECTS[p['reject']],scope='bounded_motor_tests',
+            reject=DOOR_POLICY_REJECTS[p['reject']],scope='global' if global_policy else 'bounded_motor_tests',
+            default_enabled=bool(getattr(self,'door_policy_default_enabled',True)),
             resets_on_mcu_restart=True)
         self.door_policy_last=state
         return state
@@ -1124,8 +1134,7 @@ class InventureMCU:
         enabled=None if gcmd.get('ENABLE',None) is None else gcmd.get_int('ENABLE',minval=0,maxval=1)
         try:state=self._door_policy_query(enabled)
         except Exception as exc:
-            if enabled == 0 and 'door_policy' in self.commands:
-                self.door_policy_last={}
+            if enabled == 0 and 'door_policy' in self.commands and not getattr(self,'door_policy_global',False):
                 try:self.commands['door_policy'].send([1,1])
                 except Exception:logging.exception('Could not confirm restoring door policy')
             raise gcmd.error(str(exc))
@@ -1586,6 +1595,8 @@ class InventureMCU:
             'heat_test_abi':getattr(self,'heat_test_abi',0),
             'motor_test_abi':getattr(self,'motor_test_abi',0),
             'door_policy_abi':getattr(self,'door_policy_abi',0),
+            'door_policy_global':getattr(self,'door_policy_global',False),
+            'door_policy_default_enabled':bool(getattr(self,'door_policy_default_enabled',True)),
             'xy_seek_abi':getattr(self,'xy_seek_abi',0),
             'xy_repeat_abi':getattr(self,'xy_repeat_abi',0),
             'control_abi':getattr(self,'control_abi',0),
@@ -3165,6 +3176,11 @@ class InventureMCU:
         if value:self._require_permission(gcmd)
         filament=self.printer.lookup_object('inventure_filament',None)
         if filament is not None and filament.running and not filament.in_scope():raise gcmd.error('P13 owns lock state during filament procedure')
+        if value and getattr(self,'door_policy_global',False):
+            try: policy=self._door_policy_query()
+            except Exception as exc:raise gcmd.error(str(exc))
+            if policy['reject'] or not policy['enabled']:
+                raise gcmd.error('Door locks are disabled by INVENTURE_DOOR_POLICY')
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['lock'].send([i,value])
 

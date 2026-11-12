@@ -2,9 +2,13 @@
 // Bounded raw-driver qualification. Never arms native motion or establishes XYZ.
 #line 9000 "inventure_motor_test.inc"
 DECL_CONSTANT("INVENTURE_MOTOR_TEST_ABI", 2);
-DECL_CONSTANT_STR("INVENTURE_MOTOR_TEST_RELEASE", "RC8-CONTROL-R7-FACTORY-DUAL");
+DECL_CONSTANT_STR("INVENTURE_MOTOR_TEST_RELEASE", "RC8-CONTROL-R7-CASSETTE-POLICY");
 DECL_CONSTANT("INVENTURE_DOOR_POLICY_ABI", 1);
 DECL_CONSTANT("INVENTURE_DOOR_POLICY_DISABLE_BIT", 3);
+DECL_CONSTANT("INVENTURE_DOOR_POLICY_GLOBAL", 1);
+#define DOOR_POLICY_DEFAULT_ENABLED 0
+#define DOOR_POLICY_DEFAULT_FLAGS (DOOR_POLICY_DEFAULT_ENABLED ? 0 : BIT(3))
+DECL_CONSTANT("INVENTURE_DOOR_POLICY_DEFAULT_ENABLED", DOOR_POLICY_DEFAULT_ENABLED);
 DECL_CONSTANT("INVENTURE_MOTOR_TEST_HZ", 400);
 DECL_CONSTANT("INVENTURE_MOTOR_TEST_PULSE_US", 100);
 DECL_CONSTANT("INVENTURE_MOTOR_ENABLE_ON", 1);
@@ -34,9 +38,8 @@ static struct timer motor_timer;
 
 // OEM r0323 callbacks 0x080173E4/0x0801740C clear/set system bit 3.
 // 0x08014F74 returns before door checks and lock engagement when it is set.
-// Keep that polarity in our own RAM; never write OEM NVM or bootloader data.
-// This diagnostic APP keeps native motion unarmed and lock coils released.
-static uint8_t door_policy_flags;
+// The lab build starts OFF. Keep the OEM polarity in this application's RAM.
+static volatile uint8_t door_policy_flags=DOOR_POLICY_DEFAULT_FLAGS;
 static uint8_t door_policy_enabled(void) {
     return !(door_policy_flags & BIT(3));
 }
@@ -51,13 +54,15 @@ void command_inventure_door_policy(uint32_t *args) {
     uint8_t reject=0;
     if (action > 1 || (action == 1 && enabled > 1)) reject=1;
     else if (action == 1 && enabled != door_policy_enabled()) {
-        if (motor_test_busy() || t0_heat_busy() || fan_manual_active()
-            || feeder_running[0] || feeder_running[1]
-            || locks_on[0] || locks_on[1]) reject=2;
+        if (motor_test.running || xy_seek_busy() || control_door_policy_busy()
+            || t0_heat_busy() || fan_manual_active()) reject=2;
         else if (fault || !initialized || !sample_started || !heartbeat_live
                  || iv9_due(now,heartbeat_deadline)) reject=3;
         else if (enabled) door_policy_flags &= ~BIT(3);
-        else door_policy_flags |= BIT(3);
+        else {
+            door_policy_flags |= BIT(3);
+            lock_release(0);lock_release(1);
+        }
     }
     uint8_t active=door_policy_enabled(), closed=door_closed_mask();
     uint8_t locks_mask=(!!locks_on[0]) | ((!!locks_on[1]) << 1);

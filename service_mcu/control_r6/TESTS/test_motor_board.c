@@ -8,7 +8,7 @@ static void motor_reset(uint32_t clock) {
     memset(&xy_seek,0,sizeof(xy_seek));
     if (motor_test.timer_added) sched_del_timer(&motor_timer);
     memset(&motor_test,0,sizeof(motor_test));
-    door_policy_flags=0;
+    door_policy_flags=DOOR_POLICY_DEFAULT_FLAGS;
     heat_reset(clock);
     GPIOB->IDR=BIT(10); GPIOE->IDR=BIT(15); GPIOC->IDR=BIT(14);
 }
@@ -38,8 +38,8 @@ static void door_command(unsigned action,unsigned enabled) {
 }
 static void round_trip(unsigned m,uint32_t clock,uint8_t unlocked) {
     motor_reset(clock);
+    door_command(1,!unlocked);
     if(unlocked) {
-        door_command(1,0);
         assert(door_policy_flags==BIT(3));
         GPIOB->IDR&=~BIT(10);GPIOE->IDR&=~BIT(15);
     }
@@ -78,7 +78,8 @@ static void round_trip(unsigned m,uint32_t clock,uint8_t unlocked) {
 }
 static void abort_cases(void) {
     for(unsigned why=0;why<6;why++) {
-        motor_reset(0xffffff00u);motor_command(1,0,1,100+why);motor_tick(1);
+        motor_reset(0xffffff00u);door_command(1,1);
+        motor_command(1,0,1,100+why);motor_tick(1);
         assert(motor_test.high);
         switch(why) {
         case 0: heartbeat_live=0;break;
@@ -110,9 +111,10 @@ static void abort_cases(void) {
     assert(GPIOE->BSRR==(BIT(6)<<16)); // later raw_safe_outputs keeps PE10 low too
 }
 static void door_policy_cases(void) {
-    // Default still requires both actual closed inputs; queries and invalid
-    // actions cannot relax it. Sensor masks keep OEM lid=1/front=2 order.
-    motor_reset(0);assert(door_policy_enabled() && door_closed_mask()==3);
+    // Enabling requires both closed inputs. Queries and invalid actions
+    // cannot change the policy; input masks preserve lid=1/front=2 order.
+    motor_reset(0);assert(!door_policy_enabled() && door_closed_mask()==3);
+    door_command(1,1);assert(door_policy_enabled());
     door_command(0,0);door_command(2,0);door_command(1,2);
     assert(door_policy_enabled());
     GPIOB->IDR&=~BIT(10);assert(door_closed_mask()==1);
@@ -140,12 +142,12 @@ static void door_policy_cases(void) {
         motor_command(1,m,1,10+why);assert(!motor_test.running);
     }
     // Reject a policy change without readiness or during heat/cooldown.
-    motor_reset(0);heartbeat_live=0;door_command(1,0);assert(door_policy_enabled());
-    motor_reset(0);all_heat_adc();uint32_t heat[]={1,0};command_inventure_heat_test(heat);
+    motor_reset(0);door_command(1,1);heartbeat_live=0;door_command(1,0);assert(door_policy_enabled());
+    motor_reset(0);door_command(1,1);all_heat_adc();uint32_t heat[]={1,0};command_inventure_heat_test(heat);
     door_command(1,0);assert(door_policy_enabled());
     // Normal shutdown restores the default and still releases the driver.
-    motor_reset(0);door_command(1,0);motor_command(1,0,1,99);
-    inventure_board_shutdown();assert(door_policy_enabled() && !motor_test.running);
+    motor_reset(0);door_command(1,1);motor_command(1,0,1,99);
+    inventure_board_shutdown();assert(!door_policy_enabled() && !motor_test.running);
 }
 static void seek_command(unsigned action,unsigned axis,uint32_t token) {
     uint32_t args[]={action,axis,token};command_inventure_xy_seek(args);
@@ -206,7 +208,7 @@ static void seek_limits_and_stops(void) {
         assert(xy_seek.period==CONFIG_CLOCK_FREQ/XS_HZ);
     }
     for(unsigned why=0;why<7;why++) {
-        motor_reset(0);seek_command(1,0,71);seek_tick(1);assert(xy_seek.high);
+        motor_reset(0);door_command(1,1);seek_command(1,0,71);seek_tick(1);assert(xy_seek.high);
         if(why==0)heartbeat_live=0;
         if(why==1)GPIOB->IDR&=~BIT(10);
         if(why==2)GPIOC->IDR|=BIT(15);
@@ -329,6 +331,6 @@ int main(void) {
     repeat_success_cases();repeat_failure_cases();
     puts("PASS XY REPEAT R4: existing first approach, exact 1280-pair backoff, 5ms switch release, 640Hz slow approach, retained enable between stages, both axes/initial states/edge phases, stuck/early/missing target failures, cross-mode duplicate tokens, STOP, heartbeat, unrelated switch, shutdown and thermal exclusion");
     puts("PASS XY SEEK R3: paired edges, 100us HIGH, both target switches on HIGH/LOW, wrap, exact 102400 pulse limit, 40s timeout, no retract, already-active, X-held/Y-seek, unexpected switch, duplicate START, mutual exclusion, both STOP commands, shutdown and native STEP locks");
-    puts("PASS MOTOR R2: exact round trips with both door policies, OEM bit3/masks, default ON, rejected policy changes, 100us pulses, timer wrap, duplicate START, STOP, XY/Z limits, heartbeat, deadline, shutdown, heat exclusion and native STEP locks");
+    puts("PASS MOTOR R2: exact round trips with both door policies, OEM bit3/masks, default OFF, rejected policy changes, 100us pulses, timer wrap, duplicate START, STOP, XY/Z limits, heartbeat, deadline, shutdown, heat exclusion and native STEP locks");
     return 0;
 }

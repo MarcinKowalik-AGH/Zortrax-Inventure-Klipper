@@ -68,7 +68,9 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-FACTORY-DUAL'
+    assert c['INVENTURE_DOOR_POLICY_GLOBAL'] == 1
+    assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-CASSETTE-POLICY'
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
@@ -131,6 +133,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   axis_motion_z_max_hz=c['INVENTURE_AXIS_MOTION_Z_MAX_HZ'],
                   axis_motion_e_max_hz=c['INVENTURE_AXIS_MOTION_E_MAX_HZ'],
                   door_policy_abi=1, oem_door_disable_bit=3,
+                  door_policy_global=True, door_policy_default_enabled=False,
                   release=c['INVENTURE_HEAT_TEST_RELEASE'], baud_mode='InventureBoot_journal',
                   fallback_baud=250000,forced_baud=0,boot17_abi=1,
                   compiler=env['gcc'], fan_manual_response=response,

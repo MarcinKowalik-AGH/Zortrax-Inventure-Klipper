@@ -47,8 +47,9 @@ class ProcedureCoreTests(unittest.TestCase):
         self.assertEqual((p['unload_l1'],p['unload_l2'],p['target']),(50.,50.,230.))
         flex=core.parameters(PlannerCommand(MATERIAL='Z-FLEX'))
         self.assertEqual((flex['feeder_ms'],flex['feeder_k']),(1500,3.))
-        with self.assertRaisesRegex(core.FactoryError,'T0 cassette'):
-            core.parameters(PlannerCommand(TOOL='T1',MATERIAL='Z-PETG'))
+        right = core.parameters(PlannerCommand(TOOL='T1',MATERIAL='Z-PETG'))
+        self.assertEqual((right['tool'],right['unload_l1'],right['unload_l2'],right['target']),
+                         (1,50.,50.,230.))
 
     def test_standalone_select_is_cold_and_all_modules_finish_without_E(self):
         for tool in (0,1):

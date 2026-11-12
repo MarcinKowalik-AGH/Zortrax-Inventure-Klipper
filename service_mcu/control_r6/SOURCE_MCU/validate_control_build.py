@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-DUAL'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-CASSETTE-POLICY'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -228,6 +228,16 @@ def check_dictionary(path: Path) -> dict:
     for name, value in axis_motion.items():
         if conf.get(name) != value:
             raise ValueError(f'R7 axis timer dictionary mismatch: {name}')
+    door_policy = {'INVENTURE_DOOR_POLICY_ABI': 1, 'INVENTURE_DOOR_POLICY_DISABLE_BIT': 3,
+                   'INVENTURE_DOOR_POLICY_GLOBAL': 1, 'INVENTURE_DOOR_POLICY_DEFAULT_ENABLED': 0}
+    for name, value in door_policy.items():
+        if conf.get(name) != value:
+            raise ValueError(f'R7 global door policy dictionary mismatch: {name}')
+    door_command = 'inventure_door_policy action=%c enabled=%c'
+    door_response = ('inventure_door_policy_state enabled=%c disable_bit=%c closed_mask=%c '
+                     'lock_command_mask=%c motor_busy=%c reject=%c')
+    if door_command not in d.get('commands', {}) or door_response not in d.get('responses', {}):
+        raise ValueError('R7 must preserve the exact door policy protocol')
     factory_command='inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u'
     factory_response='inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u'
     if factory_command not in d.get('commands',{}):
@@ -262,6 +272,7 @@ def check_dictionary(path: Path) -> dict:
             'RC4_constants':rc4_constants,'RC4_new_commands':new_commands,'RC4_new_responses':new_responses, 'RC7_local_constants':new_config,
             'RC7_local_OLED_schema':'inventure_local_oled_query', 'RC7_forced_baud':int(forced),
             'FACTORY_MOTION_constants':factory_motion, 'AXIS_MOTION_constants':axis_motion,
+            'DOOR_POLICY_constants':door_policy,
             'axis_exact_command_schema':axis_command, **rc5}
 
 def validate(root: Path, destination: Path) -> dict:

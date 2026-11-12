@@ -42,6 +42,12 @@ class DoorPolicyTests(unittest.TestCase):
         h.commands={'door_policy':Wire(reply)};h.connected=True;h.door_policy_last={}
         return h,h.commands['door_policy']
 
+    def global_host(self,reply):
+        h,w=self.host(reply)
+        h.door_policy_global=True
+        h.door_policy_default_enabled=0
+        return h,w
+
     def test_status_is_read_only_and_explicit_disable_keeps_actual_inputs(self):
         h,w=self.host(policy());h.cmd_door_policy(Command())
         self.assertEqual(w.calls,[(0,1)]);self.assertTrue(h.door_policy_last['enabled'])
@@ -61,6 +67,91 @@ class DoorPolicyTests(unittest.TestCase):
         h,w=self.host(policy(enabled=0,disable_bit=0))
         with self.assertRaisesRegex(RuntimeError,'Invalid MCU'):h.cmd_door_policy(Command(ENABLE=0))
         self.assertEqual(w.calls,[(1,0),(1,1)]);self.assertEqual(h.door_policy_last,{})
+
+    def test_global_status_reports_startup_policy_and_raw_open_inputs(self):
+        h,w=self.global_host(policy(enabled=0,disable_bit=1,closed_mask=0))
+        command=Command()
+        h.cmd_door_policy(command)
+        self.assertEqual(w.calls,[(0,1)])
+        prefix,reply=command.lines[0].split(' ',1)
+        self.assertEqual(prefix,'V9_DOOR_POLICY')
+        state=json.loads(reply)
+        self.assertEqual(state['scope'],'global')
+        self.assertIs(state['default_enabled'],False)
+        self.assertIs(state['enabled'],False)
+        self.assertIs(state['front_door_closed'],False)
+        self.assertIs(state['lid_closed'],False)
+        self.assertEqual(state['lock_command_mask'],0)
+
+        w.reply=policy(closed_mask=1)
+        h.cmd_door_policy(Command(ENABLE=1))
+        self.assertEqual(w.calls[-1],(1,1))
+        state=h.door_policy_last
+        self.assertIs(state['enabled'],True)
+        self.assertIs(state['default_enabled'],False)
+        self.assertIs(state['front_door_closed'],False)
+        self.assertIs(state['lid_closed'],True)
+
+    def test_global_disable_rejects_malformed_response_without_reenabling(self):
+        h,w=self.global_host(policy(enabled=0,disable_bit=0))
+        with self.assertRaisesRegex(RuntimeError,'Invalid MCU'):
+            h.cmd_door_policy(Command(ENABLE=0))
+        self.assertEqual(w.calls,[(1,0)])
+        self.assertEqual(h.door_policy_last,{})
+
+    def test_global_disable_without_ack_discards_cached_policy(self):
+        h,w=self.global_host(policy())
+        h.cmd_door_policy(Command())
+        self.assertIs(h.door_policy_last['enabled'],True)
+
+        def lost_ack(data,**kw):
+            w.calls.append(tuple(data))
+            raise TimeoutError('Lost door policy reply')
+
+        w.send=lost_ack
+        with self.assertRaisesRegex(RuntimeError,'Lost door policy reply'):
+            h.cmd_door_policy(Command(ENABLE=0))
+        self.assertEqual(w.calls,[(0,1),(1,0)])
+        self.assertEqual(h.door_policy_last,{})
+
+    def test_global_off_readback_requires_both_lock_outputs_released(self):
+        for values,request in (({},(0,1)),({'ENABLE':0},(1,0))):
+            with self.subTest(values=values):
+                h,w=self.global_host(policy(enabled=0,disable_bit=1,lock_command_mask=2))
+                with self.assertRaisesRegex(RuntimeError,'Invalid MCU'):
+                    h.cmd_door_policy(Command(**values))
+                self.assertEqual(w.calls,[request])
+                self.assertEqual(h.door_policy_last,{})
+
+    def test_global_off_refuses_lock_engagement_and_allows_release(self):
+        h,w=self.global_host(policy(enabled=0,disable_bit=1,closed_mask=0))
+        h.allow_actuators=True
+        h.printer=types.SimpleNamespace(lookup_object=lambda *args:None)
+        lock=Wire({})
+        heartbeat=Wire({})
+        h.commands.update(lock=lock,heartbeat=heartbeat)
+
+        def send_with_preface(preface,preface_args,data,**kw):
+            preface.send(preface_args)
+            return w.send(data,**kw)
+
+        w.send_with_preface=send_with_preface
+        for channel in (0,1):
+            with self.assertRaisesRegex(RuntimeError,'(?i)door|lock'):
+                h.cmd_lock(Command(CHANNEL=channel,VALUE=1))
+            self.assertIs(h.door_policy_last['enabled'],False)
+        self.assertEqual(w.calls,[(0,1),(0,1)])
+        self.assertEqual(lock.calls,[])
+
+        for channel in (0,1):
+            h.cmd_lock(Command(CHANNEL=channel,VALUE=0))
+        self.assertEqual(lock.calls,[(0,0),(1,0)])
+        self.assertEqual(w.calls,[(0,1),(0,1)])
+
+        w.reply=policy()
+        h.cmd_lock(Command(CHANNEL=1,VALUE=1))
+        self.assertEqual(lock.calls[-1],(1,1))
+        self.assertEqual(w.calls[-1],(0,1))
 
     def test_old_mcu_does_not_silently_accept_the_setting(self):
         h,w=self.host(policy());h.commands={}

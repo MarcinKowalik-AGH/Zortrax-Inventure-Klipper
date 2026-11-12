@@ -1,4 +1,4 @@
-# Zortrax Inventure — CONTROL-R7-FACTORY-DUAL
+# Zortrax Inventure — CONTROL-R7-CASSETTE-POLICY
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
@@ -12,8 +12,10 @@ Profil `SPEED_PROFILE=OEM` odtwarza żądane prędkości XY r0323 dla obu
 kaset. Przejazdy i czyszczenie używają F8000, oscylacje L1/L4 F3000,
 a docisk selektora F250. T1 korzysta z drugiej, prawej kasety
 (kanał MCU 1) i ma własną trasę od zwolnionych krańcówek X/Y.
-Szybki profil T1 wymaga MCU FACTORY-DUAL. T0 OEM działa także z MCU
-FACTORY-SPEED i ALL-AXIS-SPEED, a profil SERVICE z MCU FACTORY-FEED.
+Szybki profil T1 działa z MCU CASSETTE-POLICY lub FACTORY-DUAL.
+T0 OEM działa także z MCU FACTORY-SPEED i ALL-AXIS-SPEED, a profil SERVICE
+z MCU FACTORY-FEED. Oba tory przyjmują te same materiały modelowe
+i podporowe w profilach OEM i SERVICE.
 [Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
@@ -90,9 +92,14 @@ PARAMS odczytuje i waliduje nastawy. Po aktualizacji hosta i MCU użyj
 `factory_abi: 1`, `factory_feed_clock: 1` i `factory_motion_abi: 1`.
 Pole `factory_motion_tools: 3` oznacza obsługę T0 i T1.
 
-Pierwszą próbę prędkości OEM wykonaj na zimno w konsoli Fluidd. Jeżeli
-test wymaga otwartych osłon, wydaj `INVENTURE_DOOR_POLICY ENABLE=0`
-po wybraniu SERVICE. Podczas ruchu trzymaj ręce poza obszarem pracy.
+MCU CASSETTE-POLICY uruchamia się z globalnym `Door lock` wyłączonym.
+Przed pierwszą próbą przy otwartych osłonach sprawdź we Fluidd
+`INVENTURE_DOOR_POLICY`. Oczekiwane pola to `scope: global`,
+`enabled: false` i `lock_command_mask: 0`. Próby na starszym MCU
+zaczynają się od `INVENTURE_DOOR_POLICY ENABLE=0` po restarcie.
+[Opcja drzwi i diagnostyka](docs/OEM_DOOR_POLICY.md).
+
+Pierwszą próbę prędkości OEM wykonaj na zimno.
 
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
@@ -135,10 +142,24 @@ INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX
 INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
 ```
 
-`MATERIAL` ustawia temperaturę i długości wycofania T1 w profilu OEM. Z-SUPPORT
-używa 235°C i budżetów 50/50 mm. Z-SUPPORT-PLUS używa 240°C
-i 30/70 mm. Z-SUPPORT-PREMIUM i BASF-ULTRAFUSE-BVOH używają
-230°C i 30/70 mm. `TARGET` pozwala jawnie nadpisać temperaturę.
+`TOOL` wybiera dyszę i kasetę, a `MATERIAL` określa profil filamentu
+dla AUTO i UNLOAD. Z-SUPPORT używa 235°C i budżetów 50/50 mm,
+Z-SUPPORT-PLUS 240°C i 30/70 mm, a Z-SUPPORT-PREMIUM oraz
+BASF-ULTRAFUSE-BVOH 230°C i 30/70 mm. Te same nastawy obowiązują
+dla lewej i prawej kasety. `TARGET` jawnie nadpisuje temperaturę.
+
+Przykłady z materiałem podporowym w lewej kasecie i modelowym w prawej.
+Odczyty PARAMS pozwalają sprawdzić nastawy przed uruchomieniem AUTO.
+
+| Kaseta i materiał | Podgląd nastaw |
+|---|---|
+| T0, Z-SUPPORT | `INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT` |
+| T1, Z-PLA | `INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-PLA` |
+
+Fabryczny cel temperatury powyżej 240°C pozostaje widoczny w
+`oem_material_target_c`. Wtedy domyślny cel tej procedury wynosi 230°C.
+Przed uruchomieniem sprawdź efektywny `target` dla rzeczywistego
+filamentu. [Zakres temperatur i profile materiałowe](docs/FACTORY_LOAD_2026-11-10.md#profile-materiałowe-obu-kaset).
 
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
@@ -168,22 +189,27 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_FACTORY_DUAL_BOOT17.zip` z aplikacją
-`MCU/INVENTUR.IVB` do bootloadera 1.7. Próbę T0 z profilem OEM można
-dokończyć na wydaniu FACTORY-SPEED. Po wgraniu FACTORY-DUAL wykonaj
-`FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`.
+`INVENTURE_MCU_CONTROL_R7_CASSETTE_POLICY_BOOT17.zip` z aplikacją
+`MCU/INVENTUR.IVB` do bootloadera 1.7. Po wgraniu wykonaj
+`FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`. Nowe profile materiałowe
+są dostępne po aktualizacji hosta również z dotychczasowym MCU
+obsługującym daną procedurę. Domyślna globalna opcja drzwi wymaga
+CASSETTE-POLICY.
 
 ## Po aktualizacji hosta
 
 ```gcode
 INVENTURE_VERSION
+INVENTURE_DOOR_POLICY
 INVENTURE_CONTROL MODE=SERVICE
-INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-DUAL`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY`, `mcu_release` = `RC8-CONTROL-R7-CASSETTE-POLICY`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
+`door_policy_global: true` i `door_policy_default_enabled: false` opisują
+politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza
+kontrolę osłon w bieżącej sesji, gdy drukarka jest bezczynna.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.
 `factory_feed_clock: 1` potwierdza obsługę zegara kasety w tej sesji.
@@ -216,8 +242,9 @@ INVENTURE_LOAD_TEST ACTION=RETRACT TOOL=T0 TARGET=230 STEPS=128850 SMOOTH=1
 Oba napędy cofają ciągle, po czym grzanie automatycznie się wyłącza.
 [Podstawa długości, polecenia, wynik i STOP](docs/RETRACT_2026-11-10.md).
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
-`ENABLE=0` zachowuje ustaloną możliwość obserwacji przy otwartych drzwiach
-oraz klapie. Ich surowe odczyty nadal są widoczne. Restart MCU przywraca kontrolę osłon.
+`ENABLE=0` pozwala na obserwację przy otwartych drzwiach i klapie
+z wyłączonymi zamkami. Surowe odczyty pozostają widoczne. Po restarcie
+MCU CASSETTE-POLICY znów stosuje ustawienie wyłączone.
 
 Pierwsza wspólna próba ładowania z lewej kasety, z podłączoną rurką i wybranym T0:
 

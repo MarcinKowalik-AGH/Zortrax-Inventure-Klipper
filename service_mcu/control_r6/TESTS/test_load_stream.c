@@ -51,7 +51,9 @@ static void continuous(unsigned steps,uint32_t start_time) {
 }
 static void guards_and_replay(void) {
     for(unsigned why=0;why<12;why++) {
-        load_reset(0);output(1,6,64,1500,250,100);
+        load_reset(0);
+        if(why==11)control_set_door_policy(1);
+        output(1,6,64,1500,250,100);
         stream(1,171800,1536,115000,1500,101,0);next_step();assert(sl.active);
         if(why==0)control_command(2,0);
         if(why==1){heartbeat_live=0;control_guard(mock_now);}

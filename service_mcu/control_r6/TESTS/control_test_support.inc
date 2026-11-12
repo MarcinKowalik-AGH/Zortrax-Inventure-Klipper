@@ -6,6 +6,9 @@
 static void control_command(unsigned action,unsigned mode) {
     uint32_t args[]={action,mode};command_inventure_control(args);
 }
+static void control_set_door_policy(unsigned enabled) {
+    uint32_t args[]={1,enabled};command_inventure_door_policy(args);
+}
 static void control_adc(void) {
     all_heat_adc();inventure_adc_observe(ADC3,9,3680);inventure_adc_observe(ADC3,14,3680);
 }
@@ -23,7 +26,7 @@ static void control_reset(uint32_t now) {
     for(unsigned i=0;i<8;i++){control_min[i]=-20;control_max[i]=caps[i];}
     heat_reset(now);control_adc();
     GPIOB->IDR=BIT(10);GPIOE->IDR=BIT(15);GPIOC->IDR=BIT(14);
-    door_policy_flags=0;command_inventure_aux_config(NULL);
+    door_policy_flags=DOOR_POLICY_DEFAULT_FLAGS;command_inventure_aux_config(NULL);
     control_command(1,CT_SERVICE);assert(control_mode==CT_SERVICE && !inventure_is_armed());
 }
 static void motion(unsigned action,unsigned dirs,uint32_t a,uint32_t b,uint32_t z,uint32_t e,

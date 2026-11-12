@@ -1,9 +1,9 @@
-# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-DUAL
+# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-CASSETTE-POLICY
 
-Host `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne. Profil
 `SPEED_PROFILE=OEM` odtwarza żądane prędkości przejazdów i oscylacji r0323
-dla T0 i T1. Szybka procedura T1 wymaga MCU `RC8-CONTROL-R7-FACTORY-DUAL`.
+dla T0 i T1. Szybka procedura T1 działa z MCU CASSETTE-POLICY i FACTORY-DUAL.
 T0 OEM działa też z MCU FACTORY-SPEED i ALL-AXIS-SPEED. Profil
 serwisowy działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
@@ -21,9 +21,11 @@ Poprzednie `ACTION=LOAD` i `ACTION=RETRACT` pozostają osobnymi próbami
 stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 `TUBE_SECONDS`, `PURGE_STEPS`, `SMOOTH` ani `RATE`.
 
-Procedura SERVICE zakłada zamontowaną kasetę i podłączoną rurkę oraz pomija
-autoryzację RFID i zapis salda kasety. Odpowiedni `MATERIAL` podaje operator.
-Zewnętrzna szpula ma osobną procedurę.
+Procedura SERVICE zakłada zamontowaną kasetę i podłączoną rurkę.
+Operator wybiera `TOOL` według toru kasety i `MATERIAL` według
+filamentu. Wspólny katalog materiałów modelowych i podporowych działa
+dla obu torów w OEM i SERVICE. Obsługa kasety opiera się na tym
+ręcznym wyborze. Zewnętrzna szpula ma osobną procedurę.
 Testy programu sprawdzają parametry i żądane kroki. Czasy przejazdów,
 pozycję karetki i reakcję mechaniki przy szybszym ruchu trzeba zweryfikować
 na drukarce.
@@ -33,10 +35,11 @@ na drukarce.
 Pierwsze MCU R7-FACTORY zgłaszało RUN podajnika w SERVICE przy zablokowanym
 zegarze PE6 (TIM9 CH2). Wersja FEED włącza zegar w sesji FACTORY. Host
 sprawdza tę obsługę przed startem procedur z napędem kasety.
-MCU FACTORY-DUAL udostępnia szybkie ruchy w sesji FACTORY obu narzędzi.
+MCU CASSETTE-POLICY udostępnia szybkie ruchy w sesji FACTORY obu
+narzędzi i domyślnie wyłącza globalną opcję Door lock.
 
 1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
-   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_DUAL_BOOT17.zip`
+   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_CASSETTE_POLICY_BOOT17.zip`
    na kartę i zainstaluj aplikację przez InventureBoot 1.7.
 2. Zaktualizuj host w terminalu Orange Pi przez SSH.
 
@@ -57,11 +60,12 @@ Po ponownym połączeniu odczytaj wersje.
 INVENTURE_VERSION
 ```
 
-Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL`
-i MCU `RC8-CONTROL-R7-FACTORY-DUAL`.
+Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY`
+i MCU `RC8-CONTROL-R7-CASSETTE-POLICY`.
 W raporcie powinny być też widoczne
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
 `factory_motion_abi: 1`, `factory_motion_max_hz: 125000`, `factory_motion_tools: 3`,
+`door_policy_global: true`, `door_policy_default_enabled: false`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki
@@ -83,9 +87,16 @@ Włącz SERVICE.
 INVENTURE_CONTROL MODE=SERVICE
 ```
 
-Jeśli próba wymaga otwartych osłon, wyłącz ich kontrolę poniższym
-poleceniem. Restart MCU przywraca kontrolę osłon. Podczas ruchu
-trzymaj ręce poza obszarem pracy.
+Przy otwartych osłonach odczytaj bieżące ustawienie MCU.
+
+```gcode
+INVENTURE_DOOR_POLICY
+```
+
+Na CASSETTE-POLICY po restarcie zobaczysz `scope: global`,
+`enabled: false` i `lock_command_mask: 0`. Jeżeli wcześniej włączyłeś
+kontrolę osłon albo pracujesz na starszym MCU, wyłącz ją w bezczynnej
+drukarce poleceniem poniżej. [Globalne działanie opcji](OEM_DOOR_POLICY.md).
 
 ```gcode
 INVENTURE_DOOR_POLICY ENABLE=0
@@ -113,28 +124,28 @@ koszem prowadzi od X72 do X90, po czym głowica zmienia kierunek co 36 mm.
 INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T1 SPEED_PROFILE=OEM
 ```
 
-Po sprawdzeniu przejazdów wybierz jedną operację. Te dwa przykłady
-dotyczą lewej kasety T0 z materiałem Z-PLA. Dopasuj `MATERIAL`
-i `TARGET` do kasety.
+Po sprawdzeniu przejazdów wybierz jedną operację. Poniżej lewa kaseta
+z filamentem podporowym i prawa z modelowym. W obu przypadkach można
+wybrać także `SPEED_PROFILE=SERVICE`. Podaj rzeczywisty `MATERIAL`.
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
 ```
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
 ```
 
-Poniższe polecenia dotyczą prawej kasety T1. Podaj faktyczny `MATERIAL`.
-Przykłady dla Z-SUPPORT pobierają z profilu cel 235°C i budżety
-wycofania 50/50 mm. `TARGET` pozwala nadpisać temperaturę.
+Poniższe polecenia dotyczą prawej kasety T1 z Z-PLA. Z-SUPPORT wybiera
+235°C i budżety wycofania 50/50 mm. Z-PLA wybiera 230°C i 30/70 mm.
+`TARGET` pozwala nadpisać temperaturę.
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-PLA MAX_POWER=40
 ```
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-PLA MAX_POWER=40
 ```
 
 Stan bieżącej próby pokazuje STATUS. STOP przerywa pracę.
@@ -201,13 +212,13 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `A_TIMEOUT` | 5 | Oczekiwanie na A w L2 |
 | `LONG_MM`, `PULSE_COUNT`, `PULSE_QUIET` | 250, 6, 2 | Budżet E i potwierdzenie transportu L3 |
 | `FINAL_MM`, `FINAL_STARTS` | 100, 3 | Końcowe wyciskanie i potwierdzenie L4 |
-| `FEEDER_MS`, `FEEDER_K` | 1000, 1,75 | Czas pojedynczego doładowania AUTO i materiałowy współczynnik budżetu |
+| `FEEDER_MS`, `FEEDER_K` | 1000, 1,75. Z-FLEX i Z-SEMIFLEX 1500, 3. | Czas pojedynczego doładowania AUTO i materiałowy współczynnik budżetu |
 | `E_SPEED` | 1,6 | Prędkość osobnego E w długim podawaniu |
 | `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | SERVICE T0 30, 30, 250/60. SERVICE T1 20, 20, 4. OEM T0/T1 50, 8000/60, 250/60. | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
 | `HOME_SPEED`, `Z_SPEED` | T0 i T1 OEM 10, 2. T1 SERVICE 5, 2. | Prędkości najazdu XY i opuszczania stołu. Bazowanie do zwolnienia odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
-| `TARGET`, `MAX_POWER` | 230°C, 40% | Cel PID wybranej dyszy i limit mocy |
-| `MATERIAL` | UNKNOWN | Ustawia budżety U1/U2 i parametry napędu kasety według r0323. Dla T1 OEM ustawia także domyślne `TARGET`. |
+| `TARGET`, `MAX_POWER` | Według materiału, 40% | Cel PID wybranej dyszy w zakresie 180–240°C i limit mocy |
+| `MATERIAL` | UNKNOWN | Wybiera domyślny cel, budżety U1/U2 i parametry napędu kasety dla obu torów |
 | `DURATION` | 900 | Ograniczenie czasu od pierwszej gotowości termicznej; AUTO kończy grzanie wcześniej po zakończeniu procedury |
 | `PROCEDURE_TIMEOUT` | 1800 | Niezależny limit całej procedury, włącznie z przygotowaniem |
 
@@ -300,30 +311,43 @@ T0 i T1 OEM przyjmują nadpisania współrzędnych domyślnie w układzie OEM
 profilu, włącznie z odziedziczonymi. PARAMS pokazuje współrzędne po przeliczeniu.
 MIN/MAX są zawsze granicami w układzie SERVICE.
 
+## Profile materiałowe obu kaset
+
+Poniższe nastawy dotyczą T0 i T1 w OEM i SERVICE. Źródłem celów OEM
+i budżetów U1/U2 są rekordy kaset r0323 pod adresem `0x08029B30`
+oraz tablica materiałów `0x08029DB8`.
+
+| `MATERIAL` | Domyślny cel procedury | U1 / U2 |
+|---|---:|---:|
+| `Z-SUPPORT` | 235°C | 50 / 50 mm |
+| `Z-SUPPORT-PLUS`, `Z-NYLON`, `Z-SEMIFLEX` | 240°C | 30 / 70 mm |
+| `Z-SUPPORT-PREMIUM`, `BASF-ULTRAFUSE-BVOH`, `Z-PLA`, `Z-FLEX`, `Z-PHA`, `UNKNOWN` | 230°C | 30 / 70 mm |
+| `Z-PLA-PRO` | 200°C | 30 / 70 mm |
+| `Z-PETG` | 230°C, cel OEM 245°C | 50 / 50 mm |
+| `Z-ABS`, `Z-ABS-V2`, `Z-ASA-PRO`, `Z-ESD`, `Z-ESD-V2`, `Z-GLASS`, `Z-HIPS`, `Z-PCABS`, `Z-PEEK`, `Z-ULTRAT`, `Z-ULTRAT-PLUS` | 230°C, cel OEM powyżej 240°C | 30 / 70 mm |
+
+Warianty z celem OEM powyżej 240°C korzystają z dotychczasowej
+wartości domyślnej 230°C i zakresu 180–240°C. `PARAMS` pokazuje
+źródłowy `oem_material_target_c` oraz efektywny `target`.
+Podany `TARGET` ma pierwszeństwo w dozwolonym zakresie.
+Przed próbą sprawdź, czy efektywny cel pasuje do używanego filamentu.
+Jawne `UNLOAD_L1`, `UNLOAD_L2`, `FEEDER_MS` i `FEEDER_K`
+mają pierwszeństwo przed wartościami materiałowymi.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T0 MATERIAL=Z-SUPPORT
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T1 MATERIAL=Z-PETG TARGET=235
+```
+
 ## Wyładowanie i cofanie po nieudanym L4
 
 Przy wyładowaniu głowica stoi nad koszem w X82,8 Y152,5 dla T0 lub
-X72 Y152,5 dla T1 OEM. W r0323 Z-PLA i profil Unknown mają limity
-U1/U2 30 i 70 mm, a Z-PETG 50 i 50 mm. Dla T1 OEM dostępne są profile
-poniżej. Można jawnie ustawić `TARGET`, `UNLOAD_L1` i `UNLOAD_L2`.
-
-| `MATERIAL` dla T1 OEM | Domyślny cel PID | U1 / U2 |
-|---|---:|---:|
-| `Z-SUPPORT` | 235°C | 50 / 50 mm |
-| `Z-SUPPORT-PLUS` | 240°C | 30 / 70 mm |
-| `Z-SUPPORT-PREMIUM` | 230°C | 30 / 70 mm |
-| `BASF-ULTRAFUSE-BVOH` | 230°C | 30 / 70 mm |
-| `UNKNOWN` | 230°C | 30 / 70 mm |
-
-```gcode
-INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
-INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T0 MATERIAL=Z-PETG
-```
+X72 Y152,5 dla T1 OEM.
 
 | Parametry | Domyślne wartości | Znaczenie |
 |---|---|---|
 | `FALLBACK` | 1 | Włącza odzyskanie po braku wymaganych startów L4; 0 kończy tę gałąź błędem |
-| `UNLOAD_L1`, `UNLOAD_L2` | 30, 70 | Limity E dla Z-PLA/Unknown. Z-PETG ustawia 50, 50. |
+| `UNLOAD_L1`, `UNLOAD_L2` | 30, 70 | Limity E dla większości profili. Z-PETG i Z-SUPPORT ustawiają 50, 50. |
 | `UNLOAD_SPEED1`, `UNLOAD_SPEED2` | 1, 1 | Prędkości cofania, jawnie ustawiane do pomiaru |
 | `UNLOAD_QUIET` | 4 | Cisza impulsów kończąca wcześniejsze cofanie |
 | `UNLOAD_A_TIMEOUT` | 6 | Końcowy czas cofania z kontrolą zwolnienia A |

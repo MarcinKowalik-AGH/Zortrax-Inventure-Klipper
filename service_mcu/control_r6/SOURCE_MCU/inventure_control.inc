@@ -120,11 +120,14 @@ static uint8_t cm_axis_e_ready(unsigned tool,uint32_t now) {
 static uint8_t control_aux_allowed(void) {
     return control_mode==CT_SERVICE && !sl.active && !fs.active && !fault && !control_latched && heartbeat_live;
 }
-static uint8_t control_busy(void) {
-    if(control_mode==CT_NATIVE || cm.active || fs.active)return 1;
-    for(unsigned i=0;i<2;i++)if(feeder_running[i] || locks_on[i])return 1;
+static uint8_t control_door_policy_busy(void) {
+    if(control_mode==CT_NATIVE || cm.active || fs.active || sl.active
+       || feeder_running[0] || feeder_running[1])return 1;
     for(unsigned i=0;i<10;i++)if(co[i].duty)return 1;
     return 0;
+}
+static uint8_t control_busy(void) {
+    return control_door_policy_busy() || locks_on[0] || locks_on[1];
 }
 // STM32F207 RM0033, 15.5: PWM2 idles LOW at CNT=0 and OPM stops at
 // the update after ARR. Only a timer-backed SERVICE run remaps these STEP
@@ -400,10 +403,8 @@ static void control_stop_all(void) {
     for(unsigned i=0;i<10;i++)control_output_off(i);
     for(unsigned i=0;i<2;i++)if(auxiliary_ready) {
         if(feeder_running[i])sched_del_timer(&feeder_timer[i]);
-        if(locks_pulling[i])sched_del_timer(&lock_timer[i]);
-        feeder_running[i]=locks_on[i]=locks_pulling[i]=0;
+        feeder_running[i]=0;lock_release(i);
         raw_output(i?GPIOG:GPIOC,i?11:5,0);
-        gpio_pwm_write(locks[i],0);
         transport_stop_channel(i);
     }
     if(factory_active)gpio_pwm_write(feeder_clock,0);

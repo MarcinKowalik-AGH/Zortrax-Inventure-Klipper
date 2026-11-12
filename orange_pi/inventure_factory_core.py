@@ -31,20 +31,32 @@ PROCEDURES = {
     'UNLOAD': ('home', 'heat', 'select_tool', 'position_bin', 'unload'),
 }
 
-# T0 unload distances and feeder parameters from r0323 at 0x08029B30/0x08029DB8.
-_T0_MATERIALS = (
-    'UNKNOWN', 'Z-ABS', 'Z-ABS-V2', 'Z-ASA-PRO', 'Z-ESD', 'Z-ESD-V2',
-    'Z-FLEX', 'Z-GLASS', 'Z-HIPS', 'Z-NYLON', 'Z-PCABS', 'Z-PEEK', 'Z-PETG',
-    'Z-PHA', 'Z-PLA', 'Z-PLA-PRO', 'Z-SEMIFLEX', 'Z-ULTRAT', 'Z-ULTRAT-PLUS',
-)
-# r0323 cartridge parameters, 24-byte records at 0x08029B30. Temperature
-# comes from +0x14 and the U1/U2 distances from +0x04/+0x0c.
-_T1_CARTRIDGE_MATERIALS = {
-    'UNKNOWN': (230., 30., 70.),
-    'Z-SUPPORT': (235., 50., 50.),
-    'Z-SUPPORT-PLUS': (240., 30., 70.),
-    'Z-SUPPORT-PREMIUM': (230., 30., 70.),
-    'BASF-ULTRAFUSE-BVOH': (230., 30., 70.),
+# r0323 cassette records at 0x08029B30, keyed by the material table at
+# 0x08029DB8. Values are target °C (+0x14) and U1/U2 mm (+0x04/+0x0c).
+_CASSETTE_MATERIALS = {
+    'UNKNOWN': (230, 30, 70),
+    'Z-ABS': (275, 30, 70),
+    'Z-ABS-V2': (275, 30, 70),
+    'Z-ASA-PRO': (250, 30, 70),
+    'Z-ESD': (280, 30, 70),
+    'Z-ESD-V2': (280, 30, 70),
+    'Z-FLEX': (230, 30, 70),
+    'Z-GLASS': (254, 30, 70),
+    'Z-HIPS': (255, 30, 70),
+    'Z-NYLON': (240, 30, 70),
+    'Z-PCABS': (290, 30, 70),
+    'Z-PEEK': (360, 30, 70),
+    'Z-PETG': (245, 50, 50),
+    'Z-PHA': (230, 30, 70),
+    'Z-PLA': (230, 30, 70),
+    'Z-PLA-PRO': (200, 30, 70),
+    'Z-SEMIFLEX': (240, 30, 70),
+    'Z-ULTRAT': (260, 30, 70),
+    'Z-ULTRAT-PLUS': (245, 30, 70),
+    'Z-SUPPORT': (235, 50, 50),
+    'Z-SUPPORT-PLUS': (240, 30, 70),
+    'Z-SUPPORT-PREMIUM': (230, 30, 70),
+    'BASF-ULTRAFUSE-BVOH': (230, 30, 70),
 }
 
 # r0323 labels the released switches with negative coordinates (P03).
@@ -131,8 +143,7 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     wipe_exit=(0., 100.), park_span=(1., 200.), manual_mm=(.1, 250.), feeder=(0, 1),
     target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
     procedure_timeout=(60., 3600.))
-_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'),
-            'material': tuple(dict.fromkeys((*_T0_MATERIALS, *_T1_CARTRIDGE_MATERIALS))),
+_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'), 'material': tuple(_CASSETTE_MATERIALS),
             'xy_input_frame': ('OEM', 'RAW'), 'speed_profile': ('SERVICE', 'OEM')}
 _INTEGERS = frozenset(('l1_starts', 'pulse_count', 'final_starts',
                       'feeder_ms', 'monitor', 'fallback', 'purge_e_steps',
@@ -172,15 +183,9 @@ def _validated(values, operation=None):
                 raise FactoryError(key.upper() + ' must be an integer')
             number = int(number)
         p[key] = number
-    if p['tool'] == 0 and p['material'] not in _T0_MATERIALS:
-        raise FactoryError('MATERIAL must be an r0323 T0 cassette profile')
-    if p['tool'] == 1:
-        if oem and p['material'] not in _T1_CARTRIDGE_MATERIALS:
-            raise FactoryError('MATERIAL must be an r0323 T1 cassette profile')
-        if not oem and p['material'] != 'UNKNOWN':
-            raise FactoryError('MATERIAL selects an r0323 T0 cassette profile')
-        if not oem and p['xy_input_frame'] != 'RAW':
-            raise FactoryError('T1 XY_INPUT_FRAME=OEM requires SPEED_PROFILE=OEM')
+    p['oem_material_target_c'] = _CASSETTE_MATERIALS[p['material']][0]
+    if p['tool'] == 1 and not oem and p['xy_input_frame'] != 'RAW':
+        raise FactoryError('T1 XY_INPUT_FRAME=OEM requires SPEED_PROFILE=OEM')
     if p['l1_budget'] < p['l1_portion']:
         raise FactoryError('L1_BUDGET must cover at least one L1_PORTION')
     if p['unload_l1'] + p['unload_l2'] <= 0:
@@ -307,12 +312,13 @@ def _parameters(tool, values, operation=None):
                 p[key] += offset
             p.update(home_speed=10., xy_input_frame='OEM')
     material = str(values.get('material', p['material'])).strip().upper().replace(' ', '-')
-    if material == 'Z-PETG':
-        p.update(unload_l1=50., unload_l2=50.)
+    if material in _CASSETTE_MATERIALS:
+        stock_target, p['unload_l1'], p['unload_l2'] = _CASSETTE_MATERIALS[material]
+        min_target, max_target = _LIMITS['target']
+        if min_target <= stock_target <= max_target:
+            p['target'] = stock_target
     if material in ('Z-FLEX', 'Z-SEMIFLEX'):
         p.update(feeder_ms=1500, feeder_k=3.)
-    if oem and tool == 1 and material in _T1_CARTRIDGE_MATERIALS:
-        p['target'], p['unload_l1'], p['unload_l2'] = _T1_CARTRIDGE_MATERIALS[material]
     frame = str(values.get('xy_input_frame', p['xy_input_frame'])).strip().upper()
     p.update(values)
     if (tool == 0 or oem) and frame == 'OEM':

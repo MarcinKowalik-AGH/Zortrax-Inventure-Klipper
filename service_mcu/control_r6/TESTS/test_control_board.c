@@ -6,6 +6,9 @@
 static void control_command(unsigned action,unsigned mode) {
     uint32_t args[]={action,mode};command_inventure_control(args);
 }
+static void control_set_door_policy(unsigned enabled) {
+    uint32_t args[]={1,enabled};command_inventure_door_policy(args);
+}
 static void control_adc(void) {
     all_heat_adc();inventure_adc_observe(ADC3,9,3680);inventure_adc_observe(ADC3,14,3680);
 }
@@ -22,7 +25,7 @@ static void control_reset(uint32_t now) {
     for(unsigned i=0;i<8;i++){control_min[i]=-20;control_max[i]=caps[i];}
     heat_reset(now);control_adc();
     GPIOB->IDR=BIT(10);GPIOE->IDR=BIT(15);GPIOC->IDR=BIT(14);
-    door_policy_flags=0;command_inventure_aux_config(NULL);
+    door_policy_flags=DOOR_POLICY_DEFAULT_FLAGS;command_inventure_aux_config(NULL);
     control_command(1,CT_SERVICE);assert(control_mode==CT_SERVICE && !inventure_is_armed());
 }
 static void motion(unsigned action,unsigned dirs,uint32_t a,uint32_t b,uint32_t z,uint32_t e,
@@ -76,7 +79,7 @@ static void input_stops(void) {
         GPIO('B',10),GPIO('E',15),GPIO('D',10),GPIO('F',1),GPIO('D',15),GPIO('G',10),
         GPIO('D',7),GPIO('D',6),GPIO('D',5),GPIO('A',15)};
     for(unsigned input=0;input<16;input++)for(unsigned polarity=0;polarity<2;polarity++) {
-        control_reset(0);door_policy_flags=BIT(3);
+        control_reset(0);
         GPIO_TypeDef *g=gpio_pin_to_regs(pins[input]);uint32_t bit=BIT(pins[input]%16);
         if(polarity)g->IDR|=bit;else g->IDR&=~bit;
         motion(1,15,400,400,400,400,1000,10,30000,BIT(input),polarity?BIT(input):0,0,1);
@@ -94,7 +97,9 @@ static void input_stops(void) {
 }
 static void motion_guards(void) {
     for(unsigned why=0;why<6;why++) {
-        control_reset(0);motion(1,0,100,100,100,100,400,10,30000,0,0,0,1);motion_tick();
+        control_reset(0);
+        if(why==1)control_set_door_policy(1);
+        motion(1,0,100,100,100,100,400,10,30000,0,0,0,1);motion_tick();
         if(why==0){heartbeat_live=0;mock_now=cm_timer.waketime;assert(cm_event(&cm_timer)==SF_DONE);}
         if(why==1){GPIOB->IDR&=~BIT(10);motion_tick();}
         if(why==2){GPIOD->IDR|=BIT(11);motion_tick();}
@@ -184,7 +189,9 @@ static void native_ownership(void) {
     control_command(1,CT_NATIVE);assert(!inventure_is_armed()); // queued native pulses cannot resume
     control_command(1,CT_SERVICE);assert(control_mode==CT_OFF);
     for(unsigned cause=0;cause<3;cause++) {
-        control_reset(0);control_command(1,CT_NATIVE);assert(inventure_is_armed());
+        control_reset(0);
+        if(cause==2)control_set_door_policy(1);
+        control_command(1,CT_NATIVE);assert(inventure_is_armed());
         if(cause==0)heartbeat_live=0;
         if(cause==1)latest_adc[2]=4095;
         if(cause==2)GPIOB->IDR&=~BIT(10);
@@ -204,7 +211,8 @@ static void native_ownership(void) {
 }
 static void auxiliary_controls(void) {
     for(unsigned channel=0;channel<2;channel++)for(unsigned direction=0;direction<2;direction++) {
-        control_reset(0);uint32_t f[]={channel,direction,1500};command_inventure_feeder(f);
+        control_reset(0);control_set_door_policy(1);
+        uint32_t f[]={channel,direction,1500};command_inventure_feeder(f);
         assert(feeder_running[channel] && outputs[GPIO(channel?'G':'C',channel?11:5)]==1);
         assert(outputs[GPIO(channel?'B':'A',channel?7:8)]==direction);
         uint32_t l[]={channel,1};command_inventure_lock(l);assert(locks_on[channel] && locks_pulling[channel]);
@@ -219,9 +227,46 @@ static void auxiliary_controls(void) {
         heartbeat_live=0;control_guard(mock_now);assert(!feeder_running[channel] && control_mode==CT_OFF);
     }
 }
+static void global_door_policy(void) {
+    uint32_t lid_lock[]={0,1},front_lock[]={1,1};
+    control_reset(0);
+    assert(!door_policy_enabled() && door_closed_mask()==3);
+    command_inventure_lock(lid_lock);command_inventure_lock(front_lock);
+    assert(!scheduled_count && !locks_on[0] && !locks_on[1]);
+    assert(!TIM5->CCR3 && !TIM5->CCR4);
+
+    control_set_door_policy(1);
+    command_inventure_lock(lid_lock);command_inventure_lock(front_lock);
+    assert(locks_on[0] && locks_on[1] && TIM5->CCR3==256 && TIM5->CCR4==256);
+    sched_del_timer(&lock_timer[0]);
+    assert(lock_hold(&lock_timer[0])==SF_DONE && TIM5->CCR4==60);
+    assert(scheduled_count==1 && locks_pulling[1]);
+    control_set_door_policy(0); // an idle, energized lock cannot veto release
+    assert(!door_policy_enabled() && !scheduled_count);
+    assert(!locks_on[0] && !locks_on[1] && !locks_pulling[0] && !locks_pulling[1]);
+    assert(!TIM5->CCR3 && !TIM5->CCR4);
+    assert(lock_hold(&lock_timer[1])==SF_DONE && !TIM5->CCR3);
+
+    GPIOB->IDR&=~BIT(10);GPIOE->IDR&=~BIT(15);
+    assert(door_closed_mask()==0);
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed());
+    control_set_door_policy(1); // never change an armed owner's policy
+    assert(!door_policy_enabled());
+    assert(!inventure_filter_gpio(GPIOA,BIT(2),1));
+    assert(!inventure_filter_gpio(GPIOA,BIT(3),1));
+    assert(!inventure_filter_pwm((void*)&TIM5->CCR3,256,256));
+    assert(!inventure_filter_pwm((void*)&TIM5->CCR4,256,256));
+    command_inventure_lock(lid_lock);command_inventure_lock(front_lock);
+    assert(!scheduled_count && !TIM5->CCR3 && !TIM5->CCR4);
+    control_guard(mock_now);
+    assert(inventure_is_armed() && !fault);
+    control_command(2,0);
+    puts("PASS global door policy: default OFF, idle coil release, raw/pwm/native lock gating, live raw door inputs");
+}
 int main(void) {
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
-    native_ownership();auxiliary_controls();
+    native_ownership();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }
