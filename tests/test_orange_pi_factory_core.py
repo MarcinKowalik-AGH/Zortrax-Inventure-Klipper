@@ -96,6 +96,33 @@ class FactoryCoreTests(unittest.TestCase):
         self.assertIs(type(plan.p['pulse_count']), int)
         self.assertEqual((plan.p['feeder_ms'], plan.p['fallback']), (800, 0))
 
+    def test_OEM_profile_uses_stock_XY_feedrates_without_changing_E_or_homing(self):
+        service = core.parameters(Command(TOOL='T0'))
+        oem = core.parameters(Command(TOOL='T0', SPEED_PROFILE='OEM'))
+        self.assertEqual(service['speed_profile'], 'SERVICE')
+        self.assertEqual(oem['speed_profile'], 'OEM')
+        self.assertEqual(tuple(oem[key] for key in ('travel_speed', 'purge_speed', 'switch_speed')),
+                         (8000/60, 3000/60, 250/60))
+        for field in ('home_speed', 'z_speed', 'e_speed', 'unload_speed1', 'unload_speed2',
+                      'l1_portion', 'long_mm', 'final_mm', 'purge_e_steps'):
+            self.assertEqual(oem[field], service[field], field)
+
+    def test_OEM_feedrate_overrides_follow_configuration_precedence(self):
+        configured = core.profiles(common={'PURGE_SPEED': 24},
+                                   t0={'SPEED_PROFILE': 'OEM', 'TRAVEL_SPEED': 85})
+        inherited = core.parameters(Command(TOOL='T0'), configured)
+        self.assertEqual((inherited['speed_profile'], inherited['travel_speed'], inherited['purge_speed']),
+                         ('OEM', 85., 24.))
+        overridden = core.parameters(Command(TOOL='T0', TRAVEL_SPEED=90, PURGE_SPEED=45), configured)
+        self.assertEqual((overridden['travel_speed'], overridden['purge_speed']), (90., 45.))
+
+    def test_OEM_profile_rejects_T1_and_rates_above_stock(self):
+        for values in ({'TOOL': 'T1'}, {'TRAVEL_SPEED': 134}, {'PURGE_SPEED': 51},
+                       {'SWITCH_SPEED': 4.2}, {'PURGE_E_STEPS': 2074}):
+            with self.subTest(values=values):
+                with self.assertRaises(core.FactoryError):
+                    core.parameters(Command(SPEED_PROFILE='OEM', **values))
+
     def test_t0_legacy_tuned_points_translate_to_raw_release_coordinates(self):
         configured = core.profiles(t0={'APPROACH_X': 135, 'SWITCH_X': 150,
                                        'SERVICE_X': 135})

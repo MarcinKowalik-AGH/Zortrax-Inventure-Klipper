@@ -7,18 +7,26 @@ DECL_CONSTANT("INVENTURE_OUTPUT_ABI",1);
 DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
-DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",20000);
+#define CM_SERVICE_MAX_HZ 20000u
+#define CM_FACTORY_MAX_HZ 125000u
+#define CM_FACTORY_PULSE_US 2u
+#define CM_FACTORY_MIN_INTERVAL_US 6u
+DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
+DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
+DECL_CONSTANT("INVENTURE_FACTORY_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_STEPS",2000000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_MS",600000);
 DECL_CONSTANT("INVENTURE_CONTROL_SENSOR_MASK",127);
 enum { CT_OFF,CT_NATIVE,CT_SERVICE };
 enum { CM_IDLE,CM_RUNNING,CM_HOLD,CM_DONE,CM_STOPPED,CM_FAILED };
-enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN };
+enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN,CR_TIMING };
 static struct {
     uint32_t run,token,planned[4],sent[4],error[4],master,done,rate,pulse;
     uint32_t elapsed,fraction,last_tick,max_ms,hold_ms,hold_start,period;
+    uint32_t fast_accel_half,fast_cruise_ramp,fast_cruise_period;
+    uint32_t fast_peak_ticks,fast_peak_late,fast_last_launch;
     uint16_t stop_mask,stop_value,hit;
-    uint8_t phase,reason,active,high,direction,timer_added;
+    uint8_t phase,reason,active,high,direction,timer_added,fast_mask;
 } cm;
 static struct timer cm_timer;
 static struct {
@@ -93,6 +101,70 @@ static uint8_t control_busy(void) {
     for(unsigned i=0;i<10;i++)if(co[i].duty)return 1;
     return 0;
 }
+// STM32F207 RM0033, 15.5: PWM2 idles LOW at CNT=0 and OPM stops at
+// the update after ARR. Only the factory motion owner remaps these STEP
+// pins. Inventure's hardware-PWM pin table uses TIM4/5/8/9 exclusively.
+#define CM_PULSE_CEN 1u
+#define CM_PULSE_OPM 8u
+#define CM_PULSE_PWM2 (7u << 4)
+static const struct cm_pulse_channel {
+    TIM_TypeDef *timer;
+    GPIO_TypeDef *port;
+    uint8_t pin,af;
+} cm_pulse_channels[] = {
+    {TIM14,GPIOA,7,9}, {TIM13,GPIOA,6,9}, {0}, {TIM11,GPIOB,9,3},
+};
+
+static uint8_t cm_fast_available(uint8_t mask) {
+    for(unsigned i=0;i<ARRAY_SIZE(cm_pulse_channels);i++) {
+        if(!(mask&BIT(i)))continue;
+        TIM_TypeDef *hw=cm_pulse_channels[i].timer;
+        if(is_enabled_pclock((uint32_t)(uintptr_t)hw)
+                && (hw->CR1 || hw->CCER || hw->DIER))return 0;
+    }
+    return 1;
+}
+
+static void cm_fast_setup(uint8_t mask) {
+    for(unsigned i=0;i<ARRAY_SIZE(cm_pulse_channels);i++) {
+        if(!(mask&BIT(i)))continue;
+        const struct cm_pulse_channel *ch=&cm_pulse_channels[i];
+        TIM_TypeDef *hw=ch->timer;
+        uint32_t address=(uint32_t)(uintptr_t)hw;
+        if(!is_enabled_pclock(address))enable_pclock(address);
+        // TIM13/14: APB1 30 MHz doubled; TIM11: APB2 60 MHz doubled.
+        uint32_t counts_per_us=get_pclock_frequency(address)*2u/1000000u;
+        hw->CR1=CM_PULSE_OPM;
+        hw->DIER=0;
+        hw->PSC=0;
+        hw->ARR=counts_per_us*CM_FACTORY_PULSE_US;
+        hw->CCR1=1;
+        hw->CCMR1=CM_PULSE_PWM2;
+        hw->EGR=1;
+        hw->SR=0;
+        hw->CCER=1;
+        uint32_t mode_shift=ch->pin*2,af_shift=(ch->pin%8)*4;
+        GPIO_TypeDef *port=ch->port;
+        raw_output(port,ch->pin,0);
+        port->AFR[ch->pin/8]=(port->AFR[ch->pin/8]&~(15u<<af_shift))
+            | ((uint32_t)ch->af<<af_shift);
+        port->OSPEEDR=(port->OSPEEDR&~(3u<<mode_shift)) | (2u<<mode_shift);
+        port->MODER=(port->MODER&~(3u<<mode_shift)) | (2u<<mode_shift);
+    }
+    cm.fast_mask=mask;
+}
+
+static void cm_fast_release(void) {
+    for(unsigned i=0;i<ARRAY_SIZE(cm_pulse_channels);i++) {
+        if(!(cm.fast_mask&BIT(i)))continue;
+        const struct cm_pulse_channel *ch=&cm_pulse_channels[i];
+        raw_output(ch->port,ch->pin,0);
+        ch->timer->CCER=0;
+        ch->timer->CR1=0;
+    }
+    cm.fast_mask=0;
+}
+
 static void cm_clear_steps(void) {
     motor_test_write(GPIOA,BIT(6)|BIT(7),0);
     motor_test_write(GPIOB,BIT(8)|BIT(9),0);cm.high=0;
@@ -101,6 +173,7 @@ static void cm_end(uint8_t reason) {
     // Preserve established carriage position between factory segments.
     // A failed/safety/global STOP path always releases the driver.
     if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT)))motor_test_write(GPIOE,BIT(10),0);
+    if(cm.fast_mask)cm_fast_release();
     cm_clear_steps();
     cm.active=0;cm.reason=reason;
     cm.phase=reason==CR_COMPLETE || reason==CR_INPUT?CM_DONE:reason==CR_STOP?CM_STOPPED:CM_FAILED;
@@ -114,13 +187,116 @@ static void cm_elapsed(uint32_t now) {
     uint32_t dt=now-cm.last_tick,f=cm.fraction+dt%MS(1);cm.last_tick=now;
     cm.elapsed+=dt/MS(1)+f/MS(1);cm.fraction=f%MS(1);
 }
+
+// Four Newton steps from the next power of two give the integer root of
+// a nonzero uint32_t within one. The final division rounds down exactly.
+static uint32_t cm_root(uint32_t n) {
+    uint32_t x=1u<<((33u-__builtin_clz(n))/2u);
+    x=(x+n/x)/2u;
+    x=(x+n/x)/2u;
+    x=(x+n/x)/2u;
+    x=(x+n/x)/2u;
+    uint32_t quotient=n/x;
+    return x>quotient ? x-1 : x;
+}
+
+static void cm_fast_ramp_setup(void) {
+    uint32_t minor=cm.planned[0]<cm.planned[1]?cm.planned[0]:cm.planned[1];
+    uint32_t ratio=(1024u*minor)/cm.master;
+    uint32_t norm=cm_root(2u*(1024u*1024u+ratio*ratio));
+    // CoreXY has 640 steps/mm. The stock mixed planner uses 1500 mm/s²
+    // along the path. Q10 geometry maps that to 960000..1357790 events/s².
+    cm.fast_accel_half=(960000u*1024u)/norm;
+    // Store one quarter of velocity squared so 125000² fits uint32_t.
+    uint32_t cruise_half=(cm.rate+1u)/2u;
+    cm.fast_cruise_ramp=(cruise_half*cruise_half-40000u+cm.fast_accel_half-1u)
+        /cm.fast_accel_half;
+    cm.fast_cruise_period=(CONFIG_CLOCK_FREQ+cm.rate-1u)/cm.rate;
+}
+
+static uint_fast8_t cm_fast_finish(uint8_t reason,uint32_t now) {
+    cm_elapsed(now);
+    cm.timer_added=0;
+    cm_end(reason);
+    return SF_DONE;
+}
+
+static uint_fast8_t cm_fast_event(struct timer *timer) {
+    if(!cm.active)return SF_DONE;
+    uint32_t now=timer_read_time();
+    uint32_t late=(int32_t)(now-timer->waketime)>0?now-timer->waketime:0;
+    if(late>cm.fast_peak_late)cm.fast_peak_late=late;
+    if(!control_ready(now) || !fs.active || iv9_due(now,fs.deadline))
+        return cm_fast_finish(CR_HEARTBEAT,now);
+    if(door_policy_enabled() && door_closed_mask()!=3)
+        return cm_fast_finish(CR_DOOR,now);
+    // The independent 10 ms guard maintains elapsed time and temperature.
+    if(cm.elapsed+10u>=cm.max_ms) {
+        cm_elapsed(now);
+        if(cm.elapsed>=cm.max_ms)return cm_fast_finish(CR_TIME,now);
+    }
+    if(late>MS(1)
+            || ((cm.fast_mask&BIT(0)) && (TIM14->CR1&CM_PULSE_CEN))
+            || ((cm.fast_mask&BIT(1)) && (TIM13->CR1&CM_PULSE_CEN))
+            || ((cm.fast_mask&BIT(3)) && (TIM11->CR1&CM_PULSE_CEN)))
+        return cm_fast_finish(CR_TIMING,now);
+    // An extra dispatch drains the last one-shot before restoring GPIO.
+    if(cm.reason==CR_TIMING)return cm_fast_finish(CR_TIMING,now);
+    if(cm.done==cm.master)return cm_fast_finish(CR_COMPLETE,now);
+    // Allow 2 us HIGH plus 4 us nominal LOW. This leaves margin for
+    // the bus write skew between pulse channels during a jittered dispatch.
+    uint32_t earliest=cm.fast_last_launch+timer_from_us(CM_FACTORY_MIN_INTERVAL_US);
+    if(cm.done && !iv9_due(now,earliest)) {
+        timer->waketime=earliest;
+        return SF_RESCHEDULE;
+    }
+
+    cm.done++;
+    uint8_t step=0;
+    for(unsigned i=0;i<4;i++) {
+        cm.error[i]+=cm.planned[i];
+        if(cm.error[i]>=cm.master) {
+            cm.error[i]-=cm.master;
+            cm.sent[i]++;
+            step|=BIT(i);
+        }
+    }
+    cm.fast_last_launch=timer_read_time();
+    if(step&BIT(0))TIM14->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
+    if(step&BIT(1))TIM13->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
+    if(step&BIT(3)) {
+        TIM11->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
+        ivt_e_step(&transport[fs.tool],!!(cm.direction&BIT(3))==fs.tool);
+    }
+    uint32_t ramp=cm.done<cm.master-cm.done?cm.done:cm.master-cm.done;
+    uint32_t period=cm.fast_cruise_period;
+    if(ramp<cm.fast_cruise_ramp) {
+        uint32_t hz=2u*cm_root(40000u+cm.fast_accel_half*ramp);
+        period=(CONFIG_CLOCK_FREQ+hz-1u)/hz;
+    }
+    uint32_t spent=timer_read_time()-now;
+    if(spent>cm.fast_peak_ticks)cm.fast_peak_ticks=spent;
+    // At 125 kHz there are 8 us/event. Reserve >=3 us for dispatch
+    // and other work. The one-shot finishes even if this event runs long.
+    if(spent>timer_from_us(5))cm.reason=CR_TIMING;
+    if(cm.reason==CR_TIMING || cm.done==cm.master)
+        timer->waketime=cm.fast_last_launch+timer_from_us(4);
+    else {
+        // Keep the nominal period with ordinary IRQ jitter. A longer
+        // delay rebases the trajectory instead of replaying overdue steps.
+        uint32_t base=late>timer_from_us(1)?now:timer->waketime;
+        timer->waketime=base+period;
+    }
+    return SF_RESCHEDULE;
+}
+
 static uint_fast8_t cm_event(struct timer *timer) {
     cm.timer_added=0;if(!cm.active)return SF_DONE;
     uint32_t now=timer_read_time();cm_elapsed(now);
     uint8_t why=!control_ready(now)?CR_HEARTBEAT:
         door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
         cm.elapsed>=cm.max_ms?CR_TIME:0;
-    uint16_t hit=(uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask;
+    uint16_t hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
     if(!why && hit){cm.hit=hit;why=CR_INPUT;}
     if(why){cm_end(why);return SF_DONE;}
     if(cm.phase==CM_HOLD) {
@@ -283,7 +459,7 @@ static void control_guard(uint32_t now) {
         cm_elapsed(now);
         uint8_t reason=door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
             cm.elapsed>=cm.max_ms?CR_TIME:0;
-        uint16_t hit=(uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask;
+        uint16_t hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
         if(!reason && hit){cm.hit=hit;reason=CR_INPUT;}
         if(reason) {
             if(cm.timer_added)sched_del_timer(&cm_timer);
@@ -335,15 +511,22 @@ static uint8_t cm_request(uint32_t *args,uint32_t now) {
            || args[9]!=cm.stop_mask || args[10]!=cm.stop_value || args[11]!=cm.hold_ms)reject=1;
     } else {
         for(unsigned i=0;i<4;i++){if(args[i+2]>2000000u)reject=1;if(args[i+2]>master)master=args[i+2];}
-        if(args[1]>15 || !master || args[6]<1 || args[6]>20000 || args[7]<2 || args[7]>100
+        uint8_t fast=args[6]>CM_SERVICE_MAX_HZ;
+        if(args[1]>15 || !master || args[6]<1 || args[6]>CM_FACTORY_MAX_HZ || args[7]<2 || args[7]>100
            || args[7]+2u>1000000u/args[6] || !args[8] || args[8]>600000
            || args[11]>60000 || !token)reject=1;
+        if(!reject && fast && (args[4] || (args[2]!=master && args[3]!=master)
+                || args[7]!=CM_FACTORY_PULSE_US || args[9] || args[10] || args[11]))reject=1;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now)))reject=3;
+        if(!reject && fast && (!fs.active || fs.tool!=0 || iv9_due(now,fs.deadline)
+                || (door_policy_enabled() && door_closed_mask()!=3)))reject=3;
         if(!reject && fs.active && args[5]) {
             uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
             if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
         }
         if(!reject && (sl.active || cm.active || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active()))reject=2;
+        uint8_t fast_mask=(args[2]?BIT(0):0) | (args[3]?BIT(1):0) | (args[5]?BIT(3):0);
+        if(!reject && fast && !cm_fast_available(fast_mask))reject=2;
         if(!reject) {
             cm.run++;cm.token=token;cm.master=master;cm.done=0;cm.direction=args[1];
             for(unsigned i=0;i<4;i++){cm.planned[i]=args[i+2];cm.sent[i]=cm.error[i]=0;}
@@ -354,11 +537,17 @@ static uint8_t cm_request(uint32_t *args,uint32_t now) {
             for(unsigned i=0;i<4;i++)raw_output(mt_drivers[i].dir_port,
                 __builtin_ctz(mt_drivers[i].dir_bit),!!(cm.direction&BIT(i)));
             cm_clear_steps();
-            cm.hit=(uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask;
+            if(fast) {
+                cm.fast_peak_ticks=cm.fast_peak_late=cm.fast_last_launch=0;
+                cm_fast_setup(fast_mask);
+                cm_fast_ramp_setup();
+            }
+            cm.hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
             if(cm.hit)cm_end(CR_INPUT);
             else {
                 motor_test_write(GPIOE,BIT(10),1);
-                cm_timer.func=cm_event;cm_timer.waketime=now+MS(20);sched_add_timer(&cm_timer);cm.timer_added=1;
+                cm_timer.func=fast?cm_fast_event:cm_event;
+                cm_timer.waketime=now+MS(20);sched_add_timer(&cm_timer);cm.timer_added=1;
             }
         }
     }
@@ -385,6 +574,14 @@ void command_inventure_motion_driver(uint32_t *args) {
     sendf("inventure_motion_driver run=%u channel=%c planned=%u sent=%u direction=%c",run,i,p,s,d);
 }
 DECL_COMMAND_FLAGS(command_inventure_motion_driver,HF_IN_SHUTDOWN,"inventure_motion_driver_query channel=%c");
+void command_inventure_factory_motion_timing(uint32_t *args) {
+    (void)args;
+    irqstatus_t flags=irq_save();
+    uint32_t callback=cm.fast_peak_ticks,late=cm.fast_peak_late;
+    irq_restore(flags);
+    sendf("inventure_factory_motion_timing peak_callback_ticks=%u peak_late_ticks=%u",callback,late);
+}
+DECL_COMMAND_FLAGS(command_inventure_factory_motion_timing,HF_IN_SHUTDOWN,"inventure_factory_motion_timing_query");
 void command_inventure_output(uint32_t *args) {
     unsigned action=args[0],i=args[1],duty=args[2];uint32_t duration=args[3],token=args[5];
     int16_t limit=(int16_t)args[4];irqstatus_t flags=irq_save();uint8_t reject=0;

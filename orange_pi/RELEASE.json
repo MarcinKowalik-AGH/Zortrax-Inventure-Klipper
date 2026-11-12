@@ -1,14 +1,14 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION",
-  "host_module_sha256": "8bded1c780f38a254e6611d1212150b70e027dc0380a2e9f261388ed2c341874",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-FACTORY-SPEED",
+  "host_module_sha256": "72e5b55f8f578e6d3bf21cc1334626ea098e825c0ad67e4762a21bbe54fd6c50",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 311,
-  "previous_host_commit": "a0c8cb11a31b2071c3bf3567389643c5d02b2681",
+  "verified_public_host_tests": 330,
+  "previous_host_commit": "dc56b13328e537b010a2971f256d4472438c8c41",
   "firmware": {
-    "release": "RC8-CONTROL-R7-FACTORY-FEED",
+    "release": "RC8-CONTROL-R7-FACTORY-SPEED",
     "bootloader": "InventureBoot 1.7",
-    "ivb_sha256": "6502455cfcc006838b3e7082bcbc843ff9c6be461c39b3c5a01e76beb4eb8d5b",
+    "ivb_sha256": "f6d4ef46a432526918634980aadd8aeabf972b1e0420608d19f1d348d1646ca3",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "physical_R5_tests": true,
     "physical_qualification_complete": false,
@@ -111,15 +111,18 @@
         "last_transport_trial": "1500ms left DIR1 produced about 2mm by user observation; COMPARE rejected while still active; final pulse counts unavailable"
       }
     },
-    "previous_release": "RC8-CONTROL-R7-FACTORY",
+    "previous_release": "RC8-CONTROL-R7-FACTORY-FEED",
     "physical_R6_smooth_test": "pending operator",
     "load_stream_abi": 1,
-    "package_filename": "INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip",
-    "ivb_bytes": 89660,
+    "package_filename": "INVENTURE_MCU_CONTROL_R7_FACTORY_SPEED_BOOT17.zip",
+    "ivb_bytes": 91424,
     "factory_abi": 1,
-    "physical_R7_factory_test": "selector and homing observed; FEED awaits operator trial",
+    "physical_R7_factory_test": "Previous FACTORY-FEED: T0 selector and AUTO L4 passed on the printer. FACTORY-SPEED: cold SWEEP pending.",
     "factory_feed_clock": 1,
-    "package_sha256": "ba7e11a044236bdcd74e0c4184cd65ce3fe0784febdd031ea01e1bd06acd5696"
+    "package_sha256": "829dacda8eddbc46720b8c03dee8d7ad9978087f2729865eea2e20ec9515dc38",
+    "motor_test_release": "RC8-CONTROL-R7-FACTORY-SPEED",
+    "factory_motion_abi": 1,
+    "factory_motion_max_hz": 125000
   },
   "control": {
     "abi": 1,
@@ -325,7 +328,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION",
+  "release": "RC8-CONTROL-R7-UIFAST-FACTORY-SPEED",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -354,7 +357,7 @@
       ]
     }
   },
-  "motor_test_release": "RC8-CONTROL-R7-FACTORY",
+  "motor_test_release": "RC8-CONTROL-R7-FACTORY-SPEED",
   "procedures": {
     "api": 1,
     "command": "INVENTURE_PROCEDURE",
@@ -383,7 +386,19 @@
     "standalone_homes": true,
     "physical_test": "pending operator",
     "AUTO_R7_hardware_trace_regression": "T0 released-switch reference and original L1/L4 sweep; T1 retains its actuator trace",
-    "MCU_required_for_feeder": "RC8-CONTROL-R7-FACTORY-FEED"
+    "MCU_required_for_feeder": "RC8-CONTROL-R7-FACTORY-FEED",
+    "T0_speed_profile": {
+      "name": "OEM",
+      "tool": "T0",
+      "travel_mm_s": 133.33333333333334,
+      "oscillation_mm_s": 50.0,
+      "selector_press_mm_s": 4.166666666666667,
+      "MCU_required": "RC8-CONTROL-R7-FACTORY-SPEED",
+      "factory_motion_abi": 1,
+      "factory_motion_max_hz": 125000,
+      "physical_test": "pending operator",
+      "fast_XY_accel_mm_s2": 1500
+    }
   },
   "zortrax_menu": {
     "api": 1,

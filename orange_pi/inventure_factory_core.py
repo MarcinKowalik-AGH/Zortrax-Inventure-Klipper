@@ -13,6 +13,9 @@ import json
 E_STEPS_PER_MM = 960
 XY_STEPS_PER_MM = 640
 MAX_MASTER_RATE = 20000
+FACTORY_MOTION_MAX_RATE = 125000
+OEM_T0_SPEEDS = dict(travel_speed=8000. / 60., purge_speed=3000. / 60.,
+                     switch_speed=250. / 60.)
 XY_RELEASE_MM = 5000 / XY_STEPS_PER_MM
 XY_RELEASE_SPEED = 1.
 UINT32 = 0xffffffff
@@ -82,7 +85,8 @@ def defaults(tool=0):
         purge_span=36., purge_e_steps=2073, purge_mm=20., clean_after=1,
         wipe_y=152., wipe_span=100., wipe_exit=23., park_span=100., manual_mm=20.,
         manual_dir='LOAD', feeder=0, target=230., max_power=40., duration=900.,
-        procedure_timeout=1800., material='UNKNOWN', xy_input_frame='RAW')
+        procedure_timeout=1800., material='UNKNOWN', xy_input_frame='RAW',
+        speed_profile='SERVICE')
     if tool == 0:
         for key, offset in _T0_OEM_TO_RAW.items():
             p[key] += offset
@@ -112,7 +116,7 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
     procedure_timeout=(60., 3600.))
 _CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'), 'material': _T0_MATERIALS,
-            'xy_input_frame': ('OEM', 'RAW')}
+            'xy_input_frame': ('OEM', 'RAW'), 'speed_profile': ('SERVICE', 'OEM')}
 _INTEGERS = frozenset(('l1_starts', 'pulse_count', 'final_starts',
                       'feeder_ms', 'monitor', 'fallback', 'purge_e_steps',
                       'clean_after', 'feeder'))
@@ -127,7 +131,19 @@ def feeder_budget(p):
 def _validated(values, operation=None):
     p = dict(values)
     p['tool'] = _tool(p['tool'])
+    for key, choices in _CHOICES.items():
+        value = str(p[key]).strip().upper()
+        if key == 'material':
+            value = value.replace(' ', '-')
+        if value not in choices:
+            raise FactoryError(key.upper() + ' must be ' + ' or '.join(choices))
+        p[key] = value
+    oem = p['speed_profile'] == 'OEM'
+    if oem and p['tool'] != 0:
+        raise FactoryError('SPEED_PROFILE=OEM is available for T0')
     for key, (low, high) in _LIMITS.items():
+        if oem:
+            high = OEM_T0_SPEEDS.get(key, high)
         raw = p[key]
         try:
             number = float(raw)
@@ -140,13 +156,6 @@ def _validated(values, operation=None):
                 raise FactoryError(key.upper() + ' must be an integer')
             number = int(number)
         p[key] = number
-    for key, choices in _CHOICES.items():
-        value = str(p[key]).strip().upper()
-        if key == 'material':
-            value = value.replace(' ', '-')
-        if value not in choices:
-            raise FactoryError(key.upper() + ' must be ' + ' or '.join(choices))
-        p[key] = value
     if p['tool'] == 1 and p['material'] != 'UNKNOWN':
         raise FactoryError('MATERIAL selects an r0323 T0 cassette profile')
     if p['tool'] == 1 and p['xy_input_frame'] != 'RAW':
@@ -218,6 +227,10 @@ def _validated(values, operation=None):
             raise FactoryError(label + ' trajectory exceeds 595 seconds; increase speed or shorten travel')
     # Coordinated purge ties E to XY. A narrow span with excessive E must be
     # refused before even cold homing, not only when that later leg starts.
+    # Only use the OEM X+E ratio or a lower one at factory speed. A modified
+    # span must not turn a fast XY request into a high-rate extrusion.
+    if oem and p['purge_e_steps'] / p['purge_span'] > 2073. / 36.:
+        raise FactoryError('OEM PURGE_E_STEPS/PURGE_SPAN exceeds the r0323 coupling')
     for span, steps in ((p['purge_span'], p['purge_e_steps']),
                         (p['purge_span']/2., p['purge_e_steps']//2)):
         if math.ceil(steps * p['purge_speed'] / span) > MAX_MASTER_RATE:
@@ -263,6 +276,8 @@ def parameters(gcmd, configured=None, operation=None):
 
 def _parameters(tool, values, operation=None):
     p = defaults(tool)
+    if str(values.get('speed_profile', p['speed_profile'])).strip().upper() == 'OEM':
+        p.update(OEM_T0_SPEEDS)
     material = str(values.get('material', p['material'])).strip().upper().replace(' ', '-')
     if material == 'Z-PETG':
         p.update(unload_l1=50., unload_l2=50.)

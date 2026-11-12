@@ -1,4 +1,5 @@
 """Factory procedure integration with independent sensor, motion and lease models."""
+import json
 import math
 import unittest
 import test_orange_pi_load_test as support
@@ -137,10 +138,13 @@ class FactoryDevice(support.Device):
 
 
 class FactoryHostTests(unittest.TestCase):
-    def host(self,scenario='short'):
+    def host(self,scenario='short',fast_motion=False):
         h,ops,p13=support.LoadTests().host();h.device=FactoryDevice(h,scenario)
         h.factory_abi=1
         h.factory_feed_clock=1
+        if fast_motion:
+            h.factory_motion_abi=1
+            h.factory_motion_max_hz=125000
         h.commands.update(control=support.Wire(h.device.control),output=support.Wire(h.device.out),
             motion=support.Wire(h.device.move),motion_driver=support.Wire(h.device.driver),
             factory_session=support.Wire(h.device.query_factory))
@@ -208,6 +212,32 @@ class FactoryHostTests(unittest.TestCase):
         self.assertEqual(h.device.packets,[])
         h.cmd_procedure(Command(ACTION='SELECT', TOOL='T0'))
         self.assertEqual(self.finish(h)['factory']['result']['terminal'], 'SELECT')
+
+    def test_OEM_motion_requires_the_capability_before_any_actuation(self):
+        for action in ('SWEEP','AUTO','UNLOAD'):
+            with self.subTest(action=action):
+                h,_,_=self.host()
+                with self.assertRaisesRegex(RuntimeError, 'OEM'):
+                    h.cmd_procedure(Command(ACTION=action,TOOL='T0',SPEED_PROFILE='OEM'))
+                self.assertIsNone(h.load_test_context)
+                self.assertEqual(h.device.factory_packets,[])
+                self.assertEqual(h.device.packets,[])
+
+    def test_OEM_PARAMS_reports_capability_without_starting_the_procedure(self):
+        for fast_motion in (False,True):
+            with self.subTest(fast_motion=fast_motion):
+                h,_,_=self.host(fast_motion=fast_motion)
+                command=Command(ACTION='PARAMS',PROCEDURE='SWEEP',TOOL='T0',SPEED_PROFILE='OEM')
+                h.cmd_procedure(command)
+                line,=command.lines
+                parameters=json.loads(line.removeprefix('V9_FACTORY_PARAMS '))
+                self.assertEqual(parameters['speed_profile'],'OEM')
+                self.assertIs(parameters['factory_motion_available'],fast_motion)
+                self.assertEqual(parameters['travel_speed'],8000/60)
+                self.assertEqual(parameters['purge_speed'],3000/60)
+                self.assertIsNone(h.load_test_context)
+                self.assertEqual(h.device.factory_packets,[])
+                self.assertEqual(h.device.packets,[])
 
     def test_empty_A_uses_stock_L1_probe_only_for_T0(self):
         for tool in (0,1):
@@ -318,6 +348,98 @@ class FactoryHostTests(unittest.TestCase):
         self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
         self.assertEqual(h.device.mode_history,[0])
 
+    def test_OEM_cold_sweep_completes_with_fast_XY_and_ordinary_homing(self):
+        h,_,_=self.host(fast_motion=True)
+        h.cmd_procedure(Command(ACTION='SWEEP',TOOL='T0',SPEED_PROFILE='OEM'))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'SWEEP')
+        self.assertEqual(last['factory']['position'][:2],[82.8,152.5])
+        self.assertEqual(last['factory']['e_steps_by_phase'],{})
+        motions=[p for p in h.device.packets if p[:2]==('motion',1)]
+        homing=[p for p in motions if p[10]]
+        self.assertTrue(homing)
+        self.assertTrue(all(p[7]<=20000 and p[8]==10 for p in homing))
+        self.assertTrue(all(not p[6] for p in motions))
+        sweep=[p for p in motions if not p[10] and p[3]==p[4] and p[3] in (11520,23040)]
+        self.assertEqual([p[2:9] for p in sweep[:3]], [
+            (0,11520,11520,0,0,32000,2),
+            (3,23040,23040,0,0,32000,2),
+            (0,23040,23040,0,0,32000,2)])
+        self.assertTrue(all(20000<p[7]<=125000 and p[8]==2 for p in motions if not p[10]))
+        self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
+        self.assertEqual(h.device.mode_history,[0])
+        timing=support.Wire(lambda args: dict(peak_callback_ticks=239,peak_late_ticks=117))
+        h.commands['factory_motion_timing']=timing
+        status=Command(ACTION='STATUS')
+        h.cmd_motion(status)
+        self.assertEqual(timing.calls,[()])
+        self.assertEqual(json.loads(status.lines[-1].split(' ',1)[1])['last_fast_segment'],
+                         dict(peak_callback_ticks=239,peak_late_ticks=117))
+
+    def test_OEM_diagonal_respects_the_advertised_fast_rate_cap(self):
+        h,_,_=self.host(fast_motion=True)
+        h.cmd_procedure(Command(ACTION='SELECT',TOOL='T0',SPEED_PROFILE='OEM',
+                                XY_INPUT_FRAME='RAW',CENTER_X=60,CENTER_Y=60))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        motions=[p for p in h.device.packets if p[:2]==('motion',1) and not p[10]]
+        diagonal=motions[0]
+        self.assertEqual(diagonal[3:9],(76800,0,0,0,math.ceil(640*math.sqrt(2)*8000/60),2))
+        self.assertLessEqual(max(p[7] for p in motions),125000)
+        self.assertEqual(motions[-2][2:9],(3,9600,9600,0,0,2667,10))
+
+    def test_OEM_long_AUTO_preserves_XY_E_coupling_and_pure_E_speed(self):
+        h,_,_=self.host('long',fast_motion=True)
+        self.start(h,SPEED_PROFILE='OEM')
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'L4')
+        steps=last['factory']['e_steps_by_phase']
+        self.assertEqual(steps['L1'],19693)
+        self.assertEqual(steps['L4'],96394)
+        self.assertGreater(steps['L3'],0)
+        self.assertLess(steps['L3'],250*960)
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        coupled=[p for p in moves if p[3] or p[4]]
+        self.assertEqual([p[2:9] for p in coupled[:3]], [
+            (0,11520,11520,0,1036,32000,2),
+            (3,23040,23040,0,2073,32000,2),
+            (0,23040,23040,0,2073,32000,2)])
+        self.assertEqual(sum(p[6] for p in coupled),steps['L1']+steps['L4'])
+        self.assertTrue(all(p[7:9]==(32000,2) for p in coupled))
+        self.assertEqual([p[6:9] for p in moves if not (p[3] or p[4])], [(250*960,1536,10)])
+        self.assertEqual(h.device.output(6)['duty'],0)
+        self.assertFalse(h.device.active())
+
+    def test_OEM_timing_fault_stops_hot_procedure_without_further_moves(self):
+        h,_,_=self.host(fast_motion=True)
+        original=h.device.move
+        failed_run=None
+
+        def fail_hot_motion(args):
+            nonlocal failed_run
+            row=original(args)
+            if args[0]==1 and args[5] and args[6]>20000:
+                failed_run=row['run']
+                h.device.stop_motion()
+            if row['run']==failed_run:
+                row.update(active=0,phase=5,reason=8)
+            return row
+
+        h.commands['motion']=support.Wire(fail_hot_motion)
+        self.start(h,SPEED_PROFILE='OEM')
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'failed',last)
+        self.assertIn('timing_fault',last['reason'])
+        self.assertEqual(h.device.output(6)['duty'],0)
+        self.assertFalse(h.device.active())
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        self.assertEqual(len(moves),1)
+        count=len(h.device.packets)
+        h.reactor.pause(h.reactor.now+3.)
+        self.assertEqual(len(h.device.packets),count)
+
     def test_T0_home_requires_both_limits_to_release_before_heat(self):
         for mask in (1,2):
             with self.subTest(mask=mask):
@@ -350,17 +472,17 @@ class FactoryHostTests(unittest.TestCase):
         self.assertFalse(any(p[:2]==('motion',1) and p[6] for p in h.device.packets))
 
     def test_short_path_uses_real_AUTO_start_counter_not_number_of_renewals(self):
-        h,_,_=self.host();self.start(h);last=self.finish(h)
+        h,_,_=self.host(fast_motion=True);self.start(h);last=self.finish(h)
         self.assertEqual(last['phase'],'done',last)
         self.assertGreaterEqual(h.device.starts,6)
         self.assertGreater(sum(p[0]==2 for p in h.device.factory_packets),h.device.starts)
         self.assertEqual(h.device.auto_entries,1)
         self.assertNotIn(2,h.device.mode_history)
         feed=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
-        self.assertEqual([p[2:8] for p in feed[:3]],[
-            (0,11520,11520,0,1036,19200),
-            (3,23040,23040,0,2073,19200),
-            (0,23040,23040,0,2073,19200)])
+        self.assertEqual([p[2:9] for p in feed[:3]],[
+            (0,11520,11520,0,1036,19200,10),
+            (3,23040,23040,0,2073,19200,10),
+            (0,23040,23040,0,2073,19200,10)])
         self.assertEqual(last['factory']['motion_legs']['selector_press']['drivers']['A']['sent'],9600)
         self.assertEqual(h.device.output(6)['duty'],0);self.assertFalse(h.device.active())
 

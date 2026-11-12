@@ -10,7 +10,7 @@ typedef struct { volatile uint32_t CR1,CR2,SR,DR; } SPI_TypeDef;
 typedef struct { volatile uint32_t SR,CR1,CR2,DR,SQR1,SQR2,SQR3,SMPR1,SMPR2; } ADC_TypeDef;
 typedef struct { volatile uint32_t AHB1ENR,APB1RSTR,APB2RSTR; } RCC_TypeDef;
 extern GPIO_TypeDef mock_gpio[7];
-extern TIM_TypeDef mock_tim[10];
+extern TIM_TypeDef mock_tim[15];
 extern USART_TypeDef mock_usart[7];
 extern SPI_TypeDef mock_spi[4];
 extern ADC_TypeDef mock_adc[4];
@@ -26,6 +26,9 @@ extern RCC_TypeDef mock_rcc;
 #define TIM5 (&mock_tim[5])
 #define TIM8 (&mock_tim[8])
 #define TIM9 (&mock_tim[9])
+#define TIM11 (&mock_tim[11])
+#define TIM13 (&mock_tim[13])
+#define TIM14 (&mock_tim[14])
 #define USART1 (&mock_usart[1])
 #define USART3 (&mock_usart[3])
 #define SPI2 (&mock_spi[2])

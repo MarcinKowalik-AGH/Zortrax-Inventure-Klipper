@@ -10,8 +10,11 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-SPEED'
 FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
+FACTORY_MOTION_RELEASE = 'RC8-CONTROL-R7-FACTORY-SPEED'
+FACTORY_TIMING_QUERY = 'inventure_factory_motion_timing_query'
+FACTORY_TIMING_RESPONSE = 'inventure_factory_motion_timing peak_callback_ticks=%u peak_late_ticks=%u'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
@@ -69,7 +72,7 @@ CONTROL_REJECTS = (None,'invalid_request','another_owner_is_busy','mcu_not_ready
     'FIRMWARE_RESTART_required_after_native_stop','required_sensor_or_door_interlock')
 MOTION_PHASES = ('idle','running','holding','done','stopped','failed')
 MOTION_REASONS = ('none','completed','stop_input','operator_stop','heartbeat_or_cable_lost',
-    'door_open','maximum_time','mcu_shutdown')
+    'door_open','maximum_time','mcu_shutdown','timing_fault')
 OUTPUT_REASONS = ('idle','applied','operator_off','duration_finished',
     'temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown')
 OUTPUT_NAMES = ('F0','F1','F2','F3','F4','F5','T0','T1','PC9','PC8')
@@ -436,8 +439,13 @@ class InventureMCU:
             self.commands['load_stream']=self.mcu.lookup_query_command(LOAD_STREAM_COMMAND,LOAD_STREAM_RESPONSE)
         self.factory_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_ABI',0))
         self.factory_feed_clock=int(self.mcu.get_constants().get('INVENTURE_FACTORY_FEED_CLOCK',0))
+        self.factory_motion_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_ABI',0))
+        self.factory_motion_max_hz=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_MAX_HZ',0))
         if self.factory_abi==1:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
+        if self.factory_motion_abi==1:
+            self.commands['factory_motion_timing']=self.mcu.lookup_query_command(
+                FACTORY_TIMING_QUERY,FACTORY_TIMING_RESPONSE)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
         self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
@@ -1570,6 +1578,8 @@ class InventureMCU:
             'load_stream_abi':getattr(self,'load_stream_abi',0),
             'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1, 'zortrax_menu_api':1,
             'factory_feed_clock':getattr(self,'factory_feed_clock',0),
+            'factory_motion_abi':getattr(self,'factory_motion_abi',0),
+            'factory_motion_max_hz':getattr(self,'factory_motion_max_hz',0),
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -1712,7 +1722,7 @@ class InventureMCU:
         p=self._control_send('motion',[action,directions,*[abs(n) for n in counts],
             rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token],mutate=action==1,owner=owner)
         self._control_validate(p,{'run':(0,0xffffffff),'token':(0,0xffffffff),'phase':(0,5),
-            'reason':(0,7),'reject':(0,5),'active':(0,1),'events':(0,2000000),
+            'reason':(0,len(MOTION_REASONS)-1),'reject':(0,5),'active':(0,1),'events':(0,2000000),
             'elapsed_ms':(0,600100),'hit':(0,65535)})
         if p['reject']:
             return dict(p,reject=CONTROL_REJECTS[p['reject']])
@@ -1775,6 +1785,11 @@ class InventureMCU:
             if action==1:self._control_service()
             attempted=action==1
             state=self._motion_query(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold)
+            if action==0 and 'factory_motion_timing' in self.commands:
+                ticks=self._control_validate(self._control_send('factory_motion_timing',[]),
+                    {'peak_callback_ticks':(0,0xffffffff),'peak_late_ticks':(0,0xffffffff)})
+                state=dict(state,last_fast_segment={key:ticks[key] for key in
+                    ('peak_callback_ticks','peak_late_ticks')})
         except Exception as exc:
             if attempted:self._control_abort()
             raise gcmd.error(str(exc))
@@ -2460,6 +2475,11 @@ class InventureMCU:
                 config.get('procedure_t0','{}'),config.get('procedure_t1','{}'))
         except ValueError as exc:raise config.error(str(exc))
 
+    def _factory_motion_available(self):
+        from .inventure_factory_core import FACTORY_MOTION_MAX_RATE
+        return (getattr(self,'factory_motion_abi',0)==1
+                and getattr(self,'factory_motion_max_hz',0)>=FACTORY_MOTION_MAX_RATE)
+
     def cmd_procedure(self,gcmd):
         from .inventure_factory_core import PROCEDURES, procedure_modules
         action=str(gcmd.get('ACTION','STATUS')).upper()
@@ -2472,7 +2492,10 @@ class InventureMCU:
             gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,tool=tool,procedures=modules,
                 precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
                 standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
-                MCU_required_for_feeder=FACTORY_FEED_RELEASE),sort_keys=True));return
+                MCU_required_for_feeder=FACTORY_FEED_RELEASE,
+                MCU_required_for_oem_speed=FACTORY_MOTION_RELEASE,
+                speed_profiles=['SERVICE','OEM'] if tool=='T0' else ['SERVICE']),
+                sort_keys=True));return
         operation=str(gcmd.get('PROCEDURE','AUTO')).upper() if action=='PARAMS' else action
         if operation not in PROCEDURES:
             raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+', '.join(PROCEDURES))
@@ -2486,7 +2509,10 @@ class InventureMCU:
             timeout=p['procedure_timeout']
             if read_only:
                 gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
+                    factory_motion_available=self._factory_motion_available(),
                     modules=procedure_modules(operation,p['tool'])),sort_keys=True));return
+            if p['speed_profile']=='OEM' and not self._factory_motion_available():
+                raise ValueError('SPEED_PROFILE=OEM requires the '+FACTORY_MOTION_RELEASE+' MCU application')
             if 'factory_session' not in self.commands:
                 raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
             needs_feeder = operation in ('AUTO','UNLOAD') or (
@@ -2549,7 +2575,7 @@ class InventureMCU:
         return dict(row)
 
     def _factory_begin_move(self,context,action):
-        from .inventure_factory_core import MAX_MASTER_RATE
+        from .inventure_factory_core import MAX_MASTER_RATE,FACTORY_MOTION_MAX_RATE
         f=context['factory'];p=f['parameters'];pos=f['position']
         releasing=action['kind']=='home_release'
         home=action['kind']=='home' or releasing
@@ -2569,10 +2595,16 @@ class InventureMCU:
                 round(e*960)*(1 if context['tool'] else -1))
         master=max(map(abs,counts))
         if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
-        rate=min(MAX_MASTER_RATE,max(1,math.ceil(master*action['speed']/length)))
+        requested_rate=max(1,math.ceil(master*action['speed']/length))
+        fast_xy=(p['speed_profile']=='OEM' and not home and (counts[0] or counts[1])
+                 and requested_rate>MAX_MASTER_RATE)
+        if fast_xy and (not f['session'] or requested_rate>FACTORY_MOTION_MAX_RATE):
+            raise ValueError('OEM XY segment exceeds the owned MCU motion envelope')
+        rate=requested_rate if fast_xy else min(MAX_MASTER_RATE,requested_rate)
         maximum=math.ceil(master*1000./rate)+5000
         if maximum>600000:raise ValueError('Factory segment exceeds 600 seconds')
-        row=self._motion_query(1,counts,rate,10,maximum,mask,0 if releasing else mask,owner=context)
+        row=self._motion_query(1,counts,rate,2 if fast_xy else 10,
+            maximum,mask,0 if releasing else mask,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,

@@ -33,6 +33,25 @@ Prędkość UART pozostaje odczytywana z InventureBoot 1.7; instalator zachowuje
 konfigurację hosta. Maksimum SPI pozostaje 3,75 MHz, a konkretna nastawa
 `spi_speed` nie jest automatycznie podnoszona.
 
+## Szybkie impulsy silników
+
+M300 Classic wykonuje kwalifikowane bloki natywnego Klippera sprzętowo.
+TIM2 i TIM3 generują ciągi STEP, a TIM4 i TIM5 zliczają impulsy i kończą
+blok. Próba HW05 na M300 objęła 6054 ruchy na sucho przy 750000 baud.
+Wydanie UIFAST przeniosło z M300 optymalizacje OLED i kolejkowania UART.
+Generator kroków procedur kasetowych Inventure w tym wydaniu nadal
+używał limitu 20 000 zdarzeń/s.
+[Kod timerów M300](https://github.com/MarcinKowalik-AGH/Zortrax-m300-Klipper/blob/89c04d4f1c6a82b19f239b156958451e4d7fc764/mcu/SOURCE_MCU/overlay/src/stm32/m300_xy_step_timer.c) ·
+[Zakres próby HW05](https://github.com/MarcinKowalik-AGH/Zortrax-m300-Klipper/blob/89c04d4f1c6a82b19f239b156958451e4d7fc764/docs/pl/PRINT_LIMITS_AND_PLANNER.md).
+
+W Inventure profil `OEM` procedury T0 używa sprzętowych impulsów STEP
+z TIM14, TIM13 i TIM11. Własna sesja SERVICE synchronizuje napędy A/B/E,
+kontroluje czujniki kasety i zatrzymuje procedurę po utracie właściciela.
+Stanowisko Inventure działa z `kinematics: none`. Natywna kolejka bloków
+M300 oraz jej połączenia między timerami dotyczą płyty M300 Classic.
+Na Inventure badanie prędkości zaczyna się od zimnego `SWEEP`.
+[Profil T0, aktualizacja i polecenia](FACTORY_LOAD_2026-11-10.md).
+
 ## Poprawki Inventure
 
 Przewijanie widoku procedury wcześniej ustawiało nowy kursor, lecz pomijało

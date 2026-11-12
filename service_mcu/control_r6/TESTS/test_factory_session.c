@@ -158,7 +158,139 @@ static void pulse_age_and_status(void) {
     assert(factory_reply[7]==1 && factory_reply[8]==0 && factory_reply[9]==2 && factory_reply[10]==10);
     puts("PASS factory pulse age: real accepted edges, raw A/B status, accumulated idle age across multiple CLOCK wraps during warm-up");
 }
+
+static void fast_dispatch(uint32_t late,uint8_t hardware_finishes) {
+    assert(cm.active && cm.fast_mask && cm_timer.func==cm_fast_event);
+    sched_del_timer(&cm_timer);
+    mock_now=cm_timer.waketime+late;
+    if(hardware_finishes && mock_now-cm.fast_last_launch>=timer_from_us(2)) {
+        TIM14->CR1&=~CM_PULSE_CEN;
+        TIM13->CR1&=~CM_PULSE_CEN;
+        TIM11->CR1&=~CM_PULSE_CEN;
+    }
+    unsigned res=cm_timer.func(&cm_timer);
+    if(res==SF_RESCHEDULE)sched_add_timer(&cm_timer);
+    else assert(!cm.active && !cm.fast_mask && !cm.timer_added);
+}
+
+static void fast_start(unsigned rate,unsigned b,unsigned e) {
+    factory_reset(0xffff0000u,1);
+    factory(1,0,IVT_STOP,0,1000,1500,501,0);
+    motion(1,0,24000,b,0,e,rate,2,2000,0,0,0,601);
+    assert(fs.active && cm.active && cm.fast_mask);
+}
+
+static void fast_factory_cadence(void) {
+    const unsigned rates[]={32000,120680,125000};
+    for(unsigned n=0;n<ARRAY_SIZE(rates);n++) {
+        unsigned rate=rates[n],b=n==0?24000:17300,e=n==0?0:2073;
+        fast_start(rate,b,e);
+        assert(TIM14->ARR==120 && TIM13->ARR==120 && TIM14->CCR1==1 && TIM13->CCR1==1);
+        assert(TIM14->CCMR1==CM_PULSE_PWM2 && TIM13->CCMR1==CM_PULSE_PWM2);
+        assert(!TIM14->DIER && !TIM13->DIER && !TIM11->DIER);
+        assert(((GPIOA->AFR[0]>>24)&255)==0x99 && ((GPIOA->MODER>>12)&15)==0xA);
+        if(e) {
+            assert(TIM11->ARR==240 && TIM11->CCR1==1 && TIM11->CCMR1==CM_PULSE_PWM2);
+            assert(((GPIOB->AFR[1]>>4)&15)==3 && ((GPIOB->MODER>>18)&3)==2);
+        }
+        assert(cm.fast_accel_half==(n==0?480000u:550722u));
+        uint32_t period=(CONFIG_CLOCK_FREQ+rate-1u)/rate, cruise=0;
+        while(cm.active) {
+            uint32_t before=cm.done,wake=cm_timer.waketime,last_launch=cm.fast_last_launch;
+            uint8_t plateau=before+1>=cm.fast_cruise_ramp && cm.master-(before+1)>=cm.fast_cruise_ramp;
+            uint32_t late=plateau && cruise==0?timer_from_us(100):plateau && cruise==1?60:0;
+            fast_dispatch(late,1);
+            if(cm.active) {
+                assert(cm.done==before+1 && TIM14->CR1==(CM_PULSE_OPM|CM_PULSE_CEN));
+                if(before)assert(cm.fast_last_launch-last_launch>=timer_from_us(CM_FACTORY_MIN_INTERVAL_US));
+                if(plateau) {
+                    uint32_t base=late>timer_from_us(1)?wake+late:wake;
+                    assert(cm_timer.waketime-base==period);
+                    cruise++;
+                }
+            }
+        }
+        assert(cruise>1000 && cm.fast_peak_late==timer_from_us(100));
+        assert(cm.sent[0]==24000 && cm.sent[1]==b && cm.sent[3]==e && cm.reason==CR_COMPLETE);
+        assert(transport[0].forward==e && !transport[0].reverse && transport[0].budget==20160-e);
+        assert(!TIM14->CR1 && !TIM13->CR1 && !TIM11->CR1);
+        assert(!TIM14->CCER && !TIM13->CCER && !TIM11->CCER);
+        assert(((GPIOA->MODER>>12)&15)==5 && ((GPIOB->MODER>>18)&3)==1);
+        assert(GPIOE->BSRR==BIT(10));
+        factory(3,0,IVT_STOP,0,1000,1500,501,0);
+    }
+    puts("PASS fast factory cadence: 32/120.68/125 kHz plateaus, bounded jitter and delay, wrap, exact CoreXY/E counts, one-shot drain and GPIO restore");
+}
+
+static void fast_factory_guards(void) {
+    factory_reset(0,1);
+    motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
+    assert(!cm.active && !TIM14->CR1);
+    factory(1,1,IVT_STOP,0,1000,1500,501,0);
+    motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
+    assert(fs.active && !cm.active && !TIM14->CR1);
+    factory_reset(0,1);
+    factory(1,0,IVT_STOP,0,1000,1500,501,0);
+    motion(1,0,100,100,0,0,32000,2,1000,1,1,0,601);
+    motion(1,0,100,100,1,0,32000,2,1000,0,0,0,601);
+    motion(1,0,100,100,0,101,32000,2,1000,0,0,0,601);
+    motion(1,0,100,100,0,0,32000,2,1000,0,0,1,601);
+    motion(1,0,100,100,0,0,32000,10,1000,0,0,0,601);
+    motion(1,0,100,100,0,0,125001,2,1000,0,0,0,601);
+    assert(fs.active && !cm.active && !TIM14->CR1);
+    enable_pclock((uint32_t)(uintptr_t)TIM14);
+    TIM14->CR1=CM_PULSE_CEN;
+    motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
+    assert(!cm.active && TIM14->CR1==CM_PULSE_CEN);
+
+    for(unsigned fault_kind=0;fault_kind<8;fault_kind++) {
+        fast_start(120680,24000,10);
+        fast_dispatch(0,1);
+        assert(cm.done==1);
+        if(fault_kind==0) {
+            fast_dispatch(MS(1)+1,1);
+            assert(cm.reason==CR_TIMING);
+        } else if(fault_kind==1) {
+            fast_dispatch(0,0);
+            assert(cm.reason==CR_TIMING);
+        } else if(fault_kind==2) {
+            mock_read_cycles=timer_from_us(3);
+            fast_dispatch(0,1);
+            mock_read_cycles=0;
+            assert(cm.active && cm.reason==CR_TIMING && cm.done==2);
+            fast_dispatch(timer_from_us(10),1);
+            assert(cm.reason==CR_TIMING && cm.fast_peak_ticks==timer_from_us(6));
+        } else if(fault_kind==3) {
+            GPIOD->IDR|=BIT(11);
+            fast_dispatch(0,1);
+            assert(cm.reason==CR_HEARTBEAT);
+        } else if(fault_kind==4) {
+            fs.deadline=cm_timer.waketime;
+            fast_dispatch(0,1);
+            assert(cm.reason==CR_HEARTBEAT);
+        } else if(fault_kind==5) {
+            GPIOE->IDR&=~BIT(15);
+            fast_dispatch(0,1);
+            assert(cm.reason==CR_DOOR);
+        } else if(fault_kind==6) {
+            control_command(2,0);
+            assert(cm.reason==CR_STOP);
+        } else {
+            scheduled_count=0;
+            force_safe();
+            assert(cm.reason==CR_SHUTDOWN);
+        }
+        assert(!cm.active && cm.done==(fault_kind==2?2u:1u));
+        assert(!TIM14->CR1 && !TIM13->CR1 && !TIM11->CR1);
+        if(fault_kind!=7)assert(GPIOE->BSRR==(BIT(10)<<16));
+        else assert(((GPIOE->MODER>>20)&3)==1); // raw_safe wrote other GPIOE latches after PE10
+        assert(((GPIOA->MODER>>12)&15)==5 && ((GPIOB->MODER>>18)&3)==1);
+    }
+    puts("PASS fast factory scope and guards: T0 only, timer ownership, rate/move validation, overlap/late/CPU abort, cable, lease, door, STOP and shutdown");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
+    fast_factory_cadence();fast_factory_guards();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

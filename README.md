@@ -1,4 +1,4 @@
-# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED-T0-MOTION / MCU CONTROL-R7-FACTORY-FEED
+# Zortrax Inventure — CONTROL-R7-FACTORY-SPEED
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
@@ -8,7 +8,10 @@ Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
 T0 wyznacza współrzędne od zwolnionych krańcówek X/Y. Docisk selektora
 biegnie od X139,5 do X154,5 przy stałym Y154,5. AUTO wykonuje oscylacje
 w L1 i L4 nad koszem. UNLOAD dobiera budżety U1/U2 przez `MATERIAL`.
-Host T0-MOTION można zaktualizować na już zainstalowanym MCU FACTORY-FEED.
+Profil `SPEED_PROFILE=OEM` dla T0 odtwarza żądane prędkości XY r0323.
+Przejazdy i czyszczenie używają F8000, oscylacje F3000, a docisk F250.
+Profil wymaga MCU FACTORY-SPEED. Dotychczasowy profil serwisowy nadal
+działa z MCU FACTORY-FEED.
 [Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
@@ -40,7 +43,7 @@ INVENTURE_ZORTRAX OP=CATALOG
 
 Otwarcie czynności nie rozpoczyna ruchu/grzania. Potwierdzenie jest
 jednorazowe i związane z bieżącym widokiem/operacją. Procedury z napędem
-kasety wymagają MCU R7-FACTORY-FEED. [Obsługa menu, procedury i rzeczywista dostępność](docs/ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
+kasety wymagają `factory_feed_clock: 1`. [Obsługa menu, procedury i rzeczywista dostępność](docs/ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
 
 ## Wspólne procedury T0/T1
 
@@ -61,9 +64,10 @@ w `factory.motion_legs.selector_press`. Osobne
 `INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0` wykonuje ruchy X jednej
 porcji L1 bez grzania, E i podajnika.
 
-Nastawy: wartości wbudowane → opcjonalne `procedure_defaults` →
-`procedure_t0`/`procedure_t1` w `[inventure_mcu]` → argumenty polecenia.
-Procedury kasetowe wymagają `RC8-CONTROL-R7-FACTORY-FEED`.
+Nastawy są rozpatrywane w kolejności od wartości wbudowanych przez
+opcjonalne `procedure_defaults` i `procedure_t0`/`procedure_t1`
+w `[inventure_mcu]` po argumenty polecenia. Procedury kasetowe wymagają
+obsługi zegara podajnika `factory_feed_clock: 1`.
 [Moduły, osobne polecenia, profile i diagnostyka](docs/MODULAR_PROCEDURES_2026-11-10.md).
 
 ## Ładowanie zależne od czujników — T0 i T1
@@ -72,38 +76,49 @@ Nowe `INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0` albo `TOOL=T1` wykonuje
 odtworzony automat L1–L4: krótka próba przy działającym transporcie,
 odzyskanie podawania, dłuższy transport oraz końcowe wyciskanie/czyszczenie.
 Przygotowuje ruch, nagrzewa i mechanicznie przełącza właściwą dyszę.
-Progi impulsów, prawdziwych startów kasety, czasy, odcinki, prędkości oraz
-geometria są parametrami polecenia. Pierwsza fizyczna próba pełnego R7
-pozostaje do wykonania.
+Progi impulsów, startów kasety, czasy, odcinki, prędkości i geometria są
+parametrami polecenia.
 
 ```gcode
 INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T0
 ```
 
-PARAMS jest tylko odczytem/walidacją. Właściwa próba wymaga nowej aplikacji
-MCU `RC8-CONTROL-R7-FACTORY-FEED`, z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip`,
-oraz aktualizacji hosta opisanej poniżej. Po instalacji IVB i hosta użyj
-`FIRMWARE_RESTART`; `INVENTURE_VERSION` ma pokazać `factory_abi: 1`.
+PARAMS odczytuje i waliduje nastawy. Po aktualizacji hosta i MCU użyj
+`FIRMWARE_RESTART`. Dla profilu OEM sprawdź w `INVENTURE_VERSION`
+`factory_abi: 1`, `factory_feed_clock: 1` i `factory_motion_abi: 1`.
+
+Pierwszą próbę prędkości OEM wykonaj na zimno w konsoli Fluidd. Jeżeli
+test wymaga otwartych osłon, wydaj `INVENTURE_DOOR_POLICY ENABLE=0`
+po wybraniu SERVICE. Podczas ruchu trzymaj ręce poza obszarem pracy.
 
 ```gcode
-INVENTURE_STOP
 INVENTURE_CONTROL MODE=SERVICE
-INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0 TARGET=230 MAX_POWER=40 DURATION=900 PROCEDURE_TIMEOUT=1800
+INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0 SPEED_PROFILE=OEM
 ```
 
-Dla prawej kasety zamień `TOOL=T0` na `TOOL=T1`. Wykonuj jedną próbę naraz.
-Normalne zakończenie AUTO i błędy wyłączają grzanie oraz ruch. Ręczne
-przerwanie: `INVENTURE_STOP`. T0 żąda 30 mm/s dla przejazdów i oscylacji.
-Przekątne są ograniczane do limitu 20 000 zdarzeń DDA/s. Fabryczne F8000
-na przejazdach i F3000 podczas oscylacji wykraczają poza limit SERVICE.
-Kasetę włóż przed rozpoczęciem procedury. SERVICE pomija RFID.
+Po zakończeniu SWEEP wybierz jedną operację. Przykład używa profilu
+transportu kasety Z-PLA. Dla innego materiału zmień `MATERIAL`.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+```
+
+Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
+przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
+SERVICE pomija RFID. Opcja OEM dotyczy T0. Domyślny profil nadal obsługuje
+T0 i T1 oraz ogranicza ruchy XY do 20 000 zdarzeń DDA/s.
 [Pełna instalacja, parametry, nominalna geometria i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
 
 Opisane dalej `ACTION=LOAD` i `ACTION=RETRACT` zachowują wcześniejsze próby
 stałego odcinka, niezależnie od nowego automatu AUTO.
 
 ## Aktualizacja Orange Pi
+
+Wykonaj w terminalu Orange Pi przez SSH.
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
@@ -119,9 +134,9 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip` z aplikacją `MCU/INVENTUR.IVB` do bootloadera 1.7.
-AUTO i UNLOAD wymagają tej aplikacji oraz aktualnego hosta. Wcześniejsze próby
-stałego odcinka pozostają dostępne.
+`INVENTURE_MCU_CONTROL_R7_FACTORY_SPEED_BOOT17.zip` z aplikacją
+`MCU/INVENTUR.IVB` do bootloadera 1.7. AUTO i UNLOAD z profilem OEM
+wymagają tej aplikacji oraz aktualnego hosta.
 
 ## Po aktualizacji hosta
 
@@ -132,11 +147,14 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-SPEED`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.
 `factory_feed_clock: 1` potwierdza obsługę zegara kasety w tej sesji.
+`factory_motion_abi: 1` potwierdza obsługę profilu OEM, a
+`factory_motion_max_hz: 125000` podaje limit zdarzeń DDA/s.
+Czas ruchu i zachowanie mechaniki wymagają sprawdzenia na drukarce.
 `procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
 `zortrax_menu_api: 1` potwierdza wspólny sterownik procedur menu OLED/G-code.
 

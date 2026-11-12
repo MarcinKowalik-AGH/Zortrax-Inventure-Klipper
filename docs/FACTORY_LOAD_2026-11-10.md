@@ -1,8 +1,10 @@
-# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-FEED
+# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-SPEED
 
-Host `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION` składa AUTO z tych samych modułów
-co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne.
-Procedury używające kasety wymagają MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+Host `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED` składa AUTO z tych samych modułów
+co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne. Profil
+`SPEED_PROFILE=OEM` przywraca żądane prędkości przejazdów i oscylacji T0
+z r0323 i wymaga MCU `RC8-CONTROL-R7-FACTORY-SPEED`. Zwykły profil
+serwisowy nadal działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
 `INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0` rozpoczyna od bazowania
@@ -14,107 +16,111 @@ Poprzednie `ACTION=LOAD` i `ACTION=RETRACT` pozostają osobnymi próbami
 stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 `TUBE_SECONDS`, `PURGE_STEPS`, `SMOOTH` ani `RATE`.
 
-To procedura SERVICE dla już zamontowanej kasety i podłączonej rurki.
-Nie wykonuje autoryzacji RFID ani zapisu salda kasety. External/szpula
-pozostaje osobną procedurą. Fizyczne potwierdzenie poprawionego docisku
-i trasy pozostaje do wykonania na drukarce. Testy programu sprawdzają
-żądane kroki. Pozycję karetki, długość filamentu i zadziałanie dźwigni
-weryfikuje próba mechaniczna.
+Procedura SERVICE zakłada zamontowaną kasetę i podłączoną rurkę oraz pomija
+autoryzację RFID i zapis salda kasety. Zewnętrzna szpula ma osobną procedurę.
+Testy programu sprawdzają parametry i żądane kroki. Czasy przejazdów,
+pozycję karetki i reakcję mechaniki przy szybszym ruchu trzeba zweryfikować
+na drukarce.
 
 ## Instalacja
 
 Pierwsze MCU R7-FACTORY zgłaszało RUN podajnika w SERVICE przy zablokowanym
 zegarze PE6 (TIM9 CH2). Wersja FEED włącza zegar w sesji FACTORY. Host
 sprawdza tę obsługę przed startem procedur z napędem kasety.
-Drukarka z już zainstalowanym MCU FACTORY-FEED wymaga tylko aktualizacji hosta.
+MCU FACTORY-SPEED dodaje osobną obsługę szybkich ruchów w sesji FACTORY.
 
 1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
-   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip`
+   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_SPEED_BOOT17.zip`
    na kartę i zainstaluj aplikację przez InventureBoot 1.7.
-2. W terminalu Orange Pi zaktualizuj host:
+2. Zaktualizuj host w terminalu Orange Pi przez SSH.
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
-3. W konsoli Klippera wykonaj:
+3. Wykonaj restart w konsoli Klippera we Fluidd.
 
 ```gcode
 FIRMWARE_RESTART
 ```
 
-Po ponownym połączeniu:
+Po ponownym połączeniu odczytaj wersje.
 
 ```gcode
 INVENTURE_VERSION
 ```
 
-Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION` i MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED`
+i MCU `RC8-CONTROL-R7-FACTORY-SPEED`.
 W raporcie powinny być też widoczne
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
+`factory_motion_abi: 1`, `factory_motion_max_hz: 125000`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki
 oraz informację o nieobecności tego modułu na starszej instalacji.
 
-## Polecenia do próby
+## Próba T0 z prędkościami OEM
 
-Najpierw można odczytać i zwalidować parametry bez uruchamiania urządzenia:
+Polecenia w tym rozdziale wpisz w konsoli Klippera we Fluidd. Odczyt
+PARAMS pozwala sprawdzić parametry i `factory_motion_available` przed ruchem.
 
 ```gcode
-INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T0
-INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T1
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=SWEEP TOOL=T0 SPEED_PROFILE=OEM
 ```
 
-PARAMS pokazuje parametry planera dla podanych wartości/wartości domyślnych.
-STATUS podczas pracy pokazuje wartości rzeczywiście używane przez próbę.
-
-T0 można najpierw sprawdzić na zimno. W trybie SERVICE wykonaj osobno SELECT,
-a po jego zakończeniu SWEEP. SELECT bazuje osie, wykonuje docisk selektora
-i wraca nad kosz. SWEEP bazuje osie, parkuje nad koszem i wykonuje trasę X
-jednej porcji L1 z wyłączonym grzaniem, E i podajnikiem.
+Włącz SERVICE.
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=SELECT TOOL=T0
-```
-
-```gcode
-INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0
-```
-
-Wariant dla lewej kasety i T0:
-
-```gcode
-INVENTURE_STOP
 INVENTURE_CONTROL MODE=SERVICE
-INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
 ```
 
-Wariant dla prawej kasety i T1, po zakończeniu lub zatrzymaniu poprzedniej próby:
+Jeśli próba wymaga otwartych osłon, wyłącz ich kontrolę poniższym
+poleceniem. Restart MCU przywraca kontrolę osłon. Podczas ruchu
+trzymaj ręce poza obszarem pracy.
+
+```gcode
+INVENTURE_DOOR_POLICY ENABLE=0
+```
+
+Pierwszą próbę wykonaj na zimno. SWEEP bazuje osie, parkuje nad koszem
+i wykonuje trasę X jednej porcji L1 z wyłączonym grzaniem, E i podajnikiem.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0 SPEED_PROFILE=OEM
+```
+
+Po sprawdzeniu przejazdów wybierz jedną operację. Oba przykłady dotyczą
+lewej kasety T0 z materiałem Z-PLA. Dopasuj `MATERIAL` do kasety, a
+`TARGET` do używanego materiału.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+```
+
+Stan bieżącej próby pokazuje STATUS. STOP przerywa pracę.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=STATUS
+```
 
 ```gcode
 INVENTURE_STOP
-INVENTURE_CONTROL MODE=SERVICE
-INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T1 TARGET=230 MAX_POWER=40 DURATION=900 PROCEDURE_TIMEOUT=1800
 ```
 
-Stan i przerwanie:
-
-```gcode
-INVENTURE_LOAD_TEST ACTION=STATUS
-```
-
-```gcode
-INVENTURE_STOP
-```
+Zwykły profil wybiera `SPEED_PROFILE=SERVICE`, domyślny przy ustawieniach
+wbudowanych.
+Dla prawej kasety użyj `INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 TARGET=230 MAX_POWER=40`.
 
 T0 opuszcza stół do dolnej krańcówki, najeżdża na krańcówki Y i X i po
 każdym najeździe wyznacza zero osi na zwolnionym wejściu. Przed grzaniem
 jedzie przez X32,8 Y152,5 do X82,8 Y152,5 w układzie SERVICE.
-Na normalnym zakończeniu AUTO oraz po błędzie
-wyłącza grzanie i napędy; chłodzenie gorącej głowicy pozostaje automatyczne.
+Na zakończenie AUTO oraz po błędzie sterownik wyłącza grzanie i napędy.
+Chłodzenie gorącej głowicy działa automatycznie.
 
 ## Etapy i sprzężenie zwrotne
 
@@ -156,7 +162,7 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `FINAL_MM`, `FINAL_STARTS` | 100, 3 | Końcowe wyciskanie i potwierdzenie L4 |
 | `FEEDER_MS`, `FEEDER_K` | 1000, 1,75 | Czas pojedynczego doładowania AUTO i materiałowy współczynnik budżetu |
 | `E_SPEED` | 1,6 | Prędkość osobnego E w długim podawaniu |
-| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | T0 30, 30, 250/60. T1 20, 20, 4 | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
+| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | T0 30, 30, 250/60. T1 20, 20, 4. OEM T0 50, 8000/60, 250/60. | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
 | `HOME_SPEED`, `Z_SPEED` | T0 10, 2. T1 5, 2 | Prędkości najazdu XY i opuszczania stołu. T0 odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
 | `TARGET`, `MAX_POWER` | 230°C, 40% | Cel PID wybranej dyszy i limit mocy |
@@ -170,14 +176,28 @@ doładowania, z zaokrąglaniem float32 na etapach mnożenia:
 Przy 1000 ms i 1,75 wynik to 20160 jednostek E. To model sterownika,
 nie zmierzona długość filamentu ani dowód równej prędkości obu napędów.
 
-R7 zachowuje limit 20 000 zdarzeń DDA/s. Host ogranicza tempo każdego
-odcinka według przełożenia CoreXY. Odpowiada to maksymalnie 31,25 mm/s
-wzdłuż pojedynczej osi i około 22,1 mm/s na przekątnej 45°. Przy żądanych
-30 mm/s pełne oscylacje T0 w osi X są szybsze od poprzednich 20 mm/s,
-a nadal wolniejsze od fabrycznego F3000 (50 mm/s). Fabryczne przejazdy
-F8000 również przekraczają limit SERVICE. Podczas oscylacji prędkość E
-wynika z ruchu XY i proporcji około 2,159 mm E na pełny odcinek 36 mm X.
-`E_SPEED` steruje osobnym podawaniem ekstrudera.
+Profil serwisowy zachowuje limit 20 000 zdarzeń DDA/s. Host ogranicza
+tempo każdego odcinka według przełożenia CoreXY. Odpowiada to maksymalnie
+31,25 mm/s wzdłuż pojedynczej osi i około 22,1 mm/s na przekątnej 45°.
+
+| Ruch T0 w profilu OEM | Nastawa r0323 | Żądana prędkość |
+|---|---:|---:|
+| Parkowanie, dojazdy, powrót selektora i przejazdy czyszczące | F8000 | 133,33 mm/s |
+| Oscylacje L1/L4 i powrót po porcji L1 | F3000 | 50 mm/s |
+| Docisk dźwigni selektora | F250 | 4,17 mm/s |
+
+Sesja FACTORY w MCU obsługuje do 125 000 zdarzeń DDA/s w tym profilu.
+Przejazd F8000 potrzebuje około 85 334 zdarzeń/s w osi i do około
+120 680 zdarzeń/s na przekątnej. F3000 w osi X potrzebuje 32 000
+zdarzeń/s. Prędkości XY można obniżyć parametrami z tabeli, z zachowaniem
+fabrycznej granicy proporcji E do X. Rzeczywisty czas zależy od rozpędzania
+i hamowania. Przy pełnym F3000 proporcja 2073 kroków E na 36 mm X daje
+około 3 mm/s E.
+
+Bazowanie zachowuje prędkości serwisowe. Osobny ekstruder w L3
+(`E_SPEED=1.6`) i cofanie w U1–U3 używają dotychczasowych nastaw
+serwisowych. r0323 realizuje te etapy bezpośrednimi impulsami z pętlami
+opóźnienia CPU. Ich fizyczne prędkości wymagają pomiaru.
 
 Przykład regulacji osobnego podawania i doładowania bez zmiany progów:
 

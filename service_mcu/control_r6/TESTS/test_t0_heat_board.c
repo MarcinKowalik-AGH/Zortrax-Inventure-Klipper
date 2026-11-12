@@ -9,9 +9,10 @@
 #include "sched.h"
 #include "board/irq.h"
 #include "inventure_v9.h"
-GPIO_TypeDef mock_gpio[7]; TIM_TypeDef mock_tim[10]; USART_TypeDef mock_usart[7];
+GPIO_TypeDef mock_gpio[7]; TIM_TypeDef mock_tim[15]; USART_TypeDef mock_usart[7];
 SPI_TypeDef mock_spi[4]; ADC_TypeDef mock_adc[4]; RCC_TypeDef mock_rcc;
-static uint32_t mock_now;static jmp_buf failure;static int expect_failure, shutdown_count;
+static uint32_t mock_now,mock_read_cycles,mock_enabled_clocks;
+static jmp_buf failure;static int expect_failure, shutdown_count;
 static const char *last_failure;
 static uint8_t outputs[112];
 static int32_t pulls[112];
@@ -25,7 +26,7 @@ void sched_wake_tasks(void){task_wake_count++;}
 uint8_t inventure_panel_needs_service(void){return 0;}
 void inventure_panel_shutdown(void){panel_shutdown_count++;}
 static struct timer *scheduled[32];static unsigned scheduled_count;
-uint32_t timer_read_time(void){return mock_now;}
+uint32_t timer_read_time(void){uint32_t now=mock_now;mock_now+=mock_read_cycles;return now;}
 uint32_t timer_from_us(uint32_t us){return us*120;}
 irqstatus_t irq_save(void){return 0;} void irq_restore(irqstatus_t x){(void)x;}
 void mock_shutdown(const char*s){last_failure=s;shutdown_count++;if(expect_failure)longjmp(failure,1);fprintf(stderr,"Unexpected shutdown: %s\n",s);assert(0);__builtin_unreachable();}
@@ -44,9 +45,16 @@ GPIO_TypeDef *gpio_pin_to_regs(uint32_t pin) {
 void gpio_clock_enable(GPIO_TypeDef *regs) { (void)regs; }
 #define CONFIG_MACH_STM32F0 0
 #include "gpioperiph.c"
-void enable_pclock(uint32_t a){(void)a;}
-uint8_t is_enabled_pclock(uint32_t a){(void)a;return 0;}
-uint32_t get_pclock_frequency(uint32_t a){return a==(uint32_t)(uintptr_t)USART1?60000000:30000000;}
+static uint32_t mock_clock_bit(uint32_t address) {
+    for(unsigned i=0;i<15;i++)if(address==(uint32_t)(uintptr_t)&mock_tim[i])return 1u<<i;
+    return 0;
+}
+void enable_pclock(uint32_t address){mock_enabled_clocks|=mock_clock_bit(address);}
+uint8_t is_enabled_pclock(uint32_t address){return !!(mock_enabled_clocks&mock_clock_bit(address));}
+uint32_t get_pclock_frequency(uint32_t address) {
+    return address==(uint32_t)(uintptr_t)USART1 || address==(uint32_t)(uintptr_t)TIM11
+        ? 60000000 : 30000000;
+}
 struct gpio_out gpio_out_setup(uint32_t pin,uint32_t value){struct gpio_out g={&mock_gpio[pin/16],1u<<(pin%16)};gpio_out_write(g,value);return g;}
 void gpio_out_write(struct gpio_out g,uint32_t value){GPIO_TypeDef *r=g.regs;value=inventure_filter_gpio(r,g.bit,value);unsigned p=(r-mock_gpio)*16;for(unsigned n=0;n<16;n++)if(g.bit==(1u<<n)){outputs[p+n]=value;return;}assert(0);}
 struct gpio_in gpio_in_setup(uint32_t pin,int32_t pull){pulls[pin]=pull;return (struct gpio_in){&mock_gpio[pin/16],1u<<(pin%16)};}

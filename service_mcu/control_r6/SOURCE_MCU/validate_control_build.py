@@ -200,8 +200,6 @@ def check_dictionary(path: Path) -> dict:
     rc5 = check_rc5_p4_protocol(d)
     if str(d.get('config',{}).get('INVENTURE_RC7_ADC_SNAPSHOT_ABI')) not in ('1','1.0'):
         raise ValueError('RC7 MCU dictionary missing ADC snapshot ABI')
-    if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'RC8-CONTROL-R7-FACTORY-FEED':
-        raise ValueError('RC7 MCU dictionary wrong application release')
     forced=d.get('config',{}).get('INVENTURE_P4_FORCED_BAUD')
     if str(forced) not in ('0','1000000','1500000','2000000'):
         raise ValueError('RC7 MCU dictionary wrong forced baud')
@@ -211,19 +209,35 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-FEED'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-SPEED'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
     if (str(conf.get('INVENTURE_FACTORY_ABI')) != '1'
             or str(conf.get('INVENTURE_FACTORY_FEED_CLOCK')) != '1'):
         raise ValueError('R7 missing leased factory procedure ABI')
+    factory_motion = {'INVENTURE_FACTORY_MOTION_ABI': 1,
+                      'INVENTURE_FACTORY_MOTION_MAX_HZ': 125000,
+                      'INVENTURE_CONTROL_MAX_HZ': 20000}
+    for name, value in factory_motion.items():
+        if conf.get(name) != value:
+            raise ValueError(f'R7 factory motion dictionary mismatch: {name}')
     factory_command='inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u'
     factory_response='inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u'
     if factory_command not in d.get('commands',{}):
         raise ValueError('R7 missing exact factory command schema')
     if factory_response not in d.get('responses',{}):
         raise ValueError('R7 missing exact factory status schema')
+    motion_command = ('inventure_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u '
+                      'pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u')
+    motion_response = ('inventure_motion_state run=%u token=%u phase=%c reason=%c reject=%c '
+                       'active=%c events=%u elapsed_ms=%u hit=%hu')
+    if motion_command not in d.get('commands', {}) or motion_response not in d.get('responses', {}):
+        raise ValueError('R7 factory motion must preserve the exact motion protocol')
+    timing_command = 'inventure_factory_motion_timing_query'
+    timing_response = 'inventure_factory_motion_timing peak_callback_ticks=%u peak_late_ticks=%u'
+    if timing_command not in d.get('commands', {}) or timing_response not in d.get('responses', {}):
+        raise ValueError('R7 missing exact factory timing diagnostic schema')
     if 'inventure_cooling_query' not in d.get('commands',{}):
         raise ValueError('Missing RC8 cooling diagnostic command')
     if 'inventure_cooling_state clock=%u mode=%c reason=%c valid=%c mask=%c max_temp=%hi native_owner=%c adc_failures=%u gpio_updates=%u' not in d.get('responses',{}):
@@ -236,7 +250,8 @@ def check_dictionary(path: Path) -> dict:
     return {'required_features_present':required,'OLED_ABI':2,'TRANSPORT_ABI':1,'FACTORY_ABI':1,'factory_exact_command_schema':factory_command,'factory_exact_response_schema':factory_response,'transport_exact_command_schemas':transport_commands,'transport_exact_response_schema':transport_response,
             'OLED_exact_command_schemas':oled_commands,'OLED_exact_response_schemas':oled_responses,
             'RC4_constants':rc4_constants,'RC4_new_commands':new_commands,'RC4_new_responses':new_responses, 'RC7_local_constants':new_config,
-            'RC7_local_OLED_schema':'inventure_local_oled_query', 'RC7_forced_baud':int(forced), **rc5}
+            'RC7_local_OLED_schema':'inventure_local_oled_query', 'RC7_forced_baud':int(forced),
+            'FACTORY_MOTION_constants':factory_motion, **rc5}
 
 def validate(root: Path, destination: Path) -> dict:
     cfg=check_config(root/'.config')
