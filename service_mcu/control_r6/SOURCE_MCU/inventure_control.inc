@@ -11,22 +11,30 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_PULSE_US 2u
 #define CM_FACTORY_MIN_INTERVAL_US 6u
+#define CM_AXIS_Z_MAX_HZ 3200u
+#define CM_AXIS_E_MAX_HZ 9600u
+#define CM_AXIS_E_MIN_C 180
+#define CM_AXIS_E_MAX_C 250
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
+DECL_CONSTANT("INVENTURE_AXIS_MOTION_ABI",1);
+DECL_CONSTANT("INVENTURE_AXIS_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
+DECL_CONSTANT("INVENTURE_AXIS_MOTION_Z_MAX_HZ",CM_AXIS_Z_MAX_HZ);
+DECL_CONSTANT("INVENTURE_AXIS_MOTION_E_MAX_HZ",CM_AXIS_E_MAX_HZ);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_STEPS",2000000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_MS",600000);
 DECL_CONSTANT("INVENTURE_CONTROL_SENSOR_MASK",127);
 enum { CT_OFF,CT_NATIVE,CT_SERVICE };
 enum { CM_IDLE,CM_RUNNING,CM_HOLD,CM_DONE,CM_STOPPED,CM_FAILED };
-enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN,CR_TIMING };
+enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN,CR_TIMING,CR_THERMAL };
 static struct {
     uint32_t run,token,planned[4],sent[4],error[4],master,done,rate,pulse;
     uint32_t elapsed,fraction,last_tick,max_ms,hold_ms,hold_start,period;
     uint32_t fast_accel_half,fast_cruise_ramp,fast_cruise_period;
     uint32_t fast_peak_ticks,fast_peak_late,fast_last_launch;
     uint16_t stop_mask,stop_value,hit;
-    uint8_t phase,reason,active,high,direction,timer_added,fast_mask;
+    uint8_t phase,reason,active,high,direction,timer_added,fast_mask,fast_direct,fast_tool;
 } cm;
 static struct timer cm_timer;
 static struct {
@@ -65,13 +73,19 @@ static int16_t control_min[8]={-20,-20,-20,-20,-20,-20,-20,-20};
 static int16_t control_max[8]={310,310,150,150,150,100,100,190};
 static const uint8_t co_pins[6]={GPIO('A',1),GPIO('D',13),GPIO('A',0),GPIO('E',5),GPIO('C',9),GPIO('C',8)};
 static const uint32_t co_cycles[6]={5632,2096640,5632,12800,16776960,16776960};
-static uint16_t control_inputs(void) {
+static uint16_t cm_input_hit(uint16_t mask,uint16_t value) {
     const uint8_t pins[16]={GPIO('B',11),GPIO('C',15),GPIO('E',12),GPIO('C',14),
       GPIO('C',13),GPIO('G',2),GPIO('B',10),GPIO('E',15),GPIO('D',10),GPIO('F',1),
       GPIO('D',15),GPIO('G',10),GPIO('D',7),GPIO('D',6),GPIO('D',5),GPIO('A',15)};
-    uint16_t raw=0;
-    for(unsigned i=0;i<16;i++)if(gpio_pin_to_regs(pins[i])->IDR&BIT(pins[i]%16))raw|=BIT(i);
-    return raw;
+    uint16_t hit=0;
+    while(mask) {
+        unsigned i=__builtin_ctz((unsigned)mask);
+        unsigned pin=pins[i];
+        uint8_t level=!!(gpio_pin_to_regs(pin)->IDR&BIT(pin%16));
+        if(level==!!(value&BIT(i)))hit|=BIT(i);
+        mask&=mask-1u;
+    }
+    return hit;
 }
 static uint8_t control_ready(uint32_t now) {
     return initialized && sample_started && !fault && !control_latched && heartbeat_live
@@ -92,6 +106,15 @@ static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     }
     return 1;
 }
+static uint8_t cm_axis_e_ready(unsigned tool,uint32_t now) {
+    uint8_t valid;
+    int16_t t=control_temp(tool,now,&valid);
+    if(co[6+tool].reason>=3 || (co[6+tool].duty
+            && (uint32_t)(now-co[6+tool].last_tick)/MS(1)>=co[6+tool].remaining))
+        return 0;
+    return valid && t>=CM_AXIS_E_MIN_C && t<CM_AXIS_E_MAX_C
+        && control_sensors_valid(control_guard_mask|31,now);
+}
 static uint8_t control_aux_allowed(void) {
     return control_mode==CT_SERVICE && !sl.active && !fs.active && !fault && !control_latched && heartbeat_live;
 }
@@ -102,7 +125,7 @@ static uint8_t control_busy(void) {
     return 0;
 }
 // STM32F207 RM0033, 15.5: PWM2 idles LOW at CNT=0 and OPM stops at
-// the update after ARR. Only the factory motion owner remaps these STEP
+// the update after ARR. Only a timer-backed SERVICE run remaps these STEP
 // pins. Inventure's hardware-PWM pin table uses TIM4/5/8/9 exclusively.
 #define CM_PULSE_CEN 1u
 #define CM_PULSE_OPM 8u
@@ -112,7 +135,7 @@ static const struct cm_pulse_channel {
     GPIO_TypeDef *port;
     uint8_t pin,af;
 } cm_pulse_channels[] = {
-    {TIM14,GPIOA,7,9}, {TIM13,GPIOA,6,9}, {0}, {TIM11,GPIOB,9,3},
+    {TIM14,GPIOA,7,9}, {TIM13,GPIOA,6,9}, {TIM10,GPIOB,8,3}, {TIM11,GPIOB,9,3},
 };
 
 static uint8_t cm_fast_available(uint8_t mask) {
@@ -132,7 +155,7 @@ static void cm_fast_setup(uint8_t mask) {
         TIM_TypeDef *hw=ch->timer;
         uint32_t address=(uint32_t)(uintptr_t)hw;
         if(!is_enabled_pclock(address))enable_pclock(address);
-        // TIM13/14: APB1 30 MHz doubled; TIM11: APB2 60 MHz doubled.
+        // TIM13/14: APB1 30 MHz doubled; TIM10/11: APB2 60 MHz doubled.
         uint32_t counts_per_us=get_pclock_frequency(address)*2u/1000000u;
         hw->CR1=CM_PULSE_OPM;
         hw->DIER=0;
@@ -201,16 +224,20 @@ static uint32_t cm_root(uint32_t n) {
 }
 
 static void cm_fast_ramp_setup(void) {
-    uint32_t minor=cm.planned[0]<cm.planned[1]?cm.planned[0]:cm.planned[1];
-    uint32_t ratio=(1024u*minor)/cm.master;
-    uint32_t norm=cm_root(2u*(1024u*1024u+ratio*ratio));
-    // CoreXY has 640 steps/mm. The stock mixed planner uses 1500 mm/s²
-    // along the path. Q10 geometry maps that to 960000..1357790 events/s².
-    cm.fast_accel_half=(960000u*1024u)/norm;
+    if(cm.planned[2])cm.fast_accel_half=40100u; // 802 steps/mm × 100 mm/s² / 2
+    else if(!cm.planned[0] && !cm.planned[1])cm.fast_accel_half=240000u; // E: 500 mm/s²
+    else {
+        uint32_t minor=cm.planned[0]<cm.planned[1]?cm.planned[0]:cm.planned[1];
+        uint32_t ratio=(1024u*minor)/cm.master;
+        uint32_t norm=cm_root(2u*(1024u*1024u+ratio*ratio));
+        // CoreXY has 640 steps/mm. The stock mixed planner uses 1500 mm/s²
+        // along the path. Q10 geometry maps that to 960000..1357790 events/s².
+        cm.fast_accel_half=(960000u*1024u)/norm;
+    }
     // Store one quarter of velocity squared so 125000² fits uint32_t.
     uint32_t cruise_half=(cm.rate+1u)/2u;
-    cm.fast_cruise_ramp=(cruise_half*cruise_half-40000u+cm.fast_accel_half-1u)
-        /cm.fast_accel_half;
+    cm.fast_cruise_ramp=cm.rate<=400?0:
+        (cruise_half*cruise_half-40000u+cm.fast_accel_half-1u)/cm.fast_accel_half;
     cm.fast_cruise_period=(CONFIG_CLOCK_FREQ+cm.rate-1u)/cm.rate;
 }
 
@@ -226,7 +253,8 @@ static uint_fast8_t cm_fast_event(struct timer *timer) {
     uint32_t now=timer_read_time();
     uint32_t late=(int32_t)(now-timer->waketime)>0?now-timer->waketime:0;
     if(late>cm.fast_peak_late)cm.fast_peak_late=late;
-    if(!control_ready(now) || !fs.active || iv9_due(now,fs.deadline))
+    if(!control_ready(now) || control_mode!=CT_SERVICE
+            || (!cm.fast_direct && (!fs.active || iv9_due(now,fs.deadline))))
         return cm_fast_finish(CR_HEARTBEAT,now);
     if(door_policy_enabled() && door_closed_mask()!=3)
         return cm_fast_finish(CR_DOOR,now);
@@ -238,11 +266,17 @@ static uint_fast8_t cm_fast_event(struct timer *timer) {
     if(late>MS(1)
             || ((cm.fast_mask&BIT(0)) && (TIM14->CR1&CM_PULSE_CEN))
             || ((cm.fast_mask&BIT(1)) && (TIM13->CR1&CM_PULSE_CEN))
+            || ((cm.fast_mask&BIT(2)) && (TIM10->CR1&CM_PULSE_CEN))
             || ((cm.fast_mask&BIT(3)) && (TIM11->CR1&CM_PULSE_CEN)))
         return cm_fast_finish(CR_TIMING,now);
     // An extra dispatch drains the last one-shot before restoring GPIO.
     if(cm.reason==CR_TIMING)return cm_fast_finish(CR_TIMING,now);
     if(cm.done==cm.master)return cm_fast_finish(CR_COMPLETE,now);
+    uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
+    if(hit) {
+        cm.hit=hit;
+        return cm_fast_finish(CR_INPUT,now);
+    }
     // Allow 2 us HIGH plus 4 us nominal LOW. This leaves margin for
     // the bus write skew between pulse channels during a jittered dispatch.
     uint32_t earliest=cm.fast_last_launch+timer_from_us(CM_FACTORY_MIN_INTERVAL_US);
@@ -264,9 +298,11 @@ static uint_fast8_t cm_fast_event(struct timer *timer) {
     cm.fast_last_launch=timer_read_time();
     if(step&BIT(0))TIM14->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
     if(step&BIT(1))TIM13->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
+    if(step&BIT(2))TIM10->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
     if(step&BIT(3)) {
         TIM11->CR1=CM_PULSE_OPM|CM_PULSE_CEN;
-        ivt_e_step(&transport[fs.tool],!!(cm.direction&BIT(3))==fs.tool);
+        if(!cm.fast_direct)
+            ivt_e_step(&transport[fs.tool],!!(cm.direction&BIT(3))==fs.tool);
     }
     uint32_t ramp=cm.done<cm.master-cm.done?cm.done:cm.master-cm.done;
     uint32_t period=cm.fast_cruise_period;
@@ -296,7 +332,7 @@ static uint_fast8_t cm_event(struct timer *timer) {
     uint8_t why=!control_ready(now)?CR_HEARTBEAT:
         door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
         cm.elapsed>=cm.max_ms?CR_TIME:0;
-    uint16_t hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
+    uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
     if(!why && hit){cm.hit=hit;why=CR_INPUT;}
     if(why){cm_end(why);return SF_DONE;}
     if(cm.phase==CM_HOLD) {
@@ -459,8 +495,10 @@ static void control_guard(uint32_t now) {
         cm_elapsed(now);
         uint8_t reason=door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
             cm.elapsed>=cm.max_ms?CR_TIME:0;
-        uint16_t hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
+        uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
         if(!reason && hit){cm.hit=hit;reason=CR_INPUT;}
+        if(!reason && cm.fast_direct && cm.planned[3] && !cm_axis_e_ready(cm.fast_tool,now))
+            reason=CR_THERMAL;
         if(reason) {
             if(cm.timer_added)sched_del_timer(&cm_timer);
             cm.timer_added=0;cm_end(reason);
@@ -490,7 +528,8 @@ void command_inventure_control(uint32_t *args) {
         if(mode==CT_OFF){control_stop_all();control_mode=CT_OFF;}
         else if(mode==control_mode){} // idempotent; never renew any output timer
         else if(control_latched)reject=4;
-        else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active)reject=2;
+        else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active
+                || (cm.active && cm.fast_direct))reject=2;
         else if(!control_ready(now))reject=3;
         else if(mode==CT_NATIVE && (!control_sensors_valid(control_guard_mask|31,now)
              || (door_policy_enabled()&&door_closed_mask()!=3)))reject=5;
@@ -502,49 +541,84 @@ void command_inventure_control(uint32_t *args) {
           selected,armed,active,latch,fault,guards,reject);
 }
 DECL_COMMAND_FLAGS(command_inventure_control,HF_IN_SHUTDOWN,"inventure_control action=%c mode=%c");
-static uint8_t cm_request(uint32_t *args,uint32_t now) {
+static uint8_t cm_axis_limits(const uint32_t *args,uint32_t *mask,uint32_t *value) {
+    int32_t a=args[1]&BIT(0)?(int32_t)args[2]:-(int32_t)args[2];
+    int32_t b=args[1]&BIT(1)?(int32_t)args[3]:-(int32_t)args[3];
+    // CoreXY direction in the RELEASED coordinate frame; signs alone
+    // determine which active-high XY endstop is ahead of the carriage.
+    uint32_t required=(a+b<0?BIT(0):0) | (a-b<0?BIT(1):0),level=required;
+    if(args[4]) {
+        uint8_t up=!!(args[1]&BIT(2));
+        required=up?BIT(3):BIT(2);
+        level=up?0:BIT(2);
+    }
+    if((*mask&required)&(*value^level))return 0;
+    *mask|=required;
+    *value|=level;
+    return 1;
+}
+static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned tool) {
     uint8_t reject=0;uint32_t token=args[12],master=0;
+    uint32_t stop_mask=args[9],stop_value=args[10];
+    if(direct) {
+        uint8_t xy=!!(args[2] || args[3]);
+        if(tool>1 || args[1]>15 || args[2]>2000000u || args[3]>2000000u
+                || args[4]>2000000u || args[5]>2000000u
+                || (args[4] && (xy || args[5])) || (args[5] && xy)
+                || (args[4] && args[6]>CM_AXIS_Z_MAX_HZ)
+                || (args[5] && args[6]>CM_AXIS_E_MAX_HZ)
+                || args[7]!=CM_FACTORY_PULSE_US || args[11]
+                || stop_mask>65535 || (stop_value&~stop_mask)
+                || !cm_axis_limits(args,&stop_mask,&stop_value))
+            return 1;
+    }
     if(token==cm.token) {
         for(unsigned i=0;i<4;i++)if(args[i+2]!=cm.planned[i])reject=1;
         if(args[1]!=cm.direction)reject=1;
         if(args[6]!=cm.rate || timer_from_us(args[7])!=cm.pulse || args[8]!=cm.max_ms
-           || args[9]!=cm.stop_mask || args[10]!=cm.stop_value || args[11]!=cm.hold_ms)reject=1;
+           || stop_mask!=cm.stop_mask || stop_value!=cm.stop_value || args[11]!=cm.hold_ms
+           || direct!=cm.fast_direct || (direct && tool!=cm.fast_tool))reject=1;
     } else {
         for(unsigned i=0;i<4;i++){if(args[i+2]>2000000u)reject=1;if(args[i+2]>master)master=args[i+2];}
-        uint8_t fast=args[6]>CM_SERVICE_MAX_HZ;
+        uint8_t fast=direct || args[6]>CM_SERVICE_MAX_HZ;
         if(args[1]>15 || !master || args[6]<1 || args[6]>CM_FACTORY_MAX_HZ || args[7]<2 || args[7]>100
            || args[7]+2u>1000000u/args[6] || !args[8] || args[8]>600000
            || args[11]>60000 || !token)reject=1;
-        if(!reject && fast && (args[4] || (args[2]!=master && args[3]!=master)
+        if(!reject && fast && !direct && (args[4] || (args[2]!=master && args[3]!=master)
                 || args[7]!=CM_FACTORY_PULSE_US || args[9] || args[10] || args[11]))reject=1;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now)))reject=3;
-        if(!reject && fast && (!fs.active || fs.tool!=0 || iv9_due(now,fs.deadline)
-                || (door_policy_enabled() && door_closed_mask()!=3)))reject=3;
+        if(!reject && fast && ((door_policy_enabled() && door_closed_mask()!=3)
+                || (!direct && (!fs.active || fs.tool!=0 || iv9_due(now,fs.deadline)))))reject=3;
+        if(!reject && direct && (fs.active || feeder_running[0] || feeder_running[1]
+                || locks_on[0] || locks_on[1]))reject=2;
+        if(!reject && direct && args[5] && !cm_axis_e_ready(tool,now))reject=5;
         if(!reject && fs.active && args[5]) {
             uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
             if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
         }
         if(!reject && (sl.active || cm.active || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active()))reject=2;
-        uint8_t fast_mask=(args[2]?BIT(0):0) | (args[3]?BIT(1):0) | (args[5]?BIT(3):0);
+        uint8_t fast_mask=(args[2]?BIT(0):0) | (args[3]?BIT(1):0)
+            | (args[4]?BIT(2):0) | (args[5]?BIT(3):0);
         if(!reject && fast && !cm_fast_available(fast_mask))reject=2;
         if(!reject) {
             cm.run++;cm.token=token;cm.master=master;cm.done=0;cm.direction=args[1];
             for(unsigned i=0;i<4;i++){cm.planned[i]=args[i+2];cm.sent[i]=cm.error[i]=0;}
             cm.rate=args[6];cm.pulse=timer_from_us(args[7]);cm.max_ms=args[8];
-            cm.stop_mask=args[9];cm.stop_value=args[10];cm.hold_ms=args[11];
+            cm.stop_mask=stop_mask;cm.stop_value=stop_value;cm.hold_ms=args[11];
+            cm.fast_direct=direct;cm.fast_tool=tool;
             cm.elapsed=cm.fraction=cm.hit=cm.high=cm.reason=0;cm.last_tick=now;
             cm.phase=CM_RUNNING;cm.active=1;
             for(unsigned i=0;i<4;i++)raw_output(mt_drivers[i].dir_port,
                 __builtin_ctz(mt_drivers[i].dir_bit),!!(cm.direction&BIT(i)));
             cm_clear_steps();
-            if(fast) {
-                cm.fast_peak_ticks=cm.fast_peak_late=cm.fast_last_launch=0;
-                cm_fast_setup(fast_mask);
-                cm_fast_ramp_setup();
-            }
-            cm.hit=cm.stop_mask? (uint16_t)~(control_inputs()^cm.stop_value)&cm.stop_mask:0;
+            if(fast)cm.fast_peak_ticks=cm.fast_peak_late=cm.fast_last_launch=0;
+            cm.hit=cm_input_hit(cm.stop_mask,cm.stop_value);
             if(cm.hit)cm_end(CR_INPUT);
             else {
+                if(fast) {
+                    cm_fast_setup(fast_mask);
+                    cm_fast_ramp_setup();
+                }
                 motor_test_write(GPIOE,BIT(10),1);
                 cm_timer.func=fast?cm_fast_event:cm_event;
                 cm_timer.waketime=now+MS(20);sched_add_timer(&cm_timer);cm.timer_added=1;
@@ -553,20 +627,24 @@ static uint8_t cm_request(uint32_t *args,uint32_t now) {
     }
     return reject;
 }
-void command_inventure_motion(uint32_t *args) {
+static void cm_command(uint32_t *args,uint8_t direct,unsigned tool) {
     unsigned action=args[0];irqstatus_t flags=irq_save();uint8_t reject=0;
     uint32_t now=timer_read_time();
     if(action==2)control_motion_cancel();
     else if(action>2)reject=1;
-    else if(action==1)reject=cm_request(args,now);
+    else if(action==1)reject=cm_request(args,now,direct,tool);
     uint32_t run=cm.run,last_token=cm.token,elapsed=cm.elapsed,done=cm.done;
     uint8_t phase=cm.phase,reason=cm.reason,active=cm.active;uint16_t hit=cm.hit;
     irq_restore(flags);
     sendf("inventure_motion_state run=%u token=%u phase=%c reason=%c reject=%c active=%c events=%u elapsed_ms=%u hit=%hu",
           run,last_token,phase,reason,reject,active,done,elapsed,hit);
 }
+void command_inventure_motion(uint32_t *args) {cm_command(args,0,0);}
 DECL_COMMAND_FLAGS(command_inventure_motion,HF_IN_SHUTDOWN,
  "inventure_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u");
+void command_inventure_axis_motion(uint32_t *args) {cm_command(args,1,args[13]);}
+DECL_COMMAND_FLAGS(command_inventure_axis_motion,HF_IN_SHUTDOWN,
+ "inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c");
 void command_inventure_motion_driver(uint32_t *args) {
     unsigned i=args[0];if(i>3)return;
     irqstatus_t flags=irq_save();uint32_t run=cm.run,p=cm.planned[i],s=cm.sent[i];
@@ -595,7 +673,8 @@ void command_inventure_output(uint32_t *args) {
         if(control_mode!=CT_SERVICE || !control_ready(now))reject=3;
         else if((fs.active && i!=6+fs.tool) || (sl.active && i!=6+sl.tool)
                 || (cm.active && !(sl.active && i==6+sl.tool && cm.token==sl.token)
-                    && !(fs.active && i==6+fs.tool))
+                    && !(fs.active && i==6+fs.tool)
+                    && !(cm.fast_direct && cm.planned[3] && i==6u+cm.fast_tool))
                 || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active())reject=2;
         else if(i>=6 && (limit<40 || limit>control_max[th_heaters[i-6].sensor]
                  || !control_sensors_valid(control_guard_mask|31,now)))reject=5;
@@ -688,7 +767,7 @@ void command_inventure_load_stream(uint32_t *args) {
                 || !control_sensors_valid(control_guard_mask|31,now) || co[6+tool].reason>=3))reject=3;
         if(!reject) {
             uint32_t motion[]={1,e_direction?8:0,0,0,0,steps,rate,10,maximum,0,0,0,token};
-            reject=cm_request(motion,now);
+            reject=cm_request(motion,now,0,0);
             if(!reject) {
                 uint32_t feeder[]={channel,feeder_direction,lease};command_inventure_feeder(feeder);
                 sl.token=token;sl.steps=steps;sl.rate=rate;sl.max_ms=maximum;sl.lease_ms=lease;

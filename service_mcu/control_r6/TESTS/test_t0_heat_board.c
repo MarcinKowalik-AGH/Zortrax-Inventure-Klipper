@@ -52,7 +52,8 @@ static uint32_t mock_clock_bit(uint32_t address) {
 void enable_pclock(uint32_t address){mock_enabled_clocks|=mock_clock_bit(address);}
 uint8_t is_enabled_pclock(uint32_t address){return !!(mock_enabled_clocks&mock_clock_bit(address));}
 uint32_t get_pclock_frequency(uint32_t address) {
-    return address==(uint32_t)(uintptr_t)USART1 || address==(uint32_t)(uintptr_t)TIM11
+    return address==(uint32_t)(uintptr_t)USART1 || address==(uint32_t)(uintptr_t)TIM10
+        || address==(uint32_t)(uintptr_t)TIM11
         ? 60000000 : 30000000;
 }
 struct gpio_out gpio_out_setup(uint32_t pin,uint32_t value){struct gpio_out g={&mock_gpio[pin/16],1u<<(pin%16)};gpio_out_write(g,value);return g;}

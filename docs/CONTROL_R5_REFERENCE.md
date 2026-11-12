@@ -39,11 +39,57 @@ OEM PG5=1, PG6=0, PG7=0 zachowano. X+ daje DIR A/B=1/1, X−=0/0;
 Y+=1/0, Y−=0/1. Ruch ujemny X/Y domyślnie obserwuje własne minimum aktywne 1.
 Dodatni pozwala odjechać z aktywnej krańcówki. Ruch nie ustala pozycji/homingu.
 
+## Sprzętowe impulsy STEP w SERVICE
+
+Aplikacja MCU `RC8-CONTROL-R7-ALL-AXIS-SPEED` udostępnia `TIMER=1` dla
+`INVENTURE_MOVE` i `INVENTURE_MOTION`. W `INVENTURE_VERSION` pokazuje
+`axis_motion_abi: 1`. Generowanie STEP jest sprzętowe, a DDA wybiera
+napędy impulsowane w każdym zdarzeniu. X i Y to składowe pary A/B
+w CoreXY. Tryb `NATIVE` korzysta z kolejki Klippera.
+
+| Napęd | Timer i STEP | Nominalna skala | Limit próby |
+|---|---|---:|---:|
+| A | TIM14 CH1, PA7 | 640 kroków/mm X/Y | 125 000 impulsów/s |
+| B | TIM13 CH1, PA6 | 640 kroków/mm X/Y | 125 000 impulsów/s |
+| Z | TIM10 CH1, PB8 | 802 kroki/mm | 3200 impulsów/s |
+| E | TIM11 CH1, PB9 | 960 kroków/mm | 9600 impulsów/s |
+
+`RATE` ustala maksymalną liczbę zdarzeń DDA na sekundę. Wspólny ruch A/B
+zachowuje zadany stosunek ich kroków. Limity to nastawy serwisowe, a ruch
+na drukarce wymaga pomiaru. Impuls ma 2 µs, `HOLD_MS` wynosi 0.
+Bez `TIMER=1` obowiązują wcześniejsze ustawienia `PULSE_US`, `HOLD_MS`
+i limit 20 000 zdarzeń/s.
+
+Przykład ruchu skoordynowanego A/B po wybraniu `SERVICE`.
+
+```gcode
+INVENTURE_MOTION TIMER=1 A=320 B=-160 RATE=640 MAX_MS=5000
+```
+
+Z i E są wykonywane jako odrębne ruchy. Dla ruchów A/B MCU włącza
+obserwację krańcówki X przy `A+B<0` i Y przy `A-B<0`. Ruch Z z
+`DIR=0` obserwuje PE12 aktywne HIGH. Przy `DIR=1` obserwuje PC14 aktywne
+LOW. `STOP_MASK` i `STOP_VALUE` mogą dodać inne wejścia. Polaryzacja
+sprzeczna z obowiązkowym wejściem blokuje start.
+
+Ruch E wymaga świeżej temperatury 180–249°C z fizycznie wybranej dyszy.
+Przy bezpośrednim `INVENTURE_MOVE AXIS=E TIMER=1` lub
+`INVENTURE_MOTION TIMER=1 E=...` wybierz jej czujnik przez
+`TOOL=T0` lub `TOOL=T1`. W aktywnej próbie grzania użyj
+`INVENTURE_LOAD_TEST ACTION=JOG TIMER=1`. PID i wybór czujnika należą
+wtedy do tej próby.
+
+Po ruchu odczytaj `INVENTURE_MOTION ACTION=STATUS`. `drivers` podaje
+liczby zaplanowanych i wysłanych kroków, a `hit_inputs` wejścia, które
+zatrzymały ruch. `INVENTURE_STOP` zatrzymuje ruch i wyłącza grzanie.
+
 ## Dowolne wejścia zatrzymujące
 
 `STOP_MASK` wybiera bity; `STOP_VALUE` podaje ich aktywne poziomy.
 Zatrzymuje **dowolny** wybrany bit zgodny z wartością. Aktywny już przed START
-kończy próbę bez impulsów. Jawna maska zastępuje maskę domyślną danego ruchu.
+kończy próbę bez impulsów. W dotychczasowym ruchu serwisowym jawna maska
+zastępuje maskę domyślną danego ruchu. `TIMER=1` zachowuje obowiązkowe
+wejścia kierunkowe.
 ZLIMIT dołącza obowiązkowe wejście Z w kierunku ruchu: DIR=1 podnosi stół
 i obserwuje PC14 aktywne LOW; DIR=0 opuszcza stół i obserwuje PE12 aktywne HIGH.
 Dodatkowa maska rozszerza tę kontrolę. Sprzeczna polaryzacja jest odrzucana.

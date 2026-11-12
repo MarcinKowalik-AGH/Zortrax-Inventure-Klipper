@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-FACTORY-SPEED'
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
@@ -124,6 +124,10 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert embedded_dictionary_matches(app, dictionary)
     report = dict(motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'], motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
+                  axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],
+                  axis_motion_max_hz=c['INVENTURE_AXIS_MOTION_MAX_HZ'],
+                  axis_motion_z_max_hz=c['INVENTURE_AXIS_MOTION_Z_MAX_HZ'],
+                  axis_motion_e_max_hz=c['INVENTURE_AXIS_MOTION_E_MAX_HZ'],
                   door_policy_abi=1, oem_door_disable_bit=3,
                   release=c['INVENTURE_HEAT_TEST_RELEASE'], baud_mode='InventureBoot_journal',
                   fallback_baud=250000,forced_baud=0,boot17_abi=1,

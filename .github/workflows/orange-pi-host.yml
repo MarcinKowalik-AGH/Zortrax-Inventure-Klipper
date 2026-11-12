@@ -1,7 +1,7 @@
 name: Verify Orange Pi host updater
 on:
   push:
-    branches: [orange-pi]
+    branches: [orange-pi, orange-pi-all-axis]
     paths:
       - 'orange_pi/**'
       - 'service_mcu/control_r6/**'

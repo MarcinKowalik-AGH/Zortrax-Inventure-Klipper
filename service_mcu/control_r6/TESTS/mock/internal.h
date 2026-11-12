@@ -26,6 +26,7 @@ extern RCC_TypeDef mock_rcc;
 #define TIM5 (&mock_tim[5])
 #define TIM8 (&mock_tim[8])
 #define TIM9 (&mock_tim[9])
+#define TIM10 (&mock_tim[10])
 #define TIM11 (&mock_tim[11])
 #define TIM13 (&mock_tim[13])
 #define TIM14 (&mock_tim[14])

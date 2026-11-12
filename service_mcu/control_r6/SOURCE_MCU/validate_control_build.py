@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-SPEED'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-ALL-AXIS-SPEED'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -222,6 +222,11 @@ def check_dictionary(path: Path) -> dict:
     for name, value in factory_motion.items():
         if conf.get(name) != value:
             raise ValueError(f'R7 factory motion dictionary mismatch: {name}')
+    axis_motion = {'INVENTURE_AXIS_MOTION_ABI': 1, 'INVENTURE_AXIS_MOTION_MAX_HZ': 125000,
+                   'INVENTURE_AXIS_MOTION_Z_MAX_HZ': 3200, 'INVENTURE_AXIS_MOTION_E_MAX_HZ': 9600}
+    for name, value in axis_motion.items():
+        if conf.get(name) != value:
+            raise ValueError(f'R7 axis timer dictionary mismatch: {name}')
     factory_command='inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u'
     factory_response='inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u'
     if factory_command not in d.get('commands',{}):
@@ -234,6 +239,10 @@ def check_dictionary(path: Path) -> dict:
                        'active=%c events=%u elapsed_ms=%u hit=%hu')
     if motion_command not in d.get('commands', {}) or motion_response not in d.get('responses', {}):
         raise ValueError('R7 factory motion must preserve the exact motion protocol')
+    axis_command = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u '
+                    'pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
+    if axis_command not in d.get('commands', {}):
+        raise ValueError('R7 missing exact axis timer command schema')
     timing_command = 'inventure_factory_motion_timing_query'
     timing_response = 'inventure_factory_motion_timing peak_callback_ticks=%u peak_late_ticks=%u'
     if timing_command not in d.get('commands', {}) or timing_response not in d.get('responses', {}):
@@ -251,7 +260,8 @@ def check_dictionary(path: Path) -> dict:
             'OLED_exact_command_schemas':oled_commands,'OLED_exact_response_schemas':oled_responses,
             'RC4_constants':rc4_constants,'RC4_new_commands':new_commands,'RC4_new_responses':new_responses, 'RC7_local_constants':new_config,
             'RC7_local_OLED_schema':'inventure_local_oled_query', 'RC7_forced_baud':int(forced),
-            'FACTORY_MOTION_constants':factory_motion, **rc5}
+            'FACTORY_MOTION_constants':factory_motion, 'AXIS_MOTION_constants':axis_motion,
+            'axis_exact_command_schema':axis_command, **rc5}
 
 def validate(root: Path, destination: Path) -> dict:
     cfg=check_config(root/'.config')

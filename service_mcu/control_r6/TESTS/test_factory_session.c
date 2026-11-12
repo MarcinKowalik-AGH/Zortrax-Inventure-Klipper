@@ -166,6 +166,7 @@ static void fast_dispatch(uint32_t late,uint8_t hardware_finishes) {
     if(hardware_finishes && mock_now-cm.fast_last_launch>=timer_from_us(2)) {
         TIM14->CR1&=~CM_PULSE_CEN;
         TIM13->CR1&=~CM_PULSE_CEN;
+        TIM10->CR1&=~CM_PULSE_CEN;
         TIM11->CR1&=~CM_PULSE_CEN;
     }
     unsigned res=cm_timer.func(&cm_timer);
@@ -289,8 +290,151 @@ static void fast_factory_guards(void) {
     puts("PASS fast factory scope and guards: T0 only, timer ownership, rate/move validation, overlap/late/CPU abort, cable, lease, door, STOP and shutdown");
 }
 
+static void axis_motion(unsigned dirs,uint32_t a,uint32_t b,uint32_t z,uint32_t e,
+        unsigned hz,unsigned mask,unsigned value,uint32_t token,unsigned tool) {
+    uint32_t args[]={1,dirs,a,b,z,e,hz,2,6000,mask,value,0,token,tool};
+    command_inventure_axis_motion(args);
+}
+
+static void axis_timer_routes(void) {
+    const uint8_t dirs[]={3,1,1,0,4,8};
+    const uint32_t counts[][4]={{400,400,0,0},{400,400,0,0},{400,0,0,0},
+        {0,400,0,0},{0,0,400,0},{0,0,0,400}};
+    const unsigned rates[]={80000,80000,125000,125000,CM_AXIS_Z_MAX_HZ,CM_AXIS_E_MAX_HZ};
+    for(unsigned move=0;move<ARRAY_SIZE(counts);move++) {
+        factory_reset(0xffff0000u,1);
+        axis_motion(dirs[move],counts[move][0],counts[move][1],counts[move][2],
+            counts[move][3],rates[move],0,0,601,1);
+        assert(cm.active && cm.fast_direct && !fs.active);
+        for(unsigned i=0;i<4;i++)if(counts[move][i]) {
+            const struct cm_pulse_channel *ch=&cm_pulse_channels[i];
+            assert(cm.fast_mask&BIT(i));
+            assert(ch->timer->ARR==(i<2?120:240));
+            assert(ch->timer->CCR1==1 && !ch->timer->DIER);
+            assert(((ch->port->MODER>>(2u*ch->pin))&3u)==2);
+            assert(((ch->port->AFR[ch->pin/8]>>(4u*(ch->pin%8)))&15u)==ch->af);
+        }
+        while(cm.active)fast_dispatch(0,1);
+        for(unsigned i=0;i<4;i++)if(counts[move][i]) {
+            const struct cm_pulse_channel *ch=&cm_pulse_channels[i];
+            assert(cm.sent[i]==counts[move][i]);
+            assert(!ch->timer->CR1 && !ch->timer->CCER);
+            assert(((ch->port->MODER>>(2u*ch->pin))&3u)==1);
+        }
+        assert(cm.phase==CM_DONE && cm.reason==CR_COMPLETE && cm.done==400);
+        assert(!transport[0].forward && !transport[1].forward);
+        assert(!transport[0].reverse && !transport[1].reverse);
+        assert(GPIOE->BSRR==(BIT(10)<<16));
+        axis_motion(dirs[move],counts[move][0],counts[move][1],counts[move][2],
+            counts[move][3],rates[move],0,0,601,1);
+        assert(!cm.active && cm.run==1);
+    }
+    const unsigned low_rates[]={1,100,399,400};
+    for(unsigned i=0;i<ARRAY_SIZE(low_rates);i++) {
+        unsigned rate=low_rates[i];
+        factory_reset(0,1);
+        axis_motion(1,3,0,0,0,rate,0,0,601,0);
+        assert(cm.active && cm.fast_cruise_ramp==0);
+        for(unsigned event=0;event<3;event++) {
+            mock_now=cm_timer.waketime;
+            command_inventure_heartbeat(NULL);
+            fast_dispatch(0,1);
+            assert(cm.sent[0]==event+1);
+            if(event<2)assert(cm_timer.waketime-mock_now==(CONFIG_CLOCK_FREQ+rate-1)/rate);
+        }
+        fast_dispatch(0,1);
+        assert(!cm.active && cm.reason==CR_COMPLETE);
+    }
+    puts("PASS axis timer X/Y/A/B/Z/E mapping, exact counts, register restoration, wrap and 1..400 Hz cadence");
+}
+
+static void axis_endstops_and_scope(void) {
+    // Raw A− moves toward both minima, B+ toward Y, and B− toward X.
+    factory_reset(0,1);
+    GPIOB->IDR|=BIT(11);
+    axis_motion(0,100,0,0,0,125000,0,0,601,0);
+    assert(!cm.active && cm.stop_mask==3 && cm.hit==1 && !cm.done);
+    axis_motion(2,0,100,0,0,125000,0,0,602,0);
+    assert(cm.active && cm.stop_mask==2);fast_dispatch(0,1);
+    GPIOC->IDR|=BIT(15);fast_dispatch(0,1);
+    assert(!cm.active && cm.hit==2 && cm.done==1 && cm.reason==CR_INPUT);
+    axis_motion(0,0,100,0,0,125000,0,0,603,0);
+    assert(!cm.active && cm.stop_mask==1 && cm.hit==1 && !cm.done);
+    // Explicit extra stop bits survive the mandatory mask and conflicting
+    // mandatory polarity is rejected before changing the current run.
+    axis_motion(0,100,0,0,0,125000,BIT(5),0,604,0);
+    assert(!cm.active && cm.stop_mask==(BIT(5)|3) && cm.stop_value==3);
+    axis_motion(0,100,0,0,0,125000,1,0,605,0);
+    assert(!cm.active && cm.token==604);
+
+    factory_reset(0,1);
+    GPIOE->IDR|=BIT(12);
+    axis_motion(0,0,0,100,0,3200,0,0,601,0);
+    assert(!cm.active && cm.hit==BIT(2) && !cm.done && !TIM10->CCER);
+    axis_motion(4,0,0,100,0,3200,0,0,602,0);
+    assert(cm.active && cm.stop_mask==BIT(3) && cm.stop_value==0);
+    fast_dispatch(0,1);GPIOC->IDR&=~BIT(14);fast_dispatch(0,1);
+    assert(!cm.active && cm.hit==BIT(3) && cm.done==1 && !TIM10->CCER);
+    axis_motion(4,0,0,100,0,3200,BIT(3),BIT(3),603,0);
+    axis_motion(4,0,0,100,0,3201,0,0,604,0);
+    axis_motion(7,100,100,100,0,1000,0,0,605,0);
+    axis_motion(9,100,0,0,100,1000,0,0,606,0);
+    axis_motion(8,0,0,0,100,9601,0,0,607,0);
+    assert(!cm.active && cm.token==602);
+    enable_pclock((uint32_t)(uintptr_t)TIM10);
+    TIM10->CCER=1;GPIOE->IDR&=~BIT(12);
+    axis_motion(0,0,0,100,0,3200,0,0,608,0);
+    assert(!cm.active && cm.token==602 && TIM10->CCER==1);
+    factory(1,0,IVT_STOP,0,1000,1500,501,0);
+    assert(fs.active);
+    axis_motion(3,100,100,0,0,80000,0,0,609,0);
+    assert(!cm.active && cm.token==602);
+
+    factory_reset(0,1);
+    axis_motion(1,100,0,0,0,80000,0,0,601,0);
+    control_command(1,CT_NATIVE);assert(cm.active && control_mode==CT_SERVICE);
+    control_command(2,0);assert(!cm.active && cm.reason==CR_STOP && !TIM14->CCER);
+    puts("PASS axis timer mandatory directional limits, extra inputs, bounds and exclusive SERVICE ownership");
+}
+
+static void axis_thermal_guard(void) {
+    for(unsigned tool=0;tool<2;tool++)for(unsigned fault_kind=0;fault_kind<4;fault_kind++) {
+        factory_reset(0,1);
+        ADC_TypeDef *adc=tool?ADC3:ADC1;
+        unsigned channel=tool?6:10;
+        inventure_adc_observe(adc,channel,1000);
+        axis_motion(8,0,0,0,100,9600,0,0,601,tool);
+        assert(!cm.active && !cm.done && !TIM11->CCER); // other tool hot is insufficient
+        factory_adc(1);
+        output(1,6+tool,64,5000,250,101);
+        axis_motion(8,0,0,0,100,9600,0,0,602,tool);
+        assert(cm.active && cm.fast_tool==tool);
+        fast_dispatch(0,1);assert(cm.done==1);
+        output(1,7-tool,64,5000,250,102);
+        assert(!co[7-tool].duty);
+        output(1,6+tool,72,fault_kind==2?1:5000,250,103);
+        assert(co[6+tool].duty==72 && co[6+tool].token==103);
+        if(fault_kind==0)inventure_adc_observe(adc,channel,1000);
+        else if(fault_kind==1)inventure_adc_observe(adc,channel,1600);
+        else if(fault_kind==2)mock_now+=MS(1);
+        else {
+            mock_now+=MS(1001);
+            command_inventure_heartbeat(NULL);
+        }
+        control_guard(mock_now);
+        assert(!cm.active && cm.reason==CR_THERMAL && cm.done==1 && !TIM11->CCER);
+        assert(((GPIOE->MODER>>20)&3)==1); // a subsequent heater stop may write GPIOE BSRR
+        // Legacy command still permits its existing cold diagnostic step.
+        motion(1,8,0,0,0,1,400,10,1000,0,0,0,603);
+        assert(cm.active && !cm.fast_direct && !cm.fast_mask);
+        control_command(2,0);
+    }
+    puts("PASS axis timer hot E uses selected fresh ADC, permits PID renewals, stops on drop/overheat/stale ADC/lease and preserves legacy E");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();
+    axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

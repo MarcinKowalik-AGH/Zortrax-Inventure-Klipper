@@ -55,6 +55,15 @@ class ControlHostTests(unittest.TestCase):
             'feeder':Wire({}),'lock':Wire({})}
         return h
 
+    def timer_host(self,counts):
+        h=self.host(counts)
+        h.axis_motion_abi=1
+        h.axis_motion_max_hz=125000
+        h.axis_motion_z_max_hz=3200
+        h.axis_motion_e_max_hz=9600
+        h.commands['axis_motion']=Wire(h.commands['motion'].reply)
+        return h
+
     def test_signed_xy_corexy_mapping_and_minimum_switch_defaults(self):
         for axis,steps,counts,dirs,mask in (
                 ('X',640,(640,640,0,0),3,0),('X',-640,(-640,-640,0,0),0,1),
@@ -130,6 +139,81 @@ class ControlHostTests(unittest.TestCase):
         counts=(640,-320,80,-96);h=self.host(counts)
         h.cmd_motion(Command(A=640,B=-320,Z=80,E=-96,RATE=900))
         self.assertEqual(h.commands['motion'].actions[0][1:6],(5,640,320,80,96))
+
+    def test_timer_move_maps_each_axis_to_motor_steps_and_merges_directional_stops(self):
+        cases=(
+            ('X',(-640,-640,0,0),0,85333,1,1),
+            ('Y',(-640,640,0,0),2,85333,2,2),
+            ('A',(-640,0,0,0),0,125000,3,3),
+            ('B',(0,640,0,0),2,125000,2,2),
+            ('Z',(0,0,-802,0),0,3200,4,4),
+            ('Z',(0,0,802,0),4,3200,8,0),
+            ('E',(0,0,0,-960),0,9600,0,0),
+        )
+        for axis,counts,directions,rate,mask,value in cases:
+            with self.subTest(axis=axis,counts=counts):
+                h=self.timer_host(counts)
+                extra={'TOOL':'T1'} if axis=='E' else {}
+                steps=next(n for n in counts if n)
+                h.cmd_move(Command(AXIS=axis,STEPS=steps,RATE=rate,TIMER=1,**extra))
+                self.assertEqual(h.commands['axis_motion'].actions,[
+                    (1,directions,*map(abs,counts),rate,2,30000,mask,value,0,11,int(axis=='E'))])
+                self.assertEqual(h.commands['axis_motion'].retries,[False])
+                self.assertEqual(h.commands['motion'].actions,[])
+                self.assertEqual(h.motion_last['stop_mask'],mask)
+                self.assertEqual(h.motion_last['stop_value'],value)
+                self.assertFalse(h.motion_last['establishes_position'])
+
+    def test_timer_raw_ab_preserves_optional_stop_and_enforces_both_xy_directions(self):
+        h=self.timer_host((-640,320,0,0))
+        h.cmd_motion(Command(A=-640,B=320,RATE=64000,TIMER=1,STOP_MASK=16,STOP_VALUE=0))
+        self.assertEqual(h.commands['axis_motion'].actions,[
+            (1,2,640,320,0,0,64000,2,30000,19,3,0,11,0)])
+        self.assertEqual(h.commands['motion'].actions,[])
+
+    def test_timer_is_opt_in_and_requires_supported_mcu(self):
+        h=self.timer_host((640,640,0,0))
+        h.cmd_move(Command(AXIS='X',SPEED=100))
+        self.assertEqual(h.commands['motion'].actions[0][6:8],(20000,10))
+        self.assertEqual(h.commands['axis_motion'].actions,[])
+
+        h=self.host()
+        with self.assertRaises(RuntimeError):h.cmd_move(Command(TIMER=1))
+        self.assertEqual(h.commands['motion'].actions,[])
+        self.assertEqual(h.commands['control'].actions,[])
+
+    def test_timer_refuses_invalid_pulse_hold_rate_tool_and_stop_before_motion(self):
+        cases=(
+            (False,dict(AXIS='X',PULSE_US=10)),
+            (False,dict(AXIS='X',HOLD_MS=1)),
+            (False,dict(AXIS='A',RATE=125001)),
+            (False,dict(AXIS='Z',RATE=3201)),
+            (False,dict(AXIS='E',TOOL='T0',RATE=9601)),
+            (False,dict(AXIS='E')),
+            (False,dict(AXIS='E',TOOL='T2')),
+            (False,dict(AXIS='Z',DIR=0,STOP_MASK=4,STOP_VALUE=0)),
+            (False,dict(AXIS='X',STOP_MASK=1,STOP_VALUE=2)),
+            (True,dict(A=-64,STOP_MASK=1,STOP_VALUE=0)),
+            (True,dict(A=64,Z=80)),
+            (True,dict(B=64,E=96,TOOL='T0')),
+        )
+        for raw,params in cases:
+            with self.subTest(raw=raw,params=params):
+                h=self.timer_host((640,640,0,0))
+                command=h.cmd_motion if raw else h.cmd_move
+                with self.assertRaises(RuntimeError):command(Command(TIMER=1,**params))
+                self.assertEqual(h.commands['axis_motion'].actions,[])
+                self.assertEqual(h.commands['motion'].actions,[])
+
+    def test_timer_status_and_stop_use_legacy_query_and_decode_thermal_guard(self):
+        h=self.timer_host((0,0,0,960))
+        h.cmd_move(Command(AXIS='E',TOOL='T0',STEPS=960,TIMER=1))
+        h.commands['motion'].reply=dict(h.commands['motion'].reply,phase=5,active=0,reason=9)
+        h.cmd_motion(Command(ACTION='STATUS'))
+        self.assertEqual(h.motion_last['reason'],'thermal_guard')
+        h.cmd_motion(Command(ACTION='STOP'))
+        self.assertEqual([p[0] for p in h.commands['motion'].actions],[0,2])
+        self.assertEqual(len(h.commands['axis_motion'].actions),1)
 
     def test_motion_start_is_not_retried_and_poll_only_reads(self):
         h=self.host();h.cmd_move(Command());self.assertEqual(len(h.commands['motion'].actions),1)
@@ -216,6 +300,19 @@ class ControlHostTests(unittest.TestCase):
         dispatch.run_script_from_command('INVENTURE_OUTPUT CHANNEL=PC9 ACTION=SET POWER=75 DURATION=180 LIMIT=50')
         self.assertEqual(h.commands['output'].actions[0][1:5],(8,192,180000,50))
         dispatch.run_script_from_command('INVENTURE_STOP');self.assertEqual(h.commands['control'].actions[-1],(2,0))
+
+    def test_real_gcode_timer_checks_speed_derived_rate_instead_of_clamping(self):
+        h=self.timer_host((0,0,802,0))
+        dispatch=gcode.GCodeDispatch(Printer())
+        dispatch.register_output_handler(lambda line:None)
+        dispatch.register_command('INVENTURE_MOVE',h.cmd_move,True)
+        dispatch._handle_ready()
+        with self.assertRaisesRegex(gcode.CommandError,'timer limit'):
+            dispatch.run_script_from_command('INVENTURE_MOVE AXIS=Z DISTANCE=1 SPEED=4 TIMER=1')
+        self.assertEqual(h.commands['axis_motion'].actions,[])
+        dispatch.run_script_from_command('INVENTURE_MOVE AXIS=Z DISTANCE=1 SPEED=3 TIMER=1')
+        self.assertEqual(h.commands['axis_motion'].actions,[
+            (1,4,0,0,802,0,2406,2,30000,8,0,0,11,0)])
 
     def test_r5_maximum_wire_frames_roundtrip_in_real_compiled_dictionary(self):
         parser=msgproto.MessageParser();parser.process_identify((ROOT/'tests/fixtures/control_r5.dict').read_bytes(),decompress=False)

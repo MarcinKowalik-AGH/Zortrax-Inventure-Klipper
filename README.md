@@ -1,17 +1,20 @@
-# Zortrax Inventure — CONTROL-R7-FACTORY-SPEED
+# Zortrax Inventure — CONTROL-R7-ALL-AXIS-SPEED
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+Opcja `TIMER=1` uruchamia sprzętowe impulsy STEP w pojedynczych próbach
+serwisowych X/Y/Z/A/B/E. X i Y korzystają z pary A/B w układzie CoreXY.
+[Polecenia i limity prób timerowych](#sprzętowe-impulsy-step-dla-xyzabe).
 
 T0 wyznacza współrzędne od zwolnionych krańcówek X/Y. Docisk selektora
 biegnie od X139,5 do X154,5 przy stałym Y154,5. AUTO wykonuje oscylacje
 w L1 i L4 nad koszem. UNLOAD dobiera budżety U1/U2 przez `MATERIAL`.
 Profil `SPEED_PROFILE=OEM` dla T0 odtwarza żądane prędkości XY r0323.
 Przejazdy i czyszczenie używają F8000, oscylacje F3000, a docisk F250.
-Profil wymaga MCU FACTORY-SPEED. Dotychczasowy profil serwisowy nadal
-działa z MCU FACTORY-FEED.
+Profil OEM działa z MCU FACTORY-SPEED oraz ALL-AXIS-SPEED. Profil
+serwisowy działa również z MCU FACTORY-FEED.
 [Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
@@ -121,22 +124,24 @@ stałego odcinka, niezależnie od nowego automatu AUTO.
 Wykonaj w terminalu Orange Pi przez SSH.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
+git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
 Pierwsza instalacja, jeśli katalog jeszcze nie istnieje:
 
 ```bash
-git clone --depth 1 --single-branch --no-tags --branch orange-pi https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper.git "$HOME/inventure-orange-pi" && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
+git clone --depth 1 --single-branch --no-tags --branch orange-pi-all-axis https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper.git "$HOME/inventure-orange-pi" && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
 Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje kopie
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_FACTORY_SPEED_BOOT17.zip` z aplikacją
-`MCU/INVENTUR.IVB` do bootloadera 1.7. AUTO i UNLOAD z profilem OEM
-wymagają tej aplikacji oraz aktualnego hosta.
+`INVENTURE_MCU_CONTROL_R7_ALL_AXIS_SPEED_BOOT17.zip` z aplikacją
+`MCU/INVENTUR.IVB` do bootloadera 1.7. Próbę T0 z profilem OEM można
+dokończyć na wydaniu FACTORY-SPEED. Po wgraniu ALL-AXIS-SPEED wykonaj
+`FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`.
 
 ## Po aktualizacji hosta
 
@@ -147,13 +152,14 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-SPEED`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-ALL-AXIS`, `mcu_release` = `RC8-CONTROL-R7-ALL-AXIS-SPEED`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.
 `factory_feed_clock: 1` potwierdza obsługę zegara kasety w tej sesji.
 `factory_motion_abi: 1` potwierdza obsługę profilu OEM, a
 `factory_motion_max_hz: 125000` podaje limit zdarzeń DDA/s.
+`axis_motion_abi: 1` potwierdza dostępność `TIMER=1` na wszystkich napędach.
 Czas ruchu i zachowanie mechaniki wymagają sprawdzenia na drukarce.
 `procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
 `zortrax_menu_api: 1` potwierdza wspólny sterownik procedur menu OLED/G-code.
@@ -255,6 +261,44 @@ INVENTURE_STOP
 Chłodzenie wymagane przez temperaturę działa dalej. W SERVICE można od razu
 wybrać następną próbę. STOP po NATIVE zatrzaskuje wyjścia; do ponownego
 uzbrojenia potrzeba `FIRMWARE_RESTART`, aby stare kolejki STEP/PWM nie wznowiły ruchu.
+
+## Sprzętowe impulsy STEP dla XYZABE
+
+`INVENTURE_MOVE ... TIMER=1` wybiera sprzętowe impulsy STEP w trybie
+`SERVICE`. Do niezależnej próby A/B służą `AXIS=A` i `AXIS=B`.
+`INVENTURE_MOTION ... TIMER=1` przyjmuje podpisane liczby kroków A i B.
+W tym trybie Z i E wykonuje się w osobnych poleceniach. Bez `TIMER=1`
+polecenia używają dotychczasowego sterowania serwisowego.
+
+Po wybraniu `INVENTURE_CONTROL MODE=SERVICE` zapewnij wolny odcinek
+dla wybranego ruchu. Wydawaj po jednym poleceniu i odczytuj
+`INVENTURE_MOTION ACTION=STATUS` po każdej próbie.
+
+| Ruch na zimno | Krótka próba |
+|---|---|
+| X | `INVENTURE_MOVE AXIS=X TIMER=1 DISTANCE=1 SPEED=2` |
+| Y | `INVENTURE_MOVE AXIS=Y TIMER=1 DISTANCE=1 SPEED=2` |
+| A | `INVENTURE_MOVE AXIS=A TIMER=1 STEPS=160 DIR=1 RATE=640` |
+| B | `INVENTURE_MOVE AXIS=B TIMER=1 STEPS=160 DIR=1 RATE=640` |
+| Z w dół | `INVENTURE_MOVE AXIS=Z TIMER=1 STEPS=80 DIR=0 RATE=400` |
+
+Dla E najpierw ustaw fizycznie właściwą dyszę i przygotuj tor filamentu.
+Wybierz ją w `INVENTURE_LOAD_TEST ACTION=HEAT TOOL=T0 TARGET=230 DURATION=900`.
+Po `ready_for_jog: true` możesz wykonać krótki ruch E z działającym PID.
+
+```gcode
+INVENTURE_LOAD_TEST ACTION=JOG TIMER=1 DIR=0 STEPS=480 RATE=960
+```
+
+DIR=0 podaje T0, DIR=1 podaje T1. Bezpośredni `INVENTURE_MOVE AXIS=E
+TIMER=1` wymaga `TOOL=T0` albo `TOOL=T1` i świeżego odczytu
+180–249°C z wybranej dyszy. W aktywnym teście grzania użyj `ACTION=JOG`.
+`INVENTURE_STOP` zatrzymuje napędy i grzanie.
+
+Limity prób wynoszą 125 000 impulsów/s dla A/B, 3200 dla Z i 9600 dla E.
+Wersja wykorzystuje TIM14/13/10/11. Natywna kolejka ruchu Klippera działa
+w trybie `NATIVE`. Prędkość i powtarzalność prób wymagają pomiaru na drukarce.
+[Mapowanie, warunki i diagnostyka ruchu](docs/CONTROL_R5_REFERENCE.md#sprzętowe-impulsy-step-w-service).
 
 ## Pojedyncze próby
 

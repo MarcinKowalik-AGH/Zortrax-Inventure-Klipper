@@ -80,7 +80,7 @@ class Reactor(feeder.Reactor):
 
 
 class LoadTests(unittest.TestCase):
-    def host(self):
+    def host(self,timer=False):
         h,ops,p13=feeder.FeederRunTests().host();h.reactor=Reactor(h)
         h.load_test_context=None;h.load_test_last={'phase':'idle','load_completed':False}
         h.temperatures=[25.,25.,25.,25.,25.,25.,25.,150.]
@@ -90,6 +90,12 @@ class LoadTests(unittest.TestCase):
         h.device=Device(h)
         h.commands.update(control=Wire(h.device.control),output=Wire(h.device.out),
             motion=Wire(h.device.move),motion_driver=Wire(h.device.driver))
+        if timer:
+            h.axis_motion_abi=1
+            h.axis_motion_max_hz=125000
+            h.axis_motion_z_max_hz=3200
+            h.axis_motion_e_max_hz=9600
+            h.commands['axis_motion']=Wire(lambda args:h.device.move(args[:-1]))
         def refresh():
             now=h.reactor.monotonic()
             for i in range(8):
@@ -101,8 +107,8 @@ class LoadTests(unittest.TestCase):
         return h,ops,p13
 
     def heat(self,h,**params):h.cmd_load_test(Command(ACTION='HEAT',**params));h.reactor.pause(100.25)
-    def ready(self,h):
-        h.temperatures[0]=230.
+    def ready(self,h,tool=0):
+        h.temperatures[tool]=230.
         # Unit cases inject an already settled measurement. Full warm-up and
         # derivative history are exercised by the thermal plant/replay tests.
         if 'pid' in h.load_test_context:
@@ -200,6 +206,54 @@ class LoadTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'ready_for_jog'):h.cmd_load_test(Command(ACTION='JOG',DIR=0))
         self.assertEqual(self.starts(h,'motion'),[]);self.assertIsNotNone(h.load_test_context)
         h.reactor.pause(101.);self.assertGreater(h.device.output(6)['duty'],0)
+
+    def test_timer_jog_uses_selected_hot_nozzle_and_bounded_e_windows(self):
+        for tool in (0,1):
+            with self.subTest(tool=tool):
+                h,_,_=self.host(timer=True)
+                self.heat(h,TOOL='T%d'%tool)
+                with self.assertRaisesRegex(RuntimeError,'ready_for_jog'):
+                    h.cmd_load_test(Command(ACTION='JOG',DIR=tool,TIMER=1))
+                self.assertEqual(h.commands['axis_motion'].calls,[])
+                self.ready(h,tool)
+                h.cmd_load_test(Command(ACTION='JOG',DIR=tool,STEPS=5760,RATE=9600,TIMER=1))
+                h.reactor.pause(h.reactor.now+1.5)
+                axis_moves=h.commands['axis_motion'].calls
+                self.assertEqual([p[:12] for p in axis_moves],[
+                    (1,8*tool,0,0,0,4800,9600,2,750,0,0,0),
+                    (1,8*tool,0,0,0,960,9600,2,350,0,0,0)])
+                self.assertEqual([p[-1] for p in axis_moves],[tool,tool])
+                self.assertTrue(all(p[0]==0 for p in h.commands['motion'].calls))
+                self.assertTrue(all(p[2]==tool+6 for p in self.starts(h)))
+                last=h.load_test_last['last_jog']
+                self.assertEqual(last['sent'],5760)
+                self.assertEqual(last['windows'],2)
+                self.assertTrue(last['axis_timer'])
+
+    def test_timer_jog_rejects_unsupported_mcu_and_out_of_range_rate(self):
+        for supported,rate in ((False,960),(True,9601)):
+            with self.subTest(supported=supported,rate=rate):
+                h,_,_=self.host(timer=supported);self.heat(h);self.ready(h)
+                with self.assertRaises(RuntimeError):
+                    h.cmd_load_test(Command(ACTION='JOG',DIR=0,RATE=rate,TIMER=1))
+                self.assertEqual(self.starts(h,'motion'),[])
+                self.assertIsNotNone(h.load_test_context)
+
+    def test_timer_jog_thermal_stop_reports_mcu_reason_and_aborts_lease(self):
+        h,_,_=self.host(timer=True);self.heat(h);self.ready(h)
+        h.cmd_load_test(Command(ACTION='JOG',DIR=0,STEPS=5760,RATE=9600,TIMER=1))
+
+        def stopped_by_mcu(args):
+            row=h.device.move(args)
+            return dict(row,phase=5,reason=9,active=0)
+
+        h.commands['motion']=Wire(stopped_by_mcu)
+        h.reactor.pause(h.reactor.now+1.)
+        self.assertEqual(h.load_test_last['phase'],'failed')
+        self.assertIn('thermal_guard',h.load_test_last['reason'])
+        self.assertIsNone(h.load_test_context)
+        self.assertFalse(h.device.active())
+        self.assertEqual(len(h.commands['axis_motion'].calls),1)
 
     def test_both_E_directions_have_only_E_windows_and_finish_with_fresh_GPIO_comparison(self):
         for direction in (0,1):

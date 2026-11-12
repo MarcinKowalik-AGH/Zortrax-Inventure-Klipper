@@ -10,7 +10,13 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-SPEED'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-ALL-AXIS'
+AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
+AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
+    'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
+AXIS_MOTION_LIMITS = (('axis_motion_max_hz','INVENTURE_AXIS_MOTION_MAX_HZ',125000),
+    ('axis_motion_z_max_hz','INVENTURE_AXIS_MOTION_Z_MAX_HZ',3200),
+    ('axis_motion_e_max_hz','INVENTURE_AXIS_MOTION_E_MAX_HZ',9600))
 FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
 FACTORY_MOTION_RELEASE = 'RC8-CONTROL-R7-FACTORY-SPEED'
 FACTORY_TIMING_QUERY = 'inventure_factory_motion_timing_query'
@@ -72,7 +78,7 @@ CONTROL_REJECTS = (None,'invalid_request','another_owner_is_busy','mcu_not_ready
     'FIRMWARE_RESTART_required_after_native_stop','required_sensor_or_door_interlock')
 MOTION_PHASES = ('idle','running','holding','done','stopped','failed')
 MOTION_REASONS = ('none','completed','stop_input','operator_stop','heartbeat_or_cable_lost',
-    'door_open','maximum_time','mcu_shutdown','timing_fault')
+    'door_open','maximum_time','mcu_shutdown','timing_fault','thermal_guard')
 OUTPUT_REASONS = ('idle','applied','operator_off','duration_finished',
     'temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown')
 OUTPUT_NAMES = ('F0','F1','F2','F3','F4','F5','T0','T1','PC9','PC8')
@@ -446,6 +452,13 @@ class InventureMCU:
         if self.factory_motion_abi==1:
             self.commands['factory_motion_timing']=self.mcu.lookup_query_command(
                 FACTORY_TIMING_QUERY,FACTORY_TIMING_RESPONSE)
+        self.axis_motion_abi=int(self.mcu.get_constants().get('INVENTURE_AXIS_MOTION_ABI',0))
+        for attr,key,_ in AXIS_MOTION_LIMITS:
+            setattr(self,attr,int(self.mcu.get_constants().get(key,0)))
+        if self.axis_motion_abi==1:
+            if self.control_abi!=1 or any(getattr(self,attr)!=limit for attr,_,limit in AXIS_MOTION_LIMITS):
+                raise self.printer.config_error('Unexpected axis timer MCU limits')
+            self.commands['axis_motion']=self.mcu.lookup_query_command(AXIS_MOTION_COMMAND,MOTION_RESPONSE)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
         self.door_policy_abi = int(self.mcu.get_constants().get('INVENTURE_DOOR_POLICY_ABI', 0))
         self.xy_seek_abi = int(self.mcu.get_constants().get('INVENTURE_XY_SEEK_ABI', 0))
@@ -1580,6 +1593,8 @@ class InventureMCU:
             'factory_feed_clock':getattr(self,'factory_feed_clock',0),
             'factory_motion_abi':getattr(self,'factory_motion_abi',0),
             'factory_motion_max_hz':getattr(self,'factory_motion_max_hz',0),
+            'axis_motion_abi':getattr(self,'axis_motion_abi',0),
+            **{attr:getattr(self,attr,0) for attr,_,_ in AXIS_MOTION_LIMITS},
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -1708,19 +1723,27 @@ class InventureMCU:
         gcmd.respond_info('V9_CONTROL '+json.dumps(state,sort_keys=True))
 
     def _motion_query(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
-                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None):
+                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None,
+                      timer_tool=None):
         # State plus four driver replies must describe one run. In particular,
         # the next E window cannot start halfway through another reader's poll.
         mutex=getattr(self,'motion_mutex',None)
         with mutex if mutex is not None else nullcontext():
-            return self._motion_query_locked(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold_ms,owner)
+            return self._motion_query_locked(action,counts,rate,pulse,max_ms,stop_mask,stop_value,
+                                             hold_ms,owner,timer_tool)
 
     def _motion_query_locked(self, action=0, counts=(0,0,0,0), rate=400, pulse=10,
-                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None):
+                      max_ms=30000, stop_mask=0, stop_value=0, hold_ms=0, owner=None,
+                      timer_tool=None):
         directions=sum(1<<i for i,n in enumerate(counts) if n>0)
         token=self._control_next_token() if action==1 else 0
-        p=self._control_send('motion',[action,directions,*[abs(n) for n in counts],
-            rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token],mutate=action==1,owner=owner)
+        args=[action,directions,*[abs(n) for n in counts],
+              rate,pulse,max_ms,stop_mask,stop_value,hold_ms,token]
+        key='motion'
+        if timer_tool is not None:
+            key='axis_motion'
+            args.append(timer_tool)
+        p=self._control_send(key,args,mutate=action==1,owner=owner)
         self._control_validate(p,{'run':(0,0xffffffff),'token':(0,0xffffffff),'phase':(0,5),
             'reason':(0,len(MOTION_REASONS)-1),'reject':(0,5),'active':(0,1),'events':(0,2000000),
             'elapsed_ms':(0,600100),'hit':(0,65535)})
@@ -1739,13 +1762,15 @@ class InventureMCU:
                 raise ValueError('R5 motion driver parameters differ from the request')
             drivers[name]={k:row[k] for k in ('planned','sent','direction')}
         if action==1:
-            self.motion_request=dict(run=p['run'],token=p['token'],stop_mask=stop_mask,stop_value=stop_value)
+            self.motion_request=dict(run=p['run'],token=p['token'],stop_mask=stop_mask,
+                stop_value=stop_value,timer=timer_tool is not None)
         request=getattr(self,'motion_request',{})
         if (request.get('run'),request.get('token'))!=(p['run'],p['token']):request={}
         snapshot=self._motion_input_snapshot()
         self.motion_last=dict(p,phase=MOTION_PHASES[p['phase']],reason=MOTION_REASONS[p['reason']],
             reject=None,drivers=drivers,elapsed_s=round(p['elapsed_ms']/1000.,3),
             establishes_position=False,stop_mask=request.get('stop_mask'),stop_value=request.get('stop_value'),
+            axis_timer=request.get('timer'),
             hit_inputs=[name for i,name in enumerate(self.INPUT_NAMES) if p['hit']&(1<<i)],
             hit_scope='selected_stop_inputs_latched_by_mcu',
             z_direction=('table_up' if drivers['Z']['direction'] else 'table_down') if drivers['Z']['planned'] else None,
@@ -1764,12 +1789,39 @@ class InventureMCU:
         return dict(input_raw=observed,endstop_active=active,
             inputs_age_s=None if age is None else round(age,3),inputs_scope='latest_periodic_sample')
 
-    def _motion_execute(self,gcmd,action,counts=(0,0,0,0),rate=400,stop_mask=0,stop_value=0):
-        pulse=gcmd.get_int('PULSE_US',10,minval=2,maxval=100)
+    def _axis_timer_rate_limit(self,gcmd,counts):
+        if getattr(self,'axis_motion_abi',0)!=1 or 'axis_motion' not in self.commands:
+            raise gcmd.error('TIMER=1 requires '+AXIS_MOTION_RELEASE)
+        a,b,z,e=counts
+        if (z and (a or b or e)) or (e and (a or b)):
+            raise gcmd.error('TIMER=1 requires a standalone Z or E move')
+        if z:
+            return self.axis_motion_z_max_hz
+        if e:
+            return self.axis_motion_e_max_hz
+        return self.axis_motion_max_hz
+
+    def _motion_execute(self,gcmd,action,counts=(0,0,0,0),rate=400,stop_mask=0,stop_value=0,
+                        axis_timer=False):
+        pulse=gcmd.get_int('PULSE_US',2 if axis_timer else 10,minval=2,maxval=100)
         max_ms=gcmd.get_int('MAX_MS',30000,minval=1,maxval=600000)
         hold=gcmd.get_int('HOLD_MS',0,minval=0,maxval=60000)
         stop_mask=gcmd.get_int('STOP_MASK',stop_mask,minval=0,maxval=65535)
         stop_value=gcmd.get_int('STOP_VALUE',stop_value,minval=0,maxval=65535)
+        timer_tool=None
+        if axis_timer:
+            if pulse!=2 or hold:
+                raise gcmd.error('TIMER=1 requires PULSE_US=2 and HOLD_MS=0')
+            tool=str(gcmd.get('TOOL','' if counts[3] else 'T0')).upper()
+            if tool not in ('T0','T1'):
+                raise gcmd.error('Select TOOL=T0 or TOOL=T1 for the timer extrusion move')
+            timer_tool=int(tool[1])
+            a,b,_,_=counts
+            xy_minimum=int(a+b<0) | (int(a-b<0)<<1)
+            if xy_minimum&stop_mask&~stop_value:
+                raise gcmd.error('X/Y minimum limit polarity conflicts with STOP_VALUE')
+            stop_mask|=xy_minimum
+            stop_value|=xy_minimum
         if action==1 and counts[2]:
             # Physical test: DIR=1 raises the table; DIR=0 lowers it.
             # Require the limit ahead, while allowing release of the one behind.
@@ -1778,13 +1830,16 @@ class InventureMCU:
             if stop_mask&required and (stop_value^level)&required:
                 raise gcmd.error('Z limit polarity conflicts: PE12 bottom active HIGH; PC14 contact active LOW')
             stop_mask|=required;stop_value=(stop_value&~required)|level
+        if axis_timer and stop_value&~stop_mask:
+            raise gcmd.error('STOP_VALUE contains bits outside STOP_MASK')
         if action==1 and (not any(counts) or max(map(abs,counts))>2000000 or pulse+2>1000000//rate):
             raise gcmd.error('Invalid counts or pulse width for the requested RATE')
         attempted=False
         try:
             if action==1:self._control_service()
             attempted=action==1
-            state=self._motion_query(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold)
+            state=self._motion_query(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold,
+                                     timer_tool=timer_tool)
             if action==0 and 'factory_motion_timing' in self.commands:
                 ticks=self._control_validate(self._control_send('factory_motion_timing',[]),
                     {'peak_callback_ticks':(0,0xffffffff),'peak_late_ticks':(0,0xffffffff)})
@@ -1806,8 +1861,10 @@ class InventureMCU:
     def cmd_motion(self,gcmd):
         action=self._control_action(gcmd)
         counts=tuple(gcmd.get_int(n,0,minval=-2000000,maxval=2000000) for n in ('A','B','Z','E'))
-        rate=gcmd.get_int('RATE',400,minval=1,maxval=20000)
-        self._motion_execute(gcmd,action,counts,rate)
+        axis_timer=action==1 and gcmd.get_int('TIMER',0,minval=0,maxval=1)==1
+        cap=self._axis_timer_rate_limit(gcmd,counts) if axis_timer else 20000
+        rate=gcmd.get_int('RATE',400,minval=1,maxval=cap)
+        self._motion_execute(gcmd,action,counts,rate,axis_timer=axis_timer)
 
     def cmd_move(self,gcmd):
         action=self._control_action(gcmd)
@@ -1819,18 +1876,24 @@ class InventureMCU:
             distance=float(gcmd.get('DISTANCE',1.))
             speed=float(gcmd.get('SPEED',1.))
             if not math.isfinite(distance) or not math.isfinite(speed) or speed<=0:raise ValueError()
-        except (TypeError,ValueError):raise gcmd.error('DISTANCE and positive SPEED must be finite numbers')
-        steps=gcmd.get_int('STEPS',round(distance*scale),minval=-2000000,maxval=2000000)
+            distance_steps=round(distance*scale)
+            default_rate=max(1,round(speed*scale))
+        except (TypeError,ValueError,OverflowError):raise gcmd.error('DISTANCE and positive SPEED must be finite numbers')
+        steps=gcmd.get_int('STEPS',distance_steps,minval=-2000000,maxval=2000000)
         if gcmd.get('DIR',None) is not None:
             if axis in ('X','Y'):raise gcmd.error('DIR override is for A, B, Z or E; use signed DISTANCE for X/Y')
             steps=abs(steps)*(1 if gcmd.get_int('DIR',minval=0,maxval=1) else -1)
         counts={'X':(steps,steps,0,0),'Y':(steps,-steps,0,0),'Z':(0,0,steps,0),
                 'E':(0,0,0,steps),'A':(steps,0,0,0),'B':(0,steps,0,0)}[axis]
-        rate=gcmd.get_int('RATE',min(20000,max(1,round(speed*scale))),minval=1,maxval=20000)
+        axis_timer=gcmd.get_int('TIMER',0,minval=0,maxval=1)==1
+        cap=self._axis_timer_rate_limit(gcmd,counts) if axis_timer else 20000
+        rate=gcmd.get_int('RATE',default_rate if axis_timer else min(cap,default_rate),minval=1,maxval=cap)
+        if axis_timer and rate>cap:
+            raise gcmd.error('SPEED exceeds the timer limit of %d steps/s'%cap)
         # Negative X/Y heads toward its minimum. Directional Z limits are
         # merged in _motion_execute for both MOVE and raw vector MOTION.
         mask=(1 if axis=='X' else 2) if axis in ('X','Y') and steps<0 else 0
-        self._motion_execute(gcmd,action,counts,rate,mask,mask)
+        self._motion_execute(gcmd,action,counts,rate,mask,mask,axis_timer)
 
     def _output_query(self,channel,action=0,duty=0,duration=0,limit=0,owner=None):
         token=self._control_next_token() if action==1 else 0
@@ -2368,7 +2431,9 @@ class InventureMCU:
             steps=min(steps,next(n for n in boundaries if n>jog['sent'])-jog['sent'])
         max_ms=math.ceil(steps*1000./jog['rate'])+250
         counts=(0,0,0,steps if jog['direction'] else -steps)
-        motion=self._motion_query(1,counts,jog['rate'],10,max_ms,owner=context)
+        timer_tool=context['tool'] if jog.get('axis_timer') else None
+        motion=self._motion_query(1,counts,jog['rate'],2 if timer_tool is not None else 10,
+                                  max_ms,owner=context,timer_tool=timer_tool)
         if self.load_test_context is not context:return
         if motion['reject']:raise ValueError(motion['reject'])
         context['motion']=motion
@@ -2420,11 +2485,12 @@ class InventureMCU:
                     self._load_test_pid(context,temperature,now,integrate=False)
                     return
                 if motion['reason']!='completed' or motion['drivers']['E']['sent']!=jog['window_steps']:
-                    raise ValueError('Extruder jog stopped before completion')
+                    raise ValueError('Extruder jog stopped before completion: '+motion['reason'])
                 if jog.get('coupled'):self._load_test_feeder_window(context,0)
                 jog['windows']+=1;jog['identity']=None
             if jog['sent']==jog['steps']:
                 context['last_jog']=dict(steps=jog['steps'],sent=jog['sent'],direction=jog['direction'],
+                    axis_timer=bool(jog.get('axis_timer')),
                     rate=jog['rate'],windows=jog['windows'],elapsed_s=round(now-jog['started'],3))
                 context['measurement']['completed_jogs']+=1;context['jog']=None
                 if jog.get('coupled'):plan['feed_completed']=True
@@ -2844,7 +2910,9 @@ class InventureMCU:
         if action=='JOG':
             steps=gcmd.get_int('STEPS',960,minval=1,maxval=19200)
             direction=gcmd.get_int('DIR',minval=0,maxval=1)
-            rate=gcmd.get_int('RATE',960,minval=160,maxval=4800)
+            axis_timer=gcmd.get_int('TIMER',0,minval=0,maxval=1)==1
+            cap=self._axis_timer_rate_limit(gcmd,(0,0,0,steps)) if axis_timer else 4800
+            rate=gcmd.get_int('RATE',960,minval=160,maxval=cap)
             if steps/rate>10.:raise gcmd.error('One extruder jog must take at most 10 seconds')
             temperature,state=self.panel_temperature(context['tool'],self.reactor.monotonic())
             if not self._load_test_jog_ready(context,temperature,state):
@@ -2861,7 +2929,7 @@ class InventureMCU:
                 self._load_test_safety(context)
                 now=self.reactor.monotonic();windows=math.ceil(steps/max(1,int(rate*LOAD_JOG_WINDOW_S)))
                 context['jog']=dict(identity=None,steps=steps,sent=0,direction=direction,rate=rate,
-                    started=now,windows=0,deadline=now+steps/rate+windows*.5+30.)
+                    started=now,windows=0,deadline=now+steps/rate+windows*.5+30.,axis_timer=axis_timer)
                 context['phase']='jogging'
                 self._load_test_step(context)
                 self._control_schedule()
