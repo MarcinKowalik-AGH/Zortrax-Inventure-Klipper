@@ -1,14 +1,15 @@
-# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY
+# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-FEED
 
-Aktualny host `RC8-CONTROL-R7-MENU` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-FEED` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne.
-MCU pozostaje `RC8-CONTROL-R7-FACTORY`; ponowne wgrywanie R7 nie jest
-potrzebne. [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
+Procedury używające kasety wymagają MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+[Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
 `INVENTURE_LOAD_TEST ACTION=AUTO` wykonuje odtworzony automat ładowania
-r0323: przygotowanie ruchu, grzanie, mechaniczne przełączenie dyszy, próbę
-krótką L1 oraz, jeśli potrzebne, odzyskanie podawania L2, długi transport
-L3 i końcowe wyciskanie/czyszczenie L4. Parametry można podać w poleceniu.
+r0323. Po przygotowaniu ruchu, grzaniu i przełączeniu dyszy host odczytuje A
+z ostatniej odpowiedzi MCU sesji. A=1 wybiera próbę L1. A=0 przechodzi od razu
+do L2, z pominięciem próbnego wyciskania stosowanego przez r0323. L2 uruchamia
+kasetę i czeka na A, po czym następuje L3 oraz L4. Parametry można podać w poleceniu.
 Poprzednie `ACTION=LOAD` i `ACTION=RETRACT` pozostają osobnymi próbami
 stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 `TUBE_SECONDS`, `PURGE_STEPS`, `SMOOTH` ani `RATE`.
@@ -21,12 +22,12 @@ geometrii, długości filamentu ani działania mechanizmu.
 
 ## Instalacja
 
-R7 jest potrzebne do niezależnego nadzoru transportu i PID podczas ruchów
-XY/E. R6 nie udostępnia tej sesji. Komenda AUTO z MCU R6 odmawia przed
-uruchomieniem napędów i grzania.
+Pierwsze MCU R7-FACTORY zgłaszało RUN podajnika w SERVICE przy zablokowanym
+zegarze PE6 (TIM9 CH2). Wersja FEED włącza zegar w sesji FACTORY. Host
+sprawdza tę obsługę przed startem procedur z napędem kasety.
 
 1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
-   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip`
+   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip`
    na kartę i zainstaluj aplikację przez InventureBoot 1.7.
 2. W terminalu Orange Pi zaktualizuj host:
 
@@ -46,8 +47,8 @@ Po ponownym połączeniu:
 INVENTURE_VERSION
 ```
 
-Oczekiwane: host `RC8-CONTROL-R7-MENU`, MCU `RC8-CONTROL-R7-FACTORY`,
-`procedure_api: 1`, `factory_abi: 1`,
+Oczekiwane host `RC8-CONTROL-R7-UIFAST-FEED`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+`procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki
@@ -102,7 +103,7 @@ wyłącza grzanie i napędy; chłodzenie gorącej głowicy pozostaje automatyczn
 
 | Etap | Domyślne działanie | Warunek wyjścia |
 |---|---|---|
-| L1 | Porcje z budżetem 20 mm E, oscylacje X, AUTO kasety; próg łącznego budżetu 500 mm | Świeży impuls, wiek do 3 s, oraz co najmniej 6 rzeczywistych startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
+| L1 | Przy A=1 porcje z budżetem 20 mm E, oscylacje X, AUTO kasety i próg łącznego budżetu 500 mm | A=1, świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Zwolnienie A lub brak świeżego impulsu wybiera L2. |
 | L2 | Podajnik do przodu, oczekiwanie na wejście A | A musi pojawić się w ciągu 5 s; A już aktywne pozwala przejść dalej. |
 | L3 | Przednia pozycja serwisowa; kaseta i E podają materiał, budżet 250 mm E | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę ich liczenia; nie jest to wymaganie wszystkich 6 impulsów w jednym oknie 2 s. |
 | L4 | AUTO kasety, budżet 100 mm E z oscylacjami i końcowym czyszczeniem | Co najmniej 3 rzeczywiste starty podajnika; ich brak uruchamia skonfigurowane wycofanie lub kończy błędem. |

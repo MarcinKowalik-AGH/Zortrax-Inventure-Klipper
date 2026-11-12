@@ -14,11 +14,14 @@ static uint8_t transport_b(unsigned i) {return !!((i?GPIOG:GPIOF)->IDR & BIT(i?1
 static void transport_output(unsigned i) {
     struct ivt_state *s=&transport[i];
     if(factory_transport_allowed()) {
-        // A narrowly scoped SERVICE owner writes its own RUN latch. Native
-        // scheduled GPIO remains gated; do not globally arm the machine.
+        // The selected SERVICE owner drives RUN and the fixed PE6 clock.
+        // Generic PWM writes to TIM9_CH2 remain gated during this session.
         raw_output(i?GPIOG:GPIOC,i?11:5,0);
         gpio_out_write(feeder_dir[i],s->direction);
-        if(s->running) {gpio_pwm_write(feeder_clock,1);raw_output(i?GPIOG:GPIOC,i?11:5,1);}
+        if(i==transport_selected) {
+            TIM9->CCR2=s->running ? 1 : 0;
+            if(s->running)raw_output(i?GPIOG:GPIOC,i?11:5,1);
+        }
         return;
     }
     gpio_out_write(feeder_run[i],0);

@@ -1,22 +1,17 @@
 # Wspólne procedury T0/T1 — host CONTROL-R7-MODULAR
 
-Aktualny `RC8-CONTROL-R7-MENU` zachowuje opisany interfejs modułów i dodaje
-[wspólne sterowanie z menu Zortrax](ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
-Po aktualizacji VERSION pokazuje host R7-MENU i ten sam MCU R7-FACTORY.
-
-Host `RC8-CONTROL-R7-MODULAR` korzysta z tego samego MCU
-`RC8-CONTROL-R7-FACTORY`, `factory_abi=1`. Jeśli aplikacja R7 jest już
-wgrana, wystarcza aktualizacja hosta z gałęzi `orange-pi`. Nie trzeba
-ponownie wgrywać MCU. Dla starszej aplikacji najpierw obowiązuje
-[instalacja MCU R7](FACTORY_LOAD_2026-11-10.md).
+Host `RC8-CONTROL-R7-UIFAST-FEED` udostępnia moduły w konsoli i
+[w menu Zortrax](ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
+AUTO, UNLOAD i próby z `FEEDER=1` wymagają
+[instalacji MCU R7-FACTORY-FEED](FACTORY_LOAD_2026-11-10.md).
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
-Po ponownym połączeniu `INVENTURE_VERSION` pokazuje host
-`RC8-CONTROL-R7-MODULAR`, MCU `RC8-CONTROL-R7-FACTORY`, `procedure_api=1`
-i `factory_abi=1`. Instalator zachowuje konfigurację i zapis UART.
+Po aktualizacji obu części `INVENTURE_VERSION` pokazuje host
+`RC8-CONTROL-R7-UIFAST-FEED`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+`procedure_api=1`, `factory_abi=1` i `factory_feed_clock=1`.
 
 ## Podział programu
 
@@ -40,8 +35,8 @@ Zmiana samej sekwencji lub jej parametrów nie zmienia protokołu MCU.
 AUTO składa moduły pod jednym właścicielem i zachowuje napędy/referencję
 pomiędzy etapami. Nie uruchamia bazowania ani osobnej sesji między purge
 a czyszczeniem. Porównanie ze źródłem poprzedniego R7 sprawdza ten sam
-ciąg żądań ruchu, grzania i trybów transportu dla krótkiej/długiej ścieżki
-oraz wycofania po błędzie, dla obu narzędzi.
+ciąg żądań ruchu, grzania i trybów transportu przy A=1 na wejściu,
+dla obu narzędzi. Przy A=0 host przechodzi od razu do L2.
 
 ## Osobne polecenia serwisowe
 

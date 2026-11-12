@@ -370,7 +370,7 @@ class FactoryProgram:
         yield dict(kind='heat')
 
     def select_tool(self):
-        yield from self._module('select_tool', self._select_steps())
+        return (yield from self._module('select_tool', self._select_steps()))
 
     def _select_steps(self):
         p = self.p
@@ -379,7 +379,7 @@ class FactoryProgram:
         yield from self._center()
         yield from self._move(p['approach_x'], p['switch_y'])
         yield from self._move(p['switch_x'], p['switch_y'], speed=p['switch_speed'])
-        yield from self._center()
+        return (yield from self._center())
 
     def manual_feed(self):
         yield from self._module('manual_feed', self._manual_steps())
@@ -401,7 +401,7 @@ class FactoryProgram:
             issued, snap = yield from self._purge(p['l1_portion'])
             total += issued
             starts = delta32(snap['starts'], baseline)
-            if snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
+            if not snap['a'] or snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
                 break
             if starts >= p['l1_starts']:
                 yield from self._mode(0)
@@ -447,10 +447,13 @@ class FactoryProgram:
             raise FactoryError('l4_starts_missing')
         yield from self._mode(0)
 
-    def load(self):
-        short = yield from self._module('load_l1', self._load_l1())
-        if short:
-            return 'L1'
+    def load(self, selection):
+        # The last selector move returns a fresh snapshot from this MCU owner.
+        # A low skips the OEM's initial L1 probe with an empty inlet.
+        if _snapshot(selection)['a']:
+            short = yield from self._module('load_l1', self._load_l1())
+            if short:
+                return 'L1'
         yield from self._module('load_l2', self._load_l2())
         yield from self._module('load_l3', self._load_l3())
         yield from self._module('load_l4', self._load_l4())
@@ -468,9 +471,9 @@ class FactoryProgram:
         if operation not in ('HOME', 'SELECT'):
             yield from self.heat()
         if operation != 'HOME':
-            yield from self.select_tool()
+            selection = yield from self.select_tool()
         if operation == 'AUTO':
-            terminal = yield from self.load()
+            terminal = yield from self.load(selection)
             cleaned = terminal == 'L4'
         elif operation in ('PURGE', 'CLEAN', 'MANUAL', 'UNLOAD'):
             yield from self.position_bin()

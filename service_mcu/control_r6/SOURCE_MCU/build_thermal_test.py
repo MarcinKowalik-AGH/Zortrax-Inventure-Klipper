@@ -68,12 +68,13 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-FACTORY'
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-FACTORY-FEED'
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
     assert c['INVENTURE_LOAD_STREAM_ABI'] == 1
     assert c['INVENTURE_FACTORY_ABI'] == 1
+    assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert 'inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u' in dictionary['commands']
     assert 'inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u' in dictionary['responses']
     assert 'inventure_load_stream action=%c steps=%u rate=%u max_ms=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u tool=%c channel=%c e_direction=%c feeder_direction=%c' in dictionary['commands']

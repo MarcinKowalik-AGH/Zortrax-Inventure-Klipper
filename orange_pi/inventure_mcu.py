@@ -10,7 +10,8 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED'
+FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
@@ -434,6 +435,7 @@ class InventureMCU:
             if self.control_abi!=1:raise self.printer.config_error('Smooth load requires CONTROL ABI 1')
             self.commands['load_stream']=self.mcu.lookup_query_command(LOAD_STREAM_COMMAND,LOAD_STREAM_RESPONSE)
         self.factory_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_ABI',0))
+        self.factory_feed_clock=int(self.mcu.get_constants().get('INVENTURE_FACTORY_FEED_CLOCK',0))
         if self.factory_abi==1:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
         self.motor_test_abi = int(self.mcu.get_constants().get('INVENTURE_MOTOR_TEST_ABI', 0))
@@ -1567,6 +1569,7 @@ class InventureMCU:
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'load_stream_abi':getattr(self,'load_stream_abi',0),
             'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1, 'zortrax_menu_api':1,
+            'factory_feed_clock':getattr(self,'factory_feed_clock',0),
             'control_state':getattr(self,'control_last',{}),
             'mcu_release':self.mcu_release, 'bootloader':bootloader,
             'p4_baud':self.p4_boot.get('baud'),
@@ -2464,7 +2467,8 @@ class InventureMCU:
         if action=='LIST':
             gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,procedures=PROCEDURES,
                 precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
-                standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY'),sort_keys=True));return
+                standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
+                MCU_required_for_feeder=FACTORY_FEED_RELEASE),sort_keys=True));return
         operation=str(gcmd.get('PROCEDURE','AUTO')).upper() if action=='PARAMS' else action
         if operation not in PROCEDURES:
             raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+', '.join(PROCEDURES))
@@ -2481,6 +2485,10 @@ class InventureMCU:
                     modules=PROCEDURES[operation]),sort_keys=True));return
             if 'factory_session' not in self.commands:
                 raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
+            needs_feeder = operation in ('AUTO','UNLOAD') or (
+                operation in ('MANUAL','PURGE') and p['feeder'])
+            if needs_feeder and not getattr(self,'factory_feed_clock',0):
+                raise ValueError('Factory cassette transport requires the '+FACTORY_FEED_RELEASE+' MCU application')
             if any(gcmd.get(k,None) is not None for k in ('STEPS','HEAD_STEPS','TUBE_SECONDS','PURGE_STEPS','SMOOTH','RATE')):
                 raise ValueError('AUTO uses L1/L3/L4 parameters; remove fixed-distance LOAD/RETRACT parameters')
             if getattr(self,'load_test_context',None) is not None:
@@ -2527,6 +2535,8 @@ class InventureMCU:
                 or row['tool']!=context['tool'] or row['mode']!=f['mode']
                 or row['fault'] or row['sequence']!=seq or not row['remaining_ms']):
             raise ValueError('MCU factory guard/ownership rejected: '+json.dumps(row,sort_keys=True))
+        if row['mode']==2 and not row['running']:
+            raise ValueError('MCU did not start forward cassette feed: '+json.dumps(row,sort_keys=True))
         if f['snapshot']:
             from .inventure_factory_core import delta32
             delta32(row['pulses'],f['snapshot']['pulses']);delta32(row['starts'],f['snapshot']['starts'])

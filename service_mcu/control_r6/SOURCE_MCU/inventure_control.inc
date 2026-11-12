@@ -6,6 +6,7 @@ DECL_CONSTANT("INVENTURE_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_OUTPUT_ABI",1);
 DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
+DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",20000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_STEPS",2000000);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_MS",600000);
@@ -170,6 +171,7 @@ static void control_output_off(unsigned i) {
     }
 }
 static void control_stop_all(void) {
+    uint8_t factory_active=fs.active;
     if(fs.active){fs.active=0;fs.reason=2;transport_live=0;}
     if(sl.active) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=2;
@@ -190,12 +192,16 @@ static void control_stop_all(void) {
         gpio_pwm_write(locks[i],0);
         transport_stop_channel(i);
     }
+    if(factory_active)gpio_pwm_write(feeder_clock,0);
     motor_test_write(GPIOE,BIT(10),0);cm_clear_steps();
     if(was_native) {control_latched=1;control_mode=CT_OFF;}
     cool_mask=control_cooling_mask();cool_applied=255;cooling_apply();
 }
 static void control_shutdown(void) {
-    if(fs.active){fs.active=0;fs.reason=7;transport_live=0;}
+    if(fs.active) {
+        fs.active=0;fs.reason=7;transport_live=0;
+        gpio_pwm_write(feeder_clock,0);
+    }
     if(sl.active) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=7;
     }
@@ -550,6 +556,7 @@ static void fs_normal_stop(void) {
     fs.active=0;fs.reason=2;transport_live=0;transport_selected=255;
     control_motion_cancel();motor_test_write(GPIOE,BIT(10),0);
     for(unsigned i=0;i<2;i++)transport_stop_channel(i);
+    gpio_pwm_write(feeder_clock,0);
     // The selected heater's independent short lease remains owned by the
     // host PID. Emergency/global STOP and faults always cut all outputs.
 }
@@ -598,6 +605,7 @@ void command_inventure_factory_session(uint32_t *args) {
                 || (door_policy_enabled()&&door_closed_mask()!=3)))reject=3;
         if(!reject) {
             for(unsigned i=0;i<2;i++)transport_stop_channel(i);
+            gpio_pwm_write(feeder_clock,0);
             fs.token=token;fs.sequence=0;fs.deadline=now+MS(lease);fs.lease_ms=lease;
             fs.duration_ms=duration;fs.budget_steps=budget;fs.min_c=minimum;fs.max_c=maximum;
             fs.tool=tool;fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;

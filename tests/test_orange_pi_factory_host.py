@@ -138,6 +138,7 @@ class FactoryHostTests(unittest.TestCase):
     def host(self,scenario='short'):
         h,ops,p13=support.LoadTests().host();h.device=FactoryDevice(h,scenario)
         h.factory_abi=1
+        h.factory_feed_clock=1
         h.commands.update(control=support.Wire(h.device.control),output=support.Wire(h.device.out),
             motion=support.Wire(h.device.move),motion_driver=support.Wire(h.device.driver),
             factory_session=support.Wire(h.device.query_factory))
@@ -194,6 +195,47 @@ class FactoryHostTests(unittest.TestCase):
         h.commands.pop('factory_session')
         with self.assertRaises(RuntimeError):self.start(h,1)
         self.assertEqual(h.device.packets,[])
+
+    def test_legacy_factory_MCU_refuses_cassette_operations_before_heating(self):
+        h,_,_=self.host()
+        h.factory_feed_clock=0
+        for action, extra in (('AUTO',{}),('UNLOAD',{}),('MANUAL',{'FEEDER':1}),('PURGE',{'FEEDER':1})):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(RuntimeError, 'RC8-CONTROL-R7-FACTORY-FEED'):
+                    h.cmd_procedure(Command(ACTION=action, TOOL='T0', **extra))
+        self.assertEqual(h.device.packets,[])
+        h.cmd_procedure(Command(ACTION='SELECT', TOOL='T0'))
+        self.assertEqual(self.finish(h)['factory']['result']['terminal'], 'SELECT')
+
+    def test_empty_A_starts_feeder_before_any_E_for_both_tools(self):
+        for tool in (0,1):
+            with self.subTest(tool=tool):
+                h,_,_=self.host('wait_a')
+                self.start(h,tool)
+                self.wait_phase(h,'L2')
+                self.assertTrue(h.device.running)
+                self.assertEqual(h.device.mode_history,[0,2])
+                self.assertFalse(any(p[0]=='motion' and p[1]==1 and p[6] for p in h.device.packets))
+                h.device.a=1
+                last=self.finish(h)
+                self.assertEqual(last['factory']['result']['terminal'],'L4')
+                self.assertNotIn('L1',last['factory']['history'])
+                self.assertEqual(h.device.auto_entries,1)
+
+    def test_missing_forward_run_confirmation_aborts_before_E(self):
+        h,_,_=self.host('wait_a')
+        def query_without_forward_run(args):
+            state=h.device.query_factory(args)
+            if state['mode']==2:
+                state['running']=0
+            return state
+        h.commands['factory_session']=support.Wire(query_without_forward_run)
+        self.start(h)
+        last=self.finish(h)
+        self.assertIn('MCU did not start forward cassette feed',last['reason'])
+        self.assertFalse(any(p[0]=='motion' and p[1]==1 and p[6] for p in h.device.packets))
+        self.assertFalse(h.device.active())
+        self.assertEqual(h.device.output(6)['duty'],0)
 
     def test_invalid_tuning_cannot_move_or_start_heating(self):
         for params in ({'LONG_MM':'nan'},{'L1_BUDGET':-1},{'FEEDER_MS':1501},

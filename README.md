@@ -1,9 +1,14 @@
-# Zortrax Inventure — host CONTROL-R7-UIFAST / MCU CONTROL-R7-FACTORY
+# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED / MCU CONTROL-R7-FACTORY-FEED
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
+
+W wersji FEED sesja FACTORY uruchamia zegar PE6 podajnika kasety.
+AUTO odczytuje stan A po przełączeniu dyszy. Przy A=0 przechodzi do L2
+i podaje filament kasetą przed pierwszym ruchem E.
+[Instalacja i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
 
@@ -14,9 +19,8 @@ pilna; ruch i grzałki zachowują pierwszeństwo przed pikselami. Podczas
 grzania/ruchu obowiązuje budżet UART, również dla prób SERVICE.
 Przycisk OK jest związany z widokiem potwierdzonym przed jego odebraniem.
 
-Aktualizacja dotyczy tylko hosta: zachowuje MCU R7, bootloader 1.7,
-zapisane UART (750000 w obecnej konfiguracji), SPI i geometrię. Nowy
-transport OLED jest objęty instalacją i przywracaniem wraz z menu.
+Transfer OLED działa po aktualizacji hosta, także z poprzednim MCU R7.
+Instalator obejmuje transport OLED i menu również przy przywracaniu kopii.
 [Źródła M300, opis zmian, wyniki i próba na drukarce](docs/M300_TRANSFER_COMM_OLED_2026-11-10.md).
 
 ## Menu Zortrax na OLED i w konsoli
@@ -34,8 +38,8 @@ INVENTURE_ZORTRAX OP=CATALOG
 ```
 
 Otwarcie czynności nie rozpoczyna ruchu/grzania. Potwierdzenie jest
-jednorazowe i związane z bieżącym widokiem/operacją. Jeśli MCU ma już R7,
-wystarczy aktualizacja hosta. [Obsługa menu, procedury i rzeczywista dostępność](docs/ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
+jednorazowe i związane z bieżącym widokiem/operacją. Procedury z napędem
+kasety wymagają MCU R7-FACTORY-FEED. [Obsługa menu, procedury i rzeczywista dostępność](docs/ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
 
 ## Wspólne procedury T0/T1
 
@@ -52,7 +56,7 @@ INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T1 PROCEDURE=SELECT
 
 Nastawy: wartości wbudowane → opcjonalne `procedure_defaults` →
 `procedure_t0`/`procedure_t1` w `[inventure_mcu]` → argumenty polecenia.
-Zmiana hosta wystarcza, jeśli MCU ma już `RC8-CONTROL-R7-FACTORY`.
+Procedury kasetowe wymagają `RC8-CONTROL-R7-FACTORY-FEED`.
 [Moduły, osobne polecenia, profile i diagnostyka](docs/MODULAR_PROCEDURES_2026-11-10.md).
 
 ## Ładowanie zależne od czujników — T0 i T1
@@ -70,7 +74,7 @@ INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T0
 ```
 
 PARAMS jest tylko odczytem/walidacją. Właściwa próba wymaga nowej aplikacji
-MCU `RC8-CONTROL-R7-FACTORY`, z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip`,
+MCU `RC8-CONTROL-R7-FACTORY-FEED`, z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip`,
 oraz aktualizacji hosta opisanej poniżej. Po instalacji IVB i hosta użyj
 `FIRMWARE_RESTART`; `INVENTURE_VERSION` ma pokazać `factory_abi: 1`.
 
@@ -107,8 +111,8 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_FACTORY_BOOT17.zip`: aplikacja `MCU/INVENTUR.IVB` do bootloadera 1.7.
-AUTO wymaga tej aplikacji R7 oraz aktualnego hosta; wcześniejsze próby
+`INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip` z aplikacją `MCU/INVENTUR.IVB` do bootloadera 1.7.
+AUTO i UNLOAD wymagają tej aplikacji oraz aktualnego hosta. Wcześniejsze próby
 stałego odcinka pozostają dostępne.
 
 ## Po aktualizacji hosta
@@ -120,10 +124,11 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane: `host_revision` = `RC8-CONTROL-R7-UIFAST`, `mcu_release` = `RC8-CONTROL-R7-FACTORY`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
-`factory_abi: 1` potwierdza nową sesję MCU dla automatu i ruchów XY/E.
+`factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.
+`factory_feed_clock: 1` potwierdza obsługę zegara kasety w tej sesji.
 `procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
 `zortrax_menu_api: 1` potwierdza wspólny sterownik procedur menu OLED/G-code.
 

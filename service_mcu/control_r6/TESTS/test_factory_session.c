@@ -34,8 +34,10 @@ static void factory_motion_tick(void) {
 static void cold_home_and_hot_start(void) {
     for(unsigned tool=0;tool<2;tool++)for(unsigned wrap=0;wrap<2;wrap++) {
         factory_reset(wrap?0xffff0000u:0,0);
+        gpio_pwm_write(feeder_clock,1); // previous auxiliary ownership left the shared clock enabled
+        assert(TIM9->CCR2==1);
         factory(1,tool,IVT_STOP,1,1000,1500,501,0);
-        assert(fs.active && !factory_reply[3] && !inventure_is_armed());
+        assert(fs.active && !factory_reply[3] && !inventure_is_armed() && !TIM9->CCR2);
         motion(1,0,30,30,0,0,1000,10,1000,1,1,0,601);assert(cm.active);
         GPIOB->IDR|=BIT(11);motion_tick();assert(!cm.active && cm.reason==CR_INPUT);
         assert(GPIOE->BSRR==BIT(10)); // input establishes reference without releasing enable
@@ -48,8 +50,20 @@ static void cold_home_and_hot_start(void) {
         assert(factory_reply[3]==3 && fs.sequence==0 && transport[tool].mode==IVT_STOP);
         factory_adc(1);factory(2,tool,IVT_FORWARD,1,1000,1500,501,1);
         assert(fs.active && factory_reply[3]==0 && transport[tool].running);
+        assert(TIM9->CCR2==1);
+        GPIO_TypeDef *run_port=tool?GPIOG:GPIOC;
+        uint32_t run_bit=BIT(tool?11:5);
+        assert(run_port->BSRR==run_bit);
+        assert(inventure_filter_pwm((void*)&TIM9->CCR2,200,256)==0);
+        assert(outputs[tool?GPIO('B',7):GPIO('A',8)]==1);
+        factory(2,tool,IVT_STOP,1,1000,1500,501,2);
+        assert(!TIM9->CCR2 && run_port->BSRR==(run_bit<<16));
+        factory(2,tool,IVT_REVERSE,1,1000,1500,501,3);
+        assert(TIM9->CCR2==1 && run_port->BSRR==run_bit);
+        assert(!outputs[tool?GPIO('B',7):GPIO('A',8)]);
         factory(3,tool,IVT_STOP,1,1000,1500,501,0);
         assert(!fs.active && fs.reason==2 && !cm.active && GPIOE->BSRR==(BIT(10)<<16));
+        assert(!TIM9->CCR2 && !outputs[tool?GPIO('G',11):GPIO('C',5)]);
     }
     puts("PASS factory cold owner: both tools, wrap, homing holds enable, cold E/feeder blocked, hot transition accepted");
 }
@@ -59,7 +73,7 @@ static void auto_and_replay(void) {
         output(1,6+tool,64,5000,250,101);
         factory(1,tool,IVT_AUTO,0,100,1500,501,0);factory_advance(10,1);
         uint32_t starts=transport[tool].starts,deadline=transport[tool].deadline;
-        assert(starts==1 && transport[tool].running);
+        assert(starts==1 && transport[tool].running && TIM9->CCR2==1);
         for(unsigned seq=1;seq<5;seq++) {
             factory(2,tool,IVT_AUTO,0,100,1500,501,seq);
             assert(transport[tool].starts==starts && transport[tool].deadline==deadline);
@@ -69,8 +83,8 @@ static void auto_and_replay(void) {
         factory(2,tool,IVT_FORWARD,0,100,1500,501,4);assert(factory_reply[3]==1 && fs.deadline==lease);
         factory(1,tool,IVT_FORWARD,0,100,1500,501,0);assert(factory_reply[3]==1 && fs.deadline==lease);
         factory(1,tool,IVT_AUTO,0,100,1500,501,0);assert(factory_reply[3]==0 && fs.deadline==lease);
-        factory_advance(100,1);assert(!transport[tool].running);
-        factory_advance(10,1);assert(transport[tool].starts==starts+1 && transport[tool].running);
+        factory_advance(100,1);assert(!transport[tool].running && !TIM9->CCR2);
+        factory_advance(10,1);assert(transport[tool].starts==starts+1 && transport[tool].running && TIM9->CCR2==1);
         factory_input(tool,0,0);factory_advance(100,1);factory_advance(10,1);
         assert(!transport[tool].running && transport[tool].starts==starts+1);
         factory(3,tool,0,0,100,1500,501,0);
@@ -113,6 +127,7 @@ static void guards_and_STOP(void) {
     for(unsigned why=0;why<10;why++) {
         factory_reset(0,1);factory_input(0,1,1);output(1,6,64,5000,250,101);
         factory(1,0,IVT_FORWARD,1,1000,1500,501,0);
+        assert(TIM9->CCR2==1);
         if(why==0){mock_now=fs.deadline;command_inventure_heartbeat(NULL);factory_adc(1);control_guard(mock_now);assert(fs.reason==3);}
         if(why==1){heartbeat_live=0;control_guard(mock_now);assert(fs.reason==6);}
         if(why==2){GPIOD->IDR|=BIT(11);control_guard(mock_now);assert(fs.reason==6);}
@@ -122,8 +137,11 @@ static void guards_and_STOP(void) {
         if(why==6){transport[0].fault=3;control_guard(mock_now);assert(fs.reason==5);}
         if(why==7){GPIOE->IDR&=~BIT(15);control_guard(mock_now);assert(fs.reason==5);}
         if(why==8){uint32_t f[]={0,0,0};command_inventure_feeder(f);assert(fs.reason==2);}
-        if(why==9){scheduled_count=0;force_safe();assert(fs.reason==7);}
-        assert(!fs.active && !cm.active && !transport[0].running && !co[6].duty);
+        if(why==9){
+            scheduled_count=0;force_safe();assert(fs.reason==7);
+            assert(((GPIOE->MODER>>12)&3)==1); // PE6 returned to GPIO safe mode
+        }
+        assert(!fs.active && !cm.active && !transport[0].running && !co[6].duty && !TIM9->CCR2);
         factory(2,0,IVT_FORWARD,1,1000,1500,501,100);assert(!fs.active && factory_reply[3]==4);
     }
     factory_reset(0,1);output(1,6,64,1,250,101);factory(1,0,0,0,1000,1500,501,0);

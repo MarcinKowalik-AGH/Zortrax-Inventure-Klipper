@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST",
+  "release": "RC8-CONTROL-R7-UIFAST-FEED",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "91bfe12c6ca6e4686cb7f376fc1c02b56948207d7ab70b06dbae32f368a4a32b",
+  "module_sha256": "5889f70d1662d5dd79862e4986524ae6747e8875dfcfcd2b459458d7c40007f0",
   "allowed_existing_sha256": [
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
     "779efb44099b31b74a8bc49599a608d76f00355e1b06f96a9f7b51612ee37ae9",
@@ -32,9 +32,10 @@
     "da971f5c9196cef9f981095b2a19c6fd378f6e3c92048d8ce0e89ba1e8f93a1c",
     "5e3600c8f9632b654cb2c8a8437e6648640f51f1b084033a5ffd6944b152311e",
     "0a1a53fe6977cac1c35fb0cd437c130283ab55c7b94c5bfb5fb08cec65c386ec",
-    "63c8473e1b6dcdf84fd0ba832ccc2064cee8a67e4ee16bd41a47ec8309553e9d"
+    "63c8473e1b6dcdf84fd0ba832ccc2064cee8a67e4ee16bd41a47ec8309553e9d",
+    "91bfe12c6ca6e4686cb7f376fc1c02b56948207d7ab70b06dbae32f368a4a32b"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-FEED",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -200,14 +201,14 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "25fe47e35d1f292c91f777b87596eeeba02db2f38d117e2af7e00c8a2f30821d",
+  "factory_core_sha256": "2260bdfe7a4468e15286d51d7e6b74064754ff6b20ba0508ec62c11593943041",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
       "T0",
       "T1"
     ],
-    "MCU_required": "RC8-CONTROL-R7-FACTORY",
+    "MCU_required": "RC8-CONTROL-R7-FACTORY-FEED",
     "factory_abi": 1,
     "parameter_query": "INVENTURE_LOAD_TEST ACTION=PARAMS",
     "homing": "cold Z bottom and XY, MCU owner holds enable",
@@ -216,10 +217,12 @@
     "independent_lease_ms": 1500,
     "counter_basis": "MCU actual starts and accepted edges",
     "normal_completion_heaters_off": true,
-    "monitor_default": 0
+    "monitor_default": 0,
+    "factory_feed_clock": 1
   },
   "factory_core_allowed_existing_sha256": [
-    "3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9"
+    "3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9",
+    "25fe47e35d1f292c91f777b87596eeeba02db2f38d117e2af7e00c8a2f30821d"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,

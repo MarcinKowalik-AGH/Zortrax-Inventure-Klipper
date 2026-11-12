@@ -200,7 +200,7 @@ def check_dictionary(path: Path) -> dict:
     rc5 = check_rc5_p4_protocol(d)
     if str(d.get('config',{}).get('INVENTURE_RC7_ADC_SNAPSHOT_ABI')) not in ('1','1.0'):
         raise ValueError('RC7 MCU dictionary missing ADC snapshot ABI')
-    if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'RC8-CONTROL-R7-FACTORY':
+    if str(d.get('config',{}).get('INVENTURE_MCU_RELEASE')) != 'RC8-CONTROL-R7-FACTORY-FEED':
         raise ValueError('RC7 MCU dictionary wrong application release')
     forced=d.get('config',{}).get('INVENTURE_P4_FORCED_BAUD')
     if str(forced) not in ('0','1000000','1500000','2000000'):
@@ -211,11 +211,12 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-FEED'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
-    if str(conf.get('INVENTURE_FACTORY_ABI')) != '1':
+    if (str(conf.get('INVENTURE_FACTORY_ABI')) != '1'
+            or str(conf.get('INVENTURE_FACTORY_FEED_CLOCK')) != '1'):
         raise ValueError('R7 missing leased factory procedure ABI')
     factory_command='inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u'
     factory_response='inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u'
