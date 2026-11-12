@@ -1,15 +1,15 @@
 # Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-FEED
 
-Host `RC8-CONTROL-R7-UIFAST-FEED` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-FEED-T0` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne.
 Procedury używające kasety wymagają MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
-`INVENTURE_LOAD_TEST ACTION=AUTO` wykonuje odtworzony automat ładowania
-r0323. Po przygotowaniu ruchu, grzaniu i przełączeniu dyszy host odczytuje A
-z ostatniej odpowiedzi MCU sesji. A=1 wybiera próbę L1. A=0 przechodzi od razu
-do L2, z pominięciem próbnego wyciskania stosowanego przez r0323. L2 uruchamia
-kasetę i czeka na A, po czym następuje L3 oraz L4. Parametry można podać w poleceniu.
+`INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0` rozpoczyna od bazowania
+serwisowego i parkowania, następnie grzeje, przełącza dyszę i wykonuje
+próbę L1 zgodnie z r0323. L2 uruchamia kasetę i czeka na A. Po sygnale A
+następuje przejazd do przodu, podawanie L3 i końcowy purge L4.
+W T1 stan A=0 na wejściu kieruje bezpośrednio do L2.
 Poprzednie `ACTION=LOAD` i `ACTION=RETRACT` pozostają osobnymi próbami
 stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 `TUBE_SECONDS`, `PURGE_STEPS`, `SMOOTH` ani `RATE`.
@@ -25,6 +25,7 @@ geometrii, długości filamentu ani działania mechanizmu.
 Pierwsze MCU R7-FACTORY zgłaszało RUN podajnika w SERVICE przy zablokowanym
 zegarze PE6 (TIM9 CH2). Wersja FEED włącza zegar w sesji FACTORY. Host
 sprawdza tę obsługę przed startem procedur z napędem kasety.
+Drukarka z już zainstalowanym MCU FACTORY-FEED wymaga tylko aktualizacji hosta.
 
 1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
    `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_FEED_BOOT17.zip`
@@ -47,7 +48,7 @@ Po ponownym połączeniu:
 INVENTURE_VERSION
 ```
 
-Oczekiwane host `RC8-CONTROL-R7-UIFAST-FEED`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+Oczekiwane host `RC8-CONTROL-R7-UIFAST-FEED-T0`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
@@ -72,7 +73,7 @@ Wariant dla lewej kasety i T0:
 INVENTURE_STOP
 INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_DOOR_POLICY ENABLE=0
-INVENTURE_LOAD_TEST ACTION=AUTO TOOL=T0 TARGET=230 MAX_POWER=40 DURATION=900 PROCEDURE_TIMEOUT=1800
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
 ```
 
 Wariant dla prawej kasety i T1, po zakończeniu lub zatrzymaniu poprzedniej próby:
@@ -94,19 +95,19 @@ INVENTURE_LOAD_TEST ACTION=STATUS
 INVENTURE_STOP
 ```
 
-Procedura najpierw opuszcza stół do dolnej krańcówki i bazuje X/Y, następnie
-nagrzewa wybraną dyszę i wykonuje jej mechaniczne przełączenie. Nie bazuje
-Z na styku dyszy z platformą. Na normalnym zakończeniu AUTO oraz po błędzie
+T0 opuszcza stół do dolnej krańcówki, bazuje Y i X i jedzie przez
+X17,5 Y150 do X67,5 Y150 przed grzaniem. Punkt startu SERVICE wynika
+z krańcówek i nominalnych nastaw. Na normalnym zakończeniu AUTO oraz po błędzie
 wyłącza grzanie i napędy; chłodzenie gorącej głowicy pozostaje automatyczne.
 
 ## Etapy i sprzężenie zwrotne
 
 | Etap | Domyślne działanie | Warunek wyjścia |
 |---|---|---|
-| L1 | Przy A=1 porcje z budżetem 20 mm E, oscylacje X, AUTO kasety i próg łącznego budżetu 500 mm | A=1, świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Zwolnienie A lub brak świeżego impulsu wybiera L2. |
+| L1 | T0 wykonuje porcję 20 mm przy każdym wejściu. Porcja kończy się po pełnym ruchu X, domyślnie po 19 693 krokach E. Próg łączny wynosi 500 mm. | Dla T0 świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
 | L2 | Podajnik do przodu, oczekiwanie na wejście A | A musi pojawić się w ciągu 5 s; A już aktywne pozwala przejść dalej. |
-| L3 | Przednia pozycja serwisowa; kaseta i E podają materiał, budżet 250 mm E | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę ich liczenia; nie jest to wymaganie wszystkich 6 impulsów w jednym oknie 2 s. |
-| L4 | AUTO kasety, budżet 100 mm E z oscylacjami i końcowym czyszczeniem | Co najmniej 3 rzeczywiste starty podajnika; ich brak uruchamia skonfigurowane wycofanie lub kończy błędem. |
+| L3 | Głowica T0 stoi w X135 Y0. Kaseta i E podają do 250 mm E (240 000 kroków). | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę liczenia. T0 wraca przez X117,5 Y150 do X67,5 Y150. |
+| L4 | AUTO kasety i budżet 100 mm E. Domyślnie 96 394 kroki E i 3 przejazdy czyszczące dla T0. | Po co najmniej 3 startach podajnika T0 parkuje w X67,5 Y150. Brak startów uruchamia skonfigurowane wycofanie lub kończy błędem. |
 
 L1 sprawdza ciszę przed licznikiem startów i budżetem. Spełnienie progu
 startów przy nieaktualnych impulsach nie oznacza sukcesu. Budżety 20/100 mm
@@ -143,6 +144,7 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
 | `HOME_SPEED`, `Z_SPEED` | 5, 2 | Prędkości bazowania XY i opuszczania stołu |
 | `TARGET`, `MAX_POWER` | 230°C, 40% | Cel PID wybranej dyszy i limit mocy |
+| `MATERIAL` | UNKNOWN | Profil transportu kasety T0 z r0323. Ustawia budżety U1/U2 i parametry napędu kasety. Temperaturę dobiera `TARGET`. |
 | `DURATION` | 900 | Ograniczenie czasu od pierwszej gotowości termicznej; AUTO kończy grzanie wcześniej po zakończeniu procedury |
 | `PROCEDURE_TIMEOUT` | 1800 | Niezależny limit całej procedury, włącznie z przygotowaniem |
 
@@ -181,28 +183,43 @@ pozostaje próbą podawania bez przełączania.
 | `SERVICE_X`, `SERVICE_Y` | 135; 0 | 0; 0 |
 | `MIN_X`, `MAX_X`, `MIN_Y`, `MAX_Y` | −5; 155; 0; 155 | −5; 155; 0; 155 |
 
+Parkowanie T0 wybiera najbliższy z punktów X17,5 i X117,5 na Y150,
+po czym jedzie do X67,5 Y150. `PARK_SPAN` określa rozstaw punktów,
+domyślnie 100 mm. `ACTION=PARK TOOL=T0` pozwala sprawdzić ten moduł na zimno.
+Przy domyślnym L4 czyszczenie T0 biegnie po X117,5, X17,5 i X44,5 na Y152.
+Pierwszy przejazd jednocześnie zmienia X i Y.
+
 Oscylacje X mają pierwszy odcinek ±18 mm, kolejne ±36 mm. Ruchy E używają
 fabrycznego zaokrąglenia: 1036 kroków dla pierwszego i 2073 dla kolejnych
 odcinków. Koniec czyszczenia jest wybierany ze znaku następnej oscylacji,
 więc zależy również od liczby wykonanych odcinków/budżetu E. Nie jest
 sztywną, zawsze tą samą sekwencją X dla danej dyszy.
 
-## Wycofanie po nieudanym L4
+## Wyładowanie i cofanie po nieudanym L4
+
+Głowica T0 stoi nad koszem w X67,5 Y150. W r0323 Z-PLA i profil
+Unknown mają limity U1/U2 30 i 70 mm, a Z-PETG 50 i 50 mm. W SERVICE
+wybierz profil transportu przez `MATERIAL`.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T0 MATERIAL=Z-PETG
+```
 
 | Parametry | Domyślne wartości | Znaczenie |
 |---|---|---|
 | `FALLBACK` | 1 | Włącza odzyskanie po braku wymaganych startów L4; 0 kończy tę gałąź błędem |
-| `UNLOAD_L1`, `UNLOAD_L2` | 30, 70 | Dwa budżety cofania E |
+| `UNLOAD_L1`, `UNLOAD_L2` | 30, 70 | Limity E dla Z-PLA/Unknown. Z-PETG ustawia 50, 50. |
 | `UNLOAD_SPEED1`, `UNLOAD_SPEED2` | 1, 1 | Prędkości cofania, jawnie ustawiane do pomiaru |
 | `UNLOAD_QUIET` | 4 | Cisza impulsów kończąca wcześniejsze cofanie |
 | `UNLOAD_A_TIMEOUT` | 6 | Końcowy czas cofania z kontrolą zwolnienia A |
 
 Przed tymi dwoma budżetami kaseta cofa do 10 s lub do warunku braku A /
 aktywnego B. Następnie używany jest fabryczny tryb GATED. Po etapach E
-następuje końcowe cofanie z kontrolą A. Parametry 30+70 pochodzą z profilu
-używanego dla PLA/Support Premium; inne materiały mogą wymagać innych
-długości i temperatur. Prędkości 1 mm/s są nastawą do strojenia, nie
-przeliczeniem fabrycznych pętli opóźniających CPU na pewną prędkość.
+następuje końcowe cofanie do A=0 albo do limitu 6 s. Gdy cisza zakończy
+U1, T0 wchodzi w U2 i wysyła jeden krok przed ponownym sprawdzeniem ciszy.
+Prędkości 1 mm/s są nastawą SERVICE. Dokładne fizyczne odpowiedniki
+fabrycznych opóźnień CPU wymagają pomiaru.
 
 Wycofanie po L4 nie zamienia wyniku ładowania w sukces. Wynik informuje,
 czy A zostało zwolnione, i kończy grzanie/ruch. Awaria temperatury, kabla,
@@ -211,7 +228,7 @@ nie uruchamiają automatycznego cofania.
 
 ## Wynik i zakres potwierdzenia
 
-STATUS zawiera fazę/historię, użyte parametry, rzeczywiste kroki E,
+STATUS zawiera fazę/historię, użyte parametry, kroki E w `e_steps_by_phase`,
 liczniki MCU, stan wejść, pozycję obliczoną z ruchu i stan referencji.
 Zakończenie krótką ścieżką L1 nie oznacza wykonania dodatkowego L4.
 Raport rozróżnia zakończony transport i wykonane czyszczenie.

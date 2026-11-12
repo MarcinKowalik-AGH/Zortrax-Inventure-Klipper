@@ -110,6 +110,17 @@ class FactoryCoreTests(unittest.TestCase):
             with self.subTest(key=key):
                 with self.assertRaises(core.FactoryError):core.FactoryProgram(p)
 
+    def test_t1_profile_requires_park_geometry_only_for_park(self):
+        configured = core.profiles(t1={'WIPE_SPAN': 60, 'MIN_X': -5, 'MAX_X': 110,
+                                       'PARK_SPAN': 160})
+        command = Command(TOOL='T1')
+        p = core.parameters(command, configured, 'AUTO')
+        self.assertEqual(Executor(p, short_feedback).run().done['terminal'], 'L1')
+        with self.assertRaisesRegex(core.FactoryError, 'geometry'):
+            core.parameters(command, configured, 'PARK')
+        with self.assertRaisesRegex(core.FactoryError, 'geometry'):
+            next(core.FactoryProgram(p).run('PARK'))
+
     def test_each_possible_trajectory_fits_MCU_duration_before_any_action(self):
         for values in ({'HOME_Z_MAX':300, 'Z_SPEED':.1},
                 {'HOME_XY_MAX':250, 'HOME_SPEED':.1},
@@ -136,10 +147,13 @@ class FactoryCoreTests(unittest.TestCase):
         for tool in (0, 1):
             ex = Executor(core.defaults(tool), short_feedback).run()
             homes = [a for a in ex.actions if a['kind'] == 'home']
-            self.assertEqual([a['axis'] for a in homes], ['Z', 'X', 'Y'])
+            self.assertEqual([a['axis'] for a in homes],
+                             ['Z', 'Y', 'X'] if tool == 0 else ['Z', 'X', 'Y'])
             self.assertEqual((homes[0]['max_mm'], homes[0]['speed']), (250., 2.))
             heat = next(i for i,a in enumerate(ex.actions) if a['kind'] == 'heat')
-            self.assertFalse(any(a['kind'] in ('mode', 'move') for a in ex.actions[:heat]))
+            self.assertFalse(any(a['kind']=='mode' or a.get('e') for a in ex.actions[:heat]))
+            parked = [(a['x'],a['y']) for a in ex.actions[:heat] if a['kind']=='move']
+            self.assertEqual(parked, [(17.5,150.), (67.5,150.)] if tool==0 else [])
             switch = ex.in_phase('SWITCH', 'move')
             self.assertEqual([(a['x'], a['y']) for a in switch],
                 [(67.5, 150.), (135. if tool == 0 else 10.5, 152.),
@@ -262,8 +276,18 @@ class FactoryCoreTests(unittest.TestCase):
             p = core.defaults(tool);p['final_mm'] = budget
             ex = Executor(p, long_feedback).run()
             moves = ex.in_phase('L4', 'move')
-            self.assertEqual([a['x'] for a in moves[-3:]], expected)
-            self.assertTrue(all(a['y'] == 152. and a['e'] == 0 for a in moves[-3:]))
+            wipe = [a for a in moves if a['y']==152.]
+            self.assertEqual([a['x'] for a in wipe[-3:]], expected)
+            self.assertTrue(all(a['e']==0 for a in wipe))
+            if tool == 0:
+                self.assertEqual(len(wipe),3)
+                side=17.5 if expected[-1]<67.5 else 117.5
+                self.assertEqual([(a['x'],a['y']) for a in moves[-2:]],
+                                 [(side,150.), (67.5,150.)])
+                self.assertEqual([(a['x'],a['y']) for a in ex.in_phase('L3','move')],
+                                 [(117.5,150.), (67.5,150.)])
+                if budget==100.:
+                    self.assertEqual(round(sum(a['e'] for a in moves)*960),96394)
 
     def test_missing_final_starts_invokes_bounded_fallback_once_and_keeps_failure(self):
         def feedback(ex, action, result):
@@ -280,7 +304,7 @@ class FactoryCoreTests(unittest.TestCase):
         self.assertEqual(sum(a['kind'] == 'wait_unload' for a in ex.actions), 1)
         self.assertEqual([a for a in ex.actions if a['kind']=='mode'][-1]['mode'], 0)
 
-    def test_early_unload_quiet_skips_second_portion_and_A_timeout_does_not_prove_empty(self):
+    def test_T0_unload_quiet_retains_one_U2_pulse_and_A_timeout_does_not_prove_empty(self):
         def feedback(ex, action, result):
             long_feedback(ex, action, result)
             if result is None:return
@@ -290,8 +314,9 @@ class FactoryCoreTests(unittest.TestCase):
         ex = Executor(hook=feedback)
         with self.assertRaises(core.FactoryError) as error:ex.run()
         self.assertFalse(error.exception.details['sensor_empty_proven'])
-        self.assertNotIn('U2', ex.program.history)
-        self.assertEqual(len([a for a in ex.actions if a['kind'] == 'retract_until_quiet']), 1)
+        self.assertIn('U2', ex.program.history)
+        u2=ex.in_phase('U2','retract_until_quiet')
+        self.assertEqual([(a['mm'],a.get('min_steps')) for a in u2],[(1./960,1)])
 
     def test_disabled_fallback_stops_at_final_verification(self):
         p = core.defaults(0);p['fallback'] = 0

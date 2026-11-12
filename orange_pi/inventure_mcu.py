@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FEED-T0'
 FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
     'duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u')
@@ -2100,7 +2100,7 @@ class InventureMCU:
         if context.get('factory') is not None:
             f=context['factory']
             result['factory']={k:f[k] for k in ('parameters','phase','history','position',
-                'reference_valid','snapshot','result','e_sent_steps','fallback_started',
+                'reference_valid','snapshot','result','e_sent_steps','e_steps_by_phase','fallback_started',
                 'operation','module_stack','module_history','selection_commanded')}
             result['stage']='factory_cartridge_load' if f['operation']=='AUTO' else 'factory_procedure'
             result['cleaning_pending']=not f.get('cleaning_done',False)
@@ -2461,11 +2461,15 @@ class InventureMCU:
         except ValueError as exc:raise config.error(str(exc))
 
     def cmd_procedure(self,gcmd):
-        from .inventure_factory_core import PROCEDURES
+        from .inventure_factory_core import PROCEDURES, procedure_modules
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action in ('STATUS','STOP'):return self.cmd_load_test(gcmd)
         if action=='LIST':
-            gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,procedures=PROCEDURES,
+            tool=str(gcmd.get('TOOL','T0')).upper()
+            if tool not in ('T0','T1'):
+                raise gcmd.error('TOOL must be T0 or T1')
+            modules={name:procedure_modules(name,int(tool[-1])) for name in PROCEDURES}
+            gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,tool=tool,procedures=modules,
                 precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
                 standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
                 MCU_required_for_feeder=FACTORY_FEED_RELEASE),sort_keys=True));return
@@ -2475,14 +2479,14 @@ class InventureMCU:
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
     def _factory_start(self,gcmd,read_only=False,operation='AUTO'):
-        from .inventure_factory_core import parameters,FactoryProgram,PROCEDURES
+        from .inventure_factory_core import parameters,FactoryProgram,PROCEDURES,procedure_modules
         try:
             if operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
-            p=parameters(gcmd,getattr(self,'procedure_profiles',None))
+            p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
             timeout=p['procedure_timeout']
             if read_only:
                 gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
-                    modules=PROCEDURES[operation]),sort_keys=True));return
+                    modules=procedure_modules(operation,p['tool'])),sort_keys=True));return
             if 'factory_session' not in self.commands:
                 raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
             needs_feeder = operation in ('AUTO','UNLOAD') or (
@@ -2510,6 +2514,7 @@ class InventureMCU:
         context['factory']=dict(parameters=p,program=program,action=None,move=None,
             resume=None,phase='HOME',history=[],position=[0.,0.,0.],reference_valid=False,
             homed=[],snapshot={},result=None,e_sent_steps=0,fallback_started=False,
+            e_steps_by_phase={},
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
@@ -2590,7 +2595,10 @@ class InventureMCU:
         if delta:
             direction=int(m['counts'][3]>0)
             context['measurement']['dir%d_steps'%direction]+=delta
-            f['e_sent_steps']+=delta*(1 if direction==context['tool'] else -1)
+            steps=delta if direction==context['tool'] else -delta
+            f['e_sent_steps']+=steps
+            phase=f['phase'];by_phase=f['e_steps_by_phase']
+            by_phase[phase]=by_phase.get(phase,0)+steps
         context['motion']=row
 
     def _factory_poll_move(self,context):
@@ -2604,7 +2612,7 @@ class InventureMCU:
         elif kind=='retract_until_quiet':
             quiet=f['unload_quiet']
             if snap['pulses']!=quiet[0]:quiet[:]=[snap['pulses'],now-snap['pulse_age_ms']/1000.]
-            ok=now-quiet[1]>=a['quiet_s'];stop=ok
+            ok=m['accounted']>=a.get('min_steps',0) and now-quiet[1]>=a['quiet_s'];stop=ok
         elif kind=='retract_until_a':
             ok=not snap['a'];stop=ok or now-m['start']>=a['timeout_s']
         if stop and row['active']:

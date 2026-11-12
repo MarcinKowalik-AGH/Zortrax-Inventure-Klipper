@@ -1,14 +1,14 @@
-# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED / MCU CONTROL-R7-FACTORY-FEED
+# Zortrax Inventure — host CONTROL-R7-UIFAST-FEED-T0 / MCU CONTROL-R7-FACTORY-FEED
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
 RGB, osiem ADC, 16 wejść, tachometry, liczniki filamentu i oba UART-y RFID.
 Dostępne jest też natywne STEP/PWM Klippera. Parametry prób ustawia host.
 
-W wersji FEED sesja FACTORY uruchamia zegar PE6 podajnika kasety.
-AUTO odczytuje stan A po przełączeniu dyszy. Przy A=0 przechodzi do L2
-i podaje filament kasetą przed pierwszym ruchem E.
-[Instalacja i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
+Kaseta T0 korzysta z kolejności i nominalnych punktów r0323. AUTO zaczyna
+od L1, UNLOAD dobiera budżety U1/U2 przez `MATERIAL`, a `ACTION=PARK`
+odtwarza przejazd przez boczny punkt do środka kosza.
+[Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
 
@@ -124,7 +124,7 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FEED-T0`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-FEED`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.

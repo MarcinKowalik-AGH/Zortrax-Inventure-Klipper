@@ -207,20 +207,22 @@ class FactoryHostTests(unittest.TestCase):
         h.cmd_procedure(Command(ACTION='SELECT', TOOL='T0'))
         self.assertEqual(self.finish(h)['factory']['result']['terminal'], 'SELECT')
 
-    def test_empty_A_starts_feeder_before_any_E_for_both_tools(self):
+    def test_empty_A_uses_stock_L1_probe_only_for_T0(self):
         for tool in (0,1):
             with self.subTest(tool=tool):
                 h,_,_=self.host('wait_a')
                 self.start(h,tool)
                 self.wait_phase(h,'L2')
                 self.assertTrue(h.device.running)
-                self.assertEqual(h.device.mode_history,[0,2])
-                self.assertFalse(any(p[0]=='motion' and p[1]==1 and p[6] for p in h.device.packets))
+                self.assertEqual(h.device.mode_history,[0,1,2] if tool==0 else [0,2])
+                e=sum(p[6] for p in h.device.packets if p[0]=='motion' and p[1]==1)
+                self.assertEqual(e,19693 if tool==0 else 0)
                 h.device.a=1
                 last=self.finish(h)
                 self.assertEqual(last['factory']['result']['terminal'],'L4')
-                self.assertNotIn('L1',last['factory']['history'])
-                self.assertEqual(h.device.auto_entries,1)
+                self.assertEqual('L1' in last['factory']['history'],tool==0)
+                self.assertEqual(h.device.auto_entries,2 if tool==0 else 1)
+                self.assertEqual(last['factory']['e_steps_by_phase']['L4'],96394)
 
     def test_missing_forward_run_confirmation_aborts_before_E(self):
         h,_,_=self.host('wait_a')
@@ -233,7 +235,8 @@ class FactoryHostTests(unittest.TestCase):
         self.start(h)
         last=self.finish(h)
         self.assertIn('MCU did not start forward cassette feed',last['reason'])
-        self.assertFalse(any(p[0]=='motion' and p[1]==1 and p[6] for p in h.device.packets))
+        self.assertEqual(last['factory']['e_steps_by_phase'],{'L1':19693})
+        self.assertNotIn('L3',last['factory']['history'])
         self.assertFalse(h.device.active())
         self.assertEqual(h.device.output(6)['duty'],0)
 
@@ -252,7 +255,7 @@ class FactoryHostTests(unittest.TestCase):
                 packets=h.device.packets
                 heat=next(i for i,p in enumerate(packets) if p[:2]==('output',1))
                 homes=[p for p in packets[:heat] if p[0]=='motion' and p[1]==1 and p[10]]
-                self.assertEqual([p[10] for p in homes],[4,1,2])
+                self.assertEqual([p[10] for p in homes],[4,2,1] if tool==0 else [4,1,2])
                 self.assertTrue(all(p[2]==6+tool for p in packets if p[:2]==('output',1)))
                 self.assertEqual(h.device.session['tool'],tool)
                 self.assertEqual(h.temperatures[1-tool],25.)

@@ -1,6 +1,6 @@
 # Wspólne procedury T0/T1 — host CONTROL-R7-MODULAR
 
-Host `RC8-CONTROL-R7-UIFAST-FEED` udostępnia moduły w konsoli i
+Host `RC8-CONTROL-R7-UIFAST-FEED-T0` udostępnia moduły w konsoli i
 [w menu Zortrax](ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
 AUTO, UNLOAD i próby z `FEEDER=1` wymagają
 [instalacji MCU R7-FACTORY-FEED](FACTORY_LOAD_2026-11-10.md).
@@ -10,7 +10,7 @@ git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-or
 ```
 
 Po aktualizacji obu części `INVENTURE_VERSION` pokazuje host
-`RC8-CONTROL-R7-UIFAST-FEED`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+`RC8-CONTROL-R7-UIFAST-FEED-T0`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
 `procedure_api=1`, `factory_abi=1` i `factory_feed_clock=1`.
 
 ## Podział programu
@@ -26,17 +26,17 @@ Zmiana samej sekwencji lub jej parametrów nie zmienia protokołu MCU.
 | `heat` | PID wybranej dyszy, gotowość temperaturowa, limit mocy i czasu |
 | `select_tool` | Dojazd, powolny docisk przełączający T0/T1 i powrót nad bin |
 | `position_bin` | Dojazd do konfigurowalnego środka strefy odpadu |
+| `park` | Przejazd przez bliższy boczny punkt do środka kosza, używany w T0 przed grzaniem i po podawaniu |
 | `purge` | Wyciskanie połączone z oscylacjami XY; używane w L1, L4 i osobnym PURGE |
 | `clean` | Wspólny przejazd czyszczący, bez E; używany po purge i w osobnym CLEAN |
 | `manual_feed` | Odmierzony odcinek E w kierunku LOAD/UNLOAD, opcjonalnie z kasetą |
 | `load_l1`…`load_l4` | Warunki krótkiego i długiego ładowania z r0323 |
-| `unload` | Wspólne etapy U0–U3, używane samodzielnie i przy nieudanym L4 |
+| `unload` | U0 cofanie kasetą, U1/U2 odcinki E i U3 zwolnienie A, używane samodzielnie i przy nieudanym L4 |
 
 AUTO składa moduły pod jednym właścicielem i zachowuje napędy/referencję
 pomiędzy etapami. Nie uruchamia bazowania ani osobnej sesji między purge
-a czyszczeniem. Porównanie ze źródłem poprzedniego R7 sprawdza ten sam
-ciąg żądań ruchu, grzania i trybów transportu przy A=1 na wejściu,
-dla obu narzędzi. Przy A=0 host przechodzi od razu do L2.
+a czyszczeniem. T0 odtwarza przejazdy i postój r0323 w nominalnym układzie
+SERVICE. T0 zaczyna od L1, a T1 przy A=0 na wejściu przechodzi do L2.
 
 ## Osobne polecenia serwisowe
 
@@ -57,13 +57,14 @@ implementacją makr T0/T1 wywoływanych podczas wydruku.
 | Polecenie | Działanie |
 |---|---|
 | `INVENTURE_PROCEDURE ACTION=HOME TOOL=T0` | Samo bazowanie serwisowe, bez grzania i E |
+| `INVENTURE_PROCEDURE ACTION=PARK TOOL=T0` | Bazowanie Z/Y/X i przejazd przez boczny punkt do kosza, bez grzania i E |
 | `INVENTURE_PROCEDURE ACTION=SELECT TOOL=T1` | Mechaniczne przełączenie na T1, bez grzania i E |
 | `INVENTURE_PROCEDURE ACTION=SELECT TOOL=T0` | Mechaniczne przełączenie na T0, bez grzania i E |
 | `INVENTURE_PROCEDURE ACTION=CLEAN TOOL=T0 TARGET=230` | Nagrzanie, wybór T0 i przetarcie, bez wyciskania |
 | `INVENTURE_PROCEDURE ACTION=PURGE TOOL=T1 PURGE_MM=20 CLEAN_AFTER=1 TARGET=230` | Wyciskanie z oscylacjami nad bin i czyszczenie |
 | `INVENTURE_PROCEDURE ACTION=MANUAL TOOL=T0 MANUAL_DIR=LOAD MANUAL_MM=20 E_SPEED=1.6 TARGET=230` | Ręczne podanie odcinka przez E, nad bin |
 | `INVENTURE_PROCEDURE ACTION=MANUAL TOOL=T1 MANUAL_DIR=UNLOAD MANUAL_MM=20 E_SPEED=1.6 TARGET=230` | Ręczne cofnięcie odcinka przez E |
-| `INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 TARGET=230` | Wycofanie U0–U3, z potwierdzeniem zwolnienia wejścia A |
+| `INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 MATERIAL=Z-PLA TARGET=230` | Wycofanie U0–U3, z budżetami E profilu Z-PLA |
 | `INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 TARGET=230` | Pełna procedura ładowania L1–L4 |
 
 `INVENTURE_LOAD_TEST ACTION=AUTO` wywołuje ten sam nowy planer.

@@ -15,7 +15,7 @@ previous = importlib.util.module_from_spec(spec);spec.loader.exec_module(previou
 
 
 class ProcedureCoreTests(unittest.TestCase):
-    def test_composition_preserves_published_R7_hardware_trace_and_OEM_decisions(self):
+    def test_T1_composition_preserves_published_R7_hardware_trace_and_OEM_decisions(self):
         self.assertEqual(hashlib.sha256(Path(previous.__file__).read_bytes()).hexdigest(),
             '3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9')
         def no_final_starts(ex, action, result):
@@ -30,12 +30,22 @@ class ProcedureCoreTests(unittest.TestCase):
                 if raw['kind']=='module':continue
                 action=dict(raw);action.pop('cleaning_done',None);actions.append(action)
             return actions,error
-        for tool in (0,1):
-            for hook in (short_feedback,long_feedback,no_final_starts):
-                for final_mm in (50.,100.):
-                    with self.subTest(tool=tool,path=hook.__name__,final_mm=final_mm):
-                        p=core.defaults(tool);p['final_mm']=final_mm
-                        self.assertEqual(trace(core,p,hook),trace(previous,p,hook))
+        for hook in (short_feedback,long_feedback,no_final_starts):
+            for final_mm in (50.,100.):
+                with self.subTest(path=hook.__name__,final_mm=final_mm):
+                    p=core.defaults(1);p['final_mm']=final_mm
+                    self.assertEqual(trace(core,p,hook),trace(previous,p,hook))
+
+    def test_T0_material_profile_applies_before_config_and_command_overrides(self):
+        cfg=core.profiles('{}','{"MATERIAL":"Z-PETG","UNLOAD_L1":45}','{}')
+        p=core.parameters(PlannerCommand(UNLOAD_L2=55),cfg)
+        self.assertEqual((p['material'],p['unload_l1'],p['unload_l2']),('Z-PETG',45.,55.))
+        p=core.parameters(PlannerCommand(MATERIAL='Z-PETG'))
+        self.assertEqual((p['unload_l1'],p['unload_l2'],p['target']),(50.,50.,230.))
+        flex=core.parameters(PlannerCommand(MATERIAL='Z-FLEX'))
+        self.assertEqual((flex['feeder_ms'],flex['feeder_k']),(1500,3.))
+        with self.assertRaisesRegex(core.FactoryError,'T0 cassette'):
+            core.parameters(PlannerCommand(TOOL='T1',MATERIAL='Z-PETG'))
 
     def test_standalone_select_is_cold_and_all_modules_finish_without_E(self):
         for tool in (0,1):
@@ -145,6 +155,35 @@ class ProcedureHostTests(unittest.TestCase):
             self.assertFalse(last['factory_transport_completed'])
             self.assertEqual(last['factory']['module_stack'],[])
             self.assertFalse(last['factory']['reference_valid'])
+
+    def test_T0_park_references_Y_X_then_parks_cold_without_select_or_E(self):
+        h,_,_=self.fixture.host()
+        h.cmd_procedure(Command(ACTION='PARK',TOOL='T0'))
+        last=self.fixture.finish(h)
+        f=last['factory']
+        self.assertEqual(f['history'],['HOME','PARK','DONE'])
+        self.assertEqual(f['position'],[67.5,150.,0.])
+        self.assertEqual(f['e_steps_by_phase'],{})
+        self.assertFalse(f['selection_commanded'])
+        self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
+
+    def test_T0_unload_uses_material_step_caps_and_reports_each_phase(self):
+        for name,steps in (('Z-PLA',(28800,67200)),('Z-PETG',(48000,48000))):
+            with self.subTest(material=name):
+                h,_,_=self.fixture.host()
+                h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T0',MATERIAL=name))
+                last=self.fixture.finish(h)
+                self.assertEqual(last['phase'],'done',last)
+                self.assertEqual(last['factory']['position'],[67.5,150.,0.])
+                self.assertEqual(last['factory']['e_steps_by_phase'],
+                                 dict(U1=-steps[0],U2=-steps[1]))
+
+    def test_T0_unload_on_silence_issues_only_one_step_in_U2(self):
+        h,_,_=self.fixture.host('no_edges')
+        h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T0'))
+        last=self.fixture.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['e_steps_by_phase']['U2'],-1)
 
     def test_clean_and_purge_share_owner_heater_selection_and_completion_cleanup(self):
         for operation in ('CLEAN','PURGE'):

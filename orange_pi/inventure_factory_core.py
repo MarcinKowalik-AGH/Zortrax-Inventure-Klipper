@@ -16,12 +16,27 @@ UINT32 = 0xffffffff
 PROCEDURES = {
     'AUTO': ('home', 'heat', 'select_tool', 'load_l1_l4'),
     'HOME': ('home',),
+    'PARK': ('home', 'park'),
     'SELECT': ('home', 'select_tool'),
     'PURGE': ('home', 'heat', 'select_tool', 'position_bin', 'purge', 'optional_clean'),
     'CLEAN': ('home', 'heat', 'select_tool', 'position_bin', 'clean'),
     'MANUAL': ('home', 'heat', 'select_tool', 'position_bin', 'manual_feed'),
     'UNLOAD': ('home', 'heat', 'select_tool', 'position_bin', 'unload'),
 }
+
+# T0 unload distances and feeder parameters from r0323 at 0x08029B30/0x08029DB8.
+_T0_MATERIALS = (
+    'UNKNOWN', 'Z-ABS', 'Z-ABS-V2', 'Z-ASA-PRO', 'Z-ESD', 'Z-ESD-V2',
+    'Z-FLEX', 'Z-GLASS', 'Z-HIPS', 'Z-NYLON', 'Z-PCABS', 'Z-PEEK', 'Z-PETG',
+    'Z-PHA', 'Z-PLA', 'Z-PLA-PRO', 'Z-SEMIFLEX', 'Z-ULTRAT', 'Z-ULTRAT-PLUS',
+)
+
+
+def procedure_modules(operation, tool):
+    modules = PROCEDURES[operation]
+    if tool == 0 and operation in ('AUTO', 'UNLOAD'):
+        return modules[:1] + ('park',) + tuple(m for m in modules[1:] if m != 'position_bin')
+    return modules
 
 
 class FactoryError(ValueError):
@@ -53,9 +68,9 @@ def defaults(tool=0):
         service_x=135. if tool == 0 else 0., service_y=0.,
         min_x=-5., max_x=155., min_y=0., max_y=155.,
         purge_span=36., purge_e_steps=2073, purge_mm=20., clean_after=1,
-        wipe_y=152., wipe_span=100., wipe_exit=23., manual_mm=20.,
+        wipe_y=152., wipe_span=100., wipe_exit=23., park_span=100., manual_mm=20.,
         manual_dir='LOAD', feeder=0, target=230., max_power=40., duration=900.,
-        procedure_timeout=1800.)
+        procedure_timeout=1800., material='UNKNOWN')
 
 
 _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
@@ -74,10 +89,10 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     min_x=(-50., 250.), max_x=(-50., 250.), min_y=(-50., 250.), max_y=(-50., 250.),
     purge_span=(1., 100.), purge_e_steps=(2, 96000), purge_mm=(.1, 250.),
     clean_after=(0, 1), wipe_y=(-50., 250.), wipe_span=(1., 200.),
-    wipe_exit=(0., 100.), manual_mm=(.1, 250.), feeder=(0, 1),
+    wipe_exit=(0., 100.), park_span=(1., 200.), manual_mm=(.1, 250.), feeder=(0, 1),
     target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
     procedure_timeout=(60., 3600.))
-_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD')}
+_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'), 'material': _T0_MATERIALS}
 _INTEGERS = frozenset(('l1_starts', 'pulse_count', 'final_starts',
                       'feeder_ms', 'monitor', 'fallback', 'purge_e_steps',
                       'clean_after', 'feeder'))
@@ -89,7 +104,7 @@ def feeder_budget(p):
     return int(f32(f32(p['feeder_ms'] * f32(11.52)) * f32(p['feeder_k'])))
 
 
-def _validated(values):
+def _validated(values, operation=None):
     p = dict(values)
     p['tool'] = _tool(p['tool'])
     for key, (low, high) in _LIMITS.items():
@@ -106,10 +121,14 @@ def _validated(values):
             number = int(number)
         p[key] = number
     for key, choices in _CHOICES.items():
-        value = str(p[key]).upper()
+        value = str(p[key]).strip().upper()
+        if key == 'material':
+            value = value.replace(' ', '-')
         if value not in choices:
             raise FactoryError(key.upper() + ' must be ' + ' or '.join(choices))
         p[key] = value
+    if p['tool'] == 1 and p['material'] != 'UNKNOWN':
+        raise FactoryError('MATERIAL selects an r0323 T0 cassette profile')
     if p['l1_budget'] < p['l1_portion']:
         raise FactoryError('L1_BUDGET must cover at least one L1_PORTION')
     if p['unload_l1'] + p['unload_l2'] <= 0:
@@ -129,6 +148,15 @@ def _validated(values):
               (cx - p['purge_span']/2., cy), (cx + p['purge_span']/2., cy)]
     points += [(cx + dx, p['wipe_y']) for dx in
                (-p['wipe_span']/2., p['wipe_span']/2., -p['wipe_exit'], p['wipe_exit'])]
+    left, right = cx - p['park_span']/2., cx + p['park_span']/2.
+    park_approaches = []
+    if p['tool'] == 0 or operation == 'PARK':
+        park_approaches.append((0., 0.))
+    if p['tool'] == 0:
+        park_approaches.extend(((p['service_x'], p['service_y']),
+                                (cx - p['wipe_exit'], p['wipe_y']),
+                                (cx + p['wipe_exit'], p['wipe_y'])))
+    points += [(left if x < cx else right, cy) for x, _ in park_approaches]
     if any(not p['min_x'] <= x <= p['max_x']
            or not p['min_y'] <= y <= p['max_y'] for x, y in points):
         raise FactoryError('Factory service geometry exceeds MIN/MAX_X/Y')
@@ -147,14 +175,19 @@ def _validated(values):
         SWITCH_RETURN=travel(p['switch_x'], p['switch_y'], cx, cy),
         SERVICE=travel(cx, cy, p['service_x'], p['service_y']),
         PURGE=p['purge_span'] / p['purge_speed'],
-        PURGE_RETURN=p['purge_span']/2. / p['travel_speed'],
-        CLEAN_Y=abs(p['wipe_y'] - cy) / p['travel_speed'],
+        PURGE_RETURN=p['purge_span']/2. / min(p['travel_speed'],p['purge_speed']),
+        CLEAN_APPROACH=math.hypot(p['wipe_span']/2.+p['purge_span']/2.,
+                                  p['wipe_y']-cy) / p['travel_speed'],
         CLEAN_X=max(p['wipe_span'], p['wipe_span']/2.+p['purge_span']/2.,
                     p['wipe_span']/2.+p['wipe_exit']) / p['travel_speed'],
         LONG_MM=p['long_mm'] / p['e_speed'],
         MANUAL_MM=p['manual_mm'] / p['e_speed'],
         UNLOAD_L1=p['unload_l1'] / p['unload_speed1'],
         UNLOAD_L2=p['unload_l2'] / p['unload_speed2'])
+    if park_approaches:
+        seconds['PARK'] = max(travel(x, y, left if x < cx else right, cy)
+                              for x, y in park_approaches)
+        seconds['PARK_CENTER'] = p['park_span']/2. / p['travel_speed']
     for label, duration in seconds.items():
         if duration > 595.:
             raise FactoryError(label + ' trajectory exceeds 595 seconds; increase speed or shorten travel')
@@ -188,17 +221,31 @@ def profiles(common='{}', t0='{}', t1='{}'):
             layer[normalized] = value
         layers.append(layer)
     for tool in (0, 1):
-        _validated(dict(defaults(tool), **dict(layers[0], **layers[tool+1])))
+        _parameters(tool, dict(layers[0], **layers[tool+1]))
     return tuple(layers)
 
 
-def parameters(gcmd, configured=None):
-    p = defaults(gcmd.get('TOOL', 'T0'))
+def parameters(gcmd, configured=None, operation=None):
+    tool = _tool(gcmd.get('TOOL', 'T0'))
+    values = {}
     if configured is not None:
-        p.update(configured[0]);p.update(configured[p['tool']+1])
+        values.update(configured[0]);values.update(configured[tool+1])
     for key in (*_LIMITS, *_CHOICES):
-        p[key] = gcmd.get(key.upper(), p[key])
-    return _validated(p)
+        value = gcmd.get(key.upper(), None)
+        if value is not None:
+            values[key] = value
+    return _parameters(tool, values, operation)
+
+
+def _parameters(tool, values, operation=None):
+    p = defaults(tool)
+    material = str(values.get('material', p['material'])).strip().upper().replace(' ', '-')
+    if material == 'Z-PETG':
+        p.update(unload_l1=50., unload_l2=50.)
+    if material in ('Z-FLEX', 'Z-SEMIFLEX'):
+        p.update(feeder_ms=1500, feeder_k=3.)
+    p.update(values)
+    return _validated(p, operation)
 
 
 def delta32(current, before):
@@ -267,6 +314,17 @@ class FactoryProgram:
         return (yield from self._module('position_bin',
             self._move(self.p['center_x'], self.p['center_y'])))
 
+    def park(self):
+        return (yield from self._module('park', self._park_steps()))
+
+    def _park_steps(self):
+        p = self.p
+        center = (p['center_x'], p['center_y'])
+        if self.xy != center:
+            side = -1 if self.xy[0] < center[0] else 1
+            yield from self._move(center[0] + side * p['park_span']/2., center[1])
+        return (yield from self._center())
+
     def purge(self, mm, clean=False):
         return (yield from self._module('purge', self._purge_steps(mm, clean)))
 
@@ -295,7 +353,8 @@ class FactoryProgram:
         if clean:
             snap = yield from self.clean(dx)
         else:
-            snap = yield from self._move(*entry)
+            speed = p['purge_speed'] if p['tool'] == 0 else p['travel_speed']
+            snap = yield from self._move(*entry, speed=speed)
         return issued, snap
 
     def clean(self, next_direction=None):
@@ -305,7 +364,8 @@ class FactoryProgram:
         p = self.p
         if next_direction is None:
             next_direction = -1 if p['tool'] == 0 else 1
-        snap = yield from self._move(self.xy[0], p['wipe_y'])
+        if p['tool'] == 1:
+            yield from self._move(self.xy[0], p['wipe_y'])
         # Preserve the OEM parity of the remaining purge oscillation; a
         # standalone clean chooses its direction from the selected tool.
         half = p['wipe_span']/2.
@@ -317,24 +377,31 @@ class FactoryProgram:
     def unload(self):
         return (yield from self._module('unload', self._unload_steps()))
 
-    def _unload_steps(self):
-        p = self.p
+    def _unload_release(self):
         yield from self._phase('U0')
         yield from self._mode(3)
         _snapshot((yield dict(kind='wait_unload', timeout_s=10.)))
-        yield from self._mode(4)
-        quiet = False
-        for phase, length, speed in (
-                ('U1', p['unload_l1'], p['unload_speed1']),
-                ('U2', p['unload_l2'], p['unload_speed2'])):
-            if quiet:
-                break
-            yield from self._phase(phase)
-            if length:
-                result = yield dict(kind='retract_until_quiet', mm=length,
-                    speed=speed, quiet_s=p['unload_quiet'], reset_quiet=phase == 'U1')
-                _snapshot(result)
-                quiet = bool(result.get('ok'))
+
+    def _unload_retract(self, phase, length, speed, already_quiet):
+        quiet_s = self.p['unload_quiet']
+        yield from self._phase(phase)
+        if not length:
+            return already_quiet
+        # r0323 enters U2 even after U1 stops on silence. It sends one
+        # pulse before checking that silence again, with the same baseline.
+        if self.p['tool'] == 0 and already_quiet:
+            first = min(length, 1. / E_STEPS_PER_MM)
+            result = yield dict(kind='retract_until_quiet', mm=first,
+                                speed=speed, min_steps=1, quiet_s=quiet_s)
+            if _snapshot(result).get('ok') or first == length:
+                return bool(result.get('ok'))
+            length -= first
+        result = yield dict(kind='retract_until_quiet', mm=length,
+                            speed=speed, quiet_s=quiet_s, reset_quiet=phase == 'U1')
+        return bool(_snapshot(result).get('ok'))
+
+    def _unload_clear(self):
+        p = self.p
         yield from self._phase('U3')
         yield from self._mode(3)
         result = yield dict(kind='retract_until_a',
@@ -343,20 +410,36 @@ class FactoryProgram:
         yield from self._mode(0)
         return dict(sensor_empty_proven=snap['a'] == 0)
 
+    def _unload_steps(self):
+        p = self.p
+        yield from self._module('unload_release', self._unload_release())
+        yield from self._mode(4)
+        quiet = False
+        for phase, length, speed in (
+                ('U1', p['unload_l1'], p['unload_speed1']),
+                ('U2', p['unload_l2'], p['unload_speed2'])):
+            if quiet and p['tool'] == 1:
+                break
+            quiet = yield from self._module('unload_' + phase.lower(),
+                self._unload_retract(phase, length, speed, quiet))
+        return (yield from self._module('unload_clear', self._unload_clear()))
+
     def _fallback(self):
+        if self.p['tool'] == 0:
+            yield from self.park()
         result = yield from self.unload()
         raise FactoryError('l4_starts_missing_fallback_completed',
                            **result)
 
-    def home(self):
-        return (yield from self._module('home', self._home_steps()))
+    def home(self, y_first=False):
+        return (yield from self._module('home', self._home_steps(y_first)))
 
-    def _home_steps(self):
+    def _home_steps(self, y_first):
         p = self.p
         yield from self._phase('HOME')
+        horizontal = ('Y', 'X') if y_first else ('X', 'Y')
         for axis, maximum, speed in (('Z', p['home_z_max'], p['z_speed']),
-                ('X', p['home_xy_max'], p['home_speed']),
-                ('Y', p['home_xy_max'], p['home_speed'])):
+                *((axis, p['home_xy_max'], p['home_speed']) for axis in horizontal)):
             result = yield dict(kind='home', axis=axis, max_mm=maximum, speed=speed)
             if isinstance(result, dict) and result.get('ok') is False:
                 raise FactoryError('homing_' + axis.lower() + '_failed')
@@ -401,7 +484,7 @@ class FactoryProgram:
             issued, snap = yield from self._purge(p['l1_portion'])
             total += issued
             starts = delta32(snap['starts'], baseline)
-            if not snap['a'] or snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
+            if (p['tool'] == 1 and not snap['a']) or snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
                 break
             if starts >= p['l1_starts']:
                 yield from self._mode(0)
@@ -432,7 +515,10 @@ class FactoryProgram:
                 or snap['pulse_age_ms'] > p['pulse_quiet'] * 1000.):
             raise FactoryError('l3_unverified_transport_result')
         yield from self._mode(0)
-        yield from self._center()
+        if p['tool'] == 0:
+            yield from self.park()
+        else:
+            yield from self._center()
         if not result.get('ok'):
             raise FactoryError('l3_no_transport')
 
@@ -445,12 +531,13 @@ class FactoryProgram:
             if p['fallback']:
                 yield from self._fallback()
             raise FactoryError('l4_starts_missing')
+        if p['tool'] == 0:
+            yield from self.park()
         yield from self._mode(0)
 
     def load(self, selection):
-        # The last selector move returns a fresh snapshot from this MCU owner.
-        # A low skips the OEM's initial L1 probe with an empty inlet.
-        if _snapshot(selection)['a']:
+        entry = _snapshot(selection)
+        if self.p['tool'] == 0 or entry['a']:
             short = yield from self._module('load_l1', self._load_l1())
             if short:
                 return 'L1'
@@ -465,18 +552,26 @@ class FactoryProgram:
         if operation not in PROCEDURES:
             raise FactoryError('Unknown procedure ' + operation)
         p = self.p
-        yield from self.home()
+        if operation == 'PARK' and p['tool'] == 1:
+            _validated(p, operation)
+        cassette_t0 = p['tool'] == 0 and operation in ('AUTO', 'UNLOAD')
+        park_before_heat = cassette_t0 or operation == 'PARK'
+        yield from self.home(y_first=park_before_heat)
+        if park_before_heat:
+            yield from self._phase('PARK')
+            yield from self.park()
         terminal = operation
         cleaned = False
-        if operation not in ('HOME', 'SELECT'):
+        if operation not in ('HOME', 'PARK', 'SELECT'):
             yield from self.heat()
-        if operation != 'HOME':
+        if operation not in ('HOME', 'PARK'):
             selection = yield from self.select_tool()
         if operation == 'AUTO':
             terminal = yield from self.load(selection)
             cleaned = terminal == 'L4'
         elif operation in ('PURGE', 'CLEAN', 'MANUAL', 'UNLOAD'):
-            yield from self.position_bin()
+            if not cassette_t0:
+                yield from self.position_bin()
             yield from self._phase(operation)
             if operation == 'PURGE':
                 yield from self._mode(1 if p['feeder'] else 0, monitor=p['monitor'])
