@@ -598,6 +598,83 @@ class FactoryHostTests(unittest.TestCase):
         h.reactor.pause(h.reactor.now+3.)
         self.assertEqual(len(h.device.packets),count)
 
+    def test_T1_motion_fault_after_start_explains_the_lost_heater_lease(self):
+        for fault_query in ('output','factory_session'):
+            with self.subTest(fault_query=fault_query):
+                h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+                device=h.device;failed=False;coupled_run=None
+                # The heater owns a live lease through the first L1 move.
+                h._load_test_pid=lambda context,temperature,now:60
+
+                def move(args):
+                    nonlocal coupled_run
+                    row=device.move(args)
+                    if args[0]==1 and args[5] and args[6]>20000:
+                        coupled_run=row['run']
+                    if failed and row['run']==coupled_run:
+                        row.update(active=0,phase=5,reason=8,elapsed_ms=23,events=12)
+                    return row
+
+                def fail_motion():
+                    nonlocal failed
+                    if failed or coupled_run is None:return
+                    self.assertGreater(device.output(7)['duty'],0)
+                    self.assertEqual(h.load_test_context['factory']['phase'],'L1')
+                    failed=True
+                    device.terminate(5)
+                    device.motion['fraction']=12/11520
+                    device.outputs[7]['reason']=1
+
+                def output(args):
+                    if fault_query=='output' and args[:2]==[0,7]:fail_motion()
+                    return device.out(args)
+
+                def session(args):
+                    if fault_query=='factory_session' and args[0]==2:fail_motion()
+                    return device.query_factory(args)
+
+                def read_timing(args):
+                    self.assertEqual(device.packets[-1],('control',2,0))
+                    self.assertFalse(device.active())
+                    return dict(peak_callback_ticks=607,peak_late_ticks=25)
+
+                h.commands.update(motion=support.Wire(move),output=support.Wire(output),
+                    factory_session=support.Wire(session),factory_motion_timing=support.Wire(read_timing))
+                self.start(h,tool=1,SPEED_PROFILE='OEM')
+                last=self.finish(h)
+                self.assertTrue(failed,last)
+                self.assertEqual(last['phase'],'failed',last)
+                self.assertEqual(last['reason'],'Factory motion stopped: timing_fault')
+                details=last['factory']['result']['details']
+                self.assertIn('lease expired' if fault_query=='output' else 'guard/ownership rejected',
+                    details['secondary_error'])
+                self.assertEqual(last['motion'],details['motion'])
+                self.assertEqual(last['motion']['elapsed_ms'],23)
+                self.assertEqual(last['motion']['drivers']['E']['sent'],1)
+                self.assertEqual(last['factory']['e_sent_steps'],1)
+                self.assertEqual(last['motion']['last_fast_segment'],
+                    dict(peak_callback_ticks=607,peak_late_ticks=25))
+                self.assertEqual(h.commands['factory_motion_timing'].calls,[()])
+                self.assert_t1_owned_run(h,heated=True)
+                count=len(device.packets)
+                h.reactor.pause(h.reactor.now+3.)
+                self.assertEqual(len(device.packets),count)
+
+    def test_genuine_heater_lease_expiry_during_motion_stays_a_heater_error(self):
+        h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+        h._load_test_pid=lambda context,temperature,now:60
+        h.commands['factory_motion_timing']=support.Wire(lambda args: self.fail('No timing fault'))
+        self.start(h,tool=1,SPEED_PROFILE='OEM')
+        self.wait_phase(h,'L1')
+        self.assertTrue(h.device.active_motion())
+        h.device.outputs[7]['until']=h.reactor.now
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'failed',last)
+        self.assertIn('lease expired',last['reason'])
+        self.assertEqual(last['factory']['result']['details'],{})
+        self.assertEqual(h.commands['factory_motion_timing'].calls,[])
+        self.assert_t1_owned_run(h,heated=True)
+
     def test_T0_home_requires_both_limits_to_release_before_heat(self):
         for mask in (1,2):
             with self.subTest(mask=mask):

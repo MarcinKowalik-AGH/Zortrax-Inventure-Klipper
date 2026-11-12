@@ -12,6 +12,8 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 #define CM_FACTORY_TOOL_MASK 3u
 #define CM_FACTORY_PULSE_US 2u
 #define CM_FACTORY_MIN_INTERVAL_US 6u
+#define CM_FACTORY_CALLBACK_RESERVE_US 3u
+#define CM_FACTORY_CALLBACK_MAX_US 20u
 #define CM_AXIS_Z_MAX_HZ 3200u
 #define CM_AXIS_E_MAX_HZ 9600u
 #define CM_AXIS_E_MIN_C 180
@@ -277,7 +279,7 @@ static uint_fast8_t cm_fast_event(struct timer *timer) {
     // An extra dispatch drains the last one-shot before restoring GPIO.
     if(cm.reason==CR_TIMING)return cm_fast_finish(CR_TIMING,now);
     if(cm.done==cm.master)return cm_fast_finish(CR_COMPLETE,now);
-    uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
+    uint16_t hit=cm.stop_mask ? cm_input_hit(cm.stop_mask,cm.stop_value) : 0;
     if(hit) {
         cm.hit=hit;
         return cm_fast_finish(CR_INPUT,now);
@@ -317,9 +319,13 @@ static uint_fast8_t cm_fast_event(struct timer *timer) {
     }
     uint32_t spent=timer_read_time()-now;
     if(spent>cm.fast_peak_ticks)cm.fast_peak_ticks=spent;
-    // At 125 kHz there are 8 us/event. Reserve >=3 us for dispatch
-    // and other work. The one-shot finishes even if this event runs long.
-    if(spent>timer_from_us(5))cm.reason=CR_TIMING;
+    // The ramp computes an integer root even though its events are farther
+    // apart. Reserve 3 us of the next nominal period for dispatch and bound
+    // callback time at slower rates. At 125 kHz the limit is still 5 us.
+    uint32_t budget=period-timer_from_us(CM_FACTORY_CALLBACK_RESERVE_US);
+    if(budget>timer_from_us(CM_FACTORY_CALLBACK_MAX_US))
+        budget=timer_from_us(CM_FACTORY_CALLBACK_MAX_US);
+    if(spent>budget)cm.reason=CR_TIMING;
     if(cm.reason==CR_TIMING || cm.done==cm.master)
         timer->waketime=cm.fast_last_launch+timer_from_us(4);
     else {

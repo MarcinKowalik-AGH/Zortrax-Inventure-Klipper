@@ -1,4 +1,4 @@
-# Zortrax Inventure — CONTROL-R7-CASSETTE-POLICY
+# Zortrax Inventure — CONTROL-R7-T1-TIMING
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
@@ -12,7 +12,13 @@ Profil `SPEED_PROFILE=OEM` odtwarza żądane prędkości XY r0323 dla obu
 kaset. Przejazdy i czyszczenie używają F8000, oscylacje L1/L4 F3000,
 a docisk selektora F250. T1 korzysta z drugiej, prawej kasety
 (kanał MCU 1) i ma własną trasę od zwolnionych krańcówek X/Y.
-Szybki profil T1 działa z MCU CASSETTE-POLICY lub FACTORY-DUAL.
+Do próby szybkiego profilu T1 użyj MCU T1-TIMING. W logu dwóch prób
+Z-SUPPORT ruch L1 został przerwany przez `timing_fault` przy pierwszym
+kroku E, przy odczytach T1 232,41°C i 231,12°C. Limit czasu obsługi kroku
+MCU zależy teraz od okresu ruchu, z limitem 5 µs przy 125 kHz. Klipper
+pokazuje pierwotny błąd ruchu i dane timera także po odcięciu grzałki.
+T0 i T1 używają tej samej fabrycznej skali ADC. Okno temperatur i limity
+grzania obowiązują również po aktualizacji.
 T0 OEM działa także z MCU FACTORY-SPEED i ALL-AXIS-SPEED, a profil SERVICE
 z MCU FACTORY-FEED. Oba tory przyjmują te same materiały modelowe
 i podporowe w profilach OEM i SERVICE.
@@ -92,7 +98,7 @@ PARAMS odczytuje i waliduje nastawy. Po aktualizacji hosta i MCU użyj
 `factory_abi: 1`, `factory_feed_clock: 1` i `factory_motion_abi: 1`.
 Pole `factory_motion_tools: 3` oznacza obsługę T0 i T1.
 
-MCU CASSETTE-POLICY uruchamia się z globalnym `Door lock` wyłączonym.
+MCU T1-TIMING uruchamia się z globalnym `Door lock` wyłączonym.
 Przed pierwszą próbą przy otwartych osłonach sprawdź we Fluidd
 `INVENTURE_DOOR_POLICY`. Oczekiwane pola to `scope: global`,
 `enabled: false` i `lock_command_mask: 0`. Próby na starszym MCU
@@ -189,12 +195,12 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_CASSETTE_POLICY_BOOT17.zip` z aplikacją
+`INVENTURE_MCU_CONTROL_R7_T1_TIMING_BOOT17.zip` z aplikacją
 `MCU/INVENTUR.IVB` do bootloadera 1.7. Po wgraniu wykonaj
 `FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`. Nowe profile materiałowe
 są dostępne po aktualizacji hosta również z dotychczasowym MCU
-obsługującym daną procedurę. Domyślna globalna opcja drzwi wymaga
-CASSETTE-POLICY.
+obsługującym daną procedurę. T1-TIMING zachowuje globalną opcję drzwi
+wprowadzoną w CASSETTE-POLICY.
 
 ## Po aktualizacji hosta
 
@@ -205,7 +211,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY`, `mcu_release` = `RC8-CONTROL-R7-CASSETTE-POLICY`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-T1-TIMING`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza
@@ -244,7 +250,7 @@ Oba napędy cofają ciągle, po czym grzanie automatycznie się wyłącza.
 Po zmianie MCU użyj `FIRMWARE_RESTART`, jeśli host utrzymuje poprzedni stan.
 `ENABLE=0` pozwala na obserwację przy otwartych drzwiach i klapie
 z wyłączonymi zamkami. Surowe odczyty pozostają widoczne. Po restarcie
-MCU CASSETTE-POLICY znów stosuje ustawienie wyłączone.
+MCU T1-TIMING znów stosuje ustawienie wyłączone.
 
 Pierwsza wspólna próba ładowania z lewej kasety, z podłączoną rurką i wybranym T0:
 

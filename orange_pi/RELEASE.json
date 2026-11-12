@@ -1,14 +1,14 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY",
-  "host_module_sha256": "18f75e530ed38f37e074b23dc95537779f1daba1676cb089372e5d4dbcb415f5",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-T1-TIMING",
+  "host_module_sha256": "58a3ac932e34a0f2e7c94ce86a3223bbbbd16310ed5a109e56f4612e7272e20f",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 359,
-  "previous_host_commit": "2195ecd58f351618e8d9687ace143d6efe034265",
+  "verified_public_host_tests": 361,
+  "previous_host_commit": "8fe94157be499e342e5764b3fdc2a9b194287ed0",
   "firmware": {
-    "release": "RC8-CONTROL-R7-CASSETTE-POLICY",
+    "release": "RC8-CONTROL-R7-T1-TIMING",
     "bootloader": "InventureBoot 1.7",
-    "ivb_sha256": "48de2e9a61379750a739ed5a4182be9d31f5f4ecb5935b3ed810e2d3fa62e793",
+    "ivb_sha256": "963ba9ef91a092c678f197206c20f942adeff3ab48544f4e67acdc043e4cbf76",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "physical_R5_tests": true,
     "physical_qualification_complete": false,
@@ -332,7 +332,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY",
+  "release": "RC8-CONTROL-R7-UIFAST-T1-TIMING",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -417,7 +417,7 @@
       "physical_test": "pending cold selector and right cassette trial"
     }
   },
-  "motor_test_release": "RC8-CONTROL-R7-CASSETTE-POLICY",
+  "motor_test_release": "RC8-CONTROL-R7-T1-TIMING",
   "procedures": {
     "api": 1,
     "command": "INVENTURE_PROCEDURE",
@@ -515,7 +515,7 @@
     "physical_test": "pending"
   },
   "door_policy": {
-    "mcu_release": "RC8-CONTROL-R7-CASSETTE-POLICY",
+    "mcu_release": "RC8-CONTROL-R7-T1-TIMING",
     "global": true,
     "default_enabled": false,
     "oem_disable_bit_index": 3,
@@ -537,5 +537,14 @@
       240
     ],
     "service_fallback_c": 230
+  },
+  "fast_motion_timing": {
+    "MCU_release": "RC8-CONTROL-R7-T1-TIMING",
+    "nominal_scheduler_margin_us": 3,
+    "maximum_callback_us": 20,
+    "callback_limit_at_125000_hz_us": 5,
+    "heater_cutoff_unchanged": true,
+    "reports_primary_motion_fault": true,
+    "physical_test": "pending"
   }
 }

@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-CASSETTE-POLICY'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-T1-TIMING'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')

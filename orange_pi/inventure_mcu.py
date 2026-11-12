@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-T1-TIMING'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -1693,6 +1693,9 @@ class InventureMCU:
     def _control_abort(self):
         self._load_test_cancel('control_abort',phase='failed')
         self._feeder_run_cancel('control_abort')
+        self._control_stop_outputs()
+
+    def _control_stop_outputs(self):
         try: self._control_query(2)
         except Exception: logging.exception('R5 STOP response unavailable; MCU heartbeat remains authoritative')
 
@@ -1792,6 +1795,13 @@ class InventureMCU:
             **snapshot)
         return self.motion_last
 
+    def _motion_timing(self):
+        if 'factory_motion_timing' not in self.commands:
+            return None
+        limits={'peak_callback_ticks':(0,0xffffffff),'peak_late_ticks':(0,0xffffffff)}
+        ticks=self._control_validate(self._control_send('factory_motion_timing',[]),limits)
+        return {key:ticks[key] for key in limits}
+
     def _motion_input_snapshot(self):
         now=self.reactor.monotonic();received=getattr(self,'inputs_received',None)
         age=None if received is None else now-received
@@ -1855,11 +1865,9 @@ class InventureMCU:
             attempted=action==1
             state=self._motion_query(action,counts,rate,pulse,max_ms,stop_mask,stop_value,hold,
                                      timer_tool=timer_tool)
-            if action==0 and 'factory_motion_timing' in self.commands:
-                ticks=self._control_validate(self._control_send('factory_motion_timing',[]),
-                    {'peak_callback_ticks':(0,0xffffffff),'peak_late_ticks':(0,0xffffffff)})
-                state=dict(state,last_fast_segment={key:ticks[key] for key in
-                    ('peak_callback_ticks','peak_late_ticks')})
+            if action==0:
+                ticks=self._motion_timing()
+                if ticks is not None:state=dict(state,last_fast_segment=ticks)
         except Exception as exc:
             if attempted:self._control_abort()
             raise gcmd.error(str(exc))
@@ -2541,10 +2549,20 @@ class InventureMCU:
             else:self._load_test_step(context)
         except Exception as exc:
             if self.load_test_context is context:
-                if context.get('factory') is not None:
-                    context['factory']['result']=dict(success=False,reason=str(exc),details=getattr(exc,'details',{}))
-                self._load_test_cancel(str(exc),phase='done' if str(exc)=='hold_duration_finished' else 'failed')
-                self._control_abort()
+                factory=context.get('factory')
+                stopped=factory is not None and factory['move'] is not None
+                reason=str(exc);details=dict(getattr(exc,'details',{}))
+                if stopped:
+                    # The MCU retains an already terminal motion across STOP.
+                    # Keep ownership until readback finishes, with no renewal.
+                    self._control_stop_outputs()
+                    if self.load_test_context is not context:return self.reactor.NEVER
+                    reason=self._factory_failed_motion(context,reason,details)
+                    if self.load_test_context is not context:return self.reactor.NEVER
+                if factory is not None:
+                    factory['result']=dict(success=False,reason=reason,details=details)
+                self._load_test_cancel(reason,phase='done' if reason=='hold_duration_finished' else 'failed')
+                if not stopped:self._control_abort()
         finally:context['busy']=False
         return (self.reactor.monotonic()+(.1 if context.get('jog') is not None or context.get('factory') is not None else .25)
                 if self.load_test_context is context else self.reactor.NEVER)
@@ -2732,10 +2750,39 @@ class InventureMCU:
         if leg:
             f['motion_legs'][leg].update(reason=row['reason'],drivers=row['drivers'])
 
+    def _factory_failed_motion(self,context,reason,details):
+        # A factory motion fault clears the heater output before the next
+        # host tick. Read after STOP so a fault between polls is visible too.
+        move=context['factory']['move']
+        try:
+            row=context.get('motion') or {}
+            if (row.get('run'),row.get('token'))!=move['identity'] or row.get('phase')!='failed':
+                row=self._motion_query()
+            if (self.load_test_context is not context or row['reject']
+                    or (row['run'],row['token'])!=move['identity'] or row['phase']!='failed'):
+                return reason
+            self._factory_account(context,row)
+        except Exception:
+            logging.debug('Factory terminal motion readback unavailable',exc_info=True)
+            return reason
+        if row['reason']=='timing_fault':
+            try:
+                timing=self._motion_timing()
+                if timing is not None:
+                    row=dict(row,last_fast_segment=timing)
+                    context['motion']=row
+            except Exception:
+                logging.debug('Factory motion timing readback unavailable',exc_info=True)
+        details['motion']=row
+        primary='Factory motion stopped: '+row['reason']
+        if reason!=primary:details['secondary_error']=reason
+        return primary
+
     def _factory_poll_move(self,context):
         from .inventure_factory_core import delta32, uses_r0323_sequence
         f=context['factory'];m=f['move'];a=m['action'];snap=f['snapshot'];now=self.reactor.monotonic()
         row=self._motion_query();self._factory_account(context,row)
+        if row['phase']=='failed':raise ValueError('Factory motion stopped: '+row['reason'])
         stop=False;ok=False;kind=a['kind']
         if kind=='feed_until_edges':
             if snap['pulse_age_ms']>a['quiet_s']*1000:m['pulse_base']=snap['pulses']

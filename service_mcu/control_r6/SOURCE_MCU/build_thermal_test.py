@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
     assert c['INVENTURE_DOOR_POLICY_GLOBAL'] == 1
     assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-CASSETTE-POLICY'
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-T1-TIMING'
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
@@ -125,7 +125,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert app == ivb[64:]
     assert bytes.fromhex(base.sha(app)) == ivb[32:64]
     assert embedded_dictionary_matches(app, dictionary)
-    report = dict(motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'], motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
+    report = dict(mcu_release=c['INVENTURE_MCU_RELEASE'], motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'],
+                  motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

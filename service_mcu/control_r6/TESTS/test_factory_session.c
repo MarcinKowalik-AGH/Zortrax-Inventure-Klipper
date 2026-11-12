@@ -275,12 +275,12 @@ static void fast_factory_guards(void) {
             fast_dispatch(0,0);
             assert(cm.reason==CR_TIMING);
         } else if(fault_kind==2) {
-            mock_read_cycles=timer_from_us(3);
+            mock_read_cycles=timer_from_us(11);
             fast_dispatch(0,1);
             mock_read_cycles=0;
             assert(cm.active && cm.reason==CR_TIMING && cm.done==2);
-            fast_dispatch(timer_from_us(10),1);
-            assert(cm.reason==CR_TIMING && cm.fast_peak_ticks==timer_from_us(6));
+            fast_dispatch(0,1);
+            assert(cm.reason==CR_TIMING && cm.fast_peak_ticks==timer_from_us(22));
         } else if(fault_kind==3) {
             GPIOD->IDR|=BIT(11);
             fast_dispatch(0,1);
@@ -308,6 +308,45 @@ static void fast_factory_guards(void) {
         assert(((GPIOA->MODER>>12)&15)==5 && ((GPIOB->MODER>>18)&3)==1);
     }
     puts("PASS fast factory scope and guards: T0/T1 leased owners, timer ownership, rate/move validation, overlap/late/CPU abort, cable, lease, door, STOP and shutdown");
+}
+
+static void fast_factory_callback_budget(void) {
+    for(unsigned tool=0;tool<2;tool++) {
+        factory_reset(0,1);
+        factory_input(tool,1,1);
+        output(1,6+tool,64,1500,245,101);
+        factory(1,tool,IVT_AUTO,0,1000,1500,501,0);
+        transport_sample(mock_now);
+        assert(fs.active && transport[tool].running);
+        // First L1 sweep in the recorded T1 failure: first E at event 12.
+        motion(1,tool?11:3,11520,11520,0,1036,32000,2,1000,0,0,0,601);
+        assert(cm.active && cm.fast_mask);
+        for(unsigned event=0;event<11;event++)fast_dispatch(0,1);
+        assert(cm.done==11 && !cm.sent[3]);
+        mock_read_cycles=timer_from_us(3);
+        fast_dispatch(0,1);
+        mock_read_cycles=0;
+        assert(cm.reason==CR_NONE && cm.done==12 && cm.sent[3]==1);
+        assert(cm.fast_peak_ticks==timer_from_us(6));
+        assert(transport[tool].forward==1 && !transport[1-tool].forward);
+        while(cm.active)fast_dispatch(0,1);
+        control_guard(mock_now);
+        assert(cm.reason==CR_COMPLETE && cm.sent[3]==1036);
+        assert(fs.active && co[6+tool].duty==64 && transport[tool].forward==1036);
+        control_command(2,0);
+    }
+
+    fast_start(1,125000,24000,2073);
+    while(cm.done+1<cm.fast_cruise_ramp)fast_dispatch(0,1);
+    uint32_t before=cm.done;
+    mock_read_cycles=timer_from_us(3);
+    fast_dispatch(0,1);
+    mock_read_cycles=0;
+    assert(cm.reason==CR_TIMING && cm.done==before+1);
+    assert(cm.fast_peak_ticks==timer_from_us(6));
+    fast_dispatch(0,1);
+    assert(cm.phase==CM_FAILED && cm.done==before+1 && !TIM11->CCER);
+    puts("PASS L1 mixed T0/T1 first E with 6us callback; same duration stops 125kHz cruise");
 }
 
 static void fast_factory_right_cassette(void) {
@@ -501,7 +540,8 @@ static void axis_thermal_guard(void) {
 
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
-    fast_factory_cadence();fast_factory_guards();fast_factory_right_cassette();factory_with_open_doors();
+    fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
+    fast_factory_right_cassette();factory_with_open_doors();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
     puts("PASS R7 FACTORY session register suite");return 0;
 }
