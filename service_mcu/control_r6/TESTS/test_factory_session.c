@@ -174,18 +174,18 @@ static void fast_dispatch(uint32_t late,uint8_t hardware_finishes) {
     else assert(!cm.active && !cm.fast_mask && !cm.timer_added);
 }
 
-static void fast_start(unsigned rate,unsigned b,unsigned e) {
+static void fast_start(unsigned tool,unsigned rate,unsigned b,unsigned e) {
     factory_reset(0xffff0000u,1);
-    factory(1,0,IVT_STOP,0,1000,1500,501,0);
-    motion(1,0,24000,b,0,e,rate,2,2000,0,0,0,601);
+    factory(1,tool,IVT_STOP,0,1000,1500,501,0);
+    motion(1,tool?8:0,24000,b,0,e,rate,2,2000,0,0,0,601);
     assert(fs.active && cm.active && cm.fast_mask);
 }
 
 static void fast_factory_cadence(void) {
     const unsigned rates[]={32000,120680,125000};
-    for(unsigned n=0;n<ARRAY_SIZE(rates);n++) {
+    for(unsigned tool=0;tool<2;tool++)for(unsigned n=0;n<ARRAY_SIZE(rates);n++) {
         unsigned rate=rates[n],b=n==0?24000:17300,e=n==0?0:2073;
-        fast_start(rate,b,e);
+        fast_start(tool,rate,b,e);
         assert(TIM14->ARR==120 && TIM13->ARR==120 && TIM14->CCR1==1 && TIM13->CCR1==1);
         assert(TIM14->CCMR1==CM_PULSE_PWM2 && TIM13->CCMR1==CM_PULSE_PWM2);
         assert(!TIM14->DIER && !TIM13->DIER && !TIM11->DIER);
@@ -213,24 +213,21 @@ static void fast_factory_cadence(void) {
         }
         assert(cruise>1000 && cm.fast_peak_late==timer_from_us(100));
         assert(cm.sent[0]==24000 && cm.sent[1]==b && cm.sent[3]==e && cm.reason==CR_COMPLETE);
-        assert(transport[0].forward==e && !transport[0].reverse && transport[0].budget==20160-e);
+        assert(transport[tool].forward==e && !transport[tool].reverse && transport[tool].budget==20160-e);
+        assert(!transport[1-tool].forward && !transport[1-tool].reverse);
         assert(!TIM14->CR1 && !TIM13->CR1 && !TIM11->CR1);
         assert(!TIM14->CCER && !TIM13->CCER && !TIM11->CCER);
         assert(((GPIOA->MODER>>12)&15)==5 && ((GPIOB->MODER>>18)&3)==1);
         assert(GPIOE->BSRR==BIT(10));
-        factory(3,0,IVT_STOP,0,1000,1500,501,0);
+        factory(3,tool,IVT_STOP,0,1000,1500,501,0);
     }
-    puts("PASS fast factory cadence: 32/120.68/125 kHz plateaus, bounded jitter and delay, wrap, exact CoreXY/E counts, one-shot drain and GPIO restore");
+    puts("PASS fast factory cadence: T0/T1, 32/120.68/125 kHz plateaus, bounded jitter and delay, wrap, exact CoreXY/E counts, one-shot drain and GPIO restore");
 }
 
 static void fast_factory_guards(void) {
     factory_reset(0,1);
     motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
     assert(!cm.active && !TIM14->CR1);
-    factory(1,1,IVT_STOP,0,1000,1500,501,0);
-    motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
-    assert(fs.active && !cm.active && !TIM14->CR1);
-    factory_reset(0,1);
     factory(1,0,IVT_STOP,0,1000,1500,501,0);
     motion(1,0,100,100,0,0,32000,2,1000,1,1,0,601);
     motion(1,0,100,100,1,0,32000,2,1000,0,0,0,601);
@@ -244,8 +241,8 @@ static void fast_factory_guards(void) {
     motion(1,0,100,100,0,0,32000,2,1000,0,0,0,601);
     assert(!cm.active && TIM14->CR1==CM_PULSE_CEN);
 
-    for(unsigned fault_kind=0;fault_kind<8;fault_kind++) {
-        fast_start(120680,24000,10);
+    for(unsigned tool=0;tool<2;tool++)for(unsigned fault_kind=0;fault_kind<8;fault_kind++) {
+        fast_start(tool,120680,24000,10);
         fast_dispatch(0,1);
         assert(cm.done==1);
         if(fault_kind==0) {
@@ -287,7 +284,54 @@ static void fast_factory_guards(void) {
         else assert(((GPIOE->MODER>>20)&3)==1); // raw_safe wrote other GPIOE latches after PE10
         assert(((GPIOA->MODER>>12)&15)==5 && ((GPIOB->MODER>>18)&3)==1);
     }
-    puts("PASS fast factory scope and guards: T0 only, timer ownership, rate/move validation, overlap/late/CPU abort, cable, lease, door, STOP and shutdown");
+    puts("PASS fast factory scope and guards: T0/T1 leased owners, timer ownership, rate/move validation, overlap/late/CPU abort, cable, lease, door, STOP and shutdown");
+}
+
+static void fast_factory_right_cassette(void) {
+    factory_reset(0,1);
+    inventure_adc_observe(ADC3,6,1000); // T0 hot is insufficient for T1 extrusion
+    factory(1,1,IVT_STOP,0,1000,1500,501,0);
+    assert(fs.active && !factory_reply[3] && !TIM9->CCR2);
+    motion(1,8,100,100,0,50,32000,2,1000,0,0,0,601);
+    assert(!cm.active && !TIM11->CCER && !cm.done);
+    motion(1,0,10,10,0,0,32000,2,1000,0,0,0,602);
+    assert(cm.active);
+    while(cm.active)fast_dispatch(0,1);
+    assert(cm.reason==CR_COMPLETE && cm.sent[0]==10 && !cm.sent[3]);
+
+    factory_adc(1);
+    output(1,7,64,1500,250,101);
+    factory(2,1,IVT_FORWARD,0,1000,1500,501,1);
+    assert(fs.active && transport[1].running && !transport[0].running && TIM9->CCR2==1);
+    assert(GPIOG->BSRR==BIT(11) && outputs[GPIO('B',7)]==1);
+    motion(1,8,100,100,0,50,32000,2,1000,0,0,0,603);
+    assert(cm.active && ((cm.direction&8)!=0));
+    fast_dispatch(0,1);
+    uint32_t run=cm.run,waketime=cm_timer.waketime;
+    output(1,7,72,1500,250,102);
+    assert(co[7].duty==72 && TIM9->CCR1==256-72 && TIM9->CCR2==1);
+    factory(2,0,IVT_FORWARD,0,1000,1500,501,2);
+    assert(factory_reply[3]==1 && fs.tool==1 && fs.sequence==1);
+    factory(2,1,IVT_FORWARD,0,1000,1500,501,2);
+    assert(!factory_reply[3] && fs.sequence==2 && cm.run==run && cm_timer.waketime==waketime);
+    while(cm.active)fast_dispatch(0,1);
+    assert(transport[1].forward==50 && !transport[1].reverse && !transport[0].forward);
+
+    factory(2,1,IVT_REVERSE,0,1000,1500,501,3);
+    assert(transport[1].running && !outputs[GPIO('B',7)] && TIM9->CCR2==1);
+    motion(1,0,100,100,0,25,32000,2,1000,0,0,0,604);
+    assert(cm.active);
+    while(cm.active)fast_dispatch(0,1);
+    assert(transport[1].forward==50 && transport[1].reverse==25 && !transport[0].reverse);
+
+    motion(1,0,100,100,0,25,32000,2,1000,0,0,0,605);
+    assert(cm.active);
+    fast_dispatch(0,1);
+    inventure_adc_observe(ADC3,6,1000);
+    control_guard(mock_now);
+    assert(!fs.active && fs.reason==4 && !cm.active && cm.done==1);
+    assert(!TIM9->CCR2 && !co[7].duty && !TIM11->CCER && !transport[1].running);
+    puts("PASS fast T1 selected ADC, right cassette clock and direction, PID renewal, E polarity, and thermal shutdown");
 }
 
 static void axis_motion(unsigned dirs,uint32_t a,uint32_t b,uint32_t z,uint32_t e,
@@ -434,7 +478,7 @@ static void axis_thermal_guard(void) {
 
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
-    fast_factory_cadence();fast_factory_guards();
+    fast_factory_cadence();fast_factory_guards();fast_factory_right_cassette();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

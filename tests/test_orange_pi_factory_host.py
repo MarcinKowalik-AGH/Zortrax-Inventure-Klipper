@@ -106,7 +106,8 @@ class FactoryDevice(support.Device):
             old_count=math.floor(previous/.2);new_count=math.floor(now/.2)
             delta=max(0,new_count-old_count)
             if delta:self.pulses+=delta;self.last_edge=now
-        if mode==3:self.a=0  # operator-side model of completed physical rewind
+        if mode==3 and self.scenario!='unload_hold_a':
+            self.a=0  # operator-side model of completed physical rewind
         self.last_update=now
 
     def query_factory(self,args):
@@ -138,13 +139,15 @@ class FactoryDevice(support.Device):
 
 
 class FactoryHostTests(unittest.TestCase):
-    def host(self,scenario='short',fast_motion=False):
+    def host(self,scenario='short',fast_motion=False,factory_motion_tools=None):
         h,ops,p13=support.LoadTests().host();h.device=FactoryDevice(h,scenario)
         h.factory_abi=1
         h.factory_feed_clock=1
         if fast_motion:
             h.factory_motion_abi=1
             h.factory_motion_max_hz=125000
+        if factory_motion_tools is not None:
+            h.factory_motion_tools=factory_motion_tools
         h.commands.update(control=support.Wire(h.device.control),output=support.Wire(h.device.out),
             motion=support.Wire(h.device.move),motion_driver=support.Wire(h.device.driver),
             factory_session=support.Wire(h.device.query_factory))
@@ -157,7 +160,8 @@ class FactoryHostTests(unittest.TestCase):
             if context is not None:
                 i=context['tool']
                 if h.device.output(6+i)['duty']:
-                    h.temperatures[i]=230.;h.raw_adc[i]=round(230.*4095./660.)
+                    target=context['target']
+                    h.temperatures[i]=target;h.raw_adc[i]=round(target*4095./660.)
             h.device.update()
         h.refresh=refresh
         return h,ops,p13
@@ -193,6 +197,16 @@ class FactoryHostTests(unittest.TestCase):
             h.reactor.pause(h.reactor.now+.1)
         self.assertIsNotNone(h.load_test_context,h.load_test_last)
         self.assertEqual(h.load_test_context['factory']['phase'],phase)
+
+    def assert_t1_owned_run(self,h,heated):
+        self.assertTrue(h.device.factory_packets)
+        self.assertEqual({p[1] for p in h.device.factory_packets},{1})
+        self.assertEqual({p[2] for p in h.device.packets if p[:2]==('output',1)},
+                         {7} if heated else set())
+        self.assertEqual(h.commands['feeder'].calls,[])
+        self.assertEqual(h.temperatures[0],25.)
+        self.assertEqual(h.device.output(7)['duty'],0)
+        self.assertFalse(h.device.active())
 
     def test_PARAMETERS_is_read_only_and_old_MCU_refuses_before_actuation(self):
         h,_,_=self.host();cmd=Command(ACTION='PARAMS',TOOL='T1');h.cmd_load_test(cmd)
@@ -238,6 +252,150 @@ class FactoryHostTests(unittest.TestCase):
                 self.assertIsNone(h.load_test_context)
                 self.assertEqual(h.device.factory_packets,[])
                 self.assertEqual(h.device.packets,[])
+
+    def test_T1_OEM_requires_an_advertised_tool_bit_before_actuation(self):
+        for action in ('SELECT','SWEEP','AUTO','UNLOAD'):
+            with self.subTest(action=action):
+                h,_,_=self.host(fast_motion=True)
+                with self.assertRaisesRegex(RuntimeError,'RC8-CONTROL-R7-FACTORY-DUAL'):
+                    h.cmd_procedure(Command(ACTION=action,TOOL='T1',SPEED_PROFILE='OEM'))
+                self.assertIsNone(h.load_test_context)
+                self.assertEqual(h.device.factory_packets,[])
+                self.assertEqual(h.device.packets,[])
+
+    def test_T1_OEM_PARAMS_reports_right_tool_availability_without_actuation(self):
+        for mask,available in ((None,False),(1,False),(3,True)):
+            with self.subTest(mask=mask):
+                h,_,_=self.host(fast_motion=True,factory_motion_tools=mask)
+                cmd=Command(ACTION='PARAMS',PROCEDURE='AUTO',TOOL='T1',SPEED_PROFILE='OEM')
+                h.cmd_procedure(cmd)
+                line,=cmd.lines
+                parameters=json.loads(line.removeprefix('V9_FACTORY_PARAMS '))
+                self.assertEqual(parameters['tool'],1)
+                self.assertIs(parameters['factory_motion_available'],available)
+                self.assertEqual(parameters['travel_speed'],8000/60)
+                self.assertEqual(parameters['purge_speed'],3000/60)
+                self.assertIsNone(h.load_test_context)
+                self.assertEqual(h.device.factory_packets,[])
+                self.assertEqual(h.device.packets,[])
+
+    def test_T1_OEM_cold_selection_releases_XY_and_presses_toward_negative_X(self):
+        h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+        h.cmd_procedure(Command(ACTION='SELECT',TOOL='T1',SPEED_PROFILE='OEM'))
+        self.wait_phase(h,'SWITCH')
+        self.assertTrue(h.load_test_context['factory']['reference_valid'])
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'SELECT')
+        self.assertTrue(last['factory']['selection_commanded'])
+        legs=last['factory']['motion_legs']
+        self.assertEqual(legs['selector_approach']['target'],[15.,154.5])
+        self.assertEqual(legs['selector_press']['target'],[0.,154.5])
+        self.assertEqual(legs['selector_return']['target'],[72.,152.5])
+        self.assertEqual(legs['selector_press']['rate'],2667)
+        for name in ('A','B'):
+            self.assertEqual(legs['selector_press']['drivers'][name],
+                             dict(planned=9600,sent=9600,direction=0))
+        motions=[p for p in h.device.packets if p[:2]==('motion',1)]
+        self.assertEqual([p[10:12] for p in motions if p[10]],
+                         [(4,4),(2,2),(2,0),(1,1),(1,0)])
+        self.assertFalse(any(p[6] for p in motions))
+        self.assertEqual([p[7:9] for p in motions[-3:] if p[8]==10],[(2667,10)])
+        self.assertEqual(h.device.mode_history,[0])
+        self.assert_t1_owned_run(h,heated=False)
+
+    def test_T1_OEM_cold_sweep_starts_positive_at_F3000_without_feed(self):
+        h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+        h.cmd_procedure(Command(ACTION='SWEEP',TOOL='T1',SPEED_PROFILE='OEM'))
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'SWEEP')
+        self.assertEqual(last['factory']['position'][:2],[72.,152.5])
+        motions=[p for p in h.device.packets if p[:2]==('motion',1)]
+        self.assertFalse(any(p[6] for p in motions))
+        sweep=[p for p in motions if not p[10] and p[3]==p[4] and p[3] in (11520,23040)]
+        self.assertEqual([p[2:9] for p in sweep[:3]],[
+            (3,11520,11520,0,0,32000,2),
+            (0,23040,23040,0,0,32000,2),
+            (3,23040,23040,0,0,32000,2)])
+        self.assertEqual(h.device.mode_history,[0])
+        self.assert_t1_owned_run(h,heated=False)
+
+    def test_T1_OEM_rejects_homing_release_failure_before_heat(self):
+        for mask in (1,2):
+            with self.subTest(mask=mask):
+                h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+                h.device.release_fail=mask
+                self.start(h,1,SPEED_PROFILE='OEM')
+                last=self.finish(h)
+                self.assertEqual(last['phase'],'failed',last)
+                self.assertIn('release',last['reason'].lower())
+                self.assertFalse(last['factory']['reference_valid'])
+                self.assert_t1_owned_run(h,heated=False)
+
+    def test_T1_OEM_short_AUTO_uses_right_start_counter_and_positive_E(self):
+        h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+        self.start(h,1,SPEED_PROFILE='OEM')
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'L1')
+        self.assertGreaterEqual(h.device.starts,6)
+        self.assertNotIn(2,h.device.mode_history)
+        feed=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        self.assertEqual([p[2:9] for p in feed[:3]],[
+            (11,11520,11520,0,1036,32000,2),
+            (8,23040,23040,0,2073,32000,2),
+            (11,23040,23040,0,2073,32000,2)])
+        self.assertTrue(all(p[2]&8 for p in feed))
+        self.assert_t1_owned_run(h,heated=True)
+
+    def test_T1_OEM_empty_right_A_still_probes_L1_and_waits_in_L2(self):
+        h,_,_=self.host('wait_a',fast_motion=True,factory_motion_tools=3)
+        h.commands['sensor_inputs'].reply['raw']=1<<8  # cached left A is high
+        h.status['p4']=10000  # left counter cannot substitute for selected feedback
+        self.start(h,1,SPEED_PROFILE='OEM')
+        self.wait_phase(h,'L2')
+        self.assertEqual(h.device.mode_history,[0,1,2])
+        self.assertTrue(h.device.running)
+        h.reactor.pause(h.reactor.now+.5)
+        self.assertEqual(h.load_test_context['factory']['phase'],'L2')
+        h.device.a=1
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'L4')
+        self.assertEqual([p for p in last['factory']['history'] if p.startswith('L')],
+                         ['L1','L2','L3','L4'])
+        e=last['factory']['e_steps_by_phase']
+        self.assertEqual(e['L1'],19693)
+        self.assertEqual(e['L4'],96394)
+        self.assertGreater(e['L3'],0)
+        self.assertLess(e['L3'],250*960)
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        self.assertTrue(all(p[2]&8 for p in moves))
+        self.assertEqual([p[6:9] for p in moves if not (p[3] or p[4])],
+                         [(250*960,1536,10)])
+        self.assert_t1_owned_run(h,heated=True)
+
+    def test_T1_OEM_UNLOAD_waits_for_selected_A_release_and_reverses_E(self):
+        h,_,_=self.host('unload_hold_a',fast_motion=True,factory_motion_tools=3)
+        h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T1',SPEED_PROFILE='OEM',MATERIAL='Z-SUPPORT'))
+        self.wait_phase(h,'U3')
+        h.reactor.pause(h.reactor.now+.5)
+        self.assertEqual(h.load_test_context['factory']['phase'],'U3')
+        h.device.a=0
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'UNLOAD')
+        self.assertEqual(last['target_c'],235.)
+        self.assertEqual([p for p in last['factory']['history'] if p in ('U0','U1','U2','U3')],
+                         ['U0','U1','U2','U3'])
+        moves=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
+        self.assertEqual(len(moves),3)
+        self.assertTrue(all(not (p[2]&8 or p[3] or p[4] or p[5]) for p in moves))
+        self.assertEqual(moves[0][6],50*960)
+        self.assertEqual(moves[1][6],1)
+        self.assertEqual(h.device.mode_history,[0,3,4,3,0])
+        self.assert_t1_owned_run(h,heated=True)
 
     def test_empty_A_uses_stock_L1_probe_only_for_T0(self):
         for tool in (0,1):

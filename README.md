@@ -1,4 +1,4 @@
-# Zortrax Inventure — CONTROL-R7-ALL-AXIS-SPEED
+# Zortrax Inventure — CONTROL-R7-FACTORY-DUAL
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,
@@ -8,13 +8,12 @@ Opcja `TIMER=1` uruchamia sprzętowe impulsy STEP w pojedynczych próbach
 serwisowych X/Y/Z/A/B/E. X i Y korzystają z pary A/B w układzie CoreXY.
 [Polecenia i limity prób timerowych](#sprzętowe-impulsy-step-dla-xyzabe).
 
-T0 wyznacza współrzędne od zwolnionych krańcówek X/Y. Docisk selektora
-biegnie od X139,5 do X154,5 przy stałym Y154,5. AUTO wykonuje oscylacje
-w L1 i L4 nad koszem. UNLOAD dobiera budżety U1/U2 przez `MATERIAL`.
-Profil `SPEED_PROFILE=OEM` dla T0 odtwarza żądane prędkości XY r0323.
-Przejazdy i czyszczenie używają F8000, oscylacje F3000, a docisk F250.
-Profil OEM działa z MCU FACTORY-SPEED oraz ALL-AXIS-SPEED. Profil
-serwisowy działa również z MCU FACTORY-FEED.
+Profil `SPEED_PROFILE=OEM` odtwarza żądane prędkości XY r0323 dla obu
+kaset. Przejazdy i czyszczenie używają F8000, oscylacje L1/L4 F3000,
+a docisk selektora F250. T1 korzysta z drugiej, prawej kasety
+(kanał MCU 1) i ma własną trasę od zwolnionych krańcówek X/Y.
+Szybki profil T1 wymaga MCU FACTORY-DUAL. T0 OEM działa także z MCU
+FACTORY-SPEED i ALL-AXIS-SPEED, a profil SERVICE z MCU FACTORY-FEED.
 [Instalacja i warunki L1–L4 oraz U0–U3](docs/FACTORY_LOAD_2026-11-10.md).
 
 ## Płynność menu i komunikacja — transfer z M300
@@ -89,6 +88,7 @@ INVENTURE_LOAD_TEST ACTION=PARAMS TOOL=T0
 PARAMS odczytuje i waliduje nastawy. Po aktualizacji hosta i MCU użyj
 `FIRMWARE_RESTART`. Dla profilu OEM sprawdź w `INVENTURE_VERSION`
 `factory_abi: 1`, `factory_feed_clock: 1` i `factory_motion_abi: 1`.
+Pole `factory_motion_tools: 3` oznacza obsługę T0 i T1.
 
 Pierwszą próbę prędkości OEM wykonaj na zimno w konsoli Fluidd. Jeżeli
 test wymaga otwartych osłon, wydaj `INVENTURE_DOOR_POLICY ENABLE=0`
@@ -110,10 +110,40 @@ INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=
 INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
 ```
 
+### Prawa kaseta i T1 w profilu OEM
+
+Po włączeniu SERVICE uruchom osobno `SELECT` i `SWEEP`. Pierwsze
+polecenie sprawdza docisk selektora w lewo, drugie przejazd i oscylacje
+nad koszem. Obie próby są bez grzania, podawania kasetą i ruchu E.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SELECT TOOL=T1 SPEED_PROFILE=OEM
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T1 SPEED_PROFILE=OEM
+```
+
+Po sprawdzeniu mechaniki wybierz jedną operację z materiałem zgodnym
+z prawą kasetą. Poniższe przykłady zakładają Z-SUPPORT.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
+```
+
+`MATERIAL` ustawia temperaturę i długości wycofania T1 w profilu OEM. Z-SUPPORT
+używa 235°C i budżetów 50/50 mm. Z-SUPPORT-PLUS używa 240°C
+i 30/70 mm. Z-SUPPORT-PREMIUM i BASF-ULTRAFUSE-BVOH używają
+230°C i 30/70 mm. `TARGET` pozwala jawnie nadpisać temperaturę.
+
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
-SERVICE pomija RFID. Opcja OEM dotyczy T0. Domyślny profil nadal obsługuje
-T0 i T1 oraz ogranicza ruchy XY do 20 000 zdarzeń DDA/s.
+SERVICE pomija RFID. Domyślny profil SERVICE obsługuje T0 i T1 oraz
+ogranicza ruchy XY do 20 000 zdarzeń DDA/s.
 [Pełna instalacja, parametry, nominalna geometria i warunki L1–L4](docs/FACTORY_LOAD_2026-11-10.md).
 
 Opisane dalej `ACTION=LOAD` i `ACTION=RETRACT` zachowują wcześniejsze próby
@@ -138,9 +168,9 @@ Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje ko
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
 750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_ALL_AXIS_SPEED_BOOT17.zip` z aplikacją
+`INVENTURE_MCU_CONTROL_R7_FACTORY_DUAL_BOOT17.zip` z aplikacją
 `MCU/INVENTUR.IVB` do bootloadera 1.7. Próbę T0 z profilem OEM można
-dokończyć na wydaniu FACTORY-SPEED. Po wgraniu ALL-AXIS-SPEED wykonaj
+dokończyć na wydaniu FACTORY-SPEED. Po wgraniu FACTORY-DUAL wykonaj
 `FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`.
 
 ## Po aktualizacji hosta
@@ -152,19 +182,20 @@ INVENTURE_DOOR_POLICY ENABLE=0
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-ALL-AXIS`, `mcu_release` = `RC8-CONTROL-R7-ALL-AXIS-SPEED`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL`, `mcu_release` = `RC8-CONTROL-R7-FACTORY-DUAL`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 Nowe `load_stream_abi: 1` potwierdza możliwość ciągłego podawania i PID podczas ruchu.
 `factory_abi: 1` potwierdza sesję MCU dla automatu i ruchów XY/E.
 `factory_feed_clock: 1` potwierdza obsługę zegara kasety w tej sesji.
 `factory_motion_abi: 1` potwierdza obsługę profilu OEM, a
 `factory_motion_max_hz: 125000` podaje limit zdarzeń DDA/s.
+`factory_motion_tools: 3` potwierdza szybki ruch w obu torach.
 `axis_motion_abi: 1` potwierdza dostępność `TIMER=1` na wszystkich napędach.
 Czas ruchu i zachowanie mechaniki wymagają sprawdzenia na drukarce.
 `procedure_api: 1` potwierdza wspólny planer z osobnymi procedurami serwisowymi.
 `zortrax_menu_api: 1` potwierdza wspólny sterownik procedur menu OLED/G-code.
 
-Ładowanie z prawej kasety do T1, na początek na tym samym odcinku co T0:
+Osobna próba podawania stałego odcinka z prawej kasety do T1.
 
 ```gcode
 INVENTURE_LOAD_TEST ACTION=LOAD TOOL=T1 TARGET=230 DURATION=900 TUBE_SECONDS=50 HEAD_STEPS=95000 SMOOTH=1

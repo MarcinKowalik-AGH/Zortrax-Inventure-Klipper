@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-FACTORY-DUAL'
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
@@ -77,6 +77,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
+    assert c['INVENTURE_FACTORY_MOTION_TOOLS'] == 3
     assert c['INVENTURE_CONTROL_MAX_HZ'] == 20000
     assert 'inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u' in dictionary['commands']
     assert 'inventure_factory_state token=%u active=%c reason=%c reject=%c tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u fault=%c sequence=%u remaining_ms=%u' in dictionary['responses']
@@ -124,6 +125,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert embedded_dictionary_matches(app, dictionary)
     report = dict(motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'], motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
+                  factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],
                   axis_motion_max_hz=c['INVENTURE_AXIS_MOTION_MAX_HZ'],
                   axis_motion_z_max_hz=c['INVENTURE_AXIS_MOTION_Z_MAX_HZ'],

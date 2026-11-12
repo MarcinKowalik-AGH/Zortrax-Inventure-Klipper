@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-ALL-AXIS'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-DUAL'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -19,6 +19,7 @@ AXIS_MOTION_LIMITS = (('axis_motion_max_hz','INVENTURE_AXIS_MOTION_MAX_HZ',12500
     ('axis_motion_e_max_hz','INVENTURE_AXIS_MOTION_E_MAX_HZ',9600))
 FACTORY_FEED_RELEASE = 'RC8-CONTROL-R7-FACTORY-FEED'
 FACTORY_MOTION_RELEASE = 'RC8-CONTROL-R7-FACTORY-SPEED'
+FACTORY_DUAL_RELEASE = 'RC8-CONTROL-R7-FACTORY-DUAL'
 FACTORY_TIMING_QUERY = 'inventure_factory_motion_timing_query'
 FACTORY_TIMING_RESPONSE = 'inventure_factory_motion_timing peak_callback_ticks=%u peak_late_ticks=%u'
 FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=%c '
@@ -447,6 +448,8 @@ class InventureMCU:
         self.factory_feed_clock=int(self.mcu.get_constants().get('INVENTURE_FACTORY_FEED_CLOCK',0))
         self.factory_motion_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_ABI',0))
         self.factory_motion_max_hz=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_MAX_HZ',0))
+        legacy_tools=1 if self.factory_motion_abi==1 else 0
+        self.factory_motion_tools=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_TOOLS',legacy_tools))
         if self.factory_abi==1:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
         if self.factory_motion_abi==1:
@@ -1593,6 +1596,7 @@ class InventureMCU:
             'factory_feed_clock':getattr(self,'factory_feed_clock',0),
             'factory_motion_abi':getattr(self,'factory_motion_abi',0),
             'factory_motion_max_hz':getattr(self,'factory_motion_max_hz',0),
+            'factory_motion_tools':getattr(self,'factory_motion_tools',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
             **{attr:getattr(self,attr,0) for attr,_,_ in AXIS_MOTION_LIMITS},
             'control_state':getattr(self,'control_last',{}),
@@ -2541,10 +2545,11 @@ class InventureMCU:
                 config.get('procedure_t0','{}'),config.get('procedure_t1','{}'))
         except ValueError as exc:raise config.error(str(exc))
 
-    def _factory_motion_available(self):
+    def _factory_motion_available(self,tool=0):
         from .inventure_factory_core import FACTORY_MOTION_MAX_RATE
         return (getattr(self,'factory_motion_abi',0)==1
-                and getattr(self,'factory_motion_max_hz',0)>=FACTORY_MOTION_MAX_RATE)
+                and getattr(self,'factory_motion_max_hz',0)>=FACTORY_MOTION_MAX_RATE
+                and bool(getattr(self,'factory_motion_tools',1)&(1<<tool)))
 
     def cmd_procedure(self,gcmd):
         from .inventure_factory_core import PROCEDURES, procedure_modules
@@ -2554,13 +2559,18 @@ class InventureMCU:
             tool=str(gcmd.get('TOOL','T0')).upper()
             if tool not in ('T0','T1'):
                 raise gcmd.error('TOOL must be T0 or T1')
-            modules={name:procedure_modules(name,int(tool[-1])) for name in PROCEDURES}
+            profile=str(gcmd.get('SPEED_PROFILE','SERVICE')).upper()
+            if profile not in ('SERVICE','OEM'):
+                raise gcmd.error('SPEED_PROFILE must be SERVICE or OEM')
+            tool_index=int(tool[-1])
+            modules={name:procedure_modules(name,tool_index,profile) for name in PROCEDURES}
             gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,tool=tool,procedures=modules,
                 precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
                 standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
                 MCU_required_for_feeder=FACTORY_FEED_RELEASE,
-                MCU_required_for_oem_speed=FACTORY_MOTION_RELEASE,
-                speed_profiles=['SERVICE','OEM'] if tool=='T0' else ['SERVICE']),
+                MCU_required_for_oem_speed=FACTORY_DUAL_RELEASE if tool_index else FACTORY_MOTION_RELEASE,
+                speed_profile=profile,speed_profiles=['SERVICE','OEM'],
+                factory_motion_available=self._factory_motion_available(tool_index)),
                 sort_keys=True));return
         operation=str(gcmd.get('PROCEDURE','AUTO')).upper() if action=='PARAMS' else action
         if operation not in PROCEDURES:
@@ -2573,12 +2583,14 @@ class InventureMCU:
             if operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
             p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
             timeout=p['procedure_timeout']
+            fast_available=self._factory_motion_available(p['tool'])
             if read_only:
                 gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
-                    factory_motion_available=self._factory_motion_available(),
-                    modules=procedure_modules(operation,p['tool'])),sort_keys=True));return
-            if p['speed_profile']=='OEM' and not self._factory_motion_available():
-                raise ValueError('SPEED_PROFILE=OEM requires the '+FACTORY_MOTION_RELEASE+' MCU application')
+                    factory_motion_available=fast_available,
+                    modules=procedure_modules(operation,p['tool'],p['speed_profile'])),sort_keys=True));return
+            if p['speed_profile']=='OEM' and not fast_available:
+                release=FACTORY_DUAL_RELEASE if p['tool'] else FACTORY_MOTION_RELEASE
+                raise ValueError('SPEED_PROFILE=OEM for T%d requires the %s MCU application'%(p['tool'],release))
             if 'factory_session' not in self.commands:
                 raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
             needs_feeder = operation in ('AUTO','UNLOAD') or (
@@ -2710,7 +2722,7 @@ class InventureMCU:
             f['motion_legs'][leg].update(reason=row['reason'],drivers=row['drivers'])
 
     def _factory_poll_move(self,context):
-        from .inventure_factory_core import delta32
+        from .inventure_factory_core import delta32, uses_r0323_sequence
         f=context['factory'];m=f['move'];a=m['action'];snap=f['snapshot'];now=self.reactor.monotonic()
         row=self._motion_query();self._factory_account(context,row)
         stop=False;ok=False;kind=a['kind']
@@ -2733,7 +2745,8 @@ class InventureMCU:
                 message=('failed to release its limit' if kind=='home_release'
                          else 'failed to reach its limit')
                 raise ValueError('Factory '+a['axis']+' homing '+message)
-            if context['tool']==1 or a['axis']=='Z' or kind=='home_release':
+            released_xy=uses_r0323_sequence(context['tool'],f['parameters']['speed_profile'])
+            if not released_xy or a['axis']=='Z' or kind=='home_release':
                 f['homed'].append(a['axis']);f['position']['XYZ'.index(a['axis'])]=0.
                 f['reference_valid']=len(set(f['homed']))==3
             ok=True

@@ -1,23 +1,29 @@
-# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-SPEED
+# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-FACTORY-DUAL
 
-Host `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne. Profil
-`SPEED_PROFILE=OEM` przywraca żądane prędkości przejazdów i oscylacji T0
-z r0323 i wymaga MCU `RC8-CONTROL-R7-FACTORY-SPEED`. Zwykły profil
-serwisowy nadal działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+`SPEED_PROFILE=OEM` odtwarza żądane prędkości przejazdów i oscylacji r0323
+dla T0 i T1. Szybka procedura T1 wymaga MCU `RC8-CONTROL-R7-FACTORY-DUAL`.
+T0 OEM działa też z MCU FACTORY-SPEED i ALL-AXIS-SPEED. Profil
+serwisowy działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
-`INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0` rozpoczyna od bazowania
+`INVENTURE_PROCEDURE ACTION=AUTO ... SPEED_PROFILE=OEM` rozpoczyna od bazowania
 serwisowego i parkowania, następnie grzeje, przełącza dyszę i wykonuje
-próbę L1 zgodnie z r0323. L2 uruchamia kasetę i czeka na A. Po sygnale A
+próbę L1 zgodnie z r0323, również przy A=0 na wejściu. L2 uruchamia
+kasetę i czeka na A. Po sygnale A
 następuje przejazd do przodu, podawanie L3 i końcowy purge L4.
-W T1 stan A=0 na wejściu kieruje bezpośrednio do L2.
+W starszym profilu SERVICE dla T1 stan A=0 na wejściu kieruje bezpośrednio
+do L2. T1 korzysta z prawej, drugiej kasety, która ma numer kanału MCU 1.
+Podawanie ma kierunek DIR1 zarówno w kasecie, jak i w E T1.
+Wyładowanie obu napędów ma kierunek DIR0.
 Poprzednie `ACTION=LOAD` i `ACTION=RETRACT` pozostają osobnymi próbami
 stałego odcinka; `AUTO` nie przyjmuje ich parametrów `STEPS`, `HEAD_STEPS`,
 `TUBE_SECONDS`, `PURGE_STEPS`, `SMOOTH` ani `RATE`.
 
 Procedura SERVICE zakłada zamontowaną kasetę i podłączoną rurkę oraz pomija
-autoryzację RFID i zapis salda kasety. Zewnętrzna szpula ma osobną procedurę.
+autoryzację RFID i zapis salda kasety. Odpowiedni `MATERIAL` podaje operator.
+Zewnętrzna szpula ma osobną procedurę.
 Testy programu sprawdzają parametry i żądane kroki. Czasy przejazdów,
 pozycję karetki i reakcję mechaniki przy szybszym ruchu trzeba zweryfikować
 na drukarce.
@@ -27,15 +33,16 @@ na drukarce.
 Pierwsze MCU R7-FACTORY zgłaszało RUN podajnika w SERVICE przy zablokowanym
 zegarze PE6 (TIM9 CH2). Wersja FEED włącza zegar w sesji FACTORY. Host
 sprawdza tę obsługę przed startem procedur z napędem kasety.
-MCU FACTORY-SPEED dodaje osobną obsługę szybkich ruchów w sesji FACTORY.
+MCU FACTORY-DUAL udostępnia szybkie ruchy w sesji FACTORY obu narzędzi.
 
 1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
-   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_SPEED_BOOT17.zip`
+   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_FACTORY_DUAL_BOOT17.zip`
    na kartę i zainstaluj aplikację przez InventureBoot 1.7.
 2. Zaktualizuj host w terminalu Orange Pi przez SSH.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
+git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
 3. Wykonaj restart w konsoli Klippera we Fluidd.
@@ -50,23 +57,24 @@ Po ponownym połączeniu odczytaj wersje.
 INVENTURE_VERSION
 ```
 
-Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FACTORY-SPEED`
-i MCU `RC8-CONTROL-R7-FACTORY-SPEED`.
+Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-FACTORY-DUAL`
+i MCU `RC8-CONTROL-R7-FACTORY-DUAL`.
 W raporcie powinny być też widoczne
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
-`factory_motion_abi: 1`, `factory_motion_max_hz: 125000`,
+`factory_motion_abi: 1`, `factory_motion_max_hz: 125000`, `factory_motion_tools: 3`,
 `host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki
 oraz informację o nieobecności tego modułu na starszej instalacji.
 
-## Próba T0 z prędkościami OEM
+## Próby z prędkościami OEM
 
 Polecenia w tym rozdziale wpisz w konsoli Klippera we Fluidd. Odczyt
 PARAMS pozwala sprawdzić parametry i `factory_motion_available` przed ruchem.
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=SWEEP TOOL=T0 SPEED_PROFILE=OEM
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT
 ```
 
 Włącz SERVICE.
@@ -90,9 +98,24 @@ i wykonuje trasę X jednej porcji L1 z wyłączonym grzaniem, E i podajnikiem.
 INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T0 SPEED_PROFILE=OEM
 ```
 
-Po sprawdzeniu przejazdów wybierz jedną operację. Oba przykłady dotyczą
-lewej kasety T0 z materiałem Z-PLA. Dopasuj `MATERIAL` do kasety, a
-`TARGET` do używanego materiału.
+Przed pierwszą gorącą próbą T1 sprawdź na zimno docisk selektora.
+STATUS powinien pokazać przejazd X15 → X0 przy Y154,5. Obserwacja
+fizycznego przełączenia dyszy jest częścią tej próby.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SELECT TOOL=T1 SPEED_PROFILE=OEM
+```
+
+Po zakończeniu SELECT uruchom SWEEP dla T1. Pierwsza oscylacja nad
+koszem prowadzi od X72 do X90, po czym głowica zmienia kierunek co 36 mm.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=SWEEP TOOL=T1 SPEED_PROFILE=OEM
+```
+
+Po sprawdzeniu przejazdów wybierz jedną operację. Te dwa przykłady
+dotyczą lewej kasety T0 z materiałem Z-PLA. Dopasuj `MATERIAL`
+i `TARGET` do kasety.
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
@@ -100,6 +123,18 @@ INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 SPEED_PROFILE=OEM MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
+```
+
+Poniższe polecenia dotyczą prawej kasety T1. Podaj faktyczny `MATERIAL`.
+Przykłady dla Z-SUPPORT pobierają z profilu cel 235°C i budżety
+wycofania 50/50 mm. `TARGET` pozwala nadpisać temperaturę.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
+```
+
+```gcode
+INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-SUPPORT MAX_POWER=40
 ```
 
 Stan bieżącej próby pokazuje STATUS. STOP przerywa pracę.
@@ -113,12 +148,13 @@ INVENTURE_STOP
 ```
 
 Zwykły profil wybiera `SPEED_PROFILE=SERVICE`, domyślny przy ustawieniach
-wbudowanych.
-Dla prawej kasety użyj `INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 TARGET=230 MAX_POWER=40`.
+wbudowanych. Przykład dla prawej kasety z dotychczasową geometrią to
+`INVENTURE_PROCEDURE ACTION=AUTO TOOL=T1 SPEED_PROFILE=SERVICE TARGET=230 MAX_POWER=40`.
 
-T0 opuszcza stół do dolnej krańcówki, najeżdża na krańcówki Y i X i po
-każdym najeździe wyznacza zero osi na zwolnionym wejściu. Przed grzaniem
-jedzie przez X32,8 Y152,5 do X82,8 Y152,5 w układzie SERVICE.
+T0 oraz T1 w profilu OEM opuszczają stół do dolnej krańcówki, najeżdżają
+na krańcówki Y i X i po każdym najeździe wyznaczają zero osi na zwolnionym
+wejściu. Przed grzaniem T0 jedzie przez X32,8 do X82,8, a T1 przez X22 do
+X72. Oba przejazdy parkują na Y152,5 w układzie od zwolnionych krańcówek.
 Na zakończenie AUTO oraz po błędzie sterownik wyłącza grzanie i napędy.
 Chłodzenie gorącej głowicy działa automatycznie.
 
@@ -126,10 +162,15 @@ Chłodzenie gorącej głowicy działa automatycznie.
 
 | Etap | Domyślne działanie | Warunek wyjścia |
 |---|---|---|
-| L1 | T0 wykonuje porcję 20 mm z oscylacjami X przy stałym Y152,5 nad koszem. Porcja kończy się po pełnym ruchu X, domyślnie po 19 693 krokach E. Próg łączny wynosi 500 mm. | Dla T0 świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
+| L1 | T0 i T1 OEM wykonują porcję 20 mm z oscylacjami X przy stałym Y152,5 nad koszem. Porcja kończy się po pełnym ruchu X, domyślnie po 19 693 krokach E. Próg łączny wynosi 500 mm. | Świeży impuls o wieku do 3 s oraz co najmniej 6 startów podajnika kończą krótką ścieżkę. Brak świeżego impulsu wybiera L2. |
 | L2 | Podajnik do przodu, oczekiwanie na wejście A | A musi pojawić się w ciągu 5 s; A już aktywne pozwala przejść dalej. |
-| L3 | Głowica T0 stoi w X150,3 Y2,5 podczas podawania kasetą i E do 250 mm E (240 000 kroków). | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę liczenia. T0 wraca przez X132,8 Y152,5 do X82,8 Y152,5. |
-| L4 | AUTO kasety i oscylacje X nad koszem z budżetem 100 mm E. Domyślnie 96 394 kroki E i 3 przejazdy czyszczące dla T0. | Po co najmniej 3 startach podajnika T0 parkuje w X82,8 Y152,5. Brak startów uruchamia skonfigurowane wycofanie lub kończy błędem. |
+| L3 | Głowica stoi z przodu w X150,3 Y2,5 dla T0 lub X4,5 Y2,5 dla T1 OEM. Kaseta i E podają filament do limitu 250 mm E (240 000 kroków). | Co najmniej 6 zaakceptowanych impulsów. Przerwa ponad 2 s resetuje podstawę liczenia. Po etapie głowica parkuje przez punkt boczny nad koszem. |
+| L4 | AUTO kasety i oscylacje X nad koszem z budżetem 100 mm E. Domyślnie 96 394 kroki E i 3 przejazdy czyszczące. | Po co najmniej 3 startach podajnika głowica parkuje w punkcie środka. Brak startów uruchamia skonfigurowane wycofanie lub kończy błędem. |
+
+Kod r0323 w `0x0801433C` obsługuje oba kanały przez rekordy
+`0x08029A64` (T0) i `0x08029AA8` (T1). Pole +0x3C wybiera punkt
+podawania L3, odpowiednio 12 i 13. Wspólny kod parkowania jest w
+`0x0801D8FC`, a kod wyładowania U0–U3 w `0x0801402C`.
 
 L1 sprawdza ciszę przed licznikiem startów i budżetem. Spełnienie progu
 startów przy nieaktualnych impulsach nie oznacza sukcesu. Budżety 20/100 mm
@@ -162,11 +203,11 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `FINAL_MM`, `FINAL_STARTS` | 100, 3 | Końcowe wyciskanie i potwierdzenie L4 |
 | `FEEDER_MS`, `FEEDER_K` | 1000, 1,75 | Czas pojedynczego doładowania AUTO i materiałowy współczynnik budżetu |
 | `E_SPEED` | 1,6 | Prędkość osobnego E w długim podawaniu |
-| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | T0 30, 30, 250/60. T1 20, 20, 4. OEM T0 50, 8000/60, 250/60. | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
+| `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | SERVICE T0 30, 30, 250/60. SERVICE T1 20, 20, 4. OEM T0/T1 50, 8000/60, 250/60. | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
-| `HOME_SPEED`, `Z_SPEED` | T0 10, 2. T1 5, 2 | Prędkości najazdu XY i opuszczania stołu. T0 odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
+| `HOME_SPEED`, `Z_SPEED` | T0 i T1 OEM 10, 2. T1 SERVICE 5, 2. | Prędkości najazdu XY i opuszczania stołu. Bazowanie do zwolnienia odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
 | `TARGET`, `MAX_POWER` | 230°C, 40% | Cel PID wybranej dyszy i limit mocy |
-| `MATERIAL` | UNKNOWN | Profil transportu kasety T0 z r0323. Ustawia budżety U1/U2 i parametry napędu kasety. Temperaturę dobiera `TARGET`. |
+| `MATERIAL` | UNKNOWN | Ustawia budżety U1/U2 i parametry napędu kasety według r0323. Dla T1 OEM ustawia także domyślne `TARGET`. |
 | `DURATION` | 900 | Ograniczenie czasu od pierwszej gotowości termicznej; AUTO kończy grzanie wcześniej po zakończeniu procedury |
 | `PROCEDURE_TIMEOUT` | 1800 | Niezależny limit całej procedury, włącznie z przygotowaniem |
 
@@ -180,7 +221,7 @@ Profil serwisowy zachowuje limit 20 000 zdarzeń DDA/s. Host ogranicza
 tempo każdego odcinka według przełożenia CoreXY. Odpowiada to maksymalnie
 31,25 mm/s wzdłuż pojedynczej osi i około 22,1 mm/s na przekątnej 45°.
 
-| Ruch T0 w profilu OEM | Nastawa r0323 | Żądana prędkość |
+| Ruch T0 i T1 w profilu OEM | Nastawa r0323 | Żądana prędkość |
 |---|---:|---:|
 | Parkowanie, dojazdy, powrót selektora i przejazdy czyszczące | F8000 | 133,33 mm/s |
 | Oscylacje L1/L4 i powrót po porcji L1 | F3000 | 50 mm/s |
@@ -213,32 +254,38 @@ również nominalne przesunięcie dysz X10,8 i korektę egzemplarza.
 Dla punktów selektora 1–4 korekty narzędzia są częścią zarówno punktu,
 jak i zera, więc znoszą się w układzie od zwolnionych krańcówek.
 Stałe punkty T0 nad koszem i z przodu mają nominalne przesunięcie
-X15,3 Y2,5. Poniższe wartości T0 są podane dla zerowej korekty egzemplarza.
-Wartości T1 są w dotychczasowym układzie SERVICE.
+X15,3 Y2,5, a stałe punkty T1 mają przesunięcie X4,5 Y2,5.
+Przyjęto zerową korektę egzemplarza. T1 SERVICE używa współrzędnych
+wcześniejszej procedury.
 
-| Parametr | T0 | T1 |
-|---|---:|---:|
-| `CENTER_X`, `CENTER_Y` | X82,8 Y152,5 | X67,5 Y150 |
-| `APPROACH_X` | 139,5 | 10,5 |
-| `SWITCH_X`, `SWITCH_Y` | X154,5 Y154,5 | X−4,5 Y152 |
-| `SERVICE_X`, `SERVICE_Y` | X150,3 Y2,5 | X0 Y0 |
-| `MIN_X`, `MAX_X`, `MIN_Y`, `MAX_Y` | −5; 155; 0; 155 | −5; 155; 0; 155 |
+| Parametr | T0 | T1 OEM | T1 SERVICE |
+|---|---:|---:|---:|
+| `CENTER_X`, `CENTER_Y` | X82,8 Y152,5 | X72 Y152,5 | X67,5 Y150 |
+| `APPROACH_X` | 139,5 | 15 | 10,5 |
+| `SWITCH_X`, `SWITCH_Y` | X154,5 Y154,5 | X0 Y154,5 | X−4,5 Y152 |
+| `SERVICE_X`, `SERVICE_Y` | X150,3 Y2,5 | X4,5 Y2,5 | X0 Y0 |
+| `WIPE_Y` | 154,5 | 154,5 | 152 |
+| `MIN_X`, `MAX_X`, `MIN_Y`, `MAX_Y` | −5; 155; 0; 155 | −5; 155; 0; 155 | −5; 155; 0; 155 |
 
-Docisk T0 biegnie od X139,5 do X154,5 przy stałym Y154,5 i żądanej
-prędkości F250/60, czyli około 4,17 mm/s. Odpowiada to 9600 krokom
-każdego silnika A/B. `factory.motion_legs` w STATUS pokazuje punkty,
+Docisk OEM biegnie od X139,5 do X154,5 dla T0 i od X15 do X0
+dla T1. Obie trasy mają stałe Y154,5 oraz żądaną prędkość F250/60,
+czyli około 4,17 mm/s. Odpowiada to 9600 krokom każdego silnika A/B.
+`factory.motion_legs` w STATUS pokazuje punkty,
 prędkości i liczniki dla `selector_approach`, `selector_press`
 i `selector_return`. Fizyczne trafienie dźwigni wymaga obserwacji na drukarce.
 
-Parkowanie T0 wybiera najbliższy z punktów X32,8 i X132,8 na Y152,5,
-po czym jedzie do X82,8 Y152,5. `PARK_SPAN` określa rozstaw punktów,
-domyślnie 100 mm. `ACTION=PARK TOOL=T0` pozwala sprawdzić ten moduł na zimno.
-Przed dociskiem parkowanie także używa nominalnego punktu docelowej dyszy
-T0, ponieważ aktualne położenie mechanizmu przed wyborem jest nieznane.
-Przy domyślnym L4 czyszczenie T0 biegnie po X132,8, X32,8 i X59,8 na Y154,5.
-Pierwszy przejazd jednocześnie zmienia X i Y.
+Parkowanie T0 wybiera bliższy z punktów X32,8 i X132,8, a T1 OEM
+punkt X22 lub X122. Po dojeździe bocznym głowica jedzie do środka,
+całość kończy na Y152,5. `PARK_SPAN` określa rozstaw punktów,
+domyślnie 100 mm. `ACTION=PARK` pozwala sprawdzić ten moduł na zimno.
+Przed mechanicznym wyborem głowicy używany jest nominalny punkt
+parkowania dyszy docelowej. Fizyczny stan selektora przed ruchem
+pozostaje niepotwierdzony. Przy domyślnym L4 czyszczenie T0 biegnie po
+X132,8, X32,8 i X59,8, a T1 OEM po X22, X122 i X95, na Y154,5.
+Pierwszy przejazd czyszczący jednocześnie zmienia X i Y.
 
-Oscylacja T0 zaczyna od −18 mm w X, następnie zmienia kierunek co 36 mm.
+Oscylacja T0 zaczyna od −18 mm w X, T1 od +18 mm. Następnie kierunek
+zmienia się co 36 mm.
 Ruchy E używają
 fabrycznego zaokrąglenia: 1036 kroków dla pierwszego i 2073 dla kolejnych
 odcinków. Koniec czyszczenia jest wybierany ze znaku następnej oscylacji,
@@ -247,7 +294,7 @@ sztywną, zawsze tą samą sekwencją X dla danej dyszy. W r0323 oscylacje
 występują w L1 i L4 (`0x08012168`). L3 wykonuje dojazd i podawanie
 przy nieruchomej głowicy (`0x08014694–0x08014746`).
 
-T0 przyjmuje nadpisania współrzędnych domyślnie w układzie OEM
+T0 i T1 OEM przyjmują nadpisania współrzędnych domyślnie w układzie OEM
 (`XY_INPUT_FRAME=OEM`) i przelicza je na układ od zwolnionych krańcówek.
 `XY_INPUT_FRAME=RAW` dotyczy współrzędnych podanych w całym efektywnym
 profilu, włącznie z odziedziczonymi. PARAMS pokazuje współrzędne po przeliczeniu.
@@ -255,9 +302,18 @@ MIN/MAX są zawsze granicami w układzie SERVICE.
 
 ## Wyładowanie i cofanie po nieudanym L4
 
-Głowica T0 stoi nad koszem w X82,8 Y152,5 w układzie SERVICE. W r0323 Z-PLA i profil
-Unknown mają limity U1/U2 30 i 70 mm, a Z-PETG 50 i 50 mm. W SERVICE
-wybierz profil transportu przez `MATERIAL`.
+Przy wyładowaniu głowica stoi nad koszem w X82,8 Y152,5 dla T0 lub
+X72 Y152,5 dla T1 OEM. W r0323 Z-PLA i profil Unknown mają limity
+U1/U2 30 i 70 mm, a Z-PETG 50 i 50 mm. Dla T1 OEM dostępne są profile
+poniżej. Można jawnie ustawić `TARGET`, `UNLOAD_L1` i `UNLOAD_L2`.
+
+| `MATERIAL` dla T1 OEM | Domyślny cel PID | U1 / U2 |
+|---|---:|---:|
+| `Z-SUPPORT` | 235°C | 50 / 50 mm |
+| `Z-SUPPORT-PLUS` | 240°C | 30 / 70 mm |
+| `Z-SUPPORT-PREMIUM` | 230°C | 30 / 70 mm |
+| `BASF-ULTRAFUSE-BVOH` | 230°C | 30 / 70 mm |
+| `UNKNOWN` | 230°C | 30 / 70 mm |
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=UNLOAD TOOL=T0 MATERIAL=Z-PLA TARGET=230 MAX_POWER=40
@@ -275,12 +331,18 @@ INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T0 MATERIAL=Z-PETG
 Przed tymi dwoma budżetami kaseta cofa do 10 s lub do warunku braku A /
 aktywnego B. Następnie używany jest fabryczny tryb GATED. Po etapach E
 następuje końcowe cofanie do A=0 albo do limitu 6 s. Gdy cisza zakończy
-U1, T0 wchodzi w U2 i wysyła jeden krok przed ponownym sprawdzeniem ciszy.
+U1, T0 i T1 OEM wchodzą w U2 i wysyłają jeden krok przed ponownym
+sprawdzeniem ciszy. T1 SERVICE zachowuje wcześniejsze przejście od
+zakończenia U1 bezpośrednio do U3 przy ciszy.
 Prędkości 1 mm/s są nastawą SERVICE. Dokładne fizyczne odpowiedniki
 fabrycznych opóźnień CPU wymagają pomiaru.
 
-Wycofanie po L4 nie zamienia wyniku ładowania w sukces. Wynik informuje,
-czy A zostało zwolnione, i kończy grzanie/ruch. Awaria temperatury, kabla,
+Wycofanie po L4 raportuje błąd ładowania oraz informację o zwolnieniu A.
+Samodzielne UNLOAD kończy grzanie i ruch oraz potwierdza opróżnienie
+dopiero po A=0. Po 6 s z A=1 raportuje, że filament nadal jest przy
+czujniku. Oryginalny ekran r0323 prosi operatora o wyjęcie kasety
+i odcięcie końcówki. W SERVICE operator wykonuje te czynności po
+sprawdzeniu stanu. Awaria temperatury, kabla,
 świeżości danych, nadzoru sesji lub ręczny STOP zawsze przerywają pracę;
 nie uruchamiają automatycznego cofania.
 

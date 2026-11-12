@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-ALL-AXIS-SPEED'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-FACTORY-DUAL'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -218,6 +218,7 @@ def check_dictionary(path: Path) -> dict:
         raise ValueError('R7 missing leased factory procedure ABI')
     factory_motion = {'INVENTURE_FACTORY_MOTION_ABI': 1,
                       'INVENTURE_FACTORY_MOTION_MAX_HZ': 125000,
+                      'INVENTURE_FACTORY_MOTION_TOOLS': 3,
                       'INVENTURE_CONTROL_MAX_HZ': 20000}
     for name, value in factory_motion.items():
         if conf.get(name) != value:

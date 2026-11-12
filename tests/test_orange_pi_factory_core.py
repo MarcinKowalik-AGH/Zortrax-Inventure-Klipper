@@ -116,12 +116,50 @@ class FactoryCoreTests(unittest.TestCase):
         overridden = core.parameters(Command(TOOL='T0', TRAVEL_SPEED=90, PURGE_SPEED=45), configured)
         self.assertEqual((overridden['travel_speed'], overridden['purge_speed']), (90., 45.))
 
-    def test_OEM_profile_rejects_T1_and_rates_above_stock(self):
-        for values in ({'TOOL': 'T1'}, {'TRAVEL_SPEED': 134}, {'PURGE_SPEED': 51},
-                       {'SWITCH_SPEED': 4.2}, {'PURGE_E_STEPS': 2074}):
-            with self.subTest(values=values):
-                with self.assertRaises(core.FactoryError):
-                    core.parameters(Command(SPEED_PROFILE='OEM', **values))
+    def test_OEM_profile_rejects_rates_above_stock_for_both_tools(self):
+        for tool in ('T0', 'T1'):
+            for values in ({'TRAVEL_SPEED': 134}, {'PURGE_SPEED': 51},
+                           {'SWITCH_SPEED': 4.2}, {'PURGE_E_STEPS': 2074}):
+                with self.subTest(tool=tool, values=values):
+                    with self.assertRaises(core.FactoryError):
+                        core.parameters(Command(TOOL=tool, SPEED_PROFILE='OEM', **values))
+
+    def test_t1_oem_translates_its_own_selector_and_service_positions(self):
+        p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM'))
+        self.assertEqual(p['xy_input_frame'], 'OEM')
+        self.assertEqual(tuple(p[k] for k in ('center_x', 'center_y')), (72., 152.5))
+        self.assertEqual(tuple(p[k] for k in ('approach_x', 'switch_x', 'switch_y')), (15., 0., 154.5))
+        self.assertEqual(tuple(p[k] for k in ('service_x', 'service_y', 'wipe_y')), (4.5, 2.5, 154.5))
+        self.assertEqual(tuple(p[k] for k in ('travel_speed', 'purge_speed', 'switch_speed')),
+                         (8000/60, 3000/60, 250/60))
+        for frame, override, expect in (('OEM', 3, 7.5), ('RAW', 3, 3.)):
+            result = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM',
+                                             XY_INPUT_FRAME=frame, SERVICE_X=override))
+            self.assertEqual(result['service_x'], expect)
+        with self.assertRaisesRegex(core.FactoryError, 'negative X'):
+            core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', SWITCH_X=10.5))
+
+    def test_t1_oem_uses_cassette_temperature_and_unload_records(self):
+        records = (
+            ('UNKNOWN', 230, 30, 70), ('Z-SUPPORT', 235, 50, 50),
+            ('Z-SUPPORT-PLUS', 240, 30, 70), ('Z-SUPPORT PREMIUM', 230, 30, 70),
+            ('BASF Ultrafuse BVOH', 230, 30, 70),
+        )
+        for name, target, u1, u2 in records:
+            with self.subTest(material=name):
+                p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL=name))
+                self.assertEqual((p['target'], p['unload_l1'], p['unload_l2']), (target, u1, u2))
+                self.assertEqual((p['feeder_ms'], p['feeder_k']), (1000, 1.75))
+        overridden = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='Z-SUPPORT',
+                                             TARGET=220, UNLOAD_L2=45))
+        self.assertEqual((overridden['target'], overridden['unload_l2']), (220, 45))
+        for params in (dict(TOOL='T0', MATERIAL='Z-SUPPORT'),
+                       dict(TOOL='T1', MATERIAL='Z-SUPPORT'),
+                       dict(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='Z-PLA'),
+                       dict(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='EXTERNAL-SUPPORT')):
+            with self.subTest(params=params):
+                with self.assertRaisesRegex(core.FactoryError, 'MATERIAL'):
+                    core.parameters(Command(**params))
 
     def test_t0_legacy_tuned_points_translate_to_raw_release_coordinates(self):
         configured = core.profiles(t0={'APPROACH_X': 135, 'SWITCH_X': 150,
@@ -235,6 +273,49 @@ class FactoryCoreTests(unittest.TestCase):
         self.assertEqual((sweep[-1]['x'], sweep[-1]['y']), (82.8, 152.5))
         self.assertFalse(any(a['kind'] == 'heat' or a.get('e')
                              or (a['kind'] == 'mode' and a['mode']) for a in ex.actions))
+
+    def test_t1_oem_select_and_sweep_are_cold_and_use_the_released_reference(self):
+        p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM'))
+        select = Executor(p, operation='SELECT').run()
+        homing = [(a['kind'], a['axis']) for a in select.actions
+                  if a['kind'] in ('home', 'home_release')]
+        self.assertEqual(homing, [('home', 'Z'), ('home', 'Y'), ('home_release', 'Y'),
+                                  ('home', 'X'), ('home_release', 'X')])
+        selector = [a for a in select.actions if a.get('leg', '').startswith('selector_')]
+        self.assertEqual([(a['x'], a['y'], a['speed']) for a in selector],
+                         [(15., 154.5, 8000/60), (0., 154.5, 250/60), (72., 152.5, 8000/60)])
+        sweep = Executor(p, operation='SWEEP').run()
+        moves = sweep.in_phase('SWEEP', 'move')
+        self.assertEqual([(a['x'], a['y'], a['speed']) for a in moves],
+                         [(x, 152.5, 50.) for x in [90., 54.] * 5 + [72.]])
+        for ex in (select, sweep):
+            self.assertFalse(any(a['kind']=='heat' or a.get('e')
+                                 or (a['kind']=='mode' and a['mode']) for a in ex.actions))
+
+    def test_t1_oem_auto_tries_l1_even_with_no_a_and_uses_stock_parking(self):
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if action['kind'] == 'wait_a':result['a'] = 1
+        p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM'))
+        ex = Executor(p, feedback)
+        ex.snap['a'] = 0
+        ex.run()
+        self.assertEqual(ex.done['terminal'], 'L4')
+        self.assertEqual(ex.program.history,
+                         ['HOME','PARK','HEAT','SWITCH','L1','L2','L3','L4','DONE'])
+        self.assertEqual([(a['x'],a['y']) for a in ex.in_phase('PARK','move')],
+                         [(22.,152.5),(72.,152.5)])
+        self.assertEqual([(a['x'],a['y']) for a in ex.in_phase('L2','move')], [(4.5,2.5)])
+        self.assertEqual([(a['x'],a['y']) for a in ex.in_phase('L3','move')],
+                         [(22.,152.5),(72.,152.5)])
+        self.assertEqual([round(a['e']*960) for a in ex.in_phase('L1','move')[:2]], [1036,2073])
+        final = ex.in_phase('L4','move')
+        self.assertEqual([(a['x'],a['y'],a['speed']) for a in final if a['y']==154.5],
+                         [(x,154.5,8000/60) for x in (22.,122.,95.)])
+        self.assertEqual([(a['x'],a['y']) for a in final[-2:]], [(122.,152.5),(72.,152.5)])
+        self.assertEqual(round(sum(a['e'] for a in final)*960), 96394)
+        self.assertEqual(core.procedure_modules('AUTO', 1, 'OEM'),
+                         ('home','park','heat','select_tool','load_l1_l4'))
 
     def test_short_path_uses_exact_integer_kernel_and_stops_without_long_path(self):
         for tool in (0, 1):
@@ -396,6 +477,21 @@ class FactoryCoreTests(unittest.TestCase):
         self.assertIn('U2', ex.program.history)
         u2=ex.in_phase('U2','retract_until_quiet')
         self.assertEqual([(a['mm'],a.get('min_steps')) for a in u2],[(1./960,1)])
+
+    def test_t1_oem_unload_keeps_u2_first_pulse_when_u1_ends_on_silence(self):
+        def feedback(ex, action, result):
+            if action['kind']=='retract_until_quiet':
+                result.update(ok=True, sent_steps=1)
+        p = core.parameters(Command(TOOL='T1', SPEED_PROFILE='OEM', MATERIAL='Z-SUPPORT'))
+        ex = Executor(p, feedback, operation='UNLOAD').run()
+        self.assertEqual(ex.done['terminal'], 'UNLOAD')
+        self.assertEqual(ex.in_phase('U0','wait_unload')[0]['timeout_s'], 10.)
+        self.assertEqual(ex.in_phase('U1','retract_until_quiet')[0]['mm'], 50.)
+        u2 = ex.in_phase('U2','retract_until_quiet')
+        self.assertEqual([(a['mm'],a['min_steps']) for a in u2], [(1./960,1)])
+        self.assertEqual(ex.in_phase('U3','retract_until_a')[0]['timeout_s'], 6.)
+        self.assertEqual(core.procedure_modules('UNLOAD', 1, 'OEM'),
+                         ('home','park','heat','select_tool','unload'))
 
     def test_disabled_fallback_stops_at_final_verification(self):
         p = core.defaults(0);p['fallback'] = 0

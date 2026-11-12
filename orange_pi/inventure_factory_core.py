@@ -14,8 +14,8 @@ E_STEPS_PER_MM = 960
 XY_STEPS_PER_MM = 640
 MAX_MASTER_RATE = 20000
 FACTORY_MOTION_MAX_RATE = 125000
-OEM_T0_SPEEDS = dict(travel_speed=8000. / 60., purge_speed=3000. / 60.,
-                     switch_speed=250. / 60.)
+OEM_SPEEDS = dict(travel_speed=8000. / 60., purge_speed=3000. / 60.,
+                  switch_speed=250. / 60.)
 XY_RELEASE_MM = 5000 / XY_STEPS_PER_MM
 XY_RELEASE_SPEED = 1.
 UINT32 = 0xffffffff
@@ -37,6 +37,15 @@ _T0_MATERIALS = (
     'Z-FLEX', 'Z-GLASS', 'Z-HIPS', 'Z-NYLON', 'Z-PCABS', 'Z-PEEK', 'Z-PETG',
     'Z-PHA', 'Z-PLA', 'Z-PLA-PRO', 'Z-SEMIFLEX', 'Z-ULTRAT', 'Z-ULTRAT-PLUS',
 )
+# r0323 cartridge parameters, 24-byte records at 0x08029B30. Temperature
+# comes from +0x14 and the U1/U2 distances from +0x04/+0x0c.
+_T1_CARTRIDGE_MATERIALS = {
+    'UNKNOWN': (230., 30., 70.),
+    'Z-SUPPORT': (235., 50., 50.),
+    'Z-SUPPORT-PLUS': (240., 30., 70.),
+    'Z-SUPPORT-PREMIUM': (230., 30., 70.),
+    'BASF-ULTRAFUSE-BVOH': (230., 30., 70.),
+}
 
 # r0323 labels the released switches with negative coordinates (P03).
 # Selector points 1–4 already include the source-tool correction, which
@@ -45,11 +54,18 @@ _T0_MATERIALS = (
 _T0_OEM_TO_RAW = dict(approach_x=4.5, switch_x=4.5, switch_y=2.5,
                       center_x=15.3, center_y=2.5, service_x=15.3,
                       service_y=2.5, wipe_y=2.5)
+_T1_OEM_TO_RAW = dict(approach_x=4.5, switch_x=4.5, switch_y=2.5,
+                      center_x=4.5, center_y=2.5, service_x=4.5,
+                      service_y=2.5, wipe_y=2.5)
 
 
-def procedure_modules(operation, tool):
+def uses_r0323_sequence(tool, speed_profile='SERVICE'):
+    return tool == 0 or speed_profile == 'OEM'
+
+
+def procedure_modules(operation, tool, speed_profile='SERVICE'):
     modules = PROCEDURES[operation]
-    if tool == 0 and operation in ('AUTO', 'UNLOAD'):
+    if uses_r0323_sequence(tool, speed_profile) and operation in ('AUTO', 'UNLOAD'):
         return modules[:1] + ('park',) + tuple(m for m in modules[1:] if m != 'position_bin')
     return modules
 
@@ -115,7 +131,8 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     wipe_exit=(0., 100.), park_span=(1., 200.), manual_mm=(.1, 250.), feeder=(0, 1),
     target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
     procedure_timeout=(60., 3600.))
-_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'), 'material': _T0_MATERIALS,
+_CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'),
+            'material': tuple(dict.fromkeys((*_T0_MATERIALS, *_T1_CARTRIDGE_MATERIALS))),
             'xy_input_frame': ('OEM', 'RAW'), 'speed_profile': ('SERVICE', 'OEM')}
 _INTEGERS = frozenset(('l1_starts', 'pulse_count', 'final_starts',
                       'feeder_ms', 'monitor', 'fallback', 'purge_e_steps',
@@ -139,11 +156,10 @@ def _validated(values, operation=None):
             raise FactoryError(key.upper() + ' must be ' + ' or '.join(choices))
         p[key] = value
     oem = p['speed_profile'] == 'OEM'
-    if oem and p['tool'] != 0:
-        raise FactoryError('SPEED_PROFILE=OEM is available for T0')
+    stock_sequence = uses_r0323_sequence(p['tool'], p['speed_profile'])
     for key, (low, high) in _LIMITS.items():
         if oem:
-            high = OEM_T0_SPEEDS.get(key, high)
+            high = OEM_SPEEDS.get(key, high)
         raw = p[key]
         try:
             number = float(raw)
@@ -156,10 +172,15 @@ def _validated(values, operation=None):
                 raise FactoryError(key.upper() + ' must be an integer')
             number = int(number)
         p[key] = number
-    if p['tool'] == 1 and p['material'] != 'UNKNOWN':
-        raise FactoryError('MATERIAL selects an r0323 T0 cassette profile')
-    if p['tool'] == 1 and p['xy_input_frame'] != 'RAW':
-        raise FactoryError('XY_INPUT_FRAME=OEM is available for T0')
+    if p['tool'] == 0 and p['material'] not in _T0_MATERIALS:
+        raise FactoryError('MATERIAL must be an r0323 T0 cassette profile')
+    if p['tool'] == 1:
+        if oem and p['material'] not in _T1_CARTRIDGE_MATERIALS:
+            raise FactoryError('MATERIAL must be an r0323 T1 cassette profile')
+        if not oem and p['material'] != 'UNKNOWN':
+            raise FactoryError('MATERIAL selects an r0323 T0 cassette profile')
+        if not oem and p['xy_input_frame'] != 'RAW':
+            raise FactoryError('T1 XY_INPUT_FRAME=OEM requires SPEED_PROFILE=OEM')
     if p['l1_budget'] < p['l1_portion']:
         raise FactoryError('L1_BUDGET must cover at least one L1_PORTION')
     if p['unload_l1'] + p['unload_l2'] <= 0:
@@ -175,6 +196,8 @@ def _validated(values, operation=None):
     switch_delta = p['switch_x'] - p['approach_x']
     if (p['tool'] == 0 and switch_delta < 1. / XY_STEPS_PER_MM):
         raise FactoryError('T0 SWITCH_X must be beyond APPROACH_X toward positive X')
+    if p['tool'] == 1 and oem and switch_delta > -1. / XY_STEPS_PER_MM:
+        raise FactoryError('T1 SWITCH_X must be beyond APPROACH_X toward negative X')
     points = [(0., 0.), (cx, cy),
               (p['approach_x'], p['switch_y']),
               (p['switch_x'], p['switch_y']),
@@ -184,9 +207,9 @@ def _validated(values, operation=None):
                (-p['wipe_span']/2., p['wipe_span']/2., -p['wipe_exit'], p['wipe_exit'])]
     left, right = cx - p['park_span']/2., cx + p['park_span']/2.
     park_approaches = []
-    if p['tool'] == 0 or operation in ('PARK', 'SWEEP'):
+    if stock_sequence or operation in ('PARK', 'SWEEP'):
         park_approaches.append((0., 0.))
-    if p['tool'] == 0:
+    if stock_sequence:
         park_approaches.extend(((p['service_x'], p['service_y']),
                                 (cx - p['wipe_exit'], p['wipe_y']),
                                 (cx + p['wipe_exit'], p['wipe_y'])))
@@ -276,17 +299,25 @@ def parameters(gcmd, configured=None, operation=None):
 
 def _parameters(tool, values, operation=None):
     p = defaults(tool)
-    if str(values.get('speed_profile', p['speed_profile'])).strip().upper() == 'OEM':
-        p.update(OEM_T0_SPEEDS)
+    oem = str(values.get('speed_profile', p['speed_profile'])).strip().upper() == 'OEM'
+    if oem:
+        p.update(OEM_SPEEDS)
+        if tool == 1:
+            for key, offset in _T1_OEM_TO_RAW.items():
+                p[key] += offset
+            p.update(home_speed=10., xy_input_frame='OEM')
     material = str(values.get('material', p['material'])).strip().upper().replace(' ', '-')
     if material == 'Z-PETG':
         p.update(unload_l1=50., unload_l2=50.)
     if material in ('Z-FLEX', 'Z-SEMIFLEX'):
         p.update(feeder_ms=1500, feeder_k=3.)
+    if oem and tool == 1 and material in _T1_CARTRIDGE_MATERIALS:
+        p['target'], p['unload_l1'], p['unload_l2'] = _T1_CARTRIDGE_MATERIALS[material]
     frame = str(values.get('xy_input_frame', p['xy_input_frame'])).strip().upper()
     p.update(values)
-    if tool == 0 and frame == 'OEM':
-        for key, offset in _T0_OEM_TO_RAW.items():
+    if (tool == 0 or oem) and frame == 'OEM':
+        offsets = _T0_OEM_TO_RAW if tool == 0 else _T1_OEM_TO_RAW
+        for key, offset in offsets.items():
             if key not in values or isinstance(values[key], bool):
                 continue
             try:
@@ -329,6 +360,7 @@ class FactoryProgram:
     """Yield bounded actions; the host sends their fresh completion snapshots."""
     def __init__(self, p):
         self.p = _validated(p)
+        self.stock_sequence = uses_r0323_sequence(self.p['tool'], self.p['speed_profile'])
         self.xy = (0., 0.)
         self.history = []
 
@@ -404,7 +436,7 @@ class FactoryProgram:
         if clean:
             snap = yield from self.clean(dx)
         else:
-            speed = p['purge_speed'] if p['tool'] == 0 else p['travel_speed']
+            speed = p['purge_speed'] if self.stock_sequence else p['travel_speed']
             snap = yield from self._move(*entry, speed=speed)
         return issued, snap
 
@@ -420,7 +452,7 @@ class FactoryProgram:
         p = self.p
         if next_direction is None:
             next_direction = -1 if p['tool'] == 0 else 1
-        if p['tool'] == 1:
+        if not self.stock_sequence:
             yield from self._move(self.xy[0], p['wipe_y'])
         # Preserve the OEM parity of the remaining purge oscillation; a
         # standalone clean chooses its direction from the selected tool.
@@ -445,7 +477,7 @@ class FactoryProgram:
             return already_quiet
         # r0323 enters U2 even after U1 stops on silence. It sends one
         # pulse before checking that silence again, with the same baseline.
-        if self.p['tool'] == 0 and already_quiet:
+        if self.stock_sequence and already_quiet:
             first = min(length, 1. / E_STEPS_PER_MM)
             result = yield dict(kind='retract_until_quiet', mm=first,
                                 speed=speed, min_steps=1, quiet_s=quiet_s)
@@ -474,14 +506,14 @@ class FactoryProgram:
         for phase, length, speed in (
                 ('U1', p['unload_l1'], p['unload_speed1']),
                 ('U2', p['unload_l2'], p['unload_speed2'])):
-            if quiet and p['tool'] == 1:
+            if quiet and not self.stock_sequence:
                 break
             quiet = yield from self._module('unload_' + phase.lower(),
                 self._unload_retract(phase, length, speed, quiet))
         return (yield from self._module('unload_clear', self._unload_clear()))
 
     def _fallback(self):
-        if self.p['tool'] == 0:
+        if self.stock_sequence:
             yield from self.park()
         result = yield from self.unload()
         raise FactoryError('l4_starts_missing_fallback_completed',
@@ -499,7 +531,7 @@ class FactoryProgram:
             result = yield dict(kind='home', axis=axis, max_mm=maximum, speed=speed)
             if isinstance(result, dict) and result.get('ok') is False:
                 raise FactoryError('homing_' + axis.lower() + '_failed')
-            if p['tool'] == 0 and axis != 'Z':
+            if self.stock_sequence and axis != 'Z':
                 result = yield dict(kind='home_release', axis=axis, max_mm=XY_RELEASE_MM,
                                     speed=XY_RELEASE_SPEED)
                 if isinstance(result, dict) and result.get('ok') is False:
@@ -546,7 +578,7 @@ class FactoryProgram:
             issued, snap = yield from self._purge(p['l1_portion'])
             total += issued
             starts = delta32(snap['starts'], baseline)
-            if (p['tool'] == 1 and not snap['a']) or snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
+            if (not self.stock_sequence and not snap['a']) or snap['pulse_age_ms'] > p['l1_quiet'] * 1000.:
                 break
             if starts >= p['l1_starts']:
                 yield from self._mode(0)
@@ -577,7 +609,7 @@ class FactoryProgram:
                 or snap['pulse_age_ms'] > p['pulse_quiet'] * 1000.):
             raise FactoryError('l3_unverified_transport_result')
         yield from self._mode(0)
-        if p['tool'] == 0:
+        if self.stock_sequence:
             yield from self.park()
         else:
             yield from self._center()
@@ -593,13 +625,13 @@ class FactoryProgram:
             if p['fallback']:
                 yield from self._fallback()
             raise FactoryError('l4_starts_missing')
-        if p['tool'] == 0:
+        if self.stock_sequence:
             yield from self.park()
         yield from self._mode(0)
 
     def load(self, selection):
         entry = _snapshot(selection)
-        if self.p['tool'] == 0 or entry['a']:
+        if self.stock_sequence or entry['a']:
             short = yield from self._module('load_l1', self._load_l1())
             if short:
                 return 'L1'
@@ -614,11 +646,11 @@ class FactoryProgram:
         if operation not in PROCEDURES:
             raise FactoryError('Unknown procedure ' + operation)
         p = self.p
-        if operation in ('PARK', 'SWEEP') and p['tool'] == 1:
+        if operation in ('PARK', 'SWEEP') and not self.stock_sequence:
             _validated(p, operation)
-        cassette_t0 = p['tool'] == 0 and operation in ('AUTO', 'UNLOAD')
-        park_before_heat = cassette_t0 or operation in ('PARK', 'SWEEP')
-        yield from self.home(y_first=park_before_heat or (p['tool'] == 0 and operation == 'SELECT'))
+        parked_cassette = self.stock_sequence and operation in ('AUTO', 'UNLOAD')
+        park_before_heat = parked_cassette or operation in ('PARK', 'SWEEP')
+        yield from self.home(y_first=park_before_heat or (self.stock_sequence and operation == 'SELECT'))
         if park_before_heat:
             yield from self._phase('PARK')
             yield from self.park()
@@ -634,7 +666,7 @@ class FactoryProgram:
             terminal = yield from self.load(selection)
             cleaned = terminal == 'L4'
         elif operation in ('PURGE', 'CLEAN', 'MANUAL', 'UNLOAD'):
-            if not cassette_t0:
+            if not parked_cassette:
                 yield from self.position_bin()
             yield from self._phase(operation)
             if operation == 'PURGE':

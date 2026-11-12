@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-ALL-AXIS",
+  "release": "RC8-CONTROL-R7-UIFAST-FACTORY-DUAL",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "719feaa9128e92ca50038d4f8f7a798e3a9fd93994be6d28aabc79537e2aec3f",
+  "module_sha256": "4b99915384950777b4f9731ae9bc4c7f978e64c31b4b8170c7aad6e123d9d8ba",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -37,9 +37,10 @@
     "91bfe12c6ca6e4686cb7f376fc1c02b56948207d7ab70b06dbae32f368a4a32b",
     "5889f70d1662d5dd79862e4986524ae6747e8875dfcfcd2b459458d7c40007f0",
     "8bded1c780f38a254e6611d1212150b70e027dc0380a2e9f261388ed2c341874",
-    "72e5b55f8f578e6d3bf21cc1334626ea098e825c0ad67e4762a21bbe54fd6c50"
+    "72e5b55f8f578e6d3bf21cc1334626ea098e825c0ad67e4762a21bbe54fd6c50",
+    "719feaa9128e92ca50038d4f8f7a798e3a9fd93994be6d28aabc79537e2aec3f"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-ALL-AXIS",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-FACTORY-DUAL",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -57,7 +58,7 @@
     "overheat_limit_c": 50,
     "maximum_duration_s": 180
   },
-  "motor_test_release": "RC8-CONTROL-R7-FACTORY",
+  "motor_test_release": "RC8-CONTROL-R7-FACTORY-DUAL",
   "oled_allowed_existing_sha256": [
     "e539ced0f43aae32fd064ea59b48ab8d46e80cbb9f7237a5cd2bf1dd2a8a89c8",
     "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
@@ -205,7 +206,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "e151976868b0b82f1854f327d5b6d5a907aa70510a42d0c7e79060b8a7bc3f01",
+  "factory_core_sha256": "eb8a73d8a87045903ffbbace6672ac2a2aaf847c74a17cde0f7651ace3f6d403",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -243,6 +244,62 @@
       "factory_motion_abi": 1,
       "factory_motion_max_hz": 125000,
       "physical_test": "pending operator"
+    },
+    "T1_OEM": {
+      "required_MCU": "RC8-CONTROL-R7-FACTORY-DUAL",
+      "factory_motion_tools": 3,
+      "cassette_channel": 1,
+      "travel_speed_mm_s": 133.33333333333334,
+      "oscillation_speed_mm_s": 50.0,
+      "selector_speed_mm_s": 4.166666666666667,
+      "released_xy_mm": {
+        "bin": [
+          72,
+          152.5
+        ],
+        "selector_approach": [
+          15,
+          154.5
+        ],
+        "selector_press": [
+          0,
+          154.5
+        ],
+        "front_service": [
+          4.5,
+          2.5
+        ]
+      },
+      "e_feed_dir": 1,
+      "e_retract_dir": 0,
+      "material_target_c_u1_mm_u2_mm": {
+        "UNKNOWN": [
+          230,
+          30,
+          70
+        ],
+        "Z-SUPPORT": [
+          235,
+          50,
+          50
+        ],
+        "Z-SUPPORT-PLUS": [
+          240,
+          30,
+          70
+        ],
+        "Z-SUPPORT-PREMIUM": [
+          230,
+          30,
+          70
+        ],
+        "BASF-ULTRAFUSE-BVOH": [
+          230,
+          30,
+          70
+        ]
+      },
+      "physical_test": "pending cold selector and right cassette trial"
     }
   },
   "factory_core_allowed_existing_sha256": [
@@ -250,7 +307,8 @@
     "3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9",
     "25fe47e35d1f292c91f777b87596eeeba02db2f38d117e2af7e00c8a2f30821d",
     "2260bdfe7a4468e15286d51d7e6b74064754ff6b20ba0508ec62c11593943041",
-    "fca330b117d1e0fc18581cc6ec84936d1b79f10d3a8169b45a4c62fd4c4f7cdd"
+    "fca330b117d1e0fc18581cc6ec84936d1b79f10d3a8169b45a4c62fd4c4f7cdd",
+    "e151976868b0b82f1854f327d5b6d5a907aa70510a42d0c7e79060b8a7bc3f01"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,

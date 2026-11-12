@@ -9,6 +9,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
+#define CM_FACTORY_TOOL_MASK 3u
 #define CM_FACTORY_PULSE_US 2u
 #define CM_FACTORY_MIN_INTERVAL_US 6u
 #define CM_AXIS_Z_MAX_HZ 3200u
@@ -18,6 +19,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
+DECL_CONSTANT("INVENTURE_FACTORY_MOTION_TOOLS",CM_FACTORY_TOOL_MASK);
 DECL_CONSTANT("INVENTURE_AXIS_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_AXIS_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
 DECL_CONSTANT("INVENTURE_AXIS_MOTION_Z_MAX_HZ",CM_AXIS_Z_MAX_HZ);
@@ -588,7 +590,8 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
                 || args[7]!=CM_FACTORY_PULSE_US || args[9] || args[10] || args[11]))reject=1;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now)))reject=3;
         if(!reject && fast && ((door_policy_enabled() && door_closed_mask()!=3)
-                || (!direct && (!fs.active || fs.tool!=0 || iv9_due(now,fs.deadline)))))reject=3;
+                || (!direct && (!fs.active || !(CM_FACTORY_TOOL_MASK&BIT(fs.tool))
+                               || iv9_due(now,fs.deadline)))))reject=3;
         if(!reject && direct && (fs.active || feeder_running[0] || feeder_running[1]
                 || locks_on[0] || locks_on[1]))reject=2;
         if(!reject && direct && args[5] && !cm_axis_e_ready(tool,now))reject=5;
