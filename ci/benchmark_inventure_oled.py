@@ -19,7 +19,7 @@ def benchmark():
     package=types.ModuleType('inventure_benchmark')
     package.__path__=[str(ROOT/'orange_pi'),str(ROOT/'host')]
     sys.modules[package.__name__]=package
-    transport=importlib.import_module(package.__name__+'.inventure_oled_transport')
+    transport=importlib.import_module(package.__name__+'.inventure_oled_uifast_transport')
     renderer=importlib.import_module(package.__name__+'.inventure_oled_render')
     menus=importlib.import_module(package.__name__+'.inventure_oem_menu')
     spec=importlib.util.spec_from_file_location('inventure_benchmark_msgproto',ROOT/'tests/fixtures/pinned_msgproto.py')

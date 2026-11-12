@@ -17,7 +17,7 @@ from test_orange_pi_door_policy import adapter
 from test_orange_pi_control import msgproto
 
 ROOT=Path(__file__).resolve().parents[1]
-t=importlib.import_module(adapter.__package__+'.inventure_oled_transport')
+t=importlib.import_module(adapter.__package__+'.inventure_oled_uifast_transport')
 o=importlib.import_module(adapter.__package__+'.inventure_oled')
 core=importlib.import_module(adapter.__package__+'.inventure_menu_core')
 menu=importlib.import_module(adapter.__package__+'.inventure_oem_menu')

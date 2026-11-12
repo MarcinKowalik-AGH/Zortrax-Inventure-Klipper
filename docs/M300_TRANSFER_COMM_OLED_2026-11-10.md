@@ -67,12 +67,13 @@ Na bezczynnej drukarce:
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
-Instalator aktualizuje adapter, menu i `inventure_oled_transport.py` jako
-jeden komplet. Sprawdza znane sumy poprzednich plików, zapisuje ich kopie
-i potrafi przywrócić dokładnie poprzedni transport. Zachowuje `printer.cfg`,
-UART, SPI, geometrię, bootloader i Flash MCU.
+UIFAST korzysta z własnego modułu `inventure_oled_uifast_transport.py`.
+Instalator sprawdza sumy plików i zapisuje kopie aktualizowanych modułów.
+Poprzedni host przy wycofaniu aktualizacji ponownie korzysta ze swojego
+`inventure_oled_transport.py`. Przewijanie i transmisję OLED można
+sprawdzić również z MCU `RC8-CONTROL-R6-SMOOTH`.
 
-W konsoli Klippera:
+W konsoli Klippera w Fluidd wykonaj polecenia
 
 ```gcode
 INVENTURE_VERSION

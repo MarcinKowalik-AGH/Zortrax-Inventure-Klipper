@@ -11,7 +11,7 @@ import secrets
 from .inventure_oled_render import Frame, KlipperStatus
 from . import inventure_oled_render as panel_render
 from .inventure_oem_menu import OEMMenu
-from .inventure_oled_transport import FastOledStream, OledStream
+from .inventure_oled_uifast_transport import FastOledStream, OledStream
 
 # Klipper's native serialqueue background priority: motion/heater deadlines
 # remain ahead of optional pixels, on the existing, separate OLED queue.

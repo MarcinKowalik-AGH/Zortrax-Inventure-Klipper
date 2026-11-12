@@ -341,20 +341,30 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(self.dest.read_bytes(),modified)
         self.assertFalse(any('stop' in a for a in self.calls))
 
-    def test_known_transport_upgrade_and_rollback_preserve_the_exact_previous_dependency(self):
-        previous=(ROOT/'host/inventure_oled_transport.py').read_bytes()
-        dest=self.extras/'inventure_oled_transport.py';dest.write_bytes(previous)
-        self.active=False
+    def test_r6_t1_upgrade_preserves_legacy_transport_and_rollback_removes_new_module(self):
+        previous_host=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
+        self.dest.write_bytes(previous_host)
+        previous_transport=(ROOT/'host/inventure_oled_transport.py').read_bytes()+b'\n# Older local OLED variant\n'
+        legacy=self.extras/'inventure_oled_transport.py'
+        legacy.write_bytes(previous_transport)
+        new_name='inventure_oled_uifast_transport.py'
+        new_transport=self.extras/new_name
         with patch('sys.stdout',new=io.StringIO()):
-            result=update.core.install(self.live,apply=True)
-            self.assertEqual(dest.read_bytes(),(ROOT/'orange_pi/inventure_oled_transport.py').read_bytes())
-            update.core.install(self.live,apply=True,rollback=Path(result['backup']))
-        self.assertEqual(dest.read_bytes(),previous)
+            update.update()
+            self.assertEqual(new_transport.read_bytes(),(ROOT/'orange_pi'/new_name).read_bytes())
+            self.assertEqual(legacy.read_bytes(),previous_transport)
+            self.assertTrue(self.active)
+            backup, = (self.live/'.inventure-thermal-test-r2-backups').glob('*/inventure_mcu.py')
+            self.active=False
+            update.core.install(self.live,apply=True,rollback=backup)
+        self.assertEqual(self.dest.read_bytes(),previous_host)
+        self.assertEqual(legacy.read_bytes(),previous_transport)
+        self.assertFalse(new_transport.exists())
         self.assertEqual(self.config.read_bytes(),self.original_config)
 
     def test_unknown_transport_is_refused_before_stopping_the_running_service(self):
-        dest=self.extras/'inventure_oled_transport.py';dest.write_text('# unknown local edits\n')
-        with self.assertRaisesRegex(ValueError,'inventure_oled_transport.py differs'),patch('sys.stdout',new=io.StringIO()):
+        dest=self.extras/'inventure_oled_uifast_transport.py';dest.write_text('# unknown local edits\n')
+        with self.assertRaisesRegex(ValueError,'inventure_oled_uifast_transport.py differs'),patch('sys.stdout',new=io.StringIO()):
             update.update()
         self.assertFalse(any('stop' in a for a in self.calls))
         self.assertEqual(dest.read_text(),'# unknown local edits\n')
