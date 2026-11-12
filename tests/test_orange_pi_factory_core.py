@@ -160,6 +160,7 @@ class FactoryCoreTests(unittest.TestCase):
                     with self.subTest(tool=tool, profile=profile, material=name):
                         p = core.parameters(Command(TOOL=tool, SPEED_PROFILE=profile, MATERIAL=name))
                         self.assertEqual((p['oem_material_target_c'], p['target']), (stock, target))
+                        self.assertEqual(p['target_requires_override'], stock > 240)
                         self.assertEqual((p['unload_l1'], p['unload_l2']), (u1, u2))
                         self.assertEqual((p['feeder_ms'], p['feeder_k']), (feeder_ms, feeder_k))
                         for field in ('tool', 'speed_profile', 'switch_x', 'service_x', 'travel_speed'):
@@ -191,6 +192,38 @@ class FactoryCoreTests(unittest.TestCase):
                 self.assertEqual(unloaded.done['terminal'], 'UNLOAD')
                 self.assertEqual(tuple(unloaded.in_phase(phase,'retract_until_quiet')[0]['mm']
                                        for phase in ('U1','U2')), unload)
+
+    def test_out_of_range_material_requires_explicit_target_before_heated_procedure(self):
+        for tool in ('T0', 'T1'):
+            for profile in ('OEM', 'SERVICE'):
+                for material, (stock, _, _) in core._CASSETTE_MATERIALS.items():
+                    if stock <= 240:
+                        continue
+                    with self.subTest(tool=tool, profile=profile, material=material):
+                        p = core.parameters(Command(TOOL=tool, SPEED_PROFILE=profile,
+                                                    MATERIAL=material))
+                        self.assertEqual(p['oem_material_target_c'], stock)
+                        self.assertTrue(p['target_requires_override'])
+                        for operation in ('AUTO', 'UNLOAD', 'PURGE', 'CLEAN', 'MANUAL'):
+                            with self.assertRaisesRegex(core.FactoryError, 'Set a .*TARGET'):
+                                next(core.FactoryProgram(p).run(operation))
+                        with self.assertRaisesRegex(core.FactoryError, 'Set a .*TARGET'):
+                            core.require_heated_target(p, 'HEAT')
+                        for operation in ('HOME', 'PARK', 'SELECT', 'SWEEP'):
+                            self.assertEqual(next(core.FactoryProgram(p).run(operation))['kind'],
+                                             'module')
+
+    def test_configured_or_command_override_clears_out_of_range_material_gate(self):
+        config = core.profiles(common={'MATERIAL': 'Z-PETG'}, t1={'TARGET': 236})
+        with_override = (
+            core.parameters(Command(TOOL='T0', TARGET=235), config),
+            core.parameters(Command(TOOL='T1'), config),
+        )
+        for p, target in zip(with_override, (235, 236)):
+            self.assertEqual(p['target'], target)
+            self.assertFalse(p['target_requires_override'])
+            core.require_heated_target(p, 'AUTO')
+            self.assertEqual(next(core.FactoryProgram(p).run('AUTO'))['kind'], 'module')
 
     def test_t0_legacy_tuned_points_translate_to_raw_release_coordinates(self):
         configured = core.profiles(t0={'APPROACH_X': 135, 'SWITCH_X': 150,
@@ -407,15 +440,21 @@ class FactoryCoreTests(unittest.TestCase):
                 ex.run();self.assertEqual(ex.done['terminal'], 'L1')
 
     def test_long_path_moves_to_tool_specific_front_and_requires_verified_edges(self):
+        def feedback(ex, action, result):
+            long_feedback(ex, action, result)
+            if ex.phase == 'L3' and action['kind'] == 'mode' and action['mode'] == 2:
+                result['pulses'] = 321
+
         for tool in (0, 1):
             p = core.defaults(tool);p.update(long_mm=180., e_speed=2., pulse_count=9, pulse_quiet=1.5)
-            ex = Executor(p, long_feedback).run()
+            ex = Executor(p, feedback).run()
             front = [a for a in ex.in_phase('L2', 'move')]
             self.assertEqual((front[-1]['x'], front[-1]['y']),
                              (150.3, 2.5) if tool == 0 else (0., 0.))
             action = ex.in_phase('L3', 'feed_until_edges')[0]
             self.assertEqual((action['mm'], action['speed'], action['count'], action['quiet_s']),
                              (180., 2., 9, 1.5))
+            self.assertEqual(action['pulse_base'], 321)
             self.assertNotIn('x', action)
             self.assertNotIn('y', action)
             self.assertEqual(ex.done['terminal'], 'L4')

@@ -1,10 +1,10 @@
-# Parametryzowane ładowanie kaset T0/T1 — CONTROL-R7-CASSETTE-POLICY
+# Parametryzowane ładowanie kaset T0/T1
 
-Host `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne. Profil
 `SPEED_PROFILE=OEM` odtwarza żądane prędkości przejazdów i oscylacji r0323
-dla T0 i T1. Szybka procedura T1 działa z MCU CASSETTE-POLICY i FACTORY-DUAL.
-T0 OEM działa też z MCU FACTORY-SPEED i ALL-AXIS-SPEED. Profil
+dla T0 i T1. W obu torach używaj MCU T1-TIMING z poprawką czasu obsługi
+kroków na rampie. Profil
 serwisowy działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
@@ -323,20 +323,19 @@ oraz tablica materiałów `0x08029DB8`.
 | `Z-SUPPORT-PLUS`, `Z-NYLON`, `Z-SEMIFLEX` | 240°C | 30 / 70 mm |
 | `Z-SUPPORT-PREMIUM`, `BASF-ULTRAFUSE-BVOH`, `Z-PLA`, `Z-FLEX`, `Z-PHA`, `UNKNOWN` | 230°C | 30 / 70 mm |
 | `Z-PLA-PRO` | 200°C | 30 / 70 mm |
-| `Z-PETG` | 230°C, cel OEM 245°C | 50 / 50 mm |
-| `Z-ABS`, `Z-ABS-V2`, `Z-ASA-PRO`, `Z-ESD`, `Z-ESD-V2`, `Z-GLASS`, `Z-HIPS`, `Z-PCABS`, `Z-PEEK`, `Z-ULTRAT`, `Z-ULTRAT-PLUS` | 230°C, cel OEM powyżej 240°C | 30 / 70 mm |
+| `Z-PETG` | Wymaga jawnego `TARGET`. Cel OEM 245°C. | 50 / 50 mm |
+| `Z-ABS`, `Z-ABS-V2`, `Z-ASA-PRO`, `Z-ESD`, `Z-ESD-V2`, `Z-GLASS`, `Z-HIPS`, `Z-PCABS`, `Z-PEEK`, `Z-ULTRAT`, `Z-ULTRAT-PLUS` | Wymagają jawnego `TARGET`. Cele OEM powyżej 240°C. | 30 / 70 mm |
 
-Warianty z celem OEM powyżej 240°C korzystają z dotychczasowej
-wartości domyślnej 230°C i zakresu 180–240°C. `PARAMS` pokazuje
-źródłowy `oem_material_target_c` oraz efektywny `target`.
-Podany `TARGET` ma pierwszeństwo w dozwolonym zakresie.
-Przed próbą sprawdź, czy efektywny cel pasuje do używanego filamentu.
+Warianty z celem OEM powyżej 240°C wymagają jawnego `TARGET` właściwego
+dla filamentu i mieszczącego się w zakresie 180–240°C. `PARAMS` pokazuje
+źródłowy `oem_material_target_c` oraz efektywny `target`, który jest
+`null`, gdy brakuje wymaganego nadpisania.
 Jawne `UNLOAD_L1`, `UNLOAD_L2`, `FEEDER_MS` i `FEEDER_K`
 mają pierwszeństwo przed wartościami materiałowymi.
 
 ```gcode
 INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T0 MATERIAL=Z-SUPPORT
-INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T1 MATERIAL=Z-PETG TARGET=235
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=UNLOAD TOOL=T1 MATERIAL=Z-PETG
 ```
 
 ## Wyładowanie i cofanie po nieudanym L4

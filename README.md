@@ -163,9 +163,12 @@ Odczyty PARAMS pozwalają sprawdzić nastawy przed uruchomieniem AUTO.
 | T1, Z-PLA | `INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=AUTO TOOL=T1 SPEED_PROFILE=OEM MATERIAL=Z-PLA` |
 
 Fabryczny cel temperatury powyżej 240°C pozostaje widoczny w
-`oem_material_target_c`. Wtedy domyślny cel tej procedury wynosi 230°C.
-Przed uruchomieniem sprawdź efektywny `target` dla rzeczywistego
-filamentu. [Zakres temperatur i profile materiałowe](docs/FACTORY_LOAD_2026-11-10.md#profile-materiałowe-obu-kaset).
+`oem_material_target_c`. Grzany cykl wymaga wtedy jawnego `TARGET`
+w zakresie serwisowym i odpowiedniego dla rzeczywistego filamentu.
+[Zakres temperatur i profile materiałowe](docs/FACTORY_LOAD_2026-11-10.md#profile-materiałowe-obu-kaset)
+
+[Audyt ładowania T0 i T1](docs/FACTORY_PROCEDURE_AUDIT_2026-11-12.md) oraz
+[próba PC14 przed pełnym homingiem Z](docs/Z_CONTACT_AND_HOMING_R0323.md).
 
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
@@ -211,7 +214,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-T1-TIMING`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza

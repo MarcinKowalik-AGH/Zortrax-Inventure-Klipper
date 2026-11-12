@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-T1-TIMING'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -2202,9 +2202,13 @@ class InventureMCU:
             f=context['factory']
             result['factory']={k:f[k] for k in ('parameters','phase','history','position',
                 'reference_valid','snapshot','result','e_sent_steps','e_steps_by_phase','fallback_started',
-                'operation','module_stack','module_history','selection_commanded','motion_legs')}
+                'operation','module_stack','module_history','selection_commanded','motion_legs',
+                'cleaning_done')}
             result['stage']='factory_cartridge_load' if f['operation']=='AUTO' else 'factory_procedure'
-            result['cleaning_pending']=not f.get('cleaning_done',False)
+            cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
+                or f['operation']=='PURGE' and f['parameters']['clean_after'])
+            result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
+                and not (f.get('result') or {}).get('success'))
             result['heater_off_on_completion']=True
             result['factory_transport_completed']=(f['operation']=='AUTO'
                 and bool((f.get('result') or {}).get('success')))
@@ -2607,7 +2611,9 @@ class InventureMCU:
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
     def _factory_start(self,gcmd,read_only=False,operation='AUTO'):
-        from .inventure_factory_core import parameters,FactoryProgram,PROCEDURES,procedure_modules
+        from .inventure_factory_core import (
+            parameters, FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
+        )
         try:
             if operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
             p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
@@ -2615,8 +2621,10 @@ class InventureMCU:
             fast_available=self._factory_motion_available(p['tool'])
             if read_only:
                 gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
+                    target=None if p['target_requires_override'] else p['target'],
                     factory_motion_available=fast_available,
                     modules=procedure_modules(operation,p['tool'],p['speed_profile'])),sort_keys=True));return
+            require_heated_target(p,operation)
             if p['speed_profile']=='OEM' and not fast_available:
                 release=FACTORY_DUAL_RELEASE if p['tool'] else FACTORY_MOTION_RELEASE
                 raise ValueError('SPEED_PROFILE=OEM for T%d requires the %s MCU application'%(p['tool'],release))
@@ -2716,8 +2724,10 @@ class InventureMCU:
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
             accounted=0,deadline=self.reactor.monotonic()+maximum/1000.+.5,
-            target=[x,y,z],home=home,mask=mask,start=self.reactor.monotonic(),
-            pulse_base=f['snapshot']['pulses'],quiet_since=self.reactor.monotonic(),last_pulse=f['snapshot']['pulses'])
+            target=[x,y,z],home=home,mask=mask,start=self.reactor.monotonic())
+        if action['kind']=='feed_until_edges':
+            f['move'].update(pulse_base=action['pulse_base'],
+                last_pulse=action['pulse_base'],last_edge=None)
         leg=action.get('leg')
         if leg:
             f['motion_legs'][leg]=dict(start=pos[:2],target=[x,y],
@@ -2779,14 +2789,29 @@ class InventureMCU:
         return primary
 
     def _factory_poll_move(self,context):
-        from .inventure_factory_core import delta32, uses_r0323_sequence
-        f=context['factory'];m=f['move'];a=m['action'];snap=f['snapshot'];now=self.reactor.monotonic()
+        from .inventure_factory_core import UINT32, delta32, uses_r0323_sequence
+        f=context['factory'];m=f['move'];a=m['action']
         row=self._motion_query();self._factory_account(context,row)
         if row['phase']=='failed':raise ValueError('Factory motion stopped: '+row['reason'])
+        # Sample after a completed move. An edge at the last E step can
+        # arrive after the tick's initial lease renewal.
+        snap=self._factory_session(context) if not row['active'] and not m['home'] else f['snapshot']
+        now=self.reactor.monotonic()
         stop=False;ok=False;kind=a['kind']
         if kind=='feed_until_edges':
-            if snap['pulse_age_ms']>a['quiet_s']*1000:m['pulse_base']=snap['pulses']
-            ok=delta32(snap['pulses'],m['pulse_base'])>=a['count'];stop=ok
+            pulses=snap['pulses'];age=snap['pulse_age_ms']/1000.
+            if age>a['quiet_s']:
+                m.update(pulse_base=pulses,last_edge=None)
+            elif pulses!=m['last_pulse']:
+                edge=(snap.get('#receive_time') or now)-age
+                if m['last_edge'] is not None and edge-m['last_edge']>a['quiet_s']:
+                    # A gap can fall between two polls. Credit the newest
+                    # edge and start a new series without assuming where the
+                    # other edges in this sample occurred.
+                    m['pulse_base']=(pulses-1)&UINT32
+                m['last_edge']=edge
+            m['last_pulse']=pulses
+            ok=delta32(pulses,m['pulse_base'])>=a['count'];stop=ok
         elif kind=='retract_until_quiet':
             quiet=f['unload_quiet']
             if snap['pulses']!=quiet[0]:quiet[:]=[snap['pulses'],now-snap['pulse_age_ms']/1000.]
@@ -2826,6 +2851,7 @@ class InventureMCU:
             elif action['state']=='done' and f['module_stack'] and f['module_stack'][-1]==name:
                 f['module_stack'].pop()
                 if name=='select_tool':f['selection_commanded']=True
+                if name=='clean':f['cleaning_done']=True
             else:raise ValueError('Factory module sequence is invalid')
             f['module_history'].append(dict(name=name,state=action['state'],time_s=round(now-f['started'],3)))
             f['module_history'][:]=f['module_history'][-64:]
@@ -2848,8 +2874,9 @@ class InventureMCU:
             return self._factory_poll_move(context) if f['move'] is not None else self._factory_begin_move(context,action)
         if kind in ('wait_a','wait_unload'):
             if 'until' not in action:action['until']=now+action['timeout_s']
-            snap=f['snapshot'];ok=bool(snap['a']) if kind=='wait_a' else not snap['a'] or bool(snap['b'])
-            return dict(snap,ok=ok) if ok or now>=action['until'] else None
+            snap=f['snapshot'];expired=now>=action['until']
+            ok=(bool(snap['a']) and not expired) if kind=='wait_a' else not snap['a'] or bool(snap['b'])
+            return dict(snap,ok=ok) if ok or expired else None
         if kind in ('feed_until_edges','retract_until_quiet','retract_until_a'):
             if f['move'] is not None:return self._factory_poll_move(context)
             if kind=='retract_until_a' and not f['snapshot']['a']:

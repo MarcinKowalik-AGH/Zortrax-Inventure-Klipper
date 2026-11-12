@@ -82,6 +82,15 @@ def procedure_modules(operation, tool, speed_profile='SERVICE'):
     return modules
 
 
+def require_heated_target(p, operation):
+    if p.get('target_requires_override') and (operation == 'HEAT'
+            or 'heat' in PROCEDURES.get(operation, ())):
+        lo, hi = _LIMITS['target']
+        raise FactoryError('%s factory target %gC is outside the service range. '
+                           'Set a material-appropriate TARGET in %g..%gC.'
+                           % (p['material'], p['oem_material_target_c'], lo, hi))
+
+
 class FactoryError(ValueError):
     def __init__(self, code, **details):
         super().__init__(code)
@@ -317,6 +326,8 @@ def _parameters(tool, values, operation=None):
         min_target, max_target = _LIMITS['target']
         if min_target <= stock_target <= max_target:
             p['target'] = stock_target
+        p['target_requires_override'] = ('target' not in values
+            and not min_target <= stock_target <= max_target)
     if material in ('Z-FLEX', 'Z-SEMIFLEX'):
         p.update(feeder_ms=1500, feeder_k=3.)
     frame = str(values.get('xy_input_frame', p['xy_input_frame'])).strip().upper()
@@ -609,7 +620,8 @@ class FactoryProgram:
         yield from self._phase('L3')
         baseline = (yield from self._mode(2))['pulses']
         result = yield dict(kind='feed_until_edges', mm=p['long_mm'],
-            speed=p['e_speed'], count=p['pulse_count'], quiet_s=p['pulse_quiet'])
+            speed=p['e_speed'], count=p['pulse_count'], quiet_s=p['pulse_quiet'],
+            pulse_base=baseline)
         snap = _snapshot(result)
         if result.get('ok') and (delta32(snap['pulses'], baseline) < p['pulse_count']
                 or snap['pulse_age_ms'] > p['pulse_quiet'] * 1000.):
@@ -652,6 +664,7 @@ class FactoryProgram:
         if operation not in PROCEDURES:
             raise FactoryError('Unknown procedure ' + operation)
         p = self.p
+        require_heated_target(p, operation)
         if operation in ('PARK', 'SWEEP') and not self.stock_sequence:
             _validated(p, operation)
         parked_cassette = self.stock_sequence and operation in ('AUTO', 'UNLOAD')

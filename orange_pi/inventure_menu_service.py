@@ -189,13 +189,25 @@ class ZortraxMenuService:
         if not capability['available']:return self._info('Unavailable',capability['reason'],action=action)
         title=None
         if action in SERVICE_ACTIONS or action in ('heat_t0','heat_t1'):
-            from .inventure_factory_core import parameters
+            from .inventure_factory_core import parameters, require_heated_target
             tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
             if 'TOOL' in params and str(params['TOOL']).upper()!='T%d'%tool:raise MenuError('TOOL differs from the selected menu nozzle')
             params.pop('TOOL',None)
             parsed=parameters(Command(self,TOOL='T%d'%tool,**params),getattr(self.board,'procedure_profiles',None))
-            for key in ('TARGET','MAX_POWER','DURATION'):params.setdefault(key,parsed[key.lower()])
-            title='Select nozzle T%d?'%tool if action.startswith('select_') else 'T%d %s at %gC?'%(tool,action.split('_')[0],parsed['target'])
+            native_filament=(action.startswith(('load_cartridge_','unload_'))
+                and self._enabled('inventure_filament'))
+            if not native_filament:
+                operation=SERVICE_ACTIONS[action][0] if action in SERVICE_ACTIONS else 'HEAT'
+                require_heated_target(parsed,operation)
+            for key in ('MAX_POWER','DURATION'):params.setdefault(key,parsed[key.lower()])
+            if not parsed['target_requires_override']:
+                params.setdefault('TARGET',parsed['target'])
+            if action.startswith('select_'):
+                title='Select nozzle T%d?'%tool
+            else:
+                title='T%d %s'%(tool,action.split('_')[0])
+                if not parsed['target_requires_override']:title+=' at %gC'%parsed['target']
+                title+='?'
         elif action=='alignment':
             from .inventure_factory_core import parameters
             for tool in (0,1):

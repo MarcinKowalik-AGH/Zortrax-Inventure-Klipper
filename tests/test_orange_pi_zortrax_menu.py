@@ -312,6 +312,20 @@ class MenuServiceTests(unittest.TestCase,MenuFixture):
         self.assertEqual(h.load_test_context['jog']['steps'],19200)
         h.cmd_control_stop(Command())
 
+    def test_service_menu_does_not_inject_a_fallback_temperature(self):
+        h,s=self.host()
+        planner=importlib.import_module(adapter.__package__+'.inventure_factory_core')
+        h.procedure_profiles=planner.profiles(common={'MATERIAL':'Z-PETG'})
+        for action in ('heat_t1','load_cartridge_t1'):
+            with self.assertRaisesRegex(ValueError,'TARGET'):
+                s.open(action)
+        self.assertIsNone(h.load_test_context)
+        self.assertEqual(h.device.packets,[])
+        s.open('select_t1')
+        self.assertNotIn('TARGET',s.view.data['parameters'])
+        s.open('load_cartridge_t1',TARGET=236)
+        self.assertEqual(s.view.data['parameters']['TARGET'],236)
+
     def test_spool_selection_uses_P11_pair_and_P13_ack_without_using_cartridge_AUTO(self):
         h,s=self.host();calls=[];pair=[{'material_id':10,'source':'spool'},{'material_id':17,'source':'spool'}]
         materials=types.SimpleNamespace(enabled=True,stopped=False,generation=0)

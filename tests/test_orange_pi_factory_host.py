@@ -339,6 +339,8 @@ class FactoryHostTests(unittest.TestCase):
         last=self.finish(h)
         self.assertEqual(last['phase'],'done',last)
         self.assertEqual(last['factory']['result']['terminal'],'L1')
+        self.assertFalse(last['factory']['cleaning_done'])
+        self.assertFalse(last['cleaning_pending'])
         self.assertGreaterEqual(h.device.starts,6)
         self.assertNotIn(2,h.device.mode_history)
         feed=[p for p in h.device.packets if p[:2]==('motion',1) and p[6]]
@@ -757,6 +759,78 @@ class FactoryHostTests(unittest.TestCase):
         self.assertFalse(h.device.active());self.assertEqual(h.device.output(6)['duty'],0)
         count=len(h.device.packets);h.reactor.pause(h.reactor.now+10.)
         self.assertEqual(len(h.device.packets),count)
+
+    def test_L3_counts_edges_arriving_at_the_terminal_motion_read(self):
+        h,_,_=self.host('no_edges',fast_motion=True,factory_motion_tools=3)
+        device=h.device
+        def motion(args):
+            row=device.move(args)
+            if args[0]==0 and row['reason']==1 and device.motion['counts']==(0,0,0,9600):
+                device.pulses=6
+                device.last_edge=device.now()
+            return row
+        h.commands['motion']=support.Wire(motion)
+        self.start(h,1,SPEED_PROFILE='OEM',LONG_MM=10)
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'L4')
+        self.assertTrue(last['factory']['cleaning_done'])
+
+    def test_L3_does_not_combine_edges_across_an_unobserved_quiet_gap(self):
+        h,_,_=self.host('no_edges',fast_motion=True,factory_motion_tools=3)
+        device=h.device
+        gap_injected=False
+        def session(args):
+            nonlocal gap_injected
+            f=h.load_test_context['factory']
+            if f['phase']=='L3' and f['move'] is not None:
+                if device.pulses==0:
+                    device.pulses=5
+                    device.last_edge=device.now()
+                elif device.pulses==5 and device.now()-device.last_edge>2.:
+                    device.pulses=6
+                    device.last_edge=device.now()
+                    gap_injected=True
+            return device.query_factory(args)
+        h.commands['factory_session']=support.Wire(session)
+        self.start(h,1,SPEED_PROFILE='OEM',LONG_MM=10)
+        self.wait_phase(h,'L3')
+        h.reactor.pause(h.reactor.now+2.6)
+        self.assertTrue(gap_injected)
+        self.assertEqual(h.load_test_context['factory']['phase'],'L3')
+        device.pulses+=5
+        device.last_edge=device.now()
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'done',last)
+        self.assertEqual(last['factory']['result']['terminal'],'L4')
+
+    def test_L2_does_not_accept_A_first_read_after_the_deadline(self):
+        h,_,_=self.host('wait_a',fast_motion=True,factory_motion_tools=3)
+        self.start(h,1,SPEED_PROFILE='OEM')
+        self.wait_phase(h,'L2')
+        context=h.load_test_context
+        f=context['factory']
+        self.assertEqual(f['action']['kind'],'wait_a')
+        f['action']['until']=h.reactor.now
+        h.device.a=1
+        last=self.finish(h)
+        self.assertEqual(last['phase'],'failed',last)
+        self.assertEqual(last['reason'],'l2_a_timeout')
+        self.assertNotIn('L3',last['factory']['history'])
+
+    def test_unsupported_stock_target_requires_override_before_any_start(self):
+        h,_,_=self.host(fast_motion=True,factory_motion_tools=3)
+        cmd=Command(ACTION='PARAMS',TOOL='T1',MATERIAL='Z-PETG',SPEED_PROFILE='OEM')
+        h.cmd_load_test(cmd)
+        p=json.loads(cmd.lines[-1].removeprefix('V9_FACTORY_PARAMS '))
+        self.assertEqual(p['oem_material_target_c'],245)
+        self.assertTrue(p['target_requires_override'])
+        self.assertIsNone(p['target'])
+        with self.assertRaisesRegex(Exception,'TARGET'):
+            self.start(h,1,SPEED_PROFILE='OEM',MATERIAL='Z-PETG')
+        self.assertIsNone(h.load_test_context)
+        self.assertEqual(h.device.packets,[])
+        self.assertEqual(h.device.factory_packets,[])
 
     def test_final_missing_starts_runs_one_owned_reverse_fallback_then_fails(self):
         h,_,_=self.host('fallback');self.start(h);last=self.finish(h)

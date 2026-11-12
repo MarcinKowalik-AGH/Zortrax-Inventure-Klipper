@@ -31,6 +31,7 @@ class ProcedureCoreTests(unittest.TestCase):
                 action=dict(raw)
                 action.pop('cleaning_done',None)
                 action.pop('leg',None)  # selector diagnostics do not change the actuator request
+                action.pop('pulse_base',None)  # the L3 sensor baseline has its own regression
                 actions.append(action)
             return actions,error
         for hook in (short_feedback,long_feedback,no_final_starts):
@@ -184,10 +185,10 @@ class ProcedureHostTests(unittest.TestCase):
         self.assertFalse(any(p[:2]==('output',1) for p in h.device.packets))
 
     def test_T0_unload_uses_material_step_caps_and_reports_each_phase(self):
-        for name,steps in (('Z-PLA',(28800,67200)),('Z-PETG',(48000,48000))):
+        for name,target,steps in (('Z-PLA',230,(28800,67200)),('Z-PETG',235,(48000,48000))):
             with self.subTest(material=name):
                 h,_,_=self.fixture.host()
-                h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T0',MATERIAL=name))
+                h.cmd_procedure(Command(ACTION='UNLOAD',TOOL='T0',MATERIAL=name,TARGET=target))
                 last=self.fixture.finish(h)
                 self.assertEqual(last['phase'],'done',last)
                 self.assertEqual(last['factory']['position'],[82.8,152.5,0.])
