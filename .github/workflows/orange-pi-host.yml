@@ -23,6 +23,8 @@ on:
       - 'tests/test_orange_pi_factory_host.py'
       - 'tests/test_orange_pi_factory_protocol.py'
       - 'tests/test_orange_pi_procedures.py'
+      - 'tests/test_orange_pi_z_home_core.py'
+      - 'tests/test_orange_pi_z_home_host.py'
       - 'tests/test_orange_pi_zortrax_menu.py'
       - 'tests/test_orange_pi_oled_fast.py'
       - 'ci/benchmark_inventure_oled.py'

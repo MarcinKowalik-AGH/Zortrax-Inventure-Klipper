@@ -40,6 +40,66 @@ z `hit: 0` oznacza koniec zadanego zakresu. Odczyt bez kontaktu oraz kontakt
 przy starcie pozostawiają próbę zatrzymania w ruchu do sprawdzenia.
 `INVENTURE_STOP` przerywa ruch. Ruch serwisowy nie ustanawia współrzędnej Z.
 
+## Rozgrzana próba odniesienia Z w SERVICE
+
+Wykonuj ją po potwierdzeniu przełączania PC14 i przy osadzonej tacce
+(`raw.tray: 0`). Obsługiwane jest T0. Domyślna zadana temperatura to
+200°C, zgodnie z przygotowaniem T0 w kreatorze poziomowania Inventure.
+Można zmienić ją przez `TARGET`. Procedura utrzymuje temperaturę dyszy
+podczas pomiaru i wyłącza grzałkę po zakończeniu. Wykorzystuje polecenia
+ruchu i zabezpieczenia obecnej aplikacji MCU.
+
+Najpierw przygotuj drukarkę i sprawdź ustawienie dyszy nad środkowym
+srebrnym polem. Ten etap kończy się z platformą na dolnej krańcówce.
+
+```gcode
+INVENTURE_CONTROL MODE=SERVICE
+INVENTURE_PROCEDURE ACTION=LIST
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=HOME_Z TOOL=T0
+INVENTURE_PROCEDURE ACTION=Z_PREPARE TOOL=T0 TARGET=200
+```
+
+Po zakończeniu sprawdź `INVENTURE_PROCEDURE ACTION=STATUS`, osadzenie tacki
+i ustawienie T0. Nominalny punkt 14 to X67,5/Y65,5 w układzie r0323, co po
+przeliczeniu T0 daje X82,8/Y68,0 w układzie R7 liczonym od zwolnionych
+krańcówek. `Z_PROBE_X` i `Z_PROBE_Y` pozwalają podać zmierzone współrzędne
+w tym układzie. W razie korekty użyj tych samych wartości w `Z_PREPARE`
+i `HOME_Z`.
+
+`HOME_Z` ponownie wykonuje przygotowanie. Przy platformie na PE12
+zmierz odstęp w pionie od metalowego pola do końcówki dyszy. W
+`Z_APPROACH_MM` podaj ten odstęp pomniejszony o zapas większy od
+niepewności pomiaru. Pozostała szczelina musi mieścić się w
+`Z_PROBE_MM`. Jeżeli pomiar ma niepewność większą niż pozwala na to
+domyślne okno 1 mm, użyj odpowiednio większego okna precyzyjnego.
+W poniższym wzorze zastąp `ZMIERZONA_DROGA` liczbą w milimetrach.
+
+```gcode
+INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 Z_APPROACH_MM=ZMIERZONA_DROGA Z_PROBE_MM=1 ACK=PAD_AND_CLEARANCE_CHECKED
+```
+
+| Parametr | Domyślna wartość | Znaczenie |
+|---|---:|---|
+| `TARGET` | 200°C | Temperatura T0 podczas pomiaru, 180–240°C |
+| `SPEED_PROFILE` | `SERVICE` | Prędkości ruchów XY. `OEM` zadaje F8000 w przejazdach. Parametry Z ustawia się osobno |
+| `Z_PROBE_X`, `Z_PROBE_Y` | 82,8 / 68,0 mm | Środek w układzie R7 dla T0 |
+| `Z_APPROACH_MM` | Wymagany dla `HOME_Z` | Odległość od zadziałania PE12 do początku precyzyjnego pomiaru. Co najmniej 2 mm, a z `Z_PROBE_MM` najwyżej `HOME_Z_MAX` i 250 mm |
+| `Z_APPROACH_SPEED` | 1 mm/s | Prędkość podnoszenia przed precyzyjnym pomiarem, 0,1–2 mm/s |
+| `Z_PROBE_MM`, `Z_RELEASE_MM` | 1 / 1 mm | Budżety kontaktu i rozwarcia, odpowiednio 0,02–10 i 0,02–2 mm |
+| `Z_PROBE_SPEED`, `Z_RELEASE_SPEED` | 0,2 / 0,2 mm/s | Prędkości kontaktu i rozwarcia, 0,05–1 mm/s |
+| `Z_MAX_CYCLES` | 512 | Limit cykli kontaktu i rozwarcia, 102–512 |
+
+Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
+podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
+Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
+Zwolnienie jest wykrywane osobnym ruchem. Procedura zachowuje najmniejszą
+pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
+poprawy. W `factory.result.z_home_result` odczytaj
+`release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`
+i `non_improvements`. Pole `coordinate_saved: false` opisuje wynik
+serwisowy bez ustanowienia natywnego Z ani zapisu kalibracji.
+`INVENTURE_STOP` przerywa próbę.
+
 ## Sekwencja firmware 1.6.1 r0323
 
 | Etap | Zachowanie r0323 | Ślad kodu |
@@ -55,6 +115,12 @@ opóźnienia i startem timera. F8000 dotyczy dojazdu XY. Dokładna prędkość
 kontaktowa na sprzęcie wymaga pomiaru. Handler homingu Z nie zadaje wprost
 temperatury dyszy. Interaktywny kreator poziomowania i kalibracja wysokości
 dysz mają własne przygotowanie termiczne.
+
+Przy pustym rekordzie głębokości r0323 przyjmuje 135 000 µm jako datum
+obliczeniowe dolnego Z. Po zwolnieniu PE12 i dodatkowym odjeździe o 1 mm
+T0 osiąga logiczne Z=2 mm po nominalnym ruchu o 133 mm od pozycji, której
+przypisano datum. Ta stała służy do odtworzenia rachunku OEM. Parametr
+`Z_APPROACH_MM` w SERVICE pochodzi z pomiaru danej drukarki.
 
 ## Implementacje Klippera
 

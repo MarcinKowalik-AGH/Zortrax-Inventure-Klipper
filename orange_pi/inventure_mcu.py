@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -2205,6 +2205,10 @@ class InventureMCU:
                 'operation','module_stack','module_history','selection_commanded','motion_legs',
                 'cleaning_done')}
             result['stage']='factory_cartridge_load' if f['operation']=='AUTO' else 'factory_procedure'
+            if 'z_home_settings' in f:
+                result['stage']='factory_z_reference'
+                result['factory']['z_home_settings']=f['z_home_settings']
+                result['factory']['last_z_move']=f.get('last_z_move')
             cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
@@ -2565,7 +2569,8 @@ class InventureMCU:
                     if self.load_test_context is not context:return self.reactor.NEVER
                 if factory is not None:
                     factory['result']=dict(success=False,reason=reason,details=details)
-                self._load_test_cancel(reason,phase='done' if reason=='hold_duration_finished' else 'failed')
+                finished_hold=factory is None and reason=='hold_duration_finished'
+                self._load_test_cancel(reason,phase='done' if finished_hold else 'failed')
                 if not stopped:self._control_abort()
         finally:context['busy']=False
         return (self.reactor.monotonic()+(.1 if context.get('jog') is not None or context.get('factory') is not None else .25)
@@ -2586,6 +2591,7 @@ class InventureMCU:
 
     def cmd_procedure(self,gcmd):
         from .inventure_factory_core import PROCEDURES, procedure_modules
+        from .inventure_z_home import Z_HOME_PROCEDURES
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action in ('STATUS','STOP'):return self.cmd_load_test(gcmd)
         if action=='LIST':
@@ -2597,6 +2603,7 @@ class InventureMCU:
                 raise gcmd.error('SPEED_PROFILE must be SERVICE or OEM')
             tool_index=int(tool[-1])
             modules={name:procedure_modules(name,tool_index,profile) for name in PROCEDURES}
+            if tool_index==0:modules.update(Z_HOME_PROCEDURES)
             gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,tool=tool,procedures=modules,
                 precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
                 standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
@@ -2606,25 +2613,37 @@ class InventureMCU:
                 factory_motion_available=self._factory_motion_available(tool_index)),
                 sort_keys=True));return
         operation=str(gcmd.get('PROCEDURE','AUTO')).upper() if action=='PARAMS' else action
-        if operation not in PROCEDURES:
-            raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+', '.join(PROCEDURES))
+        if operation not in PROCEDURES and operation not in Z_HOME_PROCEDURES:
+            raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+
+                ', '.join((*PROCEDURES,*Z_HOME_PROCEDURES)))
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
     def _factory_start(self,gcmd,read_only=False,operation='AUTO'):
         from .inventure_factory_core import (
             parameters, FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
         )
+        from .inventure_z_home import Z_HOME_PROCEDURES, ZHomeProgram, z_home_parameters
+        z_home=operation in Z_HOME_PROCEDURES
+        z_settings=None
         try:
-            if operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
+            if not z_home and operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
             p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
+            if z_home:
+                if p['tool']!=0:raise ValueError('Z reference uses the model nozzle TOOL=T0')
+                if gcmd.get('TARGET',None) is None:p['target']=200.
+                p['target_requires_override']=False
+                z_settings=z_home_parameters(gcmd,p,required=operation=='HOME_Z' and not read_only)
             timeout=p['procedure_timeout']
             fast_available=self._factory_motion_available(p['tool'])
             if read_only:
+                modules=(Z_HOME_PROCEDURES[operation] if z_home
+                         else procedure_modules(operation,p['tool'],p['speed_profile']))
+                settings={} if z_settings is None else dict(z_home_settings=z_settings)
                 gcmd.respond_info('V9_FACTORY_PARAMS '+json.dumps(dict(p,operation=operation,
-                    target=None if p['target_requires_override'] else p['target'],
+                    target=None if not z_home and p['target_requires_override'] else p['target'],
                     factory_motion_available=fast_available,
-                    modules=procedure_modules(operation,p['tool'],p['speed_profile'])),sort_keys=True));return
-            require_heated_target(p,operation)
+                    modules=modules,**settings),sort_keys=True));return
+            if not z_home:require_heated_target(p,operation)
             if p['speed_profile']=='OEM' and not fast_available:
                 release=FACTORY_DUAL_RELEASE if p['tool'] else FACTORY_MOTION_RELEASE
                 raise ValueError('SPEED_PROFILE=OEM for T%d requires the %s MCU application'%(p['tool'],release))
@@ -2638,7 +2657,10 @@ class InventureMCU:
                 raise ValueError('AUTO uses L1/L3/L4 parameters; remove fixed-distance LOAD/RETRACT parameters')
             if getattr(self,'load_test_context',None) is not None:
                 raise ValueError('Load test already active; use STATUS or STOP')
-            program=FactoryProgram(p).run(operation)
+            if z_home:
+                self._z_home_inputs({'nozzle_contact':1})
+                program=ZHomeProgram(p,z_settings).run(operation)
+            else:program=FactoryProgram(p).run(operation)
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
             def get(self,key,default=None):
@@ -2659,7 +2681,16 @@ class InventureMCU:
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
+        if z_home:context['factory']['z_home_settings']=z_settings
         self._load_test_emit(context)
+
+    def _z_home_inputs(self,expected):
+        raw=self._fresh_inputs()['raw']
+        if raw.get('tray')!=0:raise ValueError('Z reference requires a seated tray (PC13=0)')
+        for name,level in expected.items():
+            if raw.get(name)!=level:
+                raise ValueError('Unexpected %s before Z reference move (expected %d)'%(name,level))
+        return raw
 
     def _factory_session(self,context,mode=None,monitor=None):
         f=context['factory'];p=f['parameters'];starting=not f['session']
@@ -2694,19 +2725,33 @@ class InventureMCU:
         f=context['factory'];p=f['parameters'];pos=f['position']
         releasing=action['kind']=='home_release'
         home=action['kind']=='home' or releasing
+        probe=action['kind']=='z_contact_move'
         e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
         z=pos[2];mask=0
-        if home:
+        if probe:
+            from .inventure_z_home import Z_STEPS_PER_MM
+            if not f['reference_valid'] or not f['selection_commanded'] or not context['ready_latched']:
+                raise ValueError('Z probe requires the heated, selected nozzle and a valid lower reference')
+            self._z_home_inputs(action['initial_raw'])
+            if self.load_test_context is not context:raise ValueError('Z reference was stopped')
+            dx=dy=0.
+            dz=action['steps']/Z_STEPS_PER_MM
+            length=abs(dz)
+            mask=action['stop_mask']|16
+            stop_value=action['stop_value']|16
+        elif home:
             axis=action['axis'];distance=action['max_mm'] if releasing else -action['max_mm']
             dx=distance if axis=='X' else 0.;dy=distance if axis=='Y' else 0.
             dz=distance if axis=='Z' else 0.;length=abs(distance)
             mask={'X':1,'Y':2,'Z':4}[axis]
+            stop_value=0 if releasing else mask
         else:
             if not f['reference_valid']:raise ValueError('Factory motion has no owned homing reference')
             if not p['min_x']<=x<=p['max_x'] or not p['min_y']<=y<=p['max_y']:
                 raise ValueError('Factory motion outside service envelope')
             dx=x-pos[0];dy=y-pos[1];dz=0.;length=math.hypot(dx,dy) or abs(e)
-        counts=(round((dx+dy)*640),round((dx-dy)*640),round(dz*802),
+            stop_value=0
+        counts=(round((dx+dy)*640),round((dx-dy)*640),action['steps'] if probe else round(dz*802),
                 round(e*960)*(1 if context['tool'] else -1))
         master=max(map(abs,counts))
         if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
@@ -2719,7 +2764,7 @@ class InventureMCU:
         maximum=math.ceil(master*1000./rate)+5000
         if maximum>600000:raise ValueError('Factory segment exceeds 600 seconds')
         row=self._motion_query(1,counts,rate,2 if fast_xy else 10,
-            maximum,mask,0 if releasing else mask,owner=context)
+            maximum,mask,stop_value,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
@@ -2793,6 +2838,20 @@ class InventureMCU:
         f=context['factory'];m=f['move'];a=m['action']
         row=self._motion_query();self._factory_account(context,row)
         if row['phase']=='failed':raise ValueError('Factory motion stopped: '+row['reason'])
+        if a['kind']=='z_contact_move':
+            from .inventure_z_home import Z_STEPS_PER_MM
+            if row['active']:
+                if self.reactor.monotonic()>=m['deadline']:raise ValueError('Z motion deadline exceeded')
+                return None
+            sent=row['drivers']['Z']['sent']
+            f['position'][2]+=(sent if m['counts'][2]>0 else -sent)/Z_STEPS_PER_MM
+            result=dict(reason=row['reason'],hit=row['hit'],sent_steps=sent)
+            f['last_z_move']=result
+            f['move']=None
+            if row['hit']&16:raise ValueError('Tray input opened during Z reference')
+            result['end_raw']=self._z_home_inputs({})
+            if self.load_test_context is not context:raise ValueError('Z reference was stopped')
+            return result
         # Sample after a completed move. An edge at the last E step can
         # arrive after the tick's initial lease renewal.
         snap=self._factory_session(context) if not row['active'] and not m['home'] else f['snapshot']
@@ -2870,7 +2929,7 @@ class InventureMCU:
             self._load_test_readiness(context,self.panel_temperature(context['tool'],now)[0],now)
             return dict(f['snapshot']) if context['ready_latched'] else None
         if kind=='mode':return self._factory_session(context,action['mode'],action['monitor'])
-        if kind in ('home','home_release','move'):
+        if kind in ('home','home_release','move','z_contact_move'):
             return self._factory_poll_move(context) if f['move'] is not None else self._factory_begin_move(context,action)
         if kind in ('wait_a','wait_unload'):
             if 'until' not in action:action['until']=now+action['timeout_s']
@@ -2886,6 +2945,10 @@ class InventureMCU:
             return self._factory_begin_move(context,action)
         if kind=='done':
             if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')
+            if 'z_home_settings' in f:
+                self._z_home_inputs({'nozzle_contact':1,
+                    'z_bottom':int(f['operation']=='Z_PREPARE')})
+                if self.load_test_context is not context:return None
             f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
             self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
                 else 'factory_procedure_completed',phase='done');self._control_abort()
@@ -2896,6 +2959,9 @@ class InventureMCU:
         f=context['factory'];now=self.reactor.monotonic()
         if now>=f['total_deadline']:raise ValueError('Factory procedure timeout')
         temperature=self._load_test_safety(context)
+        if 'z_home_settings' in f and context['ready_latched']:
+            if not context['target']-10.<=temperature<=context['target']+8.:
+                raise ValueError('Nozzle left the Z reference temperature band')
         if context['output_token'] is None:self._load_test_output(context,0)
         self._load_test_check_output(context)
         self._factory_session(context)

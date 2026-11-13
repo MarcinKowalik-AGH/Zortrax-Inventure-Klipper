@@ -58,9 +58,9 @@ def install(target,apply=False,rollback=None,service='klipper'):
         names.append('inventure_factory_core.py');optional.add('inventure_factory_core.py')
     extra_modules=meta.get('extra_modules',{})
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
-                    'inventure_oled_uifast_transport.py'}
+                    'inventure_oled_uifast_transport.py','inventure_z_home.py'}
     if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras:
-        raise ValueError('Unexpected menu module manifest')
+        raise ValueError('Unexpected optional module manifest')
     names.extend(extra_modules);optional.update(extra_modules)
     def dest_path(name):return target/'klippy/serialhdl.py' if name=='serialhdl.py' else extras/name
     def digest(data):return None if data is None else sha(data)

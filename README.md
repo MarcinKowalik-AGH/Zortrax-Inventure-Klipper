@@ -170,6 +170,11 @@ w zakresie serwisowym i odpowiedniego dla rzeczywistego filamentu.
 [Audyt ładowania T0 i T1](docs/FACTORY_PROCEDURE_AUDIT_2026-11-12.md) oraz
 [próba PC14 przed pełnym homingiem Z](docs/Z_CONTACT_AND_HOMING_R0323.md).
 
+`INVENTURE_PROCEDURE ACTION=Z_PREPARE` bazuje dolne Z i osie XY, nagrzewa
+T0 i ustawia dyszę nad punktem pomiarowym. `ACTION=HOME_Z` dodaje
+ograniczony dojazd oraz pomiar kontaktu i rozwarcia PC14.
+[Parametry i polecenia Z](docs/Z_CONTACT_AND_HOMING_R0323.md#rozgrzana-próba-odniesienia-z-w-service)
+
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
 SERVICE pomija RFID. Domyślny profil SERVICE obsługuje T0 i T1 oraz
@@ -214,7 +219,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza
