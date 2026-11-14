@@ -9,7 +9,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-Z-HOST'
+MCU_RELEASE = 'RC8-CONTROL-R7-Z-OEM-NATIVE'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_Z_HOME_ABI'] == 1
     assert c['INVENTURE_Z_EDGE_ABI'] == 1
     assert c['INVENTURE_NATIVE_Z_GUARD_ABI'] == 1
+    assert c['INVENTURE_NATIVE_Z_REFINE_ABI'] == 1
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
@@ -137,6 +138,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   z_home_abi=c['INVENTURE_Z_HOME_ABI'],
                   z_edge_abi=c['INVENTURE_Z_EDGE_ABI'],
                   native_z_guard_abi=c['INVENTURE_NATIVE_Z_GUARD_ABI'],
+                  native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

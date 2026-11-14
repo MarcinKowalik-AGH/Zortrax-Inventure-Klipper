@@ -43,6 +43,7 @@ static uint8_t auxiliary_ready;
 static volatile uint8_t control_mode,control_latched,control_pwm_bypass;
 static volatile uint16_t control_heater_duty[4];
 static volatile uint8_t native_z_guard_active,native_z_guard_lost;
+static volatile uint8_t native_z_refine_held,native_z_refine_conflict;
 static uint8_t control_aux_allowed(void);
 static uint8_t control_busy(void);
 static uint8_t control_door_policy_busy(void);
@@ -120,6 +121,18 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
     if (r == GPIOA && (bit == BIT(2) || bit == BIT(3)) && !door_policy_enabled())
         return 0;
     if (inventure_is_armed()) {
+        if (native_z_refine_held) {
+            if ((r==GPIOA && (bit==BIT(6) || bit==BIT(7)))
+                    || (r==GPIOB && (bit==BIT(8) || bit==BIT(9) || bit==BIT(1) || bit==BIT(2)))
+                    || (r==GPIOE && (bit==BIT(7) || bit==BIT(8)))) {
+                // The bounded probe owns the physical outputs until the
+                // host has rebased. Preserve levels and latch any overlap.
+                native_z_refine_conflict=1;
+                return !!(((GPIO_TypeDef*)r)->ODR&bit);
+            }
+            if (r==GPIOE && bit==BIT(10) && !value)
+                native_z_refine_conflict=1; // Honor disable, then abort probing.
+        }
         // Gate a commissioned native probe's Z STEP at its next rising
         // edge. Remember loss even if PC13 closes before the guard tick.
         if (r==GPIOB && bit==BIT(8) && value && native_z_guard_active) {

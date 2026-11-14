@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-Z-HOST'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-Z-OEM-NATIVE'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -267,6 +267,16 @@ def check_dictionary(path: Path) -> dict:
     if (native_z_guard_command not in d.get('commands', {})
             or native_z_guard_response not in d.get('responses', {})):
         raise ValueError('R7 missing exact native Z tray guard command or response schema')
+    native_z_refine_command = ('inventure_native_z_refine action=%c owner=%u token=%u span=%hu '
+                               'interval_us=%hu min_c=%hi max_c=%hi')
+    native_z_refine_response = ('inventure_native_z_refine_state owner=%u token=%u active=%c '
+                                'status=%c reject=%c net_steps=%i best_steps=%i cycles=%u '
+                                'non_improvements=%c up_steps=%u down_steps=%u')
+    if conf.get('INVENTURE_NATIVE_Z_REFINE_ABI') != 1:
+        raise ValueError('R7 missing native Z refinement ABI')
+    if (native_z_refine_command not in d.get('commands', {})
+            or native_z_refine_response not in d.get('responses', {})):
+        raise ValueError('R7 missing exact native Z refinement command or response schema')
     motion_command = ('inventure_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u '
                       'pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u')
     motion_response = ('inventure_motion_state run=%u token=%u phase=%c reason=%c reject=%c '
@@ -303,6 +313,9 @@ def check_dictionary(path: Path) -> dict:
             'NATIVE_Z_GUARD_ABI':conf['INVENTURE_NATIVE_Z_GUARD_ABI'],
             'native_z_guard_exact_command_schema':native_z_guard_command,
             'native_z_guard_exact_response_schema':native_z_guard_response,
+            'NATIVE_Z_REFINE_ABI':conf['INVENTURE_NATIVE_Z_REFINE_ABI'],
+            'native_z_refine_exact_command_schema':native_z_refine_command,
+            'native_z_refine_exact_response_schema':native_z_refine_response,
             'axis_exact_command_schema':axis_command, **rc5}
 
 def validate(root: Path, destination: Path) -> dict:

@@ -25,6 +25,19 @@ class Model:
         self.shutdown_reason = None
         self.mcu = types.SimpleNamespace(
             _serial=types.SimpleNamespace(abort_wait_acks=mock.Mock()))
+        self.native_counter = 102_937
+        self.native_counter_after_refinement = None
+        self.refine = object()
+        self.refine_polls = 0
+        self.refine_reply_overrides = {}
+        self.refine_complete = False
+        self.refine_count = 101
+        self.contact_stays_closed = False
+        self.run_token = 22
+        self.counter_query = types.SimpleNamespace(send=self._read_stepper_position)
+        self.stepper = types.SimpleNamespace(
+            get_oid=lambda: 10, get_mcu_position=lambda: -self.native_counter,
+            _get_position_cmd=self.counter_query, _invert_dir=True)
         self.guard = False
         self.bad_guard_reply = None
         self.tray = 0
@@ -70,6 +83,10 @@ class Model:
             timer.waketime = timer.callback(self.time)
         self.time = deadline
 
+    def pause(self, waketime):
+        self.advance_time(waketime - self.time)
+        return self.time
+
     def invoke_shutdown(self, reason):
         self.shutdown_reason = reason
         self.stopped = True
@@ -93,6 +110,9 @@ class Model:
         return not self.stopped
 
     def wait_moves(self):
+        return None
+
+    def flush_step_generation(self):
         return None
 
     def get_extruder(self):
@@ -154,12 +174,51 @@ class Model:
         return (200., 'valid')
 
     def _control_validate(self, row, limits):
-        assert all(lo <= row[key] <= hi for key, (lo, hi) in limits.items())
+        if any(type(row.get(key)) is not int or not lo <= row[key] <= hi
+               for key, (lo, hi) in limits.items()):
+            raise ValueError('Invalid R5 MCU response')
+        return row
 
     def _control_next_token(self):
-        return 23
+        self.run_token += 1
+        return self.run_token
+
+    def _read_stepper_position(self, data, **kwargs):
+        self.calls.append(('native_counter', tuple(data)))
+        counter = self.native_counter
+        if self.refine_complete and self.native_counter_after_refinement is not None:
+            counter = self.native_counter_after_refinement
+        return {'pos': counter}
+
+    def _refine_reply(self, data, start):
+        action, owner, token, _, _, _, _ = data
+        self.calls.append(('refine', tuple(data), start))
+        if action == 1:
+            assert self.guard and start
+            self.refine_polls = 0
+        else:
+            assert action == 0 and not start
+            self.refine_polls += 1
+        if self.refine_polls < 2:
+            cycles = self.refine_polls
+            return dict(owner=owner, token=token, active=1, status=0, reject=0,
+                        net_steps=0, best_steps=0, cycles=cycles,
+                        non_improvements=0, up_steps=cycles, down_steps=cycles)
+        self.refine_complete = True
+        self.physical_z = self.threshold + 1. / Z_STEPS_PER_MM
+        net = round((self.z - self.physical_z) * Z_STEPS_PER_MM)
+        if self.contact_stays_closed:
+            self.physical_z = self.threshold
+        row = dict(owner=owner, token=token, active=0, status=1, reject=0,
+                   net_steps=net, best_steps=net, cycles=self.refine_count + 1,
+                   non_improvements=self.refine_count,
+                   up_steps=net + self.refine_count, down_steps=self.refine_count)
+        row.update(self.refine_reply_overrides)
+        return row
 
     def _thermal_query_send(self, query, data, start=False):
+        if query is self.refine:
+            return self._refine_reply(data, start)
         action, token = data
         self.calls.append(('guard', action, token, start))
         if action:
@@ -265,6 +324,8 @@ class NativeZBridgeTests(unittest.TestCase):
         self.adapter.bottom = self.model.bottom
         self.adapter.guard = object()
         self.adapter.guard_owner = None
+        self.adapter.refine = self.model.refine
+        self.adapter.stepper = self.model.stepper
         self.adapter.running = self.adapter.interrupted = False
         self.adapter.last_result = None
         self.adapter.pad_x, self.adapter.pad_y = 67.5, 65.5
@@ -275,7 +336,8 @@ class NativeZBridgeTests(unittest.TestCase):
         self.adapter.target = 200.
         self.adapter.repeat_count = 2
         self.model.on_shutdown = self.adapter._shutdown
-        self.command = Command(ACK=Z_HOME_ACK, Z_APPROACH_MM=135, Z_PROBE_MM=8)
+        self.command = Command(ACK=Z_HOME_ACK, Z_APPROACH_MM=135, Z_PROBE_MM=8,
+                               Z_STABLE_CYCLES=self.adapter.repeat_count)
 
     def test_reports_and_commits_actual_native_reference_while_guarded(self):
         self.adapter.cmd_home(self.command)
@@ -422,6 +484,7 @@ class NativeZBridgeTests(unittest.TestCase):
 
     def test_exact_probe_cycles_stops_after_three_measured_pairs(self):
         self.adapter.repeat_count = 101
+        del self.command['Z_STABLE_CYCLES']
         self.command['Z_PROBE_CYCLES'] = 3
         self.adapter.cmd_home(self.command)
         result = self.adapter.last_result
@@ -447,6 +510,7 @@ class NativeZBridgeTests(unittest.TestCase):
 
     def test_exact_probe_cycles_aborts_when_second_contact_limit_is_reached(self):
         self.model.close_budget = 1
+        del self.command['Z_STABLE_CYCLES']
         self.command['Z_PROBE_CYCLES'] = 3
         with self.assertRaisesRegex(ValueError, 'never reached PC14 within its span'):
             self.adapter.cmd_home(self.command)
@@ -483,6 +547,100 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertTrue(self.adapter.last_result['coordinate_saved'])
         self.assertAlmostEqual(self.model.physical_z, 5. + 1. / Z_STEPS_PER_MM)
         self.assertIn(('edge', True, 3), self.model.calls)
+
+    def test_default_refines_on_mcu_and_rebases_only_after_confirmed_end(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.adapter.repeat_count = 101
+        self.adapter.coarse_speed = 20.
+        self.adapter.cmd_home(self.command)
+
+        result = self.adapter.last_result
+        self.assertTrue(result['coordinate_saved'])
+        self.assertTrue(result['local_refinement'])
+        self.assertEqual(result['completion_basis'], 'stable_repetitions')
+        self.assertEqual((result['cycles'], result['non_improvements']), (102, 101))
+        self.assertEqual(result['release_steps_from_bottom'], 140 * Z_STEPS_PER_MM - 1)
+        self.assertEqual(self.model.get_position(), [67.5, 65.5, 0., 9.])
+        self.assertAlmostEqual(self.model.physical_z, 5. + 1. / Z_STEPS_PER_MM)
+        self.assertEqual([edge[:3] for edge in self.model.edge_calls],
+                         [('PE12', self.module.OEM_Z_BOTTOM_RELEASE_SPEED, False),
+                          ('PC14', 20., True), ('PC14', 20., True)])
+        clearance, coarse = self.model.edge_calls[1:]
+        self.assertEqual(clearance[3], 144 * Z_STEPS_PER_MM - 1)
+        self.assertEqual(coarse[3], 10 * Z_STEPS_PER_MM)
+        self.assertFalse(any(call[0] == 'move' for call in self.model.calls))
+        refine = [call for call in self.model.calls if call[0] == 'refine']
+        self.assertEqual([call[1][0] for call in refine], [1, 0, 0])
+        span = round(self.command['Z_PROBE_MM'] * Z_STEPS_PER_MM)
+        interval = round(1_000_000 / (self.adapter.fine_speed * Z_STEPS_PER_MM))
+        self.assertEqual([call[1][1:] for call in refine],
+                         [(23, 24, span, interval, 190, 208)] * 3)
+        self.assertEqual([call[2] for call in refine], [True, False, False])
+        counter_positions = [index for index, call in enumerate(self.model.calls)
+                             if call[0] == 'native_counter']
+        self.assertEqual(len(counter_positions), 2)
+        self.assertLess(counter_positions[0], self.model.calls.index(refine[0]))
+        self.assertLess(self.model.calls.index(refine[-1]), counter_positions[1])
+        self.assertLess(counter_positions[1], self.model.calls.index(('set', 0., 'z')))
+        self.assertLess(self.model.calls.index(('set', 0., 'z')),
+                        self.model.calls.index(('guard', 2, 23, False)))
+        self.model.move([67.5, 65.5, 1., 9.], 1.)
+        self.assertAlmostEqual(self.model.physical_z, 6. + 1. / Z_STEPS_PER_MM)
+
+    def test_mcu_refinement_rejects_inconsistent_result_before_rebase(self):
+        for overrides in ({'token': 100}, {'net_steps': 0}, {'non_improvements': 102},
+                          {'up_steps': True}, {'active': 1}):
+            with self.subTest(overrides=overrides):
+                self.setUp()
+                del self.command['Z_STABLE_CYCLES']
+                self.adapter.repeat_count = 101
+                self.model.refine_reply_overrides = overrides
+                with self.assertRaises(ValueError):
+                    self.adapter.cmd_home(self.command)
+                self.assertIn(('stop',), self.model.calls)
+                self.assertNotIn(('set', 0., 'z'), self.model.calls)
+                self.assertEqual(self.model.axes, '')
+                self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+    def test_default_refinement_requires_local_abi_before_issuing_motion(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.adapter.refine = None
+        with self.assertRaisesRegex(ValueError, 'Z-OEM-NATIVE MCU application'):
+            self.adapter.cmd_home(self.command)
+        self.assertFalse(self.model.calls)
+        self.assertFalse(self.model.timers)
+
+    def test_mcu_refinement_requires_fresh_open_contact_before_rebase(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.model.contact_stays_closed = True
+        with self.assertRaisesRegex(ValueError, 'physical reference'):
+            self.adapter.cmd_home(self.command)
+        self.assertIn(('stop',), self.model.calls)
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+    def test_mcu_refinement_lost_handoff_invalidates_xyz_without_gcode_reset(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.model.bad_guard_reply = 2
+        with self.assertRaisesRegex(ValueError, 'guard ownership'):
+            self.adapter.cmd_home(self.command)
+        self.assertTrue(self.model.refine_complete)
+        self.assertIn(('stop',), self.model.calls)
+        self.assertEqual(self.model.axes, '')
+        self.assertEqual(self.model.base_position, [1., 2., 3., 4.])
+        self.assertEqual(self.model.homing_position, [1., 2., 3., 4.])
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+    def test_mcu_refinement_invalidates_native_frame_on_counter_change(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.adapter.repeat_count = 101
+        self.model.native_counter_after_refinement = self.model.native_counter + 1
+        with self.assertRaisesRegex(ValueError, 'counter|stepper position'):
+            self.adapter.cmd_home(self.command)
+        self.assertIn(('stop',), self.model.calls)
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+        self.assertEqual(self.model.axes, '')
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
 
 
 if __name__ == '__main__':

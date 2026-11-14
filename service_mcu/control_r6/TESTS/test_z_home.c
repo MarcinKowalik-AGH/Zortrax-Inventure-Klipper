@@ -514,6 +514,127 @@ static void native_tray_guard_stop(void)
     assert(native_z_guard_reply[0]==OWNER+2 && !native_z_guard_reply[1] && !native_z_guard_reply[2]);
 }
 
+static void refine(unsigned action,unsigned owner,unsigned token,unsigned span,
+                   unsigned interval,unsigned lower,unsigned upper)
+{
+    uint32_t args[]={action,owner,token,span,interval,lower,upper};
+    command_inventure_native_z_refine(args);
+}
+
+static void native_refine_reset(unsigned enable_guard)
+{
+    memset(&zh,0,sizeof(zh));
+    native_z_guard_owner=0;
+    native_z_guard_clear();
+    control_reset(0xffff0000u);
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed());
+    z_home_adc();
+    GPIOE->ODR=BIT(7)|BIT(10);
+    if(enable_guard) {
+        uint32_t args[]={1,OWNER};
+        command_inventure_native_z_guard(args);
+        assert(!native_z_guard_reply[2] && native_z_guard_active);
+    }
+}
+
+static void native_refine_run(void)
+{
+    native_refine_reset(0);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(z_home_reply.reject==4 && !zh.active);
+    uint32_t args[]={1,OWNER};
+    command_inventure_native_z_guard(args);
+    GPIOE->ODR&=~BIT(10);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(z_home_reply.reject==3 && !zh.active);
+    GPIOE->ODR|=BIT(10);
+    GPIOB->ODR|=BIT(8);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(z_home_reply.reject==3 && !zh.active);
+    GPIOB->ODR&=~BIT(8);
+    contact(1);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(z_home_reply.reject==3 && !zh.active);
+    contact(0);
+    refine(1,OWNER,TOKEN,10,4000,235,240);
+    assert(z_home_reply.reject==3 && !zh.active);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(!z_home_reply.reject && zh.active && zh.native && native_z_refine_held);
+    uint32_t wake=zh_timer.waketime;
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(!z_home_reply.reject && zh.active && zh_timer.waketime==wake);
+    refine(1,OWNER,TOKEN,10,4000,199,240);
+    assert(z_home_reply.reject==1 && zh.active && zh_timer.waketime==wake);
+    args[0]=2;command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[2]==2 && native_z_refine_held);
+
+    unsigned dispatches=0;
+    while(zh.active) {
+        switch(zh.phase) {
+        case ZH_START_UP: case ZH_SEEK:
+            contact(zh.net>=4);
+            break;
+        case ZH_START_DOWN: case ZH_RELEASE:
+            contact(zh.net>(zh.cycles?1:0));
+            break;
+        case ZH_START_SETTLE: case ZH_SETTLE:
+            contact(zh.net!=0);
+            break;
+        default:assert(!"unexpected native refinement phase");
+        }
+        step_timer();
+        assert(++dispatches<2000);
+    }
+    refine(0,OWNER,TOKEN,0,0,0,0);
+    assert(!z_home_reply.reject && z_home_reply.status==ZH_DONE && !zh.active);
+    assert(z_home_reply.cycles==102 && z_home_reply.misses==101);
+    assert(z_home_reply.net==0 && z_home_reply.best==0);
+    assert(z_home_reply.up_steps>0 && z_home_reply.down_steps==z_home_reply.up_steps);
+    assert(inventure_is_armed() && native_z_refine_held && native_z_guard_active);
+    assert(GPIOE->BSRR==BIT(7)); // saved native DIR restored while queue remains fenced
+    command_inventure_native_z_guard(args);
+    assert(!native_z_guard_reply[2] && !native_z_guard_active && !native_z_refine_held);
+    assert(inventure_filter_gpio(GPIOB,BIT(8),1)==1 && inventure_is_armed());
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    assert(!z_home_reply.reject && z_home_reply.status==ZH_DONE && !zh.active);
+}
+
+static void native_refine_faults(void)
+{
+    for(unsigned kind=0;kind<8;kind++) {
+        native_refine_reset(1);
+        refine(1,OWNER,TOKEN,10,4000,200,240);
+        assert(zh.active && native_z_refine_held);
+        if(kind==0)assert(inventure_filter_gpio(GPIOB,BIT(8),1)==0);
+        if(kind==1)assert(inventure_filter_gpio(GPIOE,BIT(7),0)==1); // hold prior DIR
+        if(kind==2)assert(inventure_filter_gpio(GPIOE,BIT(10),0)==0); // disable is honored
+        if(kind==3)GPIOC->IDR|=BIT(13);
+        if(kind==4)GPIOE->IDR|=BIT(12);
+        if(kind==5)inventure_adc_observe(ADC1,10,1024);
+        if(kind==6)heartbeat_live=0;
+        if(kind==7) {
+            zh_end(ZH_DONE); // simulate terminal hold awaiting the host rebase
+            mock_now+=MS(ZH_HANDOFF_MS);
+            command_inventure_heartbeat(NULL);
+            z_home_adc();
+        }
+        expect_failure=1;
+        if(!setjmp(failure)){control_guard(mock_now);assert(!"native probe guard failed");}
+        expect_failure=0;
+        assert(fault==8 && !inventure_is_armed() && !native_z_refine_held && !zh.active);
+        assert(zh.status==ZH_GUARD && !zh.up_steps && !zh.down_steps);
+        assert(!control_heater_duty[0] && !zh.high && !zh.timer_added);
+    }
+    native_refine_reset(1);
+    refine(1,OWNER,TOKEN,10,4000,200,240);
+    refine(2,OWNER,TOKEN+1,0,0,0,0);
+    assert(z_home_reply.reject==4 && zh.active);
+    refine(2,OWNER,TOKEN,0,0,0,0);
+    assert(!z_home_reply.reject && z_home_reply.status==ZH_STOP);
+    assert(!inventure_is_armed() && control_latched && !native_z_refine_held && !zh.active);
+}
+
 int main(void)
 {
     minimum_and_final_settle(0);
@@ -535,5 +656,8 @@ int main(void)
     native_tray_guard(0);
     native_tray_guard_stop();
     puts("PASS native Z tray guard: token ownership, PB8 interlock, latched PC13 fault and global STOP");
+    native_refine_run();
+    native_refine_faults();
+    puts("PASS native Z refine: exact 101 misses, saved DIR, exclusive queue gate, handoff and fault stops");
     return 0;
 }

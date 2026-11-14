@@ -44,8 +44,10 @@ static uint32_t native_z_guard_reply[3];
 #endif
 void sendf(const char*f,...){
 #ifdef TEST_Z_HOME_WIRE
-    if (!strncmp(f, "inventure_z_home_state ", 23)) {
-        assert(!strcmp(f, "inventure_z_home_state owner=%u token=%u active=%c status=%c"
+    if (!strncmp(f, "inventure_z_home_state ", 23)
+            || !strncmp(f,"inventure_native_z_refine_state ",32)) {
+        const char *fields=strchr(f,' ')+1;
+        assert(!strcmp(fields, "owner=%u token=%u active=%c status=%c"
             " reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c"
             " up_steps=%u down_steps=%u"));
         va_list args;

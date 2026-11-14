@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Opt-in native CoreXY T0 reference using an STM32 endstop per motion leg."""
+"""Native CoreXY T0 reference with a bounded, local STM32 contact cycle."""
 from contextlib import nullcontext
 import json
 import logging
@@ -7,11 +7,21 @@ import math
 
 from . import homing
 from .inventure_factory_core import FactoryError
-from .inventure_z_home import Z_HOME_ACK, ZReleaseTracker, Z_STEPS_PER_MM
+from .inventure_z_home import (
+    OEM_Z_BACKOFF_SPEED, OEM_Z_BOTTOM_RELEASE_SPEED, OEM_Z_CONTACT_SPEED,
+    Z_HOME_ACK, Z_MAX_CYCLES, Z_STABLE_CYCLES, Z_STEPS_PER_MM, ZReleaseTracker,
+)
 
 
 GUARD_COMMAND = 'inventure_native_z_guard action=%c owner=%u'
 GUARD_RESPONSE = 'inventure_native_z_guard_state owner=%u active=%c reject=%c'
+REFINE_COMMAND = ('inventure_native_z_refine action=%c owner=%u token=%u span=%hu '
+                  'interval_us=%hu min_c=%hi max_c=%hi')
+REFINE_RESPONSE = ('inventure_native_z_refine_state owner=%u token=%u active=%c status=%c '
+                   'reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c '
+                   'up_steps=%u down_steps=%u')
+REFINE_STATUS = ('running', 'done', 'no contact', 'no release', 'guard dropped',
+                 'cycle or time limit', 'stopped')
 PHASE_MARGIN_S = 10.
 PROGRESS_INTERVAL_S = 5.
 
@@ -34,9 +44,12 @@ class InventureNativeZ:
         self.pad_x = config.getfloat('pad_x')
         self.pad_y = config.getfloat('pad_y')
         self.bottom_position = config.getfloat('bottom_position', minval=2., maxval=250.)
-        self.bottom_release = config.getfloat('bottom_release', 5., above=1., maxval=6.3)
-        self.coarse_speed = config.getfloat('coarse_speed', 2., above=0., maxval=20.)
-        self.fine_speed = config.getfloat('fine_speed', .312, minval=.1, maxval=1.)
+        self.bottom_release = config.getfloat('bottom_release', 5000. / Z_STEPS_PER_MM,
+                                              above=1., maxval=6.3)
+        self.coarse_speed = config.getfloat('coarse_speed', OEM_Z_BACKOFF_SPEED,
+                                            above=0., maxval=OEM_Z_BACKOFF_SPEED)
+        self.fine_speed = config.getfloat('fine_speed', OEM_Z_CONTACT_SPEED,
+                                          minval=.1, maxval=.997)
         self.target = config.getfloat('nozzle_temperature', 200., minval=180., maxval=240.)
         self.repeat_count = config.getint('repeat_count', 101, minval=1, maxval=101)
         self.endstop = self.printer.lookup_object('pins').setup_pin(
@@ -46,6 +59,7 @@ class InventureNativeZ:
         self.bottom = None
         self.running = False
         self.guard = None
+        self.refine = None
         self.guard_owner = None
         self.last_result = None
         self.z_enable = None
@@ -60,9 +74,12 @@ class InventureNativeZ:
             desc='Establish native Z at the measured T0 release from the center pad')
 
     def _build_config(self):
-        if int(self.board.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI', 0)) != 1:
+        constants = self.board.mcu.get_constants()
+        if int(constants.get('INVENTURE_NATIVE_Z_GUARD_ABI', 0)) != 1:
             raise self.printer.config_error('Inventure native Z requires local tray guard ABI 1')
         self.guard = self.board.mcu.lookup_query_command(GUARD_COMMAND, GUARD_RESPONSE)
+        if int(constants.get('INVENTURE_NATIVE_Z_REFINE_ABI', 0)) == 1:
+            self.refine = self.board.mcu.lookup_query_command(REFINE_COMMAND, REFINE_RESPONSE)
 
     def _verify_guard(self, action, token, active):
         row = self.board._thermal_query_send(self.guard, [action, token], start=action == 1)
@@ -252,7 +269,72 @@ class InventureNativeZ:
         self._check(0)
         return best, tracker, basis
 
-    def _establish(self, approach_mm, span_mm, repeat_count, probe_cycles, report):
+    def _native_step_position(self):
+        raw = self.stepper._get_position_cmd.send([self.stepper.get_oid()])['pos']
+        position = -raw if self.stepper._invert_dir else raw
+        if position != self.stepper.get_mcu_position():
+            raise FactoryError('Native Z stepper position does not match its queued step count')
+        return position
+
+    def _refine_on_mcu(self, start, span, report):
+        self._stage('STM32 PC14 refinement handoff')
+        self._check(0)
+        native_steps = self._native_step_position()
+        token = self.board._control_next_token()
+        interval = round(1_000_000. / (self.fine_speed * Z_STEPS_PER_MM))
+        args = [self.guard_owner, token, span, interval, math.ceil(self.target - 10.),
+                math.ceil(self.target + 8.)]
+        limits = dict(owner=(1, 0xffffffff), token=(1, 0xffffffff), active=(0, 1),
+                      status=(0, len(REFINE_STATUS) - 1), reject=(0, 4),
+                      net_steps=(-span, span), best_steps=(-span, span),
+                      cycles=(0, Z_MAX_CYCLES), non_improvements=(0, Z_STABLE_CYCLES),
+                      up_steps=(0, 0xffffffff), down_steps=(0, 0xffffffff))
+        next_report = self.reactor.monotonic() + PROGRESS_INTERVAL_S
+        last = None
+        action = 1
+        while True:
+            self._stage('STM32 PC14 refinement status')
+            row = self.board._thermal_query_send(self.refine, [action] + args, start=action == 1)
+            if row.get('reject'):
+                raise FactoryError('MCU rejected native Z refinement (%s)' % row['reject'])
+            self.board._control_validate(row, limits)
+            if (row['owner'] != self.guard_owner or row['token'] != token
+                    or row['active'] != int(row['status'] == 0)
+                    or row['net_steps'] != row['up_steps'] - row['down_steps']
+                    or row['non_improvements'] >= max(1, row['cycles'])
+                    or (last is not None and any(row[field] < last[field] for field in
+                                                  ('up_steps', 'down_steps', 'cycles')))):
+                raise FactoryError('MCU reported inconsistent native Z refinement state')
+            now = self.reactor.monotonic()
+            if not row['active'] or now >= next_report:
+                report(dict(stage='PC14 refinement', engine='STM32',
+                            cycles=row['cycles'], non_improvements=row['non_improvements'],
+                            required_non_improvements=Z_STABLE_CYCLES))
+                next_report = now + PROGRESS_INTERVAL_S
+            if not row['active']:
+                break
+            if self.interrupted or self.printer.is_shutdown() or now >= self.deadline:
+                raise FactoryError('Native Inventure Z refinement expired or was interrupted')
+            last = row
+            action = 0
+            self.reactor.pause(now + .25)
+
+        status = REFINE_STATUS[row['status']]
+        if status != 'done':
+            raise FactoryError('MCU native Z refinement failed: ' + status)
+        if (not row['cycles'] or not row['up_steps'] or row['net_steps'] != row['best_steps']
+                or (row['non_improvements'] != Z_STABLE_CYCLES and row['up_steps'] < span)):
+            raise FactoryError('MCU did not settle on a valid native Z release')
+        self._stage('STM32 PC14 refinement verification')
+        self._check(0)
+        if (self._is_triggered(self.endstop) or self._current_steps() != start
+                or self._native_step_position() != native_steps):
+            raise FactoryError('Native Z lost its physical reference or stepper ownership')
+        basis = ('stable_repetitions' if row['non_improvements'] == Z_STABLE_CYCLES
+                 else 'upper_bound_with_best_release')
+        return start - row['best_steps'], row, basis
+
+    def _establish(self, approach_mm, span_mm, repeat_count, probe_cycles, report, local):
         start_pos = self.toolhead.get_position()
         start_pos[2] = self.bottom_position
         bottom_steps = round(self.bottom_position * Z_STEPS_PER_MM)
@@ -260,7 +342,7 @@ class InventureNativeZ:
         span = round(span_mm * Z_STEPS_PER_MM)
         low, high = start - span, start + span
         native_low, native_high = self.kin.rails[2].get_range()
-        if (low < round(native_low * Z_STEPS_PER_MM)
+        if ((start if local else low) < round(native_low * Z_STEPS_PER_MM)
                 or bottom_steps > round(native_high * Z_STEPS_PER_MM)
                 or high >= bottom_steps - round((self.bottom_release + 1.) * Z_STEPS_PER_MM)):
             raise FactoryError('Native Z probe and clearance exceed its configured travel')
@@ -269,11 +351,15 @@ class InventureNativeZ:
         self.started = True
         self.toolhead.set_position(start_pos, homing_axes='z')
         self._edge(self.bottom, self.bottom_position - self.bottom_release,
-                   min(self.coarse_speed, 1.25), False, 1, True, 'PE12 release')
+                   OEM_Z_BOTTOM_RELEASE_SPEED, False, 1, True, 'PE12 release')
         if self._is_triggered(self.bottom):
             raise FactoryError('PE12 did not release during native Z clearance')
         if self._current_steps() - start < Z_STEPS_PER_MM:
             raise FactoryError('Native Z coarse approach leaves less than 1 mm above PE12 release')
+        if local:
+            clearance = self._current_steps() - Z_STEPS_PER_MM
+            if self._matching_edge(True, clearance, self.coarse_speed, 'PE12 clearance') is not None:
+                raise FactoryError('PC14 closed during PE12 clearance')
         logging.info('Inventure native Z: PC14 coarse approach %.5f -> %.5f at %.3f mm/s',
                      self._current_steps() / Z_STEPS_PER_MM, start / Z_STEPS_PER_MM,
                      self.coarse_speed)
@@ -287,12 +373,18 @@ class InventureNativeZ:
         report(dict(stage='PC14 refinement', cycles=0,
                     required_non_improvements=repeat_count if probe_cycles is None else None,
                     requested_cycles=probe_cycles))
-        best, tracker, basis = self._reference(start, low, high, span, repeat_count, probe_cycles, report)
+        if local:
+            best, telemetry, basis = self._refine_on_mcu(start, span, report)
+        else:
+            best, tracker, basis = self._reference(
+                start, low, high, span, repeat_count, probe_cycles, report)
+            telemetry = dict(cycles=tracker.cycles, non_improvements=tracker.non_improvements)
         return dict(reference_established=True, coordinate_saved=True,
                     persistence='current_klipper_session', terminal='done',
                     release_steps_from_bottom=bottom_steps - best,
                     release_mm_from_bottom=round((bottom_steps - best) / Z_STEPS_PER_MM, 6),
-                    cycles=tracker.cycles, non_improvements=tracker.non_improvements,
+                    cycles=telemetry['cycles'], non_improvements=telemetry['non_improvements'],
+                    local_refinement=local,
                     required_non_improvements=repeat_count if probe_cycles is None else None,
                     requested_cycles=probe_cycles,
                     completion_basis=basis)
@@ -302,11 +394,20 @@ class InventureNativeZ:
             raise gcmd.error('Native Inventure Z reference already running or unavailable')
         if gcmd.get('ACK', '') != Z_HOME_ACK:
             raise gcmd.error('Native Inventure Z requires ACK=' + Z_HOME_ACK)
-        approach = gcmd.get_float('Z_APPROACH_MM', minval=2., maxval=self.bottom_position)
+        stable_requested = gcmd.get('Z_STABLE_CYCLES', None) is not None
+        local = not stable_requested and gcmd.get('Z_PROBE_CYCLES', None) is None
+        if local and self.refine is None:
+            raise gcmd.error('OEM native Z requires the RC8-CONTROL-R7-Z-OEM-NATIVE MCU application')
+        if local and getattr(self.kin, 'max_z_velocity', self.coarse_speed) < self.coarse_speed:
+            raise gcmd.error('Native Z max_z_velocity must allow the configured coarse_speed')
+        approach = gcmd.get_float('Z_APPROACH_MM', self.bottom_position - 2.,
+                                  minval=2., maxval=self.bottom_position)
         span = gcmd.get_float('Z_PROBE_MM', 10., minval=.02, maxval=10.)
-        repeat_count = gcmd.get_int('Z_STABLE_CYCLES', self.repeat_count, minval=1, maxval=101)
+        repeat_count = gcmd.get_int('Z_STABLE_CYCLES',
+                                   Z_STABLE_CYCLES if local else self.repeat_count,
+                                   minval=1, maxval=Z_STABLE_CYCLES)
         probe_cycles = gcmd.get_int('Z_PROBE_CYCLES', None, minval=1, maxval=101)
-        if probe_cycles is not None and gcmd.get('Z_STABLE_CYCLES', None) is not None:
+        if probe_cycles is not None and stable_requested:
             raise gcmd.error('Choose either Z_PROBE_CYCLES or Z_STABLE_CYCLES')
         now = self.reactor.monotonic()
         status = self.kin.get_status(now)
@@ -350,7 +451,7 @@ class InventureNativeZ:
                 guard_attempted = True
                 self._verify_guard(1, token, True)
                 self.guard_owner = token
-                result = self._establish(approach, span, repeat_count, probe_cycles, report)
+                result = self._establish(approach, span, repeat_count, probe_cycles, report, local)
                 self._stage('verify and commit Z reference')
                 self._check(0)
                 if self._is_triggered(self.endstop) or not self.z_enable.is_motor_enabled():
@@ -358,10 +459,10 @@ class InventureNativeZ:
                 position = self.toolhead.get_position()
                 position[2] = 0.
                 self.toolhead.set_position(position, homing_axes='z')
-                gm.base_position[2] = gm.homing_position[2] = 0.
-                gm.reset_last_position()
                 self._verify_guard(2, token, False)
                 self.guard_owner = None
+                gm.base_position[2] = gm.homing_position[2] = 0.
+                gm.reset_last_position()
                 if operations is not None:
                     operations.state.homed('z')
             self.last_result = result

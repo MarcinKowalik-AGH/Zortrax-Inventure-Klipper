@@ -45,6 +45,7 @@ static struct timer cm_timer;
 static uint32_t native_z_guard_owner;
 static void native_z_guard_clear(void) {
     native_z_guard_active=native_z_guard_lost=0;
+    native_z_refine_held=native_z_refine_conflict=0;
 }
 static struct {
     struct gpio_pwm pwm;
@@ -571,12 +572,14 @@ void command_inventure_native_z_guard(uint32_t *args) {
     unsigned action=args[0];
     uint32_t owner=args[1];
     irqstatus_t flags=irq_save();
+    uint32_t now=timer_read_time();
+    zh_guard(now);
     uint8_t reject=0;
     if(action>2 || (action && !owner))reject=1;
     else if(native_z_guard_active && (native_z_guard_lost || (GPIOC->IDR&BIT(13))))
         trip(7);
     else if(action==1) {
-        if(control_mode!=CT_NATIVE || !control_ready(timer_read_time()) || (GPIOC->IDR&BIT(13)))
+        if(control_mode!=CT_NATIVE || !control_ready(now) || (GPIOC->IDR&BIT(13)))
             reject=3;
         else if(owner==native_z_guard_owner){} // Retries never rearm a stopped guard.
         else if(native_z_guard_active)reject=2;
@@ -585,7 +588,10 @@ void command_inventure_native_z_guard(uint32_t *args) {
             native_z_guard_active=1;
         }
     } else if(owner && owner!=native_z_guard_owner)reject=4;
-    else if(action==2)native_z_guard_clear();
+    else if(action==2) {
+        if(native_z_refine_held && zh_active())reject=2;
+        else native_z_guard_clear();
+    }
     uint8_t active=native_z_guard_active;
     owner=native_z_guard_owner;
     irq_restore(flags);

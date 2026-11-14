@@ -24,6 +24,7 @@ prędkości przyjmij z pomiarów swojej maszyny.
 | Skala Z | 802 kroki/mm, np. 200 × 16 / 3,99002493766 |
 | Kontakt | `^!PC14`, rezerwowany przez ten moduł |
 | Tacka | PC13 aktywne niskim i lokalna ochrona `INVENTURE_NATIVE_Z_GUARD_ABI=1` |
+| Pomiar kontaktu | Aplikacja `RC8-CONTROL-R7-Z-OEM-NATIVE`, `INVENTURE_NATIVE_Z_REFINE_ABI=1` |
 
 Jeżeli sekcja `[inventure_contact]` istnieje, pozostaw w niej
 `enabled: False`, aby PC14 miał jednego właściciela. Ustaw `pad_x`,
@@ -40,15 +41,15 @@ pad_y: 65.5
 # Przykład formatu. Wpisz wynik pomiaru PE12 z własnej drukarki.
 bottom_position: 139.35
 nozzle_temperature: 200
-repeat_count: 101
+coarse_speed: 20
 ```
 
 ## Profil próbny na Orange Pi
 
 Plik [`INVENTURE_NATIVE_Z_TEST.cfg`](../config/INVENTURE_NATIVE_Z_TEST.cfg)
 zawiera osobny profil do sprawdzenia bazowania. Adres `/dev/ttyS1` i 750000
-baud odpowiadają konfiguracji z `klippy(11).log`. Firmware `Z-HOST` już
-zgłosił `native_z_guard_abi: 1`. W przebiegu serwisowym uzyskano 147 cykli,
+baud odpowiadają konfiguracji z `klippy(11).log`. W poprzednim przebiegu
+serwisowym uzyskano 147 cykli,
 101 bez poprawy i rozwarcie na wysokości 139,34414 mm od PE12.
 
 Ostatnia udana próba `HOME_Z TOOL=T0` fizycznie wybrała T0. Jeśli dysza
@@ -59,7 +60,6 @@ drukarce. Polecenie tworzy kopię serwisowego `printer.cfg` z datą w nazwie
 i wypisuje jej ścieżkę.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
 cfg="$HOME/printer_data/config/printer.cfg" &&
 backup="$cfg.service-$(date +%Y%m%d-%H%M%S)" &&
 cp -p "$cfg" "$backup" &&
@@ -91,26 +91,27 @@ liczniki tachometru tych wentylatorów w `INVENTURE_SENSORS`.
 
 ```gcode
 M109 S200
-INVENTURE_NATIVE_HOME_Z Z_APPROACH_MM=137 Z_PROBE_MM=3 Z_PROBE_CYCLES=3 ACK=PAD_AND_CLEARANCE_CHECKED
+INVENTURE_NATIVE_HOME_Z ACK=PAD_AND_CLEARANCE_CHECKED
 ```
 
-`Z_PROBE_CYCLES=3` kończy próbę po trzech pełnych parach zwarcie–rozwarcie.
-Po jej zakończeniu sprawdź
-`GET_POSITION` osobnym poleceniem i wyłącz grzanie przez `M104 S0`.
-Bez tego parametru stosowany jest domyślny próg 101 cykli bez poprawy,
-który można zmienić parametrem `Z_STABLE_CYCLES`. Fabryczny r0323 liczy
-te mikroruchy lokalnie na MCU. W trybie natywnym każdy ruch wymaga
-oddzielnej synchronizacji Klipper–MCU. `V9_NATIVE_Z_PROGRESS` podaje liczbę
-cykli po około 5 sekundach i przy zakończeniu pomiaru.
+Po zakończeniu wyłącz grzanie przez `M104 S0` i sprawdź `GET_POSITION`.
+STM32 wykonuje mikroruchy i liczy cykle lokalnie. `V9_NATIVE_Z_PROGRESS`
+podaje ich liczbę podczas pomiaru i przy zakończeniu. Parametry
+`Z_PROBE_CYCLES` i `Z_STABLE_CYCLES` wybierają starszą diagnostykę, w której
+Klipper osobno synchronizuje każdy ruch.
 
 W r0323 bazowanie jednego pola wywołuje procedurę mikroruchów z progiem
 100 (`0x0801DDAE–0x0801DDB0`). Oddzielna kalibracja może zlecić trzy pełne
 przejścia (`0x0801888C–0x08018890`). Każde z nich ma własną wewnętrzną
 pętlę pomiarową. Polski opis pomiaru jednego pola jest w [audycie r0323](Z_CONTACT_AND_HOMING_R0323.md#sekwencja-firmware-161-r0323).
-Krańcówki X/Y są szukane przy 5 mm/s, a przejazd do pola ma zadaną
-prędkość 80 mm/s. Zgrubny najazd Z odbywa się jednym ruchem przy 8 mm/s
-po zwolnieniu PE12. PC14 może go zatrzymać w dowolnym punkcie, a MCU
-nadzoruje osadzenie tacki. Ruchy pomiarowe mają własną niższą prędkość.
+Profil próbny szuka krańcówek X/Y przy 5 mm/s i jedzie do pola przy 80 mm/s.
+Z zjeżdża do PE12 przy 8,285 mm/s i odjeżdża do rozwarcia przy 1,246 mm/s.
+Po odsunięciu się od PE12 o dodatkowy 1 mm stół jedzie do pozycji
+początkowej pomiaru z limitem 20 mm/s. PC14 może zatrzymać ten ruch, a MCU
+nadzoruje osadzenie tacki. W pobliżu styku licznik kończy pomiar po 101
+kolejnych parach bez poprawy. Domyślny odstęp 4 ms między krokami daje
+ok. 0,312 mm/s. To odpowiednik programowego opóźnienia r0323. Dokładny
+czas między impulsami w oryginalnej aplikacji wymaga pomiaru na płycie.
 Każdy etap ma limit obejmujący przewidywany czas ruchu i potwierdzenia.
 Gdy limit upłynie, Klipper wykonuje awaryjne zatrzymanie i w logu podaje nazwę etapu.
 Przy błędzie lub braku reakcji użyj przycisku awaryjnego STOP w Fluidd
@@ -134,21 +135,20 @@ Ustabilizuj temperaturę T0 za pomocą natywnego grzania. Sprawdź
 współrzędnych przed próbą.
 
 ```gcode
-INVENTURE_NATIVE_HOME_Z Z_APPROACH_MM=137 Z_PROBE_MM=3 ACK=PAD_AND_CLEARANCE_CHECKED
+INVENTURE_NATIVE_HOME_Z ACK=PAD_AND_CLEARANCE_CHECKED
 GET_POSITION
 ```
 
-Przykładowa para 137/3 mm obejmuje zmierzony wcześniej kontakt około
-139,35 mm od PE12. Dobierz początek pomiaru z potwierdzonej geometrii
-i zmierz pozostałą szczelinę do metalu. Musi ona zmieścić się w
-`Z_PROBE_MM`. Całe okno, wraz z oboma krańcami, musi mieścić się w
-skonfigurowanym zakresie osi także względem pobliskich elementów
-głowicy. Przy podanym przykładzie dolne ograniczenie natywnego Z
-musiałoby dopuszczać co najmniej -0,65 mm.
+Domyślny początek dokładnego pomiaru odpowiada Z=2 mm względem
+`bottom_position`. `Z_APPROACH_MM` zmienia drogę od zadziałania PE12,
+a `Z_PROBE_MM` zmienia zakres do 10 mm w każdą stronę. Zakres pomiaru
+lokalnego STM32 jest niezależny od `position_min` ruchów G-code. Dlatego
+położenie dyszy nad polem i prześwit należy zweryfikować przed próbą.
 
-MCU zatrzymuje poszczególne ruchy na PC14 i blokuje kroki po utracie
-tacki. Host wybiera minimalne rozwarcie w krokach native Z oraz
-sprawdza pozycję zatrzymania przed przypisaniem zera. Przy braku styku,
+STM32 wybiera najlepsze rozwarcie, wraca do niego i utrzymuje ochronę
+tacki, temperatury oraz napędu do chwili przekazania sterowania. Klipper
+sprawdza otwarte PC14 i zgodność liczników natywnego planera, po czym
+ustanawia Z=0 na zmierzonym rozwarciu. Przy braku styku,
 braku rozwarcia lub utracie zabezpieczenia czynność zwraca błąd.
 Po prawidłowym wyniku `V9_NATIVE_Z` podaje `coordinate_saved: true`,
 `persistence: current_klipper_session` oraz `completion_basis`.

@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-HOST'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-OEM-NATIVE'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -462,6 +462,7 @@ class InventureMCU:
         self.z_home_abi=int(self.mcu.get_constants().get('INVENTURE_Z_HOME_ABI',0))
         self.z_edge_abi=int(self.mcu.get_constants().get('INVENTURE_Z_EDGE_ABI',0))
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
+        self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
             if self.control_abi!=1 or self.factory_abi!=1:
                 raise self.printer.config_error('MCU Z edge probing requires CONTROL and FACTORY ABI 1')
@@ -1623,6 +1624,7 @@ class InventureMCU:
             'z_home_abi':getattr(self,'z_home_abi',0),
             'z_edge_abi':getattr(self,'z_edge_abi',0),
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
+            'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
             **{attr:getattr(self,attr,0) for attr,_,_ in AXIS_MOTION_LIMITS},
             'control_state':getattr(self,'control_last',{}),
