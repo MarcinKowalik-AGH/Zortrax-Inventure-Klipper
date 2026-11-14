@@ -2,6 +2,7 @@
 """Opt-in native CoreXY T0 reference using an STM32 endstop per motion leg."""
 from contextlib import nullcontext
 import json
+import logging
 import math
 
 from . import homing
@@ -132,11 +133,11 @@ class InventureNativeZ:
                 or not self.target - 10. <= temperature <= self.target + 8.):
             raise FactoryError('T0 left the native Z temperature band')
 
-    def _edge(self, pin, target, speed, triggered, bottom_expected, check_triggered):
+    def _edge(self, pin, target, speed, triggered, bottom_expected, check_triggered, phase):
         self._check(bottom_expected)
         position = self.toolhead.get_position()
         position[2] = target
-        move = homing.HomingMove(self.printer, [(pin, 'inventure_native_z')], self.toolhead)
+        move = homing.HomingMove(self.printer, [(pin, phase)], self.toolhead)
         measured = move.homing_move(position, speed, probe_pos=True, triggered=triggered,
                                     check_triggered=check_triggered)
         self.toolhead.wait_moves()
@@ -157,40 +158,38 @@ class InventureNativeZ:
     def _is_triggered(self, pin):
         return bool(pin.query_endstop(self.toolhead.get_last_move_time()))
 
-    def _matching_edge(self, triggered, limit, speed):
-        # A bounded native leg uses the hardware pin for its stop. Limiting
-        # each dispatched leg also bounds travel between fresh tray checks.
+    def _matching_edge(self, triggered, limit, speed, phase):
+        # One native move keeps the local PC14 stop armed for the entire leg.
+        # The MCU independently supervises tray presence while it is queued.
         direction = -1 if triggered else 1
         current = self._current_steps()
-        while direction * (limit - current) > 0:
-            self._check(0)
-            if self._is_triggered(self.endstop) == triggered:
-                return current
-            remaining = abs(limit - current)
-            target = current + direction * min(remaining, Z_STEPS_PER_MM)
-            require_trigger = (not triggered and target == limit)
-            measured = self._edge(self.endstop, target / Z_STEPS_PER_MM,
-                                  speed, triggered, 0, require_trigger)
-            actual = self._current_steps()
-            if not (0 <= direction * (measured - current)
-                    <= direction * (actual - current) <= abs(target - current)):
-                raise FactoryError('Native Z trigger or halt fell outside its own move')
-            if actual != target or measured != target:
-                return measured
-            current = actual
+        if direction * (limit - current) <= 0:
+            return None
+        self._check(0)
+        if self._is_triggered(self.endstop) == triggered:
+            return current
+        measured = self._edge(self.endstop, limit / Z_STEPS_PER_MM,
+                              speed, triggered, 0, not triggered, phase)
+        actual = self._current_steps()
+        if not (0 <= direction * (measured - current)
+                <= direction * (actual - current) <= abs(limit - current)):
+            raise FactoryError(phase + ': Z trigger or halt fell outside its own move')
+        if (not triggered or actual != limit or measured != limit
+                or self._is_triggered(self.endstop)):
+            return measured
         return None
 
     def _reference(self, start, low, high, span):
         tracker = ZReleaseTracker(span, self.repeat_count, 512)
         basis = 'stable_repetitions'
         while True:
-            closed = self._matching_edge(True, low, self.fine_speed)
+            closed = self._matching_edge(True, low, self.fine_speed, 'PC14 contact')
             if closed is None:
                 if tracker.best is None:
                     raise FactoryError('Native Z never reached PC14 within its span')
                 basis = 'upper_bound_with_best_release'
                 break
-            opened = self._matching_edge(False, high, self.fine_speed)
+            opened = self._matching_edge(False, high, self.fine_speed, 'PC14 release')
             if opened is None:
                 self._check(0)
                 if self._is_triggered(self.endstop):
@@ -200,12 +199,12 @@ class InventureNativeZ:
                 break
         best = start - tracker.best
         if self._current_steps() > best:
-            if self._matching_edge(True, best, self.fine_speed) is not None:
+            if self._matching_edge(True, best, self.fine_speed, 'PC14 return') is not None:
                 raise FactoryError('PC14 closed on the return to the selected native reference')
             if self._current_steps() != best:
                 raise FactoryError('Native Z did not return to its recorded best release')
-        while self._current_steps() != best:
-            self._move(min(best, self._current_steps() + Z_STEPS_PER_MM), self.fine_speed)
+        elif self._current_steps() < best:
+            self._move(best, self.fine_speed)
         if self._is_triggered(self.endstop):
             raise FactoryError('PC14 stayed closed at the selected native reference')
         self._check(0)
@@ -228,15 +227,20 @@ class InventureNativeZ:
         self.started = True
         self.toolhead.set_position(start_pos, homing_axes='z')
         self._edge(self.bottom, self.bottom_position - self.bottom_release,
-                   min(self.coarse_speed, 1.25), False, 1, True)
+                   min(self.coarse_speed, 1.25), False, 1, True, 'PE12 release')
         if self._is_triggered(self.bottom):
             raise FactoryError('PE12 did not release during native Z clearance')
-        self._move(self._current_steps() - Z_STEPS_PER_MM, self.coarse_speed)
-        if (self._matching_edge(True, start, self.coarse_speed) is not None
+        if self._current_steps() - start < Z_STEPS_PER_MM:
+            raise FactoryError('Native Z coarse approach leaves less than 1 mm above PE12 release')
+        logging.info('Inventure native Z: PC14 coarse approach %.5f -> %.5f at %.3f mm/s',
+                     self._current_steps() / Z_STEPS_PER_MM, start / Z_STEPS_PER_MM,
+                     self.coarse_speed)
+        if (self._matching_edge(True, start, self.coarse_speed, 'PC14 coarse approach') is not None
                 or self._is_triggered(self.endstop)):
             raise FactoryError('PC14 closed during the guarded coarse approach')
         if self._current_steps() != start:
             raise FactoryError('Native Z did not reach the start of refinement')
+        logging.info('Inventure native Z: starting PC14 refinement at %.5f', start / Z_STEPS_PER_MM)
         best, tracker, basis = self._reference(start, low, high, span)
         return dict(reference_established=True, coordinate_saved=True,
                     persistence='current_klipper_session', terminal='done',
@@ -272,6 +276,8 @@ class InventureNativeZ:
         self.running = True
         self.interrupted = False
         self.started = False
+        display_was_held = bool(getattr(self.board, 'thermal_display_held', False))
+        display_hold_requested = False
         guard_attempted = False
         self.deadline = now + 600.
         self.last_result = None
@@ -279,6 +285,8 @@ class InventureNativeZ:
             with owner:
                 self.toolhead.wait_moves()
                 self._check(1)
+                display_hold_requested = True
+                self.board._thermal_display_hold(True)
                 token = self.board._control_next_token()
                 guard_attempted = True
                 self._verify_guard(1, token, True)
@@ -300,6 +308,10 @@ class InventureNativeZ:
         except Exception as exc:
             if guard_attempted:
                 self.board._control_stop_outputs()
+                try:
+                    self.toolhead.get_extruder().get_heater().set_temp(0.)
+                except Exception:
+                    logging.exception('Inventure native Z: unable to clear the nozzle target')
             if self.started or guard_attempted:
                 if operations is None:
                     self.kin.clear_homing_state('xyz')
@@ -307,10 +319,17 @@ class InventureNativeZ:
                     operations.invalidate('xyz', 'native_z_reference_failed')
             self.last_result = dict(reference_established=False, coordinate_saved=False,
                                     terminal='failed', reason=str(exc))
+            logging.warning('Inventure native Z failed: %s (UART buffers: %s)', exc,
+                            getattr(self.board, 'uart_buffer_stats', {}))
             raise gcmd.error(str(exc)) from exc
         finally:
             self.guard_owner = None
             self.running = False
+            if display_hold_requested:
+                try:
+                    self.board._thermal_display_hold(display_was_held)
+                except Exception:
+                    logging.exception('Inventure native Z: unable to restore OLED refresh')
         gcmd.respond_info('V9_NATIVE_Z ' + json.dumps(self.last_result, sort_keys=True))
 
     def get_status(self, eventtime):

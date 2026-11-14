@@ -14,6 +14,8 @@ class Model:
         self.physical_z = self.z
         self.axes = 'xy'
         self.calls = []
+        self.edge_calls = []
+        self.timeout_edge = None
         self.guard = False
         self.bad_guard_reply = None
         self.tray = 0
@@ -25,6 +27,8 @@ class Model:
         self.release_overrun_steps = 0
         self.time = 0.
         self.stopped = False
+        self.heater_target = 200.
+        self.thermal_display_held = False
         self.move_transform = None
         self.base_position = [1., 2., 3., 4.]
         self.homing_position = [1., 2., 3., 4.]
@@ -50,6 +54,16 @@ class Model:
 
     def get_extruder(self):
         return self
+
+    def get_heater(self):
+        return self
+
+    def set_temp(self, temperature):
+        self.heater_target = temperature
+
+    def _thermal_display_hold(self, hold):
+        self.thermal_display_held = hold
+        self.calls.append(('display_hold', hold))
 
     def get_name(self):
         return self.name
@@ -119,7 +133,7 @@ class Model:
 class HomingMove:
     def __init__(self, printer, endstops, toolhead):
         self.model = toolhead
-        self.pin = endstops[0][0]
+        self.pin, self.phase = endstops[0]
 
     def homing_move(self, position, speed, probe_pos, triggered, check_triggered):
         model = self.model
@@ -127,7 +141,15 @@ class HomingMove:
         target = position[2]
         old = model.physical_z
         limit = old + target - model.z
+        pin_name = 'PE12' if self.pin is model.bottom else 'PC14'
+        model.edge_calls.append((pin_name, speed, triggered,
+                                 round(target * Z_STEPS_PER_MM), check_triggered))
         model.calls.append(('edge', triggered, round(abs(limit - old) * Z_STEPS_PER_MM)))
+        if model.timeout_edge == (pin_name, speed, triggered):
+            model.z -= 2.
+            model.physical_z -= 2.
+            raise ValueError('Error during homing %s: Communication timeout during homing'
+                             % self.phase)
         if self.pin is model.bottom:
             hit = not triggered and limit < 145.
             if hit:
@@ -206,7 +228,8 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertEqual(self.model.get_position(), [67.5, 65.5, 0., 9.])
         self.assertEqual(self.model.base_position, [1., 2., 0., 4.])
         self.assertEqual(self.model.physical_z, 5. + 1. / Z_STEPS_PER_MM)
-        self.assertEqual(self.model.calls[-2:], [('set', 0., 'z'), ('guard', 2, 23, False)])
+        self.assertEqual([call for call in self.model.calls if call[0] != 'display_hold'][-2:],
+                         [('set', 0., 'z'), ('guard', 2, 23, False)])
         self.assertFalse(self.model.guard)
         self.adapter._enable_changed(0., False)
         self.assertNotIn('z', self.model.axes)
@@ -233,11 +256,63 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertTrue(self.model.stopped)
         self.assertNotIn(('set', 0., 'z'), self.model.calls)
 
+    def test_coarse_approach_is_one_guarded_pc14_leg_to_refinement_start(self):
+        self.adapter.cmd_home(self.command)
+        coarse = [edge for edge in self.model.edge_calls
+                  if edge[0] == 'PC14' and edge[1] == self.adapter.coarse_speed]
+        expected_start = round((self.adapter.bottom_position
+                                - self.command['Z_APPROACH_MM']) * Z_STEPS_PER_MM)
+        self.assertEqual(coarse, [('PC14', self.adapter.coarse_speed, True,
+                                   expected_start, False)])
+        self.assertEqual(self.model.edge_calls[0][0], 'PE12')
+        self.assertFalse([call for call in self.model.calls if call[0] == 'move'])
+        self.assertTrue(self.adapter.last_result['coordinate_saved'])
+
+    def test_coarse_communication_timeout_aborts_without_reference(self):
+        self.model.timeout_edge = ('PC14', self.adapter.coarse_speed, True)
+        with self.assertRaisesRegex(ValueError, 'PC14 coarse approach.*Communication timeout'):
+            self.adapter.cmd_home(self.command)
+        self.assertEqual([edge[0] for edge in self.model.edge_calls], ['PE12', 'PC14'])
+        self.assertIn(('stop',), self.model.calls)
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+        self.assertEqual(self.model.axes, '')
+        self.assertTrue(self.model.stopped)
+        self.assertFalse(self.model.guard)
+        self.assertFalse(self.model.thermal_display_held)
+        self.assertEqual(self.model.heater_target, 0.)
+        self.assertEqual([call for call in self.model.calls if call[0] == 'display_hold'],
+                         [('display_hold', True), ('display_hold', False)])
+        self.assertFalse(self.adapter.last_result['reference_established'])
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+        self.assertEqual(self.adapter.last_result['terminal'], 'failed')
+        self.assertIn('Communication timeout', self.adapter.last_result['reason'])
+        self.assertFalse(self.adapter.running)
+
+    def test_pc14_touch_at_coarse_target_aborts_before_fine_moves(self):
+        self.model.threshold = self.adapter.bottom_position - self.command['Z_APPROACH_MM']
+        with self.assertRaisesRegex(ValueError, 'PC14.*coarse approach'):
+            self.adapter.cmd_home(self.command)
+        self.assertEqual([edge[0] for edge in self.model.edge_calls], ['PE12', 'PC14'])
+        self.assertEqual(self.model.physical_z, self.model.threshold)
+        self.assertTrue(self.model.stopped)
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+
+    def test_pc14_touch_at_fine_limit_counts_as_real_contact(self):
+        self.model.threshold = (self.adapter.bottom_position
+                                - self.command['Z_APPROACH_MM']
+                                - self.command['Z_PROBE_MM'])
+        self.adapter.cmd_home(self.command)
+        self.assertTrue(self.adapter.last_result['coordinate_saved'])
+        self.assertEqual(self.adapter.last_result['cycles'], 3)
+        self.assertAlmostEqual(self.model.physical_z,
+                               self.model.threshold + 1. / Z_STEPS_PER_MM)
+
     def test_preflight_requires_existing_xy_and_t0(self):
         self.model.name = 'extruder1'
         with self.assertRaisesRegex(ValueError, 'selected T0'):
             self.adapter.cmd_home(self.command)
-        self.assertFalse(self.model.calls)
+        self.assertFalse([call for call in self.model.calls if call[0] != 'display_hold'])
+        self.model.calls.clear()
         self.model.name = 'extruder'
         self.model.axes = 'x'
         with self.assertRaisesRegex(ValueError, 'Home native X/Y'):

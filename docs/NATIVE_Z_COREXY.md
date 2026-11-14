@@ -78,7 +78,7 @@ G28 Z
 G28 Y
 G28 X
 G90
-G0 X82.8 Y68 F600
+G0 X82.8 Y68 F4800
 SET_STEPPER_ENABLE STEPPER=stepper_z ENABLE=1
 M400
 INVENTURE_INPUTS
@@ -97,7 +97,13 @@ M104 S0
 ```
 
 Po pomyślnym wyniku `GET_POSITION` powinno pokazać robocze `Z=0`.
-Jeżeli próba zgłosi błąd, wyślij `M104 S0` osobno. Aby wrócić do SERVICE,
+Krańcówki X/Y są szukane przy 5 mm/s, a przejazd do pola ma zadaną
+prędkość 80 mm/s. Zgrubny najazd Z odbywa się jednym ruchem przy 8 mm/s
+po zwolnieniu PE12. PC14 może go zatrzymać w dowolnym punkcie, a MCU
+nadzoruje osadzenie tacki. Ruchy pomiarowe mają własną niższą prędkość.
+Jeżeli próba zgłosi błąd, prześlij pełny `klippy.log` z tej sesji.
+Po błędzie w rozpoczętej procedurze host zeruje cel T0 i zatrzymuje MCU,
+jeśli rozpoczął uzbrajanie ochrony ruchu. Aby wrócić do SERVICE,
 po ostygnięciu przywróć wypisaną wcześniej kopię `printer.cfg` i wykonaj
 `FIRMWARE_RESTART`. Profil przeszedł uruchomienie w trybie symulacji
 Klippera z rzeczywistym słownikiem MCU. Fizyczna próba tej ścieżki
