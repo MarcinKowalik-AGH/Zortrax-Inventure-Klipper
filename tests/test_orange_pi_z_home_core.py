@@ -13,9 +13,10 @@ class PlanModel:
     def __init__(self, **options):
         self.p = defaults(0)
         self.p['speed_profile'] = options.get('SPEED_PROFILE', 'SERVICE')
-        command = dict(Z_APPROACH_MM=3, ACK=Z_HOME_ACK)
+        command = dict(Z_APPROACH_MM=3, Z_PROBE_MM=1, ACK=Z_HOME_ACK)
         command.update(options)
-        self.settings = z_home_parameters(command, self.p, required=True)
+        self.settings = z_home_parameters(command, self.p, required=True,
+                                          native=self.p['speed_profile']=='OEM')
         self.program = ZHomeProgram(self.p, self.settings)
         self.position = 0
         self.actions = []
@@ -70,6 +71,14 @@ class PlanModel:
                 return action
             if kind == 'z_contact_move':
                 response = self._motion(action)
+            elif kind == 'z_contact_mcu':
+                self.actions.append((self.program.history[-1], action))
+                best = self.contact_at - 1 - self.position
+                self.position += best
+                response = dict(best_steps=best, cycles=1+action['repeats'],
+                                non_improvements=action['repeats'],
+                                up_steps=best+1+action['repeats'],
+                                down_steps=1+action['repeats'])
             elif kind == 'z_verify_open':
                 response = dict(nozzle_contact=int(not self.closed), z_bottom=int(self.position == 0))
             else:
@@ -217,17 +226,34 @@ class ZHomeCoreTests(unittest.TestCase):
 
     def test_oem_speed_defaults_and_bottom_bound_only_affect_z_modules(self):
         model = PlanModel(SPEED_PROFILE='OEM', Z_STABLE_CYCLES=1)
-        model.run()
+        result = model.run()['z_home_result']
         bottom = next(a for _, a in model.actions if a['kind'] == 'home' and a['axis'] == 'Z')
         self.assertEqual((bottom['speed'], bottom['max_mm']), (OEM_Z_BOTTOM_SPEED, 150.))
         legs = [a for _, a in model.actions if a['kind'] == 'z_contact_move']
-        self.assertEqual([(a['steps'], a['speed']) for a in legs[:3]],
+        self.assertEqual([(a['steps'], a['speed']) for a in legs],
                          [(5000, OEM_Z_BOTTOM_RELEASE_SPEED), (802, 20.), (1603, 20.)])
-        self.assertEqual(legs[3]['speed'], .2)
-        self.assertEqual(legs[4]['speed'], .2)
+        native = [a for _, a in model.actions if a['kind'] == 'z_contact_mcu']
+        self.assertEqual(native, [dict(kind='z_contact_mcu', start_steps=3*802,
+                                      span_steps=802, interval_us=4000, repeats=1)])
+        self.assertEqual((result['engine'], result['release_steps_from_bottom']),
+                         ('mcu', model.contact_at-1))
+        self.assertFalse(result['coordinate_saved'])
         with self.assertRaisesRegex(FactoryError, 'exceeds the Z travel bound'):
             PlanModel(SPEED_PROFILE='OEM', Z_APPROACH_MM=143, Z_PROBE_MM=9)
         with self.assertRaisesRegex(FactoryError, 'Z bottom seek exceeds 595 seconds'):
             PlanModel(SPEED_PROFILE='OEM', Z_BOTTOM_SPEED=.1)
         accepted = PlanModel(SPEED_PROFILE='OEM', Z_APPROACH_MM=135, Z_PROBE_MM=9)
         self.assertEqual(accepted.settings['z_approach_mm'] + accepted.settings['z_probe_mm'], 144.)
+
+    def test_native_mode_validates_symmetric_span_cadence_and_mcu_limits(self):
+        for params, error in (
+                (dict(Z_APPROACH_MM=2, Z_PROBE_MM=1.1), 'bottom clearance'),
+                (dict(Z_PROBE_SPEED=1.), 'interval'),
+                (dict(Z_PROBE_SPEED=.2, Z_RELEASE_SPEED=.3), 'same speed'),
+                (dict(Z_MAX_CYCLES=400), 'MCU cap'),
+                (dict(Z_TRANSIENT_RETRIES=1), 'SERVICE profile')):
+            with self.subTest(params=params), self.assertRaisesRegex(FactoryError, error):
+                PlanModel(SPEED_PROFILE='OEM', **params)
+        tuned = PlanModel(SPEED_PROFILE='OEM', Z_PROBE_SPEED=.2)
+        self.assertEqual(tuned.settings['z_contact_interval_us'], 6234)
+        self.assertEqual(tuned.settings['z_release_speed'], .2)

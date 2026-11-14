@@ -173,9 +173,8 @@ w zakresie serwisowym i odpowiedniego dla rzeczywistego filamentu.
 `INVENTURE_PROCEDURE ACTION=Z_PREPARE` bazuje dolne Z i osie XY, nagrzewa
 T0 i ustawia dyszę nad punktem pomiarowym. `ACTION=HOME_Z` dodaje
 ograniczony dojazd, pomiar kontaktu i rozwarcia PC14 oraz powrót do
-najniższej potwierdzonej pozycji rozwarcia. Krótkie zwarcie i krótkie
-rozwarcie PC14 uruchamiają ograniczone ponowienia. Profil `OEM` stosuje odczytane prędkości odcinków
-Z i zachowuje serwisową prędkość precyzyjnego pomiaru.
+najniższej pozycji rozwarcia. W profilu `OEM` firmware `Z-NATIVE` odtwarza
+kolejność pomiaru r0323 lokalnie na MCU, z własnym zegarem kroków.
 [Parametry i polecenia Z](docs/Z_CONTACT_AND_HOMING_R0323.md#rozgrzana-próba-odniesienia-z-w-service)
 
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
@@ -205,9 +204,9 @@ git clone --depth 1 --single-branch --no-tags --branch orange-pi-all-axis https:
 Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje kopie
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
-750000 baud i aktualną geometrię. MCU otrzymujesz osobno w czacie jako
-`INVENTURE_MCU_CONTROL_R7_T1_TIMING_BOOT17.zip` z aplikacją
-`MCU/INVENTUR.IVB` do bootloadera 1.7. Po wgraniu wykonaj
+750000 baud i aktualną geometrię. Pakiet
+`INVENTURE_MCU_CONTROL_R7_Z_NATIVE_BOOT17.zip` zawiera aplikację
+`INVENTUR.IVB` do bootloadera 1.7. Po wgraniu wykonaj
 `FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`. Nowe profile materiałowe
 są dostępne po aktualizacji hosta również z dotychczasowym MCU
 obsługującym daną procedurę. T1-TIMING zachowuje globalną opcję drzwi
@@ -222,8 +221,9 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-RECOVERY`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE`, `mcu_release` = `RC8-CONTROL-R7-Z-NATIVE`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
+`z_home_abi: 1` potwierdza dostępność pomiaru HOME_Z na MCU.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza
 kontrolę osłon w bieżącej sesji, gdy drukarka jest bezczynna.

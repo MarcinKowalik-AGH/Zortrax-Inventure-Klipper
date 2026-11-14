@@ -1,14 +1,14 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-RECOVERY",
-  "host_module_sha256": "546d846cbe1169ba333052b8edee9f4e9fb8cb040b0f02fe6d5700cc44276630",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
+  "host_module_sha256": "50c3d8493c73e651a2229ae9cec60f2936d18ab417f5f42eed17f9f39d7de848",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 397,
-  "previous_host_commit": "a62ce7f81042b8a4048847e39babf52bf7de962d",
+  "verified_public_host_tests": 405,
+  "previous_host_commit": "0b647072b6742c862c0a87f1e48e85d30d2c606f",
   "firmware": {
-    "release": "RC8-CONTROL-R7-T1-TIMING",
+    "release": "RC8-CONTROL-R7-Z-NATIVE",
     "bootloader": "InventureBoot 1.7",
-    "ivb_sha256": "963ba9ef91a092c678f197206c20f942adeff3ab48544f4e67acdc043e4cbf76",
+    "ivb_sha256": "34aec089c8c4b65e8e78352c6592b9f0facb72b8c248679774fa4507598a21b0",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "physical_R5_tests": true,
     "physical_qualification_complete": false,
@@ -111,22 +111,27 @@
         "last_transport_trial": "1500ms left DIR1 produced about 2mm by user observation; COMPARE rejected while still active; final pulse counts unavailable"
       }
     },
-    "previous_release": "RC8-CONTROL-R7-FACTORY-DUAL",
+    "previous_release": "RC8-CONTROL-R7-T1-TIMING",
     "physical_R6_smooth_test": "pending operator",
     "load_stream_abi": 1,
-    "package_filename": "INVENTURE_MCU_CONTROL_R7_CASSETTE_POLICY_BOOT17.zip",
-    "ivb_bytes": 92340,
+    "package_filename": "INVENTURE_MCU_CONTROL_R7_Z_NATIVE_BOOT17.zip",
+    "ivb_bytes": 94400,
     "factory_abi": 1,
     "physical_R7_factory_test": "Global open-door policy and crossed material trials pending on the printer.",
     "factory_feed_clock": 1,
-    "package_sha256": "5e79eb06ea7fb32f695e9b41fbbdb25fa5f9c240757ce6ab8bfad44042ab1bd0",
-    "motor_test_release": "RC8-CONTROL-R7-CASSETTE-POLICY",
+    "package_sha256": "fba33e91856e23e0366f3563a328e199668ac5f0417c71524d8543821bd6462d",
+    "motor_test_release": "RC8-CONTROL-R7-Z-NATIVE",
     "factory_motion_abi": 1,
     "factory_motion_max_hz": 125000,
     "axis_motion_abi": 1,
     "factory_motion_tools": 3,
     "door_policy_global": true,
-    "door_policy_default_enabled": false
+    "door_policy_default_enabled": false,
+    "z_home_abi": 1,
+    "application_sha256": "f636661c4932d3c5d39f1bb96a82fe010d56f0de2b77b282a4f47e675dcc9ffb",
+    "tested_on_printer": false,
+    "validated_compiler": "arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119",
+    "z_home_source_sha256": "9ea8033e35304ab2e261c9adea31ff538cd185544c3e114ce19b436de97433d6"
   },
   "control": {
     "abi": 1,
@@ -332,7 +337,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-RECOVERY",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -613,6 +618,17 @@
     ],
     "release_recovery_default_max_steps": 16,
     "release_recovery_open_confirmation_min_ms": 25,
-    "sample_clearance_default_mm": 0.05
+    "sample_clearance_default_mm": 0.05,
+    "oem_contact_engine": "mcu",
+    "oem_mcu_release": "RC8-CONTROL-R7-Z-NATIVE",
+    "oem_mcu_abi": 1,
+    "oem_scope": "r0323 contact and release loop in a leased SERVICE motion",
+    "oem_interval_us": 4000,
+    "oem_interval_measured_on_stock": false,
+    "oem_max_span_each_direction_steps": 8020,
+    "oem_max_elapsed_s": 600,
+    "oem_max_cycles": 512,
+    "oem_native_probe_tested_on_printer": false,
+    "oem_native_probe_fallback_to_host": false
   }
 }

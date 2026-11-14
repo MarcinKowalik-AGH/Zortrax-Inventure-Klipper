@@ -18,6 +18,11 @@ Z_HOME_ACK = 'PAD_AND_CLEARANCE_CHECKED'
 OEM_Z_BOTTOM_SPEED = 2_000_000. / 301 / Z_STEPS_PER_MM
 OEM_Z_BOTTOM_RELEASE_SPEED = 2_000_000. / 2001 / Z_STEPS_PER_MM
 OEM_Z_BACKOFF_SPEED = 20.
+OEM_Z_CONTACT_INTERVAL_US = 4000
+OEM_Z_CONTACT_INTERVAL_MIN = 1250
+OEM_Z_CONTACT_INTERVAL_MAX = 25000
+OEM_Z_CONTACT_SPEED = 1_000_000. / OEM_Z_CONTACT_INTERVAL_US / Z_STEPS_PER_MM
+Z_MCU_MAX_CYCLES = 512
 
 Z_HOME_PROCEDURES = {
     'Z_PREPARE': ('home', 'heat', 'select_tool', 'z_position_pad'),
@@ -26,7 +31,7 @@ Z_HOME_PROCEDURES = {
 }
 
 
-def z_home_parameters(gcmd, p, required=False):
+def z_home_parameters(gcmd, p, required=False, native=False):
     """Read SERVICE coordinates and bounds before sending any motion."""
     if p['tool'] != 0:
         raise FactoryError('Z_PREPARE and HOME_Z use TOOL=T0')
@@ -54,26 +59,48 @@ def z_home_parameters(gcmd, p, required=False):
                         else p['home_z_max'], 1., 300.)
     travel = min(250., bottom_max)
     approach = number('Z_APPROACH_MM', None, 2., travel)
-    span = number('Z_PROBE_MM', 1., .02, 10.)
+    span = number('Z_PROBE_MM', 10. if native else 1., .02, 10.)
     if required and approach is None:
         raise FactoryError('HOME_Z requires Z_APPROACH_MM measured from the PE12 trigger')
     if required and gcmd.get('ACK', '') != Z_HOME_ACK:
         raise FactoryError('HOME_Z requires ACK=' + Z_HOME_ACK)
-    if approach is not None and approach + span > travel:
-        raise FactoryError('Z_APPROACH_MM plus Z_PROBE_MM exceeds the Z travel bound')
+    if approach is not None:
+        if approach + span > travel:
+            raise FactoryError('Z_APPROACH_MM plus Z_PROBE_MM exceeds the Z travel bound')
+        if native and approach - span < 1.:
+            raise FactoryError('OEM Z probe span extends into the bottom clearance')
     approach_speed = number('Z_APPROACH_SPEED', OEM_Z_BACKOFF_SPEED if oem else 1.,
                             .1, OEM_Z_BACKOFF_SPEED if oem else 2.)
     if approach is not None and approach / approach_speed > 595.:
         raise FactoryError('Z coarse approach exceeds 595 seconds at this speed')
     stable = integer('Z_STABLE_CYCLES', Z_STABLE_CYCLES, 1, Z_STABLE_CYCLES)
-    cycles = integer('Z_MAX_CYCLES', 512, stable + 1, 512)
+    cycles = integer('Z_MAX_CYCLES', Z_MCU_MAX_CYCLES, stable + 1, Z_MCU_MAX_CYCLES)
     default_bottom_speed = (OEM_Z_BOTTOM_SPEED if oem and gcmd.get('Z_SPEED', None) is None
                             else p['z_speed'])
     bottom_speed = number('Z_BOTTOM_SPEED', default_bottom_speed, .1,
                           OEM_Z_BOTTOM_SPEED if oem else 5.)
     if bottom_max / bottom_speed > 595.:
         raise FactoryError('Z bottom seek exceeds 595 seconds at this speed')
+    probe_speed = number('Z_PROBE_SPEED', OEM_Z_CONTACT_SPEED if native else .2, .05, 1.)
+    release_speed = number('Z_RELEASE_SPEED', probe_speed if native else .2, .05, 1.)
+    interval = None
+    if native:
+        if cycles != Z_MCU_MAX_CYCLES:
+            raise FactoryError('OEM Z probe uses the MCU cap of 512 cycles')
+        if any(gcmd.get(name, None) is not None for name in (
+                'Z_RELEASE_RECOVERY_STEPS', 'Z_SAMPLE_CLEARANCE_MM',
+                'Z_TRANSIENT_BACKOFF_MM', 'Z_TRANSIENT_RETRIES', 'Z_TRANSIENT_TOTAL')):
+            raise FactoryError('OEM Z probing uses one MCU loop; the Z_TRANSIENT_*, '
+                               'Z_RELEASE_RECOVERY_STEPS and Z_SAMPLE_CLEARANCE_MM '
+                               'parameters apply to the SERVICE profile')
+        interval = round(1_000_000. / (probe_speed * Z_STEPS_PER_MM))
+        if not OEM_Z_CONTACT_INTERVAL_MIN <= interval <= OEM_Z_CONTACT_INTERVAL_MAX:
+            raise FactoryError('OEM Z probe speed must fit an MCU interval of 1250..25000 µs')
+        if interval != round(1_000_000. / (release_speed * Z_STEPS_PER_MM)):
+            raise FactoryError('OEM Z probe uses the same speed for approach and release')
     return dict(
+        z_contact_engine='mcu' if native else 'host',
+        z_contact_interval_us=interval,
         z_approach_mm=approach,
         z_probe_x=number('Z_PROBE_X', 82.8, p['min_x'], p['max_x']),
         z_probe_y=number('Z_PROBE_Y', 68., p['min_y'], p['max_y']),
@@ -88,8 +115,8 @@ def z_home_parameters(gcmd, p, required=False):
         z_backoff_speed=number('Z_BACKOFF_SPEED', OEM_Z_BACKOFF_SPEED if oem else 1.,
                                .1, OEM_Z_BACKOFF_SPEED if oem else 1.),
         z_approach_speed=approach_speed,
-        z_probe_speed=number('Z_PROBE_SPEED', .2, .05, 1.),
-        z_release_speed=number('Z_RELEASE_SPEED', .2, .05, 1.),
+        z_probe_speed=probe_speed,
+        z_release_speed=release_speed,
         z_release_recovery_steps=integer('Z_RELEASE_RECOVERY_STEPS', Z_RELEASE_RECOVERY_MAX,
                                          0, Z_RELEASE_RECOVERY_MAX),
         z_sample_clearance_mm=number('Z_SAMPLE_CLEARANCE_MM', .05, 0., .5),
@@ -329,8 +356,14 @@ class ZHomeProgram(FactoryProgram):
         span = round(p['z_probe_mm'] * Z_STEPS_PER_MM)
         clearance = self.z_steps
         lower, upper = max(clearance, approach - span), approach + span
+        native = p['z_contact_engine'] == 'mcu'
+        if native and lower != approach - span:
+            raise FactoryError('OEM Z probe span reaches the measured bottom clearance',
+                               clearance_steps=clearance, lower_steps=approach - span)
         yield from self._module('z_contact_approach', self._z_approach(approach, clearance))
         yield from self._phase('Z_CONTACT_REFERENCE')
+        if native:
+            return (yield from self._module('z_contact_mcu', self._z_mcu_reference(span)))
         progress = yield from self._module(
             'z_contact_repeat', self._z_repeat_contact(lower, upper))
         best = progress['best_release_steps']
@@ -345,6 +378,25 @@ class ZHomeProgram(FactoryProgram):
                     zero_step_releases=progress['zero_step_releases'],
                     release_recovery_samples=progress['release_recovery_samples'],
                     release_recovery_max_steps=progress['release_recovery_max_steps'],
+                    coordinate_saved=False)
+
+    def _z_mcu_reference(self, span):
+        p = self.settings
+        start = self.z_steps
+        row = yield dict(kind='z_contact_mcu', start_steps=start, span_steps=span,
+                         interval_us=p['z_contact_interval_us'], repeats=p['z_stable_cycles'])
+        best = start + row['best_steps']
+        self.z_steps = best
+        basis = ('stable_repetitions' if row['non_improvements'] == p['z_stable_cycles']
+                 else 'upper_bound_with_best_release')
+        return dict(engine='mcu', method='r0323_local_contact_release_minimum',
+                    completion_basis=basis,
+                    release_steps_from_bottom=best,
+                    release_mm_from_bottom=round(best / Z_STEPS_PER_MM, 6),
+                    probe_lower_steps=start - span, probe_upper_steps=start + span,
+                    cycles=row['cycles'], non_improvements=row['non_improvements'],
+                    interval_us=p['z_contact_interval_us'],
+                    up_steps=row['up_steps'], down_steps=row['down_steps'],
                     coordinate_saved=False)
 
     def run(self, operation='HOME_Z'):

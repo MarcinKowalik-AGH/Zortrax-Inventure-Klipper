@@ -67,6 +67,10 @@ static struct {
 } fs;
 static void fs_guard(uint32_t now);
 static void fs_age_update(uint32_t now);
+static uint8_t zh_active(void);
+static void zh_guard(uint32_t now);
+static void zh_stop(void);
+static void zh_shutdown(void);
 static uint8_t factory_transport_allowed(void) {
     return fs.active && control_mode==CT_SERVICE;
 }
@@ -400,7 +404,7 @@ static void control_stop_all(void) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=2;
     }
     uint8_t was_native=control_mode==CT_NATIVE;
-    control_motion_cancel();xy_seek_cancel();
+    zh_stop();control_motion_cancel();xy_seek_cancel();
     if(motor_test.running) {
         if(motor_test.timer_added)sched_del_timer(&motor_timer);
         motor_test.timer_added=0;motor_test_end(MT_STOP);
@@ -419,6 +423,7 @@ static void control_stop_all(void) {
     cool_mask=control_cooling_mask();cool_applied=255;cooling_apply();
 }
 static void control_shutdown(void) {
+    zh_shutdown();
     if(fs.active) {
         fs.active=0;fs.reason=7;transport_live=0;
         gpio_pwm_write(feeder_clock,0);
@@ -471,6 +476,7 @@ static uint8_t control_service_fan(unsigned i) {
 static void control_guard(uint32_t now) {
     fs_age_update(now);
     sl_guard(now);
+    zh_guard(now);
     fs_guard(now);
     if(control_cooldown_ms) {
         uint32_t ms=(uint32_t)(now-control_cooldown_tick)/MS(1);
@@ -526,6 +532,7 @@ static void control_guard(uint32_t now) {
     }
     // Heater expiry and a failed DDA segment must abort the same owner on
     // this sampler pass, not after another host renewal opportunity.
+    zh_guard(now);
     fs_guard(now);
 }
 void command_inventure_control(uint32_t *args) {
@@ -606,7 +613,8 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
             uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
             if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
         }
-        if(!reject && (sl.active || cm.active || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active()))reject=2;
+        if(!reject && (zh_active() || sl.active || cm.active || motor_test.running || xy_seek_busy()
+                || t0_heat_busy() || fan_manual_active()))reject=2;
         uint8_t fast_mask=(args[2]?BIT(0):0) | (args[3]?BIT(1):0)
             | (args[4]?BIT(2):0) | (args[5]?BIT(3):0);
         if(!reject && fast && !cm_fast_available(fast_mask))reject=2;
@@ -640,7 +648,7 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
 static void cm_command(uint32_t *args,uint8_t direct,unsigned tool) {
     unsigned action=args[0];irqstatus_t flags=irq_save();uint8_t reject=0;
     uint32_t now=timer_read_time();
-    if(action==2)control_motion_cancel();
+    if(action==2){zh_stop();control_motion_cancel();}
     else if(action>2)reject=1;
     else if(action==1)reject=cm_request(args,now,direct,tool);
     uint32_t run=cm.run,last_token=cm.token,elapsed=cm.elapsed,done=cm.done;
@@ -840,7 +848,7 @@ static void fs_set_mode(unsigned mode,unsigned monitor,uint32_t now) {
 }
 static void fs_normal_stop(void) {
     fs.active=0;fs.reason=2;transport_live=0;transport_selected=255;
-    control_motion_cancel();motor_test_write(GPIOE,BIT(10),0);
+    zh_stop();control_motion_cancel();motor_test_write(GPIOE,BIT(10),0);
     for(unsigned i=0;i<2;i++)transport_stop_channel(i);
     gpio_pwm_write(feeder_clock,0);
     // The selected heater's independent short lease remains owned by the
@@ -861,12 +869,13 @@ static void fs_guard(uint32_t now) {
             || !transport[fs.tool].configured || cm.phase==CM_FAILED)why=5;
     if(why){control_stop_all();fs.reason=why;}
 }
+#include "inventure_z_home.inc"
 void command_inventure_factory_session(uint32_t *args) {
     unsigned action=args[0],tool=args[1],mode=args[2],monitor=args[3],duration=args[4];
     uint32_t budget=args[5],lease=args[6],token=args[9],sequence=args[10];
     int16_t minimum=args[7],maximum=args[8];
     irqstatus_t irq=irq_save();uint32_t now=timer_read_time();uint8_t reject=0;
-    fs_age_update(now);fs_guard(now);
+    fs_age_update(now);zh_guard(now);fs_guard(now);
     if(action>3)reject=1;
     else if(action==3) {
         if(!token || token!=fs.token)reject=4;
@@ -908,6 +917,7 @@ void command_inventure_factory_session(uint32_t *args) {
         if(!fs.active || token!=fs.token || !sequence || sequence<fs.sequence)reject=4;
         else if(tool!=fs.tool || mode>IVT_GATED || monitor>1 || duration!=fs.duration_ms
                 || budget!=fs.budget_steps || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
+        else if(zh_active() && (mode!=IVT_STOP || monitor!=fs.monitor))reject=2;
         else if(mode!=IVT_STOP && (!valid || t<fs.min_c || t>=fs.max_c
                 || !control_sensors_valid(control_guard_mask|31,now)))reject=3;
         else if(sequence==fs.sequence) {

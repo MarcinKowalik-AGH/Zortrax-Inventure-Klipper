@@ -9,6 +9,8 @@ import tempfile
 import zlib
 from pathlib import Path
 
+MCU_RELEASE = 'RC8-CONTROL-R7-Z-NATIVE'
+
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
         if app[offset] != 0x78 or int.from_bytes(app[offset:offset + 2], 'big') % 31:
@@ -41,7 +43,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     root, original = base.extract_pinned(Path(tmp), expected)
     base.apply_rc7(root, original, expected)
     changes = {}
-    for name in ('inventure_board.c', 'inventure_control.inc', 'inventure_transport.inc','inventure_transport.h', 'inventure_motor_test.inc', 'inventure_xy_seek.inc', 'inventure_cooling.inc', 'inventure_fan_manual.inc', 'inventure_heat_test.inc',
+    for name in ('inventure_board.c', 'inventure_control.inc', 'inventure_z_home.inc',
+                 'inventure_transport.inc','inventure_transport.h', 'inventure_motor_test.inc', 'inventure_xy_seek.inc', 'inventure_cooling.inc', 'inventure_fan_manual.inc', 'inventure_heat_test.inc',
                  'inventure_panel.c', 'inventure_fans.inc', 'gpioperiph.c',
                  'inventure_p4_baud.c','inventure_p4_baud.h','serial.c','inventure_oled_local.inc'):
         data = (source / name).read_bytes()
@@ -49,6 +52,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
         changes[name] = base.sha(data)
     provenance=json.loads((root/'.inventure-v9-patch.json').read_text())
     provenance['patched_sha256'].update({'src/stm32/'+name:digest for name,digest in changes.items()})
+    provenance['version'] = MCU_RELEASE
     provenance['p4_mode']='InventureBoot 1.7 journal; forced baud disabled'
     (root/'.inventure-v9-patch.json').write_text(json.dumps(provenance,indent=2,sort_keys=True)+'\n')
     cfg = root / '.config'
@@ -70,12 +74,13 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
     assert c['INVENTURE_DOOR_POLICY_GLOBAL'] == 1
     assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
-    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == 'RC8-CONTROL-R7-T1-TIMING'
+    assert c['INVENTURE_MOTOR_TEST_RELEASE'] == MCU_RELEASE
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
     assert c['INVENTURE_LOAD_STREAM_ABI'] == 1
     assert c['INVENTURE_FACTORY_ABI'] == 1
+    assert c['INVENTURE_Z_HOME_ABI'] == 1
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
@@ -127,6 +132,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert embedded_dictionary_matches(app, dictionary)
     report = dict(mcu_release=c['INVENTURE_MCU_RELEASE'], motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'],
                   motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
+                  z_home_abi=c['INVENTURE_Z_HOME_ABI'],
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

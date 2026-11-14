@@ -30,6 +30,11 @@ class ZDevice(factory_support.FactoryDevice):
         self.release_recovery_closed_blocks = 0
         self.z_moves = []
         self.input_reads = []
+        self.native_probe = None
+        self.native_packets = []
+        self.native_status = 1
+        self.native_invalid = {}
+        self.native_closed_at_finish = False
 
     def _raw_z(self, position, contact):
         return ((self.BOTTOM if position == 0 else 0)
@@ -38,13 +43,59 @@ class ZDevice(factory_support.FactoryDevice):
 
     def _settle(self):
         row = self.motion
-        if row is not None and 'z_start' in row:
+        if self.native_probe is None and row is not None and 'z_start' in row:
             fraction = self.fraction()
             self.z = row['z_start'] + row['direction'] * round(row['z_steps'] * fraction)
             if fraction == 1. and not row['stopped']:
                 self.contact = row['contact_at_end']
                 if row['hit'] & self.TRAY:
                     self.tray = False
+
+    def terminate(self, reason, heaters=True):
+        super().terminate(reason, heaters)
+        if self.native_probe is not None and self.native_probe['polls'] < 3:
+            self.native_probe.setdefault('stopped', 6)
+
+    def z_home(self, args):
+        action, owner, token, span, interval_us, repeats = args
+        self.native_packets.append(tuple(args))
+        if action == 1:
+            self._settle()
+            if self.native_probe is not None or self.active_motion():
+                raise AssertionError('Host attempted overlapping Z motion')
+            if not self.session or not self.session['active'] or self.session['token'] != owner:
+                raise AssertionError('Host started OEM Z without an active factory session')
+            self.native_probe = dict(owner=owner, token=token, origin=self.z,
+                                     span=span, repeats=repeats, polls=0)
+        else:
+            self.native_probe['polls'] += 1
+        probe = self.native_probe
+        if (owner, token) != (probe['owner'], probe['token']):
+            raise AssertionError('Host changed native Z owner or token')
+        row = dict(owner=owner, token=token, active=1, status=0, reject=0,
+                   net_steps=0, best_steps=0, cycles=0, non_improvements=0,
+                   up_steps=0, down_steps=0)
+        if probe.get('stopped'):
+            row.update(active=0, status=probe['stopped'])
+            return row
+        if probe['polls'] < 3:
+            return row
+        row.update(active=0, status=self.native_status)
+        if self.native_status == 1:
+            best = self.contact_at - 1 - probe['origin']
+            self.z = probe['origin'] + best
+            self.contact = self.native_closed_at_finish
+            row.update(net_steps=best, best_steps=best, cycles=1+probe['repeats'],
+                       non_improvements=probe['repeats'], up_steps=best+probe['repeats']+1,
+                       down_steps=probe['repeats']+1)
+        elif self.native_status == 2:
+            row.update(net_steps=probe['span'], up_steps=probe['span'])
+        row.update(self.native_invalid)
+        return row
+
+    def reject_native_guard(self):
+        self.terminate(5)
+        self.native_probe['stopped'] = 4
 
     def inputs(self):
         self._settle()
@@ -152,7 +203,7 @@ class ZDevice(factory_support.FactoryDevice):
 
 
 class ZHomeHostTests(unittest.TestCase):
-    def host(self):
+    def host(self, native=False):
         fixture = factory_support.FactoryHostTests()
         host, _, _ = fixture.host(fast_motion=True, factory_motion_tools=3)
         host.device = ZDevice(host)
@@ -163,6 +214,9 @@ class ZHomeHostTests(unittest.TestCase):
             motion=load_support.Wire(host.device.move),
             motion_driver=load_support.Wire(host.device.driver),
             factory_session=load_support.Wire(host.device.query_factory))
+        if native:
+            host.z_home_abi = 1
+            host.commands['z_home'] = load_support.Wire(host.device.z_home)
         return host
 
     def command(self, host, action='HOME_Z', **values):
@@ -186,6 +240,40 @@ class ZHomeHostTests(unittest.TestCase):
         self.assertIsNone(host.load_test_context)
         self.assertEqual(host.device.packets, [])
         self.assertEqual(host.device.factory_packets, [])
+
+    def test_oem_params_report_engine_and_availability_separately(self):
+        for capability in (False, True):
+            with self.subTest(capability=capability):
+                host = self.host(native=capability)
+                command = self.command(host, 'PARAMS', PROCEDURE='HOME_Z',
+                                       TOOL='T0', SPEED_PROFILE='OEM')
+                report = json.loads(command.lines[0].split(' ', 1)[1])
+                self.assertIs(report['z_home_mcu_available'], capability)
+                self.assertEqual(report['z_home_settings']['z_contact_engine'], 'mcu')
+                self.assertEqual(report['z_home_settings']['z_contact_interval_us'], 4000)
+                self.assertIsNone(host.load_test_context)
+                self.assertEqual(host.device.packets, [])
+                self.assertEqual(host.device.factory_packets, [])
+                self.assertEqual(host.device.native_packets, [])
+
+    def test_oem_home_z_requires_native_abi_before_any_actuation(self):
+        host = self.host()
+        with self.assertRaisesRegex(RuntimeError, 'MCU|ABI'):
+            self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
+                         Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        self.assertIsNone(host.load_test_context)
+        self.assertEqual(host.device.packets, [])
+        self.assertEqual(host.device.factory_packets, [])
+
+    def test_service_stays_on_legacy_contact_actions_with_native_abi_available(self):
+        host = self.host(native=True)
+        self.command(host, SPEED_PROFILE='SERVICE', Z_APPROACH_MM=3,
+                     Z_STABLE_CYCLES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        self.assertEqual(host.device.native_packets, [])
+        self.assertEqual([row['direction'] for row in host.device.z_moves
+                          if row['hit'] == ZDevice.CONTACT], [1, -1, 1, -1])
 
     def test_requires_ack_and_explicit_approach_before_actuation(self):
         for values in ({}, {'ACK': 'PAD_AND_CLEARANCE_CHECKED'}, {'Z_APPROACH_MM': 3}):
@@ -276,7 +364,7 @@ class ZHomeHostTests(unittest.TestCase):
                 self.assertFalse(host.device.active())
 
     def test_oem_host_preserves_logged_probe_envelope_and_uses_audited_rates(self):
-        host = self.host()
+        host = self.host(native=True)
         host.device.contact_at = 135 * 802 + 3471
         host.device.z = 135 * 802
         self.command(host, SPEED_PROFILE='OEM', TARGET=200, Z_APPROACH_MM=135,
@@ -288,12 +376,111 @@ class ZHomeHostTests(unittest.TestCase):
                          [(-1, 6645, 120300, 4), (1, 1000, 5000, 4), (1, 16040, 802, 0)])
         self.assertEqual((moves[3]['rate'], moves[3]['mask'], moves[3]['value']),
                          (16040, 24, 16))
-        self.assertEqual((moves[4]['rate'], moves[4]['planned'], moves[4]['sent'], moves[4]['hit']),
-                         (161, 7218, 3471, 8))
+        self.assertEqual(len(moves), 4)
+        start, *polls = host.device.native_packets
+        self.assertEqual(start[0], 1)
+        self.assertEqual(start[1], host.device.factory_packets[0][-2])
+        self.assertNotEqual(start[2], 0)
+        self.assertEqual(start[3:], (7218, 4000, 1))
+        self.assertGreaterEqual(len(polls), 3)
+        self.assertTrue(all(packet == (0, *start[1:3], 0, 0, 0) for packet in polls))
+        self.assertEqual(host.commands['z_home'].retries, [False]+[True]*len(polls))
+        self.assertEqual(host.device.native_probe['origin'], 135*802)
         self.assertEqual(report['factory']['motion_legs']['z_contact_pad']['target'], [82.8, 68.])
         measured = report['factory']['result']['z_home_result']
+        self.assertEqual((measured['engine'], measured['cycles'], measured['non_improvements']),
+                         ('mcu', 2, 1))
+        self.assertEqual(measured['completion_basis'], 'stable_repetitions')
         self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at - 1)
+        self.assertEqual(measured['up_steps']-measured['down_steps'], 3470)
+        self.assertFalse(measured['coordinate_saved'])
+        self.assertFalse(host.device.active())
         self.assertEqual(host.device.output(6)['duty'], 0)
+
+    def test_oem_native_status_and_forged_counters_cannot_mark_reference_done(self):
+        cases = [
+            (2, {}, False, 'z_contact_not_found'),
+            (3, {}, False, 'z_contact_did_not_release'),
+            (4, {}, False, 'z_contact_mcu_guard'),
+            (5, {}, False, 'z_contact_mcu_time_limit'),
+            (6, {}, False, 'z_contact_mcu_stopped'),
+            (1, {'net_steps': 0}, False, 'Inconsistent MCU Z reference response'),
+            (1, {'token': 0}, False, 'MCU Z reference ownership changed'),
+            (1, {}, True, 'Unexpected nozzle_contact'),
+        ]
+        for status, invalid, closed, reason in cases:
+            with self.subTest(status=status, invalid=invalid, closed=closed):
+                host = self.host(native=True)
+                host.device.native_status = status
+                host.device.native_invalid = invalid
+                host.device.native_closed_at_finish = closed
+                self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
+                             Z_PROBE_MM=1, Z_STABLE_CYCLES=1,
+                             ACK='PAD_AND_CLEARANCE_CHECKED')
+                report = self.finish(host)
+                self.assertEqual(report['phase'], 'failed', report)
+                result = report['factory']['result']
+                self.assertFalse(result['success'])
+                self.assertNotIn('z_home_result', result)
+                self.assertIn(reason, result['reason'])
+                self.assertEqual(len(host.device.z_moves), 4)
+                start, *polls = host.device.native_packets
+                self.assertEqual(start[0], 1)
+                self.assertGreaterEqual(len(polls), 3)
+                self.assertTrue(all(packet == (0, *start[1:3], 0, 0, 0) for packet in polls))
+                self.assertFalse(host.device.active())
+                self.assertEqual(host.device.output(6)['duty'], 0)
+
+    def test_oem_accepts_mcu_qualified_release_at_travel_limit_before_all_repeats(self):
+        host = self.host(native=True)
+        host.device.native_invalid = dict(cycles=1, non_improvements=0)
+        self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3, Z_PROBE_MM=1,
+                     ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        self.assertEqual(host.device.native_packets[0][-1], 101)
+        measured = report['factory']['result']['z_home_result']
+        self.assertEqual((measured['cycles'], measured['non_improvements']), (1, 0))
+        self.assertEqual(measured['completion_basis'], 'upper_bound_with_best_release')
+        self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at-1)
+        self.assertTrue(all(m['hit'] != host.device.CONTACT for m in host.device.z_moves))
+
+    def test_oem_native_guard_reason_survives_loss_of_factory_lease(self):
+        host = self.host(native=True)
+        self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
+                     Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        self.wait_native_start(host)
+        host.device.reject_native_guard()
+        report = self.finish(host)
+        result = report['factory']['result']
+        self.assertEqual((report['phase'], result['reason']), ('failed', 'z_contact_mcu_guard'))
+        self.assertIn('guard/ownership rejected', result['details']['secondary_error'])
+        self.assertEqual(result['details']['z_mcu_state']['status'], 4)
+        self.assertEqual(len(host.device.z_moves), 4)
+        self.assertFalse(host.device.active())
+
+    def test_oem_stop_while_native_loop_active_cancels_without_restart(self):
+        host = self.host(native=True)
+        self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
+                     Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        self.wait_native_start(host)
+        host.cmd_control_stop(Command())
+        native_packets = list(host.device.native_packets)
+        lease_packets = list(host.device.factory_packets)
+        host.reactor.pause(host.reactor.now + 5.)
+        self.assertTrue(host.device.native_probe['stopped'])
+        self.assertEqual(host.load_test_last['phase'], 'stopped')
+        self.assertEqual(host.device.native_packets, native_packets)
+        self.assertEqual(host.device.factory_packets, lease_packets)
+        self.assertEqual(len(host.device.z_moves), 4)
+        self.assertFalse(host.device.active())
+
+    def wait_native_start(self, host):
+        deadline = host.reactor.now + 60.
+        while host.device.native_probe is None:
+            self.assertLess(host.reactor.now, deadline)
+            self.assertIsNotNone(host.load_test_context, host.load_test_last)
+            host.reactor.pause(host.reactor.now + .1)
 
     def test_transient_pc14_stop_backs_off_without_counting_a_release(self):
         for transients in (1, 2):

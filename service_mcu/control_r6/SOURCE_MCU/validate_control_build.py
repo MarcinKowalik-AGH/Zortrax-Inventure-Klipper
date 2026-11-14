@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-T1-TIMING'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-Z-NATIVE'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -244,6 +244,14 @@ def check_dictionary(path: Path) -> dict:
         raise ValueError('R7 missing exact factory command schema')
     if factory_response not in d.get('responses',{}):
         raise ValueError('R7 missing exact factory status schema')
+    z_home_command = ('inventure_z_home action=%c owner=%u token=%u span=%hu '
+                      'interval_us=%hu repeats=%c')
+    z_home_response = ('inventure_z_home_state owner=%u token=%u active=%c status=%c reject=%c '
+                       'net_steps=%i best_steps=%i cycles=%u non_improvements=%c up_steps=%u down_steps=%u')
+    if conf.get('INVENTURE_Z_HOME_ABI') != 1:
+        raise ValueError('R7 missing native Z homing ABI')
+    if z_home_command not in d.get('commands', {}) or z_home_response not in d.get('responses', {}):
+        raise ValueError('R7 missing exact native Z homing command or response schema')
     motion_command = ('inventure_motion action=%c directions=%c a=%u b=%u z=%u e=%u rate=%u '
                       'pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u')
     motion_response = ('inventure_motion_state run=%u token=%u phase=%c reason=%c reject=%c '
@@ -273,6 +281,8 @@ def check_dictionary(path: Path) -> dict:
             'RC7_local_OLED_schema':'inventure_local_oled_query', 'RC7_forced_baud':int(forced),
             'FACTORY_MOTION_constants':factory_motion, 'AXIS_MOTION_constants':axis_motion,
             'DOOR_POLICY_constants':door_policy,
+            'Z_HOME_ABI':conf['INVENTURE_Z_HOME_ABI'], 'z_home_exact_command_schema':z_home_command,
+            'z_home_exact_response_schema':z_home_response,
             'axis_exact_command_schema':axis_command, **rc5}
 
 def validate(root: Path, destination: Path) -> dict:

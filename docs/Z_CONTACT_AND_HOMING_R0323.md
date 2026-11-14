@@ -46,8 +46,8 @@ Wykonuj ją po potwierdzeniu przełączania PC14 i przy osadzonej tacce
 (`raw.tray: 0`). Obsługiwane jest T0. Domyślna zadana temperatura to
 200°C, zgodnie z przygotowaniem T0 w kreatorze poziomowania Inventure.
 Można zmienić ją przez `TARGET`. Procedura utrzymuje temperaturę dyszy
-podczas pomiaru i wyłącza grzałkę po zakończeniu. Wykorzystuje polecenia
-ruchu i zabezpieczenia obecnej aplikacji MCU.
+podczas pomiaru i wyłącza grzałkę po zakończeniu. Profil `OEM` wymaga
+aplikacji MCU `RC8-CONTROL-R7-Z-NATIVE` z `z_home_abi: 1`.
 
 Najpierw przygotuj drukarkę i sprawdź ustawienie dyszy nad środkowym
 srebrnym polem. Ten etap kończy się z platformą na dolnej krańcówce.
@@ -70,13 +70,13 @@ i `HOME_Z`.
 zmierz odstęp w pionie od metalowego pola do końcówki dyszy. W
 `Z_APPROACH_MM` podaj ten odstęp pomniejszony o zapas większy od
 niepewności pomiaru. Pozostała szczelina musi mieścić się w
-`Z_PROBE_MM`. Jeżeli pomiar ma niepewność większą niż pozwala na to
-domyślne okno 1 mm, użyj odpowiednio większego okna precyzyjnego.
+`Z_PROBE_MM`. Profil OEM ma domyślnie zakres 10 mm w każdą stronę
+od punktu wejścia w pomiar. MCU zachowuje ten zakres przez cały przebieg.
 W próbie 53 odczyt z MCU wykazał `hit=8` po 3471 krokach precyzyjnego
 dojazdu, na wysokości 139,327930 mm od PE12. Operator potwierdził dotknięcie.
 Przy kolejnym odczycie PC14 był rozwarty, więc próba nie zmierzyła jeszcze
 punktu rozwarcia. Dla tej samej geometrii i ustawienia T0 użyj sprawdzonego
-dojazdu 135 mm oraz zakresu pomiarowego 9 mm.
+dojazdu 135 mm oraz fabrycznego budżetu pomiarowego 10 mm.
 
 Kolejna próba z profilem OEM doszła do potwierdzonego zwarcia na
 139,362843 mm od PE12. MCU zatrzymał odjazd (ruch 15) na chwilowym
@@ -100,7 +100,7 @@ Obie próby przerwano, gdy PC14 rozwarł się przed pierwszym krokiem w dół
 i ponownie zwarł przy świeżym odczycie. Różnica minimów to 0,007481 mm.
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
+INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=10 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
 
 | Parametr | Domyślna wartość | Znaczenie |
@@ -114,44 +114,32 @@ INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROAC
 | `Z_PROBE_X`, `Z_PROBE_Y` | 82,8 / 68,0 mm | Środek w układzie R7 dla T0 |
 | `Z_APPROACH_MM` | Wymagany dla `HOME_Z` | Odległość od zadziałania PE12 do początku precyzyjnego pomiaru. Co najmniej 2 mm, a z `Z_PROBE_MM` najwyżej `HOME_Z_MAX` i 250 mm |
 | `Z_APPROACH_SPEED` | 1 mm/s SERVICE / 20 mm/s OEM | Prędkość dojazdu w górę przed precyzyjnym pomiarem |
-| `Z_PROBE_MM`, `Z_RELEASE_MM` | 1 / 1 mm | Budżety kontaktu i rozwarcia, odpowiednio 0,02–10 i 0,02–2 mm |
-| `Z_PROBE_SPEED`, `Z_RELEASE_SPEED` | 0,2 / 0,2 mm/s | Prędkości kontaktu i rozwarcia, 0,05–1 mm/s |
+| `Z_PROBE_MM` | 10 mm OEM / 1 mm SERVICE | Zakres precyzyjny wokół początku pomiaru, do 10 mm w każdą stronę |
+| `Z_RELEASE_MM` | 1 mm | Budżet odjazdu serwisowego i odjazdu przy styku na zgrubnym najazdzie |
+| `Z_PROBE_SPEED`, `Z_RELEASE_SPEED` | ok. 0,312 mm/s OEM / 0,2 mm/s SERVICE | OEM używa tego samego odstępu kroków w obu kierunkach. Domyślne 4000 µs to przybliżenie pętli r0323 |
 | `Z_STABLE_CYCLES` | 101 | Kolejne pełne cykle bez znalezienia niższego rozwarcia, 1–101 |
-| `Z_MAX_CYCLES` | 512 | Limit pełnych cykli, od `Z_STABLE_CYCLES + 1` do 512 |
-| `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem, 0,05–0,5 mm |
-| `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Wspólne limity ponowień zwarcia i rozwarcia, z rzędu i w całym przebiegu, 0–10 / 0–30 |
-| `Z_RELEASE_RECOVERY_STEPS` | 16 | Maksymalny dodatkowy ruch w dół po niepotwierdzonym rozwarciu, 0–16 kroków w ramach `Z_RELEASE_MM` |
-| `Z_SAMPLE_CLEARANCE_MM` | 0,05 mm | Dodatkowy odjazd w dół między pomiarami po zapisaniu próbki, 0–0,5 mm |
+| `Z_MAX_CYCLES` | 512 | Stały limit bezpieczeństwa w OEM. W SERVICE od `Z_STABLE_CYCLES + 1` do 512 |
+| `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem w SERVICE, 0,05–0,5 mm |
+| `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Wspólne limity ponowień zwarcia i rozwarcia w SERVICE |
+| `Z_RELEASE_RECOVERY_STEPS` | 16 | Maksymalny dodatkowy ruch w dół po niepotwierdzonym rozwarciu w SERVICE |
+| `Z_SAMPLE_CLEARANCE_MM` | 0,05 mm | Dodatkowy odjazd między pomiarami w SERVICE |
 
 Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
 podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
 Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
-Krótki impuls PC14 w fazie precyzyjnej resetuje licznik stabilności. Jeśli
-styk jest rozwarty w świeżym odczycie po zatrzymaniu MCU, procedura odjeżdża
-w dół i ponawia pomiar w obrębie tego samego okna. Do pełnego cyklu wlicza
-się dopiero zwarcie po co najmniej jednym kroku w górę oraz potwierdzone
-rozwarcie. Najazd precyzyjny zatrzymany przez PC14 przy zerowej liczbie
-kroków traktuje się jak próbę do ponowienia. Odjazd awaryjny w dół pozostaje
-ograniczony odległością oraz sygnałami PE12 i PC13. Następny najazd wymaga
-potwierdzenia rozwarcia po odjeździe. Gdy po zatrzymaniu odjazdu PC14 jest znowu zwarty, ponowienie
-odjazdu wykorzystuje resztę pierwotnego limitu `Z_RELEASE_MM`. Przy otwartym
-PC14 i zerowej liczbie kroków program czeka co najmniej 25 ms na drugi
-świeży odczyt bez ruchu. Potwierdzone rozwarcie zalicza do `zero_step_releases`.
-Po niepotwierdzonym rozwarciu `HOME-Z-RECOVERY` opuszcza stół odcinkami
-po najwyżej cztery kroki, w granicach pozostałego `Z_RELEASE_MM`.
-Każdy krok oddala stół od dyszy. Pozostają aktywne zabezpieczenia PE12
-i PC13. Potwierdzenie wymaga otwartego PC14 po ruchu i przy ponownym
-odczycie po co najmniej 25 ms. Wynik tej ścieżki jest otwartą pozycją
-poniżej niepewnego przełączenia. `release_recovery_samples` podaje liczbę
-takich próbek, a `release_recovery_max_steps` największą liczbę dodatkowych
-kroków użytych w potwierdzonej próbce. Wyczerpanie zakresu odrzuca próbkę
-i zużywa limit ponowień. Dodatkowy odjazd między cyklami daje prześwit
-przed kolejnym najazdem. Procedura zachowuje najmniejszą
-pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
-poprawy. W `factory.result.z_home_result` odczytaj
-`release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`
-i `non_improvements`. Pole `coordinate_saved: false` opisuje wynik
-serwisowy bez ustanowienia natywnego Z ani zapisu kalibracji.
+W profilu OEM host uruchamia jeden pomiar. MCU zmienia kierunek po
+zwarciu, bada PC14 przed pierwszym krokiem w dół i zapisuje rozwarcie także
+wtedy, gdy nastąpiło bez kroku. MCU zachowuje najniższe rozwarcie i wraca
+do tej pozycji przy końcu pomiaru. Po 101 kolejnych cyklach bez poprawy
+normalne kryterium r0323 kończy pętlę. Firmware ogranicza też drogę, czas
+i liczbę cykli oraz sprawdza PE12, PC13 i ważność sesji oraz temperatury.
+Klipper odczytuje postęp bez sterowania zmianami kierunku przez UART.
+
+Profil `SERVICE` zachowuje diagnostykę sterowaną z hosta z dodatkowymi
+potwierdzeniami PC14, odjazdami i ograniczonymi ponowieniami. W obu
+profilach `factory.result.z_home_result` zawiera pozycję od PE12 i liczniki
+cykli. `coordinate_saved: false` opisuje wynik serwisowy. Układ roboczy
+Klippera i fabryczny rekord EEPROM nie są zapisywane.
 `INVENTURE_STOP` przerywa próbę.
 
 ## Sekwencja firmware 1.6.1 r0323
@@ -182,8 +170,15 @@ Handler homingu Z nie zadaje wprost temperatury dyszy. Interaktywny kreator
 poziomowania i kalibracja wysokości dysz mają własne przygotowanie cieplne.
 R7 SERVICE opuszcza stół przed ruchem XY, co daje prześwit na wybór T0.
 OEM dopuszcza próbkę z zerowym odjazdem przy natychmiastowym rozwarciu.
-R7 SERVICE potwierdza taki przypadek dodatkowym odczytem. Krótkie odjazdy
-do weryfikacji rozwarcia i odjazd między próbkami są rozszerzeniem R7 SERVICE.
+Profil OEM zachowuje fabryczną kolejność odczytów PC14 w pętli MCU.
+Profil SERVICE potwierdza taki przypadek dodatkowym odczytem i umożliwia
+krótkie odjazdy diagnostyczne. Oryginał przy braku rozwarcia wykonywał
+jeszcze jeden krok poniżej granicy. MCU `Z-NATIVE` zatrzymuje się na granicy.
+MCU sprawdza PC14 również bezpośrednio przed krokiem w górę i po powrocie
+do minimum. Przy odjeździe krok w dół wybrany przy zwartym PC14 jest
+wykonywany po odczekaniu, jeśli lokalne zabezpieczenia nadal pozwalają
+na ruch. `completion_basis` odróżnia stabilne powtórzenia od osiągnięcia
+górnej granicy z wcześniej zarejestrowanym rozwarciem.
 Powtórzenia `HOME_Z`
 dotyczą jednego pola. Pomiar kilku pól i regulacja płaszczyzny należą do
 osobnej procedury. Fabryczne bazowanie `.zcode` po pomiarze może wywołać

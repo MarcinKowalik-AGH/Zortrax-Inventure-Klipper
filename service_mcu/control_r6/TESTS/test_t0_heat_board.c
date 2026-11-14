@@ -31,7 +31,36 @@ uint32_t timer_from_us(uint32_t us){return us*120;}
 irqstatus_t irq_save(void){return 0;} void irq_restore(irqstatus_t x){(void)x;}
 void mock_shutdown(const char*s){last_failure=s;shutdown_count++;if(expect_failure)longjmp(failure,1);fprintf(stderr,"Unexpected shutdown: %s\n",s);assert(0);__builtin_unreachable();}
 static uint32_t factory_reply[15];
+#ifdef TEST_Z_HOME_WIRE
+static struct {
+    uint32_t owner, token, active, status, reject;
+    int32_t net, best;
+    uint32_t cycles, misses, up_steps, down_steps;
+} z_home_reply;
+#endif
 void sendf(const char*f,...){
+#ifdef TEST_Z_HOME_WIRE
+    if (!strncmp(f, "inventure_z_home_state ", 23)) {
+        assert(!strcmp(f, "inventure_z_home_state owner=%u token=%u active=%c status=%c"
+            " reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c"
+            " up_steps=%u down_steps=%u"));
+        va_list args;
+        va_start(args, f);
+        z_home_reply.owner = va_arg(args, unsigned);
+        z_home_reply.token = va_arg(args, unsigned);
+        z_home_reply.active = va_arg(args, unsigned);
+        z_home_reply.status = va_arg(args, unsigned);
+        z_home_reply.reject = va_arg(args, unsigned);
+        z_home_reply.net = va_arg(args, int);
+        z_home_reply.best = va_arg(args, int);
+        z_home_reply.cycles = va_arg(args, unsigned);
+        z_home_reply.misses = va_arg(args, unsigned);
+        z_home_reply.up_steps = va_arg(args, unsigned);
+        z_home_reply.down_steps = va_arg(args, unsigned);
+        va_end(args);
+        return;
+    }
+#endif
     if(strncmp(f,"inventure_factory_state ",24))return;
     va_list ap;va_start(ap,f);
     for(unsigned i=0;i<15;i++)factory_reply[i]=va_arg(ap,unsigned int);
