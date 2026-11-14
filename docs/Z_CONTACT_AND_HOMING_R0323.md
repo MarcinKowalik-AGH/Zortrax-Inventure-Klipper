@@ -94,6 +94,11 @@ Kolejny log z `HOME-Z-RETRY` potwierdził 3 pełne cykle i pośrednie minimum
 Ostatni ruch 67 zatrzymał się na rozwarciu bez kroku w dół i ze świeżym
 odczytem PC14=1. `HOME-Z-VERIFY` sprawdza taki odczyt ponownie na postoju.
 
+W dwóch próbach `HOME-Z-VERIFY` uzyskano odpowiednio pięć i jeden pełny
+cykl. Najlepsze rozwarcia wyniosły 111 761 i 111 767 kroków od PE12.
+Obie próby przerwano, gdy PC14 rozwarł się przed pierwszym krokiem w dół
+i ponownie zwarł przy świeżym odczycie. Różnica minimów to 0,007481 mm.
+
 ```gcode
 INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
@@ -115,6 +120,8 @@ INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROAC
 | `Z_MAX_CYCLES` | 512 | Limit pełnych cykli, od `Z_STABLE_CYCLES + 1` do 512 |
 | `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem, 0,05–0,5 mm |
 | `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Wspólne limity ponowień zwarcia i rozwarcia, z rzędu i w całym przebiegu, 0–10 / 0–30 |
+| `Z_RELEASE_RECOVERY_STEPS` | 16 | Maksymalny dodatkowy ruch w dół po niepotwierdzonym rozwarciu, 0–16 kroków w ramach `Z_RELEASE_MM` |
+| `Z_SAMPLE_CLEARANCE_MM` | 0,05 mm | Dodatkowy odjazd w dół między pomiarami po zapisaniu próbki, 0–0,5 mm |
 
 Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
 podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
@@ -130,9 +137,16 @@ potwierdzenia rozwarcia po odjeździe. Gdy po zatrzymaniu odjazdu PC14 jest znow
 odjazdu wykorzystuje resztę pierwotnego limitu `Z_RELEASE_MM`. Przy otwartym
 PC14 i zerowej liczbie kroków program czeka co najmniej 25 ms na drugi
 świeży odczyt bez ruchu. Potwierdzone rozwarcie zalicza do `zero_step_releases`.
-Ponowne zwarcie zużywa limit ponowień. Raport `factory.z_home_progress`
-zlicza krótkie zdarzenia w `transient_closures` i `transient_openings`.
-Procedura zachowuje najmniejszą
+Po niepotwierdzonym rozwarciu `HOME-Z-RECOVERY` opuszcza stół odcinkami
+po najwyżej cztery kroki, w granicach pozostałego `Z_RELEASE_MM`.
+Każdy krok oddala stół od dyszy. Pozostają aktywne zabezpieczenia PE12
+i PC13. Potwierdzenie wymaga otwartego PC14 po ruchu i przy ponownym
+odczycie po co najmniej 25 ms. Wynik tej ścieżki jest otwartą pozycją
+poniżej niepewnego przełączenia. `release_recovery_samples` podaje liczbę
+takich próbek, a `release_recovery_max_steps` największą liczbę dodatkowych
+kroków użytych w potwierdzonej próbce. Wyczerpanie zakresu odrzuca próbkę
+i zużywa limit ponowień. Dodatkowy odjazd między cyklami daje prześwit
+przed kolejnym najazdem. Procedura zachowuje najmniejszą
 pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
 poprawy. W `factory.result.z_home_result` odczytaj
 `release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`
@@ -168,7 +182,9 @@ Handler homingu Z nie zadaje wprost temperatury dyszy. Interaktywny kreator
 poziomowania i kalibracja wysokości dysz mają własne przygotowanie cieplne.
 R7 SERVICE opuszcza stół przed ruchem XY, co daje prześwit na wybór T0.
 OEM dopuszcza próbkę z zerowym odjazdem przy natychmiastowym rozwarciu.
-R7 SERVICE potwierdza taki przypadek dodatkowym odczytem. Powtórzenia `HOME_Z`
+R7 SERVICE potwierdza taki przypadek dodatkowym odczytem. Krótkie odjazdy
+do weryfikacji rozwarcia i odjazd między próbkami są rozszerzeniem R7 SERVICE.
+Powtórzenia `HOME_Z`
 dotyczą jednego pola. Pomiar kilku pól i regulacja płaszczyzny należą do
 osobnej procedury. Fabryczne bazowanie `.zcode` po pomiarze może wywołać
 `0x0801D604` (Z=1 mm, XY=0,0, Z=0 w układzie roboczym). Osobny etap

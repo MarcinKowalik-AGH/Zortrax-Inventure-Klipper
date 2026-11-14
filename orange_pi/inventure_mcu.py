@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-VERIFY'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-RECOVERY'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')

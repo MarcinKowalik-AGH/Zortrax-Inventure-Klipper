@@ -70,6 +70,8 @@ class PlanModel:
                 return action
             if kind == 'z_contact_move':
                 response = self._motion(action)
+            elif kind == 'z_verify_open':
+                response = dict(nozzle_contact=int(not self.closed), z_bottom=int(self.position == 0))
             else:
                 self.actions.append((self.program.history[-1] if self.program.history else '', action))
                 response = dict(ok=True, a=0, b=0, starts=0, pulses=0,
@@ -84,6 +86,7 @@ class ZHomeCoreTests(unittest.TestCase):
         self.assertEqual((preview['z_probe_x'], preview['z_probe_y']), (82.8, 68.))
         self.assertEqual(preview['z_stable_cycles'], 101)
         self.assertEqual((preview['z_transient_retries'], preview['z_transient_total']), (3, 10))
+        self.assertEqual((preview['z_release_recovery_steps'], preview['z_sample_clearance_mm']), (16, .05))
         for params in ({'ACK': Z_HOME_ACK}, {'Z_APPROACH_MM': 3},
                        {'Z_APPROACH_MM': 249.5, 'ACK': Z_HOME_ACK},
                        {'Z_APPROACH_MM': 80, 'Z_APPROACH_SPEED': .1, 'ACK': Z_HOME_ACK},
@@ -91,6 +94,8 @@ class ZHomeCoreTests(unittest.TestCase):
                        {'Z_APPROACH_MM': 3, 'Z_MAX_CYCLES': 101, 'ACK': Z_HOME_ACK},
                        {'Z_APPROACH_MM': 3, 'Z_STABLE_CYCLES': 1.5, 'ACK': Z_HOME_ACK},
                        {'Z_APPROACH_MM': 3, 'Z_TRANSIENT_RETRIES': None, 'ACK': Z_HOME_ACK},
+                       {'Z_APPROACH_MM': 3, 'Z_RELEASE_RECOVERY_STEPS': 17, 'ACK': Z_HOME_ACK},
+                       {'Z_APPROACH_MM': 3, 'Z_SAMPLE_CLEARANCE_MM': .6, 'ACK': Z_HOME_ACK},
                        {'Z_APPROACH_MM': 3, 'Z_TRANSIENT_BACKOFF_MM': 3, 'ACK': Z_HOME_ACK}):
             with self.subTest(params=params), self.assertRaises(FactoryError):
                 z_home_parameters(params, p, required=True)
@@ -143,7 +148,7 @@ class ZHomeCoreTests(unittest.TestCase):
         self.assertEqual(action['initial_raw'], dict(z_bottom=0, nozzle_contact=0))
 
     def test_stale_opening_and_missing_contact_cannot_establish_reference(self):
-        model = PlanModel(Z_TRANSIENT_RETRIES=0)
+        model = PlanModel(Z_TRANSIENT_RETRIES=0, Z_RELEASE_RECOVERY_STEPS=0)
         model.bounce_after_release = True
         with self.assertRaisesRegex(FactoryError, 'z_contact_retry_limit') as error:
             model.run()
@@ -174,12 +179,13 @@ class ZHomeCoreTests(unittest.TestCase):
         self.assertEqual((result['transient_closures'], model.releases), (1, 4))
         self.assertEqual(result['release_steps_from_bottom'], 2485)
         moves = [a for _, a in model.actions if a['kind'] == 'z_contact_move']
-        backoff = moves[8]
+        backoff_index = next(index for index, action in enumerate(moves) if action['steps'] == -160)
+        backoff = moves[backoff_index]
         self.assertEqual(backoff['steps'], -160)
         self.assertEqual((backoff['stop_mask'], backoff['stop_value']),
                          (Z_BOTTOM, Z_BOTTOM))
         self.assertEqual(backoff['initial_raw'], dict(z_bottom=0))
-        self.assertGreater(moves[9]['steps'], 0)
+        self.assertGreater(moves[backoff_index + 1]['steps'], 0)
         modules = [a['name'] for _, a in model.actions if a.get('state') == 'done']
         self.assertEqual(modules.count('z_contact_retry'), 1)
         self.assertIn('z_contact_approach', modules)
