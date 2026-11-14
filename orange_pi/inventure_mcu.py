@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-OEM'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -2209,6 +2209,7 @@ class InventureMCU:
                 result['stage']='factory_z_reference'
                 result['factory']['z_home_settings']=f['z_home_settings']
                 result['factory']['last_z_move']=f.get('last_z_move')
+                result['factory']['z_home_progress']=f.get('z_home_progress')
             cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
@@ -2755,7 +2756,8 @@ class InventureMCU:
                 round(e*960)*(1 if context['tool'] else -1))
         master=max(map(abs,counts))
         if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
-        requested_rate=max(1,math.ceil(master*action['speed']/length))
+        speed=action['speed']
+        requested_rate=max(1,math.ceil(Z_STEPS_PER_MM*speed if probe else master*speed/length))
         fast_xy=(p['speed_profile']=='OEM' and not home and (counts[0] or counts[1])
                  and requested_rate>MAX_MASTER_RATE)
         if fast_xy and (not f['session'] or requested_rate>FACTORY_MOTION_MAX_RATE):
@@ -2919,6 +2921,9 @@ class InventureMCU:
             f['phase']=action['name'];f['history'].append(action['name'])
             if f['operation']=='AUTO' and action['name'].startswith('U'):f['fallback_started']=True
             self._load_test_emit(context);return dict(f['snapshot'])
+        if kind=='z_progress':
+            f['z_home_progress']={key:value for key,value in action.items() if key!='kind'}
+            return dict(f['snapshot'])
         if kind=='heat':
             if not f['heat_started']:
                 temperature,state=self.panel_temperature(context['tool'],now)

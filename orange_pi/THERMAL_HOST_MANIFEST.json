@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "d83db734f1dec6b108515fda32f062dc4b837d529fba1a6adc41b1eadac76033",
+  "module_sha256": "e8cb598b0829547f900cc1953fca676a479c51c03f92460f5af5562c41eea2b7",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -42,9 +42,10 @@
     "4b99915384950777b4f9731ae9bc4c7f978e64c31b4b8170c7aad6e123d9d8ba",
     "18f75e530ed38f37e074b23dc95537779f1daba1676cb089372e5d4dbcb415f5",
     "58a3ac932e34a0f2e7c94ce86a3223bbbbd16310ed5a109e56f4612e7272e20f",
-    "46026fd76758284db039ca7de86b8820dd46341469f1814312d1034fc4280362"
+    "46026fd76758284db039ca7de86b8820dd46341469f1814312d1034fc4280362",
+    "d83db734f1dec6b108515fda32f062dc4b837d529fba1a6adc41b1eadac76033"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -341,8 +342,10 @@
       "allowed_existing_sha256": []
     },
     "inventure_z_home.py": {
-      "sha256": "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916",
-      "allowed_existing_sha256": []
+      "sha256": "2a23810408ddf198fa05f7ce8fc8399e1b055cb5aba8aedbf9c0c8fa20448723",
+      "allowed_existing_sha256": [
+        "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916"
+      ]
     }
   },
   "axis_timer_motion": {
@@ -393,7 +396,7 @@
     "original_material_records_checked": 23,
     "field_observations": "User observed filament discharge and wiping in both T0 and T1 on the T1-TIMING release",
     "short_and_long_paths": "Covered in automated tests; terminal branch IDs unavailable for the physical runs",
-    "z_reference": "PE12 bottom physically checked; PC14 stationary contact check pending"
+    "z_reference": "PE12 lower limit and first PC14 motion stop confirmed; release repeatability pending"
   },
   "z_service_reference": {
     "actions": [
@@ -408,7 +411,19 @@
     "requires_measured_coarse_approach": true,
     "stock_stable_release_cycles": 101,
     "physical_contact_at_rest": "confirmed",
-    "physical_probe_motion": "pending",
-    "native_coordinates_written": false
+    "physical_probe_motion": "PC14 stop confirmed; full contact/release sequence pending",
+    "native_coordinates_written": false,
+    "observed_motion_run": 53,
+    "observed_hit": 8,
+    "observed_pc14_after_stop": 1,
+    "observed_first_contact_mm_from_pe12": 139.32793,
+    "oem_bottom_seek_max_mm": 150,
+    "oem_bottom_release_max_steps": 5000,
+    "oem_bottom_seek_rate_steps_s": 6644.5183,
+    "oem_bottom_release_rate_steps_s": 999.50025,
+    "oem_z_planner_speed_limit_mm_s": 20,
+    "fine_probe_service_speed_mm_s": 0.2,
+    "oem_fine_speed_measured": false,
+    "transient_contact_retry": true
   }
 }

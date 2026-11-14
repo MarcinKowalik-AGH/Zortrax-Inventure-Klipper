@@ -55,8 +55,8 @@ srebrnym polem. Ten etap kończy się z platformą na dolnej krańcówce.
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_PROCEDURE ACTION=LIST
-INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=HOME_Z TOOL=T0
-INVENTURE_PROCEDURE ACTION=Z_PREPARE TOOL=T0 TARGET=200
+INVENTURE_PROCEDURE ACTION=PARAMS PROCEDURE=HOME_Z TOOL=T0 SPEED_PROFILE=OEM
+INVENTURE_PROCEDURE ACTION=Z_PREPARE TOOL=T0 TARGET=200 SPEED_PROFILE=OEM
 ```
 
 Po zakończeniu sprawdź `INVENTURE_PROCEDURE ACTION=STATUS`, osadzenie tacki
@@ -72,27 +72,42 @@ zmierz odstęp w pionie od metalowego pola do końcówki dyszy. W
 niepewności pomiaru. Pozostała szczelina musi mieścić się w
 `Z_PROBE_MM`. Jeżeli pomiar ma niepewność większą niż pozwala na to
 domyślne okno 1 mm, użyj odpowiednio większego okna precyzyjnego.
-W poniższym wzorze zastąp `ZMIERZONA_DROGA` liczbą w milimetrach.
+W próbie 53 odczyt z MCU wykazał `hit=8` po 3471 krokach precyzyjnego
+dojazdu, na wysokości 139,327930 mm od PE12. Operator potwierdził dotknięcie.
+Przy kolejnym odczycie PC14 był rozwarty, więc próba nie zmierzyła jeszcze
+punktu rozwarcia. Dla tej samej geometrii i ustawienia T0 użyj sprawdzonego
+dojazdu 135 mm oraz zakresu pomiarowego 9 mm.
 
 ```gcode
-INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 Z_APPROACH_MM=ZMIERZONA_DROGA Z_PROBE_MM=1 ACK=PAD_AND_CLEARANCE_CHECKED
+INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
 
 | Parametr | Domyślna wartość | Znaczenie |
 |---|---:|---|
 | `TARGET` | 200°C | Temperatura T0 podczas pomiaru, 180–240°C |
-| `SPEED_PROFILE` | `SERVICE` | Prędkości ruchów XY. `OEM` zadaje F8000 w przejazdach. Parametry Z ustawia się osobno |
+| `SPEED_PROFILE` | `SERVICE` | `OEM` stosuje F8000 na przejeździe do pola oraz parametry Z z kolejnych wierszy |
+| `HOME_Z_MAX` | 250 mm SERVICE / 150 mm OEM | Maksymalna droga szukania PE12 |
+| `Z_BOTTOM_SPEED` | 2 mm/s SERVICE / 8,285 mm/s OEM | Zjazd do PE12. W SERVICE wartość dziedziczy `Z_SPEED` |
+| `Z_BOTTOM_RELEASE_SPEED` | 1 mm/s SERVICE / 1,246 mm/s OEM | Odjazd do rozwarcia PE12 |
+| `Z_BACKOFF_SPEED` | 1 mm/s SERVICE / 20 mm/s OEM | Dodatkowy odjazd o 1 mm po rozwarciu PE12 |
 | `Z_PROBE_X`, `Z_PROBE_Y` | 82,8 / 68,0 mm | Środek w układzie R7 dla T0 |
 | `Z_APPROACH_MM` | Wymagany dla `HOME_Z` | Odległość od zadziałania PE12 do początku precyzyjnego pomiaru. Co najmniej 2 mm, a z `Z_PROBE_MM` najwyżej `HOME_Z_MAX` i 250 mm |
-| `Z_APPROACH_SPEED` | 1 mm/s | Prędkość podnoszenia przed precyzyjnym pomiarem, 0,1–2 mm/s |
+| `Z_APPROACH_SPEED` | 1 mm/s SERVICE / 20 mm/s OEM | Prędkość dojazdu w górę przed precyzyjnym pomiarem |
 | `Z_PROBE_MM`, `Z_RELEASE_MM` | 1 / 1 mm | Budżety kontaktu i rozwarcia, odpowiednio 0,02–10 i 0,02–2 mm |
 | `Z_PROBE_SPEED`, `Z_RELEASE_SPEED` | 0,2 / 0,2 mm/s | Prędkości kontaktu i rozwarcia, 0,05–1 mm/s |
-| `Z_MAX_CYCLES` | 512 | Limit cykli kontaktu i rozwarcia, 102–512 |
+| `Z_STABLE_CYCLES` | 101 | Kolejne pełne cykle bez znalezienia niższego rozwarcia, 1–101 |
+| `Z_MAX_CYCLES` | 512 | Limit pełnych cykli, od `Z_STABLE_CYCLES + 1` do 512 |
+| `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem, 0,05–0,5 mm |
+| `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Limity ponowień z rzędu i w całym przebiegu, 0–10 / 0–30 |
 
 Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
 podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
 Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
-Zwolnienie jest wykrywane osobnym ruchem. Procedura zachowuje najmniejszą
+Krótki impuls PC14 w fazie precyzyjnej resetuje licznik stabilności. Jeśli
+styk jest rozwarty w świeżym odczycie po zatrzymaniu MCU, procedura odjeżdża
+w dół i ponawia pomiar w obrębie tego samego okna. Do pełnego cyklu wlicza
+się dopiero utrzymane zwarcie i rozwarcie wykryte osobnym ruchem.
+Stan podaje `factory.z_home_progress`. Procedura zachowuje najmniejszą
 pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
 poprawy. W `factory.result.z_home_result` odczytaj
 `release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`
@@ -105,16 +120,31 @@ serwisowy bez ustanowienia natywnego Z ani zapisu kalibracji.
 | Etap | Zachowanie r0323 | Ślad kodu |
 |---|---|---|
 | Początek | Opróżnienie kolejki, zapewnienie bazowania Y, potem X. Stan bez referencji uruchamia pomocnika dolnego Z na PE12. | `0x0801DD34`, `0x0801D5A2`, `0x0801D59C`, `0x0801D6C0` |
+| Dolna referencja | Dojazd do PE12 do 120 300 kroków. Odjazd do rozwarcia do 5000 kroków i osobny przejazd w górę o 1 mm. | `0x0801D720`, `0x0801D76E`, `0x0801D6C0` |
 | Podejście | Ruch XY z zadanym F8000 do punktu 14, X67,5 / Y65,5 mm w fabrycznym układzie. Następnie zadane Z = 1604 kroki, czyli 2 mm w tym układzie. | `0x0801DD62–0x0801DD92` |
 | Pomiar | Szukanie kontaktu na PC14, odjazd do rozwarcia i ponowienia. Zakres wynosi 8020 kroków względem pozycji początkowej. Kod zachowuje najlepsze rozwarcie i kończy normalny cykl po 101 kolejnych cyklach bez poprawy. | `0x0801DD9E–0x0801DDB0`, `0x0801DC70`, `0x0801D368` |
 | Wynik | Ustanowienie Z w pozycji rozwarcia i zapis głębokości w rekordzie 52. Silnik rozróżnia brak pierwszego kontaktu (`INT_MAX`) i niezwalniający kontakt (`INT_MIN`). | `0x0801DDB4–0x0801DDEA`, `0x0801DE0C`, `0x0801DE3E` |
 
-W wywołaniu silnika pomiarowego `100` steruje licznikiem powtórzeń, a trzeci
-argument `800` pozostaje nieodczytany. Kroki pomiarowe są rozdzielane pętlą
-opóźnienia i startem timera. F8000 dotyczy dojazdu XY. Dokładna prędkość
-kontaktowa na sprzęcie wymaga pomiaru. Handler homingu Z nie zadaje wprost
-temperatury dyszy. Interaktywny kreator poziomowania i kalibracja wysokości
-dysz mają własne przygotowanie termiczne.
+TIM6 otrzymuje zegar 60 MHz i preskaler 29. Zjazd i rozwarcie PE12
+używają wartości ARR odpowiednio 300 i 2000. Daje to 6644,52 i 999,50 kroków/s,
+czyli 8,285 i 1,246 mm/s przy 802 krokach/mm. Odczytane F8000 jest w mm/min.
+Planer zachowuje je podczas zadanego Z=2 mm i odjazdu o 1 mm, z limitem
+ruchu Z 20 mm/s. Prędkości w profilu `OEM` to wartości zadane, z rampą MCU.
+
+W silniku pomiarowym argument `100` steruje licznikiem powtórzeń. Trzeci
+argument `800` pozostaje nieodczytany. Kroki pomiarowe uruchamia TIM10,
+a odstępy wyznacza pętla procesora o 60 000 iteracji. Wartość 0,2 mm/s
+pochodzi z próby serwisowej. Pomiar czasów STEP w oryginalnej aplikacji
+pozwoli ustalić rzeczywistą prędkość precyzyjnego pomiaru. SEEK i RELEASE
+krańcówek XY również używają programowych opóźnień. Zachowują serwisowe
+nastawy, a przejazd do pola korzysta z wartości fabrycznej.
+
+Handler homingu Z nie zadaje wprost temperatury dyszy. Interaktywny kreator
+poziomowania i kalibracja wysokości dysz mają własne przygotowanie cieplne.
+R7 SERVICE opuszcza stół przed ruchem XY, co daje prześwit na wybór T0.
+OEM dopuszcza próbkę z zerowym odjazdem przy natychmiastowym rozwarciu.
+R7 SERVICE ponawia taki styk. Powtórzenia `HOME_Z` dotyczą jednego pola.
+Pomiar kilku pól i regulacja płaszczyzny należą do osobnej procedury.
 
 Przy pustym rekordzie głębokości r0323 przyjmuje 135 000 µm jako datum
 obliczeniowe dolnego Z. Po zwolnieniu PE12 i dodatkowym odjeździe o 1 mm

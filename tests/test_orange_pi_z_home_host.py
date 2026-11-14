@@ -19,6 +19,7 @@ class ZDevice(factory_support.FactoryDevice):
         self.contact = False
         self.tray = True
         self.release_fault = None
+        self.transient_closures = 0
         self.z_moves = []
 
     def _raw_z(self, position, contact):
@@ -72,6 +73,11 @@ class ZDevice(factory_support.FactoryDevice):
                     if hit:
                         distance = step
                         break
+            if direction > 0 and hit == self.CONTACT and self.transient_closures:
+                self.transient_closures -= 1
+                # The MCU latched PC14 while moving. By the time the host
+                # queries the settled inputs, PC14 has opened again.
+                contact_at_end = False
             duration = distance / rate + .02 if distance else .0
             self.motion = dict(
                 token=token, counts=(a, b, z, e), directions=directions, z_start=self.z,
@@ -82,7 +88,8 @@ class ZDevice(factory_support.FactoryDevice):
                 self.motion['fraction'] = 1.
             self.z_moves.append(dict(
                 direction=direction, planned=z, sent=distance, rate=rate,
-                max_ms=ms, mask=mask, value=value, hit=hit))
+                max_ms=ms, mask=mask, value=value, hit=hit,
+                contact_at_end=contact_at_end))
         else:
             return super().move(args)
         row = self.motion
@@ -229,6 +236,68 @@ class ZHomeHostTests(unittest.TestCase):
                 self.assertEqual(report['phase'], 'failed', report)
                 self.assertTrue(host.device.z_moves[-1]['hit'] & hit)
                 self.assertFalse(host.device.active())
+
+    def test_oem_host_preserves_logged_probe_envelope_and_uses_audited_rates(self):
+        host = self.host()
+        host.device.contact_at = 135 * 802 + 3471
+        host.device.z = 135 * 802
+        self.command(host, SPEED_PROFILE='OEM', TARGET=200, Z_APPROACH_MM=135,
+                     Z_PROBE_MM=9, Z_STABLE_CYCLES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        moves = host.device.z_moves
+        self.assertEqual([(m['direction'], m['rate'], m['planned'], m['hit']) for m in moves[:3]],
+                         [(-1, 6645, 120300, 4), (1, 1000, 5000, 4), (1, 16040, 802, 0)])
+        self.assertEqual((moves[3]['rate'], moves[3]['mask'], moves[3]['value']),
+                         (16040, 24, 16))
+        self.assertEqual((moves[4]['rate'], moves[4]['planned'], moves[4]['sent'], moves[4]['hit']),
+                         (161, 7218, 3471, 8))
+        self.assertEqual(report['factory']['motion_legs']['z_contact_pad']['target'], [82.8, 68.])
+        measured = report['factory']['result']['z_home_result']
+        self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at - 1)
+        self.assertEqual(host.device.output(6)['duty'], 0)
+
+    def test_transient_pc14_stop_backs_off_without_counting_a_release(self):
+        for transients in (1, 2):
+            with self.subTest(transients=transients):
+                host = self.host()
+                host.device.transient_closures = transients
+                self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
+                             Z_TRANSIENT_RETRIES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+                report = self.finish(host)
+                moves = host.device.z_moves
+                first = next(index for index, move in enumerate(moves)
+                             if move['hit'] == host.device.CONTACT)
+                self.assertFalse(moves[first]['contact_at_end'])
+                backoff = moves[first + 1]
+                self.assertEqual((backoff['direction'], backoff['planned'], backoff['sent']),
+                                 (-1, 160, 160))
+                self.assertEqual((backoff['mask'], backoff['value'], backoff['hit']),
+                                 (28, 20, 0))
+                self.assertFalse(backoff['contact_at_end'])
+                self.assertEqual(moves[first + 2]['direction'], 1)
+                self.assertEqual(moves[first + 2]['hit'], host.device.CONTACT)
+                result = report['factory']['result']
+                progress = report['factory']['z_home_progress']
+                if transients == 1:
+                    self.assertEqual(report['phase'], 'done', report)
+                    measured = result['z_home_result']
+                    self.assertEqual((measured['cycles'], measured['transient_closures']), (2, 1))
+                    self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at - 1)
+                    self.assertEqual(sum(move['direction'] < 0 and move['hit'] == host.device.CONTACT
+                                         for move in moves), 2)
+                    self.assertEqual(
+                        (progress['qualified_cycles'], progress['transient_closures']), (2, 1))
+                    self.assertEqual(progress['best_release_steps'], host.device.contact_at - 1)
+                else:
+                    self.assertEqual(report['phase'], 'failed', report)
+                    self.assertEqual(result['reason'], 'z_contact_retry_limit')
+                    self.assertEqual(result['details']['qualified_cycles'], 0)
+                    self.assertEqual(len(moves), first + 3)
+                    self.assertEqual(progress['qualified_cycles'], 0)
+                    self.assertIsNone(progress['best_release_steps'])
+                self.assertFalse(host.device.active())
+                self.assertEqual(host.device.output(6)['duty'], 0)
 
     def test_early_contact_releases_then_stops_before_fine_probe(self):
         host = self.host()
