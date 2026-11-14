@@ -43,7 +43,67 @@ nozzle_temperature: 200
 repeat_count: 101
 ```
 
-## Kontrolowana próba
+## Profil próbny na Orange Pi
+
+Plik [`INVENTURE_NATIVE_Z_TEST.cfg`](../config/INVENTURE_NATIVE_Z_TEST.cfg)
+zawiera osobny profil do sprawdzenia bazowania. Adres `/dev/ttyS1` i 750000
+baud odpowiadają konfiguracji z `klippy(11).log`. Firmware `Z-HOST` już
+zgłosił `native_z_guard_abi: 1`. W przebiegu serwisowym uzyskano 147 cykli,
+101 bez poprawy i rozwarcie na wysokości 139,34414 mm od PE12.
+
+Ostatnia udana próba `HOME_Z TOOL=T0` fizycznie wybrała T0. Jeśli dysza
+została przełączona, wykonaj `INVENTURE_PROCEDURE ACTION=Z_PREPARE TOOL=T0
+TARGET=200 SPEED_PROFILE=OEM` w SERVICE, sprawdź zakończenie i ostudź dyszę
+przed zmianą konfiguracji. Zainstaluj profil w terminalu SSH przy bezczynnej
+drukarce. Polecenie tworzy kopię serwisowego `printer.cfg` z datą w nazwie
+i wypisuje jej ścieżkę.
+
+```bash
+git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
+cfg="$HOME/printer_data/config/printer.cfg" &&
+backup="$cfg.service-$(date +%Y%m%d-%H%M%S)" &&
+cp -p "$cfg" "$backup" &&
+cp "$HOME/inventure-orange-pi/config/INVENTURE_NATIVE_Z_TEST.cfg" "$cfg" &&
+printf '%s\n' "$backup"
+```
+
+W Fluidd wykonaj `FIRMWARE_RESTART`. Gdy Klipper będzie gotowy, opuść stół na
+PE12 i zabazuj XY na zimno. W tym profilu krańcówki XY mają współrzędną
+0. Pierwszy przejazd sprawdź wzrokowo. W razie odchylenia skoryguj `pad_x`
+i `pad_y` po zmierzeniu położenia pola, po czym powtórz zimną część próby.
+
+```gcode
+INVENTURE_CONTROL MODE=NATIVE
+G28 Z
+G28 Y
+G28 X
+G90
+G0 X82.8 Y68 F600
+SET_STEPPER_ENABLE STEPPER=stepper_z ENABLE=1
+M400
+INVENTURE_INPUTS
+```
+
+Sprawdź, czy wysunięta T0 jest nad metalowym polem, a odczyt pokazuje
+`z_bottom=1`, `nozzle_contact=1` i `tray=0`. Podczas grzania profil uruchamia
+F0, F2 i F3. Zacznij od `M104 S50` i sprawdź po kilku sekundach dodatnie
+liczniki tachometru tych wentylatorów w `INVENTURE_SENSORS`.
+
+```gcode
+M109 S200
+INVENTURE_NATIVE_HOME_Z Z_APPROACH_MM=137 Z_PROBE_MM=3 ACK=PAD_AND_CLEARANCE_CHECKED
+GET_POSITION
+M104 S0
+```
+
+Po pomyślnym wyniku `GET_POSITION` powinno pokazać robocze `Z=0`.
+Jeżeli próba zgłosi błąd, wyślij `M104 S0` osobno. Aby wrócić do SERVICE,
+po ostygnięciu przywróć wypisaną wcześniej kopię `printer.cfg` i wykonaj
+`FIRMWARE_RESTART`. Profil przeszedł uruchomienie w trybie symulacji
+Klippera z rzeczywistym słownikiem MCU. Fizyczna próba tej ścieżki
+pozostaje do wykonania.
+
+## Kontrolowana próba na własnym profilu CoreXY
 
 Na przygotowanym profilu uzyskaj prawidłowe natywne X/Y i doprowadź
 platformę do sprawdzonej dolnej krańcówki PE12. Utrzymaj włączony napęd Z.
