@@ -12,6 +12,8 @@ from .inventure_z_home import Z_HOME_ACK, ZReleaseTracker, Z_STEPS_PER_MM
 
 GUARD_COMMAND = 'inventure_native_z_guard action=%c owner=%u'
 GUARD_RESPONSE = 'inventure_native_z_guard_state owner=%u active=%c reject=%c'
+PHASE_MARGIN_S = 10.
+PROGRESS_INTERVAL_S = 5.
 
 
 class InventureNativeZ:
@@ -50,7 +52,7 @@ class InventureNativeZ:
         self.interrupted = False
         self.printer.register_event_handler('klippy:mcu_identify', self._identify)
         self.printer.register_event_handler('klippy:connect', self._connect)
-        self.printer.register_event_handler('klippy:shutdown', self._lost_enable)
+        self.printer.register_event_handler('klippy:shutdown', self._shutdown)
         self.printer.register_event_handler('inventure:native_motion_lost', self._lost_enable)
         self.board.mcu.register_config_callback(self._build_config)
         self.printer.lookup_object('gcode').register_command(
@@ -115,6 +117,31 @@ class InventureNativeZ:
             elif self.kin is not None:
                 self.kin.clear_homing_state('xyz')
 
+    def _shutdown(self):
+        if self.running:
+            # Klipper's trsync shutdown handler completes a pending trigger
+            # wait. Release serial ACK waiters as well, after emergency STOP
+            # has been enqueued by the MCU's earlier shutdown callback.
+            self.board.mcu._serial.abort_wait_acks()
+        self._lost_enable()
+
+    def _stage(self, name, timeout=PHASE_MARGIN_S):
+        self.active_phase = name
+        self.reactor.update_timer(self.watchdog_timer,
+                                  min(self.deadline, self.reactor.monotonic() + timeout))
+
+    def _watchdog(self, eventtime):
+        if self.running and not self.printer.is_shutdown():
+            self.timeout_reason = 'Inventure native Z timeout during ' + self.active_phase
+            self.printer.invoke_shutdown(self.timeout_reason)
+        return self.reactor.NEVER
+
+    def _motion_stage(self, name, target, speed):
+        speed = min(speed, getattr(self.kin, 'max_z_velocity', speed))
+        distance = abs(target - self.toolhead.get_position()[2])
+        accel = getattr(self.kin, 'max_z_accel', 20.)
+        self._stage(name, distance / speed + speed / accel + PHASE_MARGIN_S)
+
     def _check(self, bottom_expected=None):
         if self.interrupted or self.reactor.monotonic() >= self.deadline or self.printer.is_shutdown():
             raise FactoryError('Native Inventure Z reference expired or was interrupted')
@@ -134,6 +161,7 @@ class InventureNativeZ:
             raise FactoryError('T0 left the native Z temperature band')
 
     def _edge(self, pin, target, speed, triggered, bottom_expected, check_triggered, phase):
+        self._motion_stage(phase, target, speed)
         self._check(bottom_expected)
         position = self.toolhead.get_position()
         position[2] = target
@@ -145,6 +173,7 @@ class InventureNativeZ:
         return round(measured[2] * Z_STEPS_PER_MM)
 
     def _move(self, target, speed):
+        self._motion_stage('return to measured release', target / Z_STEPS_PER_MM, speed)
         self._check(0)
         position = self.toolhead.get_position()
         position[2] = target / Z_STEPS_PER_MM
@@ -165,6 +194,7 @@ class InventureNativeZ:
         current = self._current_steps()
         if direction * (limit - current) <= 0:
             return None
+        self._stage(phase + ' input check')
         self._check(0)
         if self._is_triggered(self.endstop) == triggered:
             return current
@@ -179,13 +209,14 @@ class InventureNativeZ:
             return measured
         return None
 
-    def _reference(self, start, low, high, span):
-        tracker = ZReleaseTracker(span, self.repeat_count, 512)
+    def _reference(self, start, low, high, span, repeat_count, probe_cycles, report):
+        tracker = ZReleaseTracker(span, repeat_count, 512)
+        next_report = self.reactor.monotonic() + PROGRESS_INTERVAL_S
         basis = 'stable_repetitions'
         while True:
             closed = self._matching_edge(True, low, self.fine_speed, 'PC14 contact')
             if closed is None:
-                if tracker.best is None:
+                if tracker.best is None or probe_cycles is not None:
                     raise FactoryError('Native Z never reached PC14 within its span')
                 basis = 'upper_bound_with_best_release'
                 break
@@ -195,7 +226,18 @@ class InventureNativeZ:
                 if self._is_triggered(self.endstop):
                     raise FactoryError('Native Z did not release PC14 within its span')
                 opened = high
-            if tracker.add(start - opened):
+            stable = tracker.add(start - opened)
+            complete = tracker.cycles == probe_cycles if probe_cycles is not None else stable
+            now = self.reactor.monotonic()
+            if complete or now >= next_report:
+                report(dict(stage='PC14 refinement', cycles=tracker.cycles,
+                            non_improvements=tracker.non_improvements,
+                            required_non_improvements=repeat_count if probe_cycles is None else None,
+                            requested_cycles=probe_cycles))
+                next_report = now + PROGRESS_INTERVAL_S
+            if complete:
+                if probe_cycles is not None:
+                    basis = 'requested_contact_cycles'
                 break
         best = start - tracker.best
         if self._current_steps() > best:
@@ -210,7 +252,7 @@ class InventureNativeZ:
         self._check(0)
         return best, tracker, basis
 
-    def _establish(self, approach_mm, span_mm):
+    def _establish(self, approach_mm, span_mm, repeat_count, probe_cycles, report):
         start_pos = self.toolhead.get_position()
         start_pos[2] = self.bottom_position
         bottom_steps = round(self.bottom_position * Z_STEPS_PER_MM)
@@ -235,18 +277,24 @@ class InventureNativeZ:
         logging.info('Inventure native Z: PC14 coarse approach %.5f -> %.5f at %.3f mm/s',
                      self._current_steps() / Z_STEPS_PER_MM, start / Z_STEPS_PER_MM,
                      self.coarse_speed)
+        report(dict(stage='PC14 coarse approach'))
         if (self._matching_edge(True, start, self.coarse_speed, 'PC14 coarse approach') is not None
                 or self._is_triggered(self.endstop)):
             raise FactoryError('PC14 closed during the guarded coarse approach')
         if self._current_steps() != start:
             raise FactoryError('Native Z did not reach the start of refinement')
         logging.info('Inventure native Z: starting PC14 refinement at %.5f', start / Z_STEPS_PER_MM)
-        best, tracker, basis = self._reference(start, low, high, span)
+        report(dict(stage='PC14 refinement', cycles=0,
+                    required_non_improvements=repeat_count if probe_cycles is None else None,
+                    requested_cycles=probe_cycles))
+        best, tracker, basis = self._reference(start, low, high, span, repeat_count, probe_cycles, report)
         return dict(reference_established=True, coordinate_saved=True,
                     persistence='current_klipper_session', terminal='done',
                     release_steps_from_bottom=bottom_steps - best,
                     release_mm_from_bottom=round((bottom_steps - best) / Z_STEPS_PER_MM, 6),
                     cycles=tracker.cycles, non_improvements=tracker.non_improvements,
+                    required_non_improvements=repeat_count if probe_cycles is None else None,
+                    requested_cycles=probe_cycles,
                     completion_basis=basis)
 
     def cmd_home(self, gcmd):
@@ -256,6 +304,10 @@ class InventureNativeZ:
             raise gcmd.error('Native Inventure Z requires ACK=' + Z_HOME_ACK)
         approach = gcmd.get_float('Z_APPROACH_MM', minval=2., maxval=self.bottom_position)
         span = gcmd.get_float('Z_PROBE_MM', 10., minval=.02, maxval=10.)
+        repeat_count = gcmd.get_int('Z_STABLE_CYCLES', self.repeat_count, minval=1, maxval=101)
+        probe_cycles = gcmd.get_int('Z_PROBE_CYCLES', None, minval=1, maxval=101)
+        if probe_cycles is not None and gcmd.get('Z_STABLE_CYCLES', None) is not None:
+            raise gcmd.error('Choose either Z_PROBE_CYCLES or Z_STABLE_CYCLES')
         now = self.reactor.monotonic()
         status = self.kin.get_status(now)
         position = self.toolhead.get_position()
@@ -281,8 +333,15 @@ class InventureNativeZ:
         guard_attempted = False
         self.deadline = now + 600.
         self.last_result = None
+        self.timeout_reason = None
+        self.watchdog_timer = self.reactor.register_timer(self._watchdog)
+
+        def report(fields):
+            gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(fields, sort_keys=True))
+
         try:
             with owner:
+                self._stage('preflight')
                 self.toolhead.wait_moves()
                 self._check(1)
                 display_hold_requested = True
@@ -291,7 +350,8 @@ class InventureNativeZ:
                 guard_attempted = True
                 self._verify_guard(1, token, True)
                 self.guard_owner = token
-                result = self._establish(approach, span)
+                result = self._establish(approach, span, repeat_count, probe_cycles, report)
+                self._stage('verify and commit Z reference')
                 self._check(0)
                 if self._is_triggered(self.endstop) or not self.z_enable.is_motor_enabled():
                     raise FactoryError('Native Z lost the selected reference before assigning zero')
@@ -306,8 +366,10 @@ class InventureNativeZ:
                     operations.state.homed('z')
             self.last_result = result
         except Exception as exc:
-            if guard_attempted:
+            if guard_attempted and not self.printer.is_shutdown():
+                self._stage('stop after error')
                 self.board._control_stop_outputs()
+            if guard_attempted or self.timeout_reason is not None:
                 try:
                     self.toolhead.get_extruder().get_heater().set_temp(0.)
                 except Exception:
@@ -317,12 +379,14 @@ class InventureNativeZ:
                     self.kin.clear_homing_state('xyz')
                 else:
                     operations.invalidate('xyz', 'native_z_reference_failed')
+            reason = self.timeout_reason or str(exc)
             self.last_result = dict(reference_established=False, coordinate_saved=False,
-                                    terminal='failed', reason=str(exc))
-            logging.warning('Inventure native Z failed: %s (UART buffers: %s)', exc,
+                                    terminal='failed', reason=reason)
+            logging.warning('Inventure native Z failed: %s (UART buffers: %s)', reason,
                             getattr(self.board, 'uart_buffer_stats', {}))
-            raise gcmd.error(str(exc)) from exc
+            raise gcmd.error(reason) from exc
         finally:
+            self.reactor.unregister_timer(self.watchdog_timer)
             self.guard_owner = None
             self.running = False
             if display_hold_requested:

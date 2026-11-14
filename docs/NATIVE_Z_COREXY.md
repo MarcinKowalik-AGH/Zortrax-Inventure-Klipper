@@ -91,17 +91,30 @@ liczniki tachometru tych wentylatorów w `INVENTURE_SENSORS`.
 
 ```gcode
 M109 S200
-INVENTURE_NATIVE_HOME_Z Z_APPROACH_MM=137 Z_PROBE_MM=3 ACK=PAD_AND_CLEARANCE_CHECKED
-GET_POSITION
-M104 S0
+INVENTURE_NATIVE_HOME_Z Z_APPROACH_MM=137 Z_PROBE_MM=3 Z_PROBE_CYCLES=3 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
 
-Po pomyślnym wyniku `GET_POSITION` powinno pokazać robocze `Z=0`.
+`Z_PROBE_CYCLES=3` kończy próbę po trzech pełnych parach zwarcie–rozwarcie.
+Po jej zakończeniu sprawdź
+`GET_POSITION` osobnym poleceniem i wyłącz grzanie przez `M104 S0`.
+Bez tego parametru stosowany jest domyślny próg 101 cykli bez poprawy,
+który można zmienić parametrem `Z_STABLE_CYCLES`. Fabryczny r0323 liczy
+te mikroruchy lokalnie na MCU. W trybie natywnym każdy ruch wymaga
+oddzielnej synchronizacji Klipper–MCU. `V9_NATIVE_Z_PROGRESS` podaje liczbę
+cykli po około 5 sekundach i przy zakończeniu pomiaru.
+
+W r0323 bazowanie jednego pola wywołuje procedurę mikroruchów z progiem
+100 (`0x0801DDAE–0x0801DDB0`). Oddzielna kalibracja może zlecić trzy pełne
+przejścia (`0x0801888C–0x08018890`). Każde z nich ma własną wewnętrzną
+pętlę pomiarową. Polski opis pomiaru jednego pola jest w [audycie r0323](Z_CONTACT_AND_HOMING_R0323.md#sekwencja-firmware-161-r0323).
 Krańcówki X/Y są szukane przy 5 mm/s, a przejazd do pola ma zadaną
 prędkość 80 mm/s. Zgrubny najazd Z odbywa się jednym ruchem przy 8 mm/s
 po zwolnieniu PE12. PC14 może go zatrzymać w dowolnym punkcie, a MCU
 nadzoruje osadzenie tacki. Ruchy pomiarowe mają własną niższą prędkość.
-Jeżeli próba zgłosi błąd, prześlij pełny `klippy.log` z tej sesji.
+Każdy etap ma limit obejmujący przewidywany czas ruchu i potwierdzenia.
+Gdy limit upłynie, Klipper wykonuje awaryjne zatrzymanie i w logu podaje nazwę etapu.
+Przy błędzie lub braku reakcji użyj przycisku awaryjnego STOP w Fluidd
+i zachowaj pełny `klippy.log` z tej sesji.
 Po błędzie w rozpoczętej procedurze host zeruje cel T0 i zatrzymuje MCU,
 jeśli rozpoczął uzbrajanie ochrony ruchu. Aby wrócić do SERVICE,
 po ostygnięciu przywróć wypisaną wcześniej kopię `printer.cfg` i wykonaj

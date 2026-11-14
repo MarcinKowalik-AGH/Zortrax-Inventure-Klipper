@@ -1,5 +1,6 @@
 """Exercise the opt-in native Z adapter with a pinned Klipper API model."""
 import importlib
+import json
 import sys
 import types
 import unittest
@@ -9,6 +10,9 @@ from orange_pi.inventure_z_home import Z_HOME_ACK, Z_STEPS_PER_MM
 
 
 class Model:
+    NOW = 0.
+    NEVER = float('inf')
+
     def __init__(self):
         self.z = 145.
         self.physical_z = self.z
@@ -16,6 +20,11 @@ class Model:
         self.calls = []
         self.edge_calls = []
         self.timeout_edge = None
+        self.stalled_phase = None
+        self.timers = []
+        self.shutdown_reason = None
+        self.mcu = types.SimpleNamespace(
+            _serial=types.SimpleNamespace(abort_wait_acks=mock.Mock()))
         self.guard = False
         self.bad_guard_reply = None
         self.tray = 0
@@ -39,6 +48,40 @@ class Model:
 
     def monotonic(self):
         return self.time
+
+    def register_timer(self, callback, waketime=NEVER):
+        timer = types.SimpleNamespace(callback=callback, waketime=waketime)
+        self.timers.append(timer)
+        return timer
+
+    def update_timer(self, timer, waketime):
+        timer.waketime = waketime
+
+    def unregister_timer(self, timer):
+        self.timers.remove(timer)
+
+    def advance_time(self, seconds):
+        deadline = self.time + seconds
+        while self.timers:
+            timer = min(self.timers, key=lambda item: item.waketime)
+            if timer.waketime > deadline or self.shutdown_reason is not None:
+                break
+            self.time = max(self.time, timer.waketime)
+            timer.waketime = timer.callback(self.time)
+        self.time = deadline
+
+    def invoke_shutdown(self, reason):
+        self.shutdown_reason = reason
+        self.stopped = True
+        self.on_shutdown()
+
+    def stall_until_shutdown(self, phase):
+        if self.stalled_phase != phase:
+            return
+        self.advance_time(60.)
+        if self.shutdown_reason is None:
+            raise AssertionError('Native Z waiter was still blocked after 60 seconds')
+        raise ValueError('MCU shutdown interrupted the simulated wait')
 
     def lookup_object(self, name, default=None):
         return self if name == 'gcode_move' else default
@@ -99,6 +142,7 @@ class Model:
         pass
 
     def _control_query(self):
+        self.stall_until_shutdown('preflight')
         return dict(mode='NATIVE', armed=not self.stopped, fault=0, latched=0)
 
     def _z_home_inputs(self, expected):
@@ -178,10 +222,15 @@ class HomingMove:
             model.physical_z += model.release_overrun_steps / Z_STEPS_PER_MM
         if model.trip_at is not None and model.physical_z < model.trip_at:
             model.tray = 1
+        model.stall_until_shutdown(self.phase)
         return trigger
 
 
 class Command(dict):
+    def __init__(self, **params):
+        super().__init__(**params)
+        self.messages = []
+
     @staticmethod
     def error(message):
         return ValueError(message)
@@ -189,8 +238,17 @@ class Command(dict):
     def get_float(self, key, default=None, **kwargs):
         return float(self.get(key, default))
 
+    def get_int(self, key, default=None, minval=None, maxval=None):
+        if key not in self:
+            return default
+        value = int(self[key])
+        if minval is not None and value < minval or maxval is not None and value > maxval:
+            raise self.error(key + ' outside the allowed range')
+        return value
+
     def respond_info(self, message):
         self.message = message
+        self.messages.append(message)
 
 
 class NativeZBridgeTests(unittest.TestCase):
@@ -216,6 +274,7 @@ class NativeZBridgeTests(unittest.TestCase):
         self.adapter.fine_speed = .3
         self.adapter.target = 200.
         self.adapter.repeat_count = 2
+        self.model.on_shutdown = self.adapter._shutdown
         self.command = Command(ACK=Z_HOME_ACK, Z_APPROACH_MM=135, Z_PROBE_MM=8)
 
     def test_reports_and_commits_actual_native_reference_while_guarded(self):
@@ -231,6 +290,9 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertEqual([call for call in self.model.calls if call[0] != 'display_hold'][-2:],
                          [('set', 0., 'z'), ('guard', 2, 23, False)])
         self.assertFalse(self.model.guard)
+        self.assertFalse(self.model.timers)
+        self.assertTrue(any(message.startswith('V9_NATIVE_Z_PROGRESS ')
+                            for message in self.command.messages))
         self.adapter._enable_changed(0., False)
         self.assertNotIn('z', self.model.axes)
         self.assertEqual(self.adapter.last_result['terminal'], 'invalidated')
@@ -306,6 +368,94 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertEqual(self.adapter.last_result['cycles'], 3)
         self.assertAlmostEqual(self.model.physical_z,
                                self.model.threshold + 1. / Z_STEPS_PER_MM)
+
+    def test_watchdog_stops_a_blocked_pc14_waiter_at_contact(self):
+        self.model.stalled_phase = 'PC14 contact'
+        with self.assertRaisesRegex(ValueError, 'timeout.*PC14 contact'):
+            self.adapter.cmd_home(self.command)
+        self.assertIn('PC14 contact', self.model.shutdown_reason)
+        self.model.mcu._serial.abort_wait_acks.assert_called_once_with()
+        self.assertLessEqual(self.model.physical_z, self.model.threshold)
+        self.assertEqual([edge[0] for edge in self.model.edge_calls], ['PE12', 'PC14', 'PC14'])
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+        self.assertEqual(self.model.heater_target, 0.)
+        self.assertFalse(self.model.thermal_display_held)
+        self.assertFalse(self.model.timers)
+        self.assertFalse(self.adapter.running)
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+    def test_watchdog_covers_blocked_preflight_before_guard_ownership(self):
+        self.model.stalled_phase = 'preflight'
+        with self.assertRaisesRegex(ValueError, 'timeout.*preflight'):
+            self.adapter.cmd_home(self.command)
+        self.assertIn('preflight', self.model.shutdown_reason)
+        self.model.mcu._serial.abort_wait_acks.assert_called_once_with()
+        self.assertFalse(self.model.edge_calls)
+        self.assertFalse(any(call[0] == 'guard' for call in self.model.calls))
+        self.assertEqual(self.model.heater_target, 0.)
+        self.assertFalse(self.model.timers)
+        self.assertFalse(self.adapter.running)
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+    def test_per_command_stable_cycles_override_reports_short_test_threshold(self):
+        self.adapter.repeat_count = 101
+        self.command['Z_STABLE_CYCLES'] = 5
+        self.adapter.cmd_home(self.command)
+        result = self.adapter.last_result
+        self.assertEqual((result['cycles'], result['non_improvements']), (6, 5))
+        self.assertEqual(self.adapter.repeat_count, 101)
+        progress = [json.loads(message.split(' ', 1)[1]) for message in self.command.messages
+                    if message.startswith('V9_NATIVE_Z_PROGRESS ')]
+        counts = [row['required_non_improvements'] for row in progress
+                  if row['stage'] == 'PC14 refinement']
+        self.assertEqual(counts, [5, 5])
+
+    def test_rejects_out_of_range_stable_cycles_before_motion(self):
+        for repeats in (0, 102):
+            with self.subTest(repeats=repeats):
+                self.command['Z_STABLE_CYCLES'] = repeats
+                with self.assertRaisesRegex(ValueError, 'Z_STABLE_CYCLES'):
+                    self.adapter.cmd_home(self.command)
+                self.assertFalse(self.model.edge_calls)
+                self.assertFalse(self.model.timers)
+        self.assertFalse(self.model.calls)
+
+    def test_exact_probe_cycles_stops_after_three_measured_pairs(self):
+        self.adapter.repeat_count = 101
+        self.command['Z_PROBE_CYCLES'] = 3
+        self.adapter.cmd_home(self.command)
+        result = self.adapter.last_result
+        self.assertTrue(result['coordinate_saved'])
+        self.assertEqual(result['completion_basis'], 'requested_contact_cycles')
+        self.assertEqual((result['cycles'], result['requested_cycles']), (3, 3))
+        self.assertIsNone(result['required_non_improvements'])
+        self.assertEqual(self.adapter.repeat_count, 101)
+        fine_edges = [edge[2] for edge in self.model.edge_calls if edge[1] == self.adapter.fine_speed]
+        self.assertEqual(fine_edges, [True, False] * 3)
+        progress = [json.loads(message.split(' ', 1)[1]) for message in self.command.messages
+                    if message.startswith('V9_NATIVE_Z_PROGRESS ')]
+        refine = [row for row in progress if row['stage'] == 'PC14 refinement']
+        self.assertEqual([(row['cycles'], row['requested_cycles']) for row in refine],
+                         [(0, 3), (3, 3)])
+
+    def test_exact_probe_cycles_rejects_stability_override_before_motion(self):
+        self.command.update(Z_PROBE_CYCLES=3, Z_STABLE_CYCLES=5)
+        with self.assertRaisesRegex(ValueError, 'either Z_PROBE_CYCLES or Z_STABLE_CYCLES'):
+            self.adapter.cmd_home(self.command)
+        self.assertFalse(self.model.calls)
+        self.assertFalse(self.model.timers)
+
+    def test_exact_probe_cycles_aborts_when_second_contact_limit_is_reached(self):
+        self.model.close_budget = 1
+        self.command['Z_PROBE_CYCLES'] = 3
+        with self.assertRaisesRegex(ValueError, 'never reached PC14 within its span'):
+            self.adapter.cmd_home(self.command)
+        self.assertEqual(self.model.close_count, 1)
+        fine_edges = [edge[2] for edge in self.model.edge_calls if edge[1] == self.adapter.fine_speed]
+        self.assertEqual(fine_edges, [True, False, True])
+        self.assertIn(('stop',), self.model.calls)
+        self.assertNotIn(('set', 0., 'z'), self.model.calls)
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
 
     def test_preflight_requires_existing_xy_and_t0(self):
         self.model.name = 'extruder1'

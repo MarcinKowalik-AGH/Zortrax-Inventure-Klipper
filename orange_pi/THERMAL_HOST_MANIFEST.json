@@ -360,9 +360,10 @@
       ]
     },
     "inventure_native_z.py": {
-      "sha256": "3f73bb0d92b5f19bc6b9973f8a1f161486d68e23fde7ca5ad2a7d390c35d28e7",
+      "sha256": "5f33a5aaf309daeb137523181aeeedb4141441bddabff9ffbe99a7eaa8fe41fa",
       "allowed_existing_sha256": [
-        "a3399b18df7d7eecaf660ba49268c2b7b2dc13e0960c5e51cbc9f6218d4e620c"
+        "a3399b18df7d7eecaf660ba49268c2b7b2dc13e0960c5e51cbc9f6218d4e620c",
+        "3f73bb0d92b5f19bc6b9973f8a1f161486d68e23fde7ca5ad2a7d390c35d28e7"
       ]
     }
   },

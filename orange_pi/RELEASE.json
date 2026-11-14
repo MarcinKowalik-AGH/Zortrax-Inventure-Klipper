@@ -3,7 +3,7 @@
   "host_module_sha256": "ad9e586c459671b791fc0f20995b97fd2cd8ce8b22983637570c43e72009c05f",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 417,
+  "verified_public_host_tests": 428,
   "previous_host_commit": "480ca1f7278957b9cfc265077b34c9c966895e85",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-HOST",
