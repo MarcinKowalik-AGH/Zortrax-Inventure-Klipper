@@ -143,10 +143,12 @@ class ZHomeCoreTests(unittest.TestCase):
         self.assertEqual(action['initial_raw'], dict(z_bottom=0, nozzle_contact=0))
 
     def test_stale_opening_and_missing_contact_cannot_establish_reference(self):
-        model = PlanModel()
+        model = PlanModel(Z_TRANSIENT_RETRIES=0)
         model.bounce_after_release = True
-        with self.assertRaisesRegex(FactoryError, 'input changed after latched stop'):
+        with self.assertRaisesRegex(FactoryError, 'z_contact_retry_limit') as error:
             model.run()
+        self.assertEqual(error.exception.details['transient_openings'], 1)
+        self.assertEqual(error.exception.details['qualified_cycles'], 0)
         self.assertEqual(model.releases, 1)
         model = PlanModel()
         model.contact_at = None

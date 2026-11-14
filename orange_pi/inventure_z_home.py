@@ -106,12 +106,15 @@ class ZHomeProgram(FactoryProgram):
         self.z_steps = 0  # Table rises in positive Z; zero here is the PE12 trigger.
 
     def _z_move(self, steps, speed, stop_mask, stop_value, contact, bottom,
-                allow_transient_close=False):
+                allow_contact_transient=False):
         if not steps:
             raise FactoryError('Z reference move requires a nonzero step count')
+        initial_raw = dict(z_bottom=bottom)
+        if contact is not None:
+            initial_raw['nozzle_contact'] = contact
         row = yield dict(kind='z_contact_move', steps=steps, speed=speed,
                          stop_mask=stop_mask, stop_value=stop_value,
-                         initial_raw=dict(nozzle_contact=contact, z_bottom=bottom))
+                         initial_raw=initial_raw)
         if not isinstance(row, dict):
             raise FactoryError('Missing Z motion result')
         sent, hit = row.get('sent_steps'), row.get('hit')
@@ -130,7 +133,7 @@ class ZHomeProgram(FactoryProgram):
             raise FactoryError('Missing fresh Z motion inputs', hit=hit, sent_steps=sent)
         for bit, name in ((NOZZLE_CONTACT, 'nozzle_contact'), (Z_BOTTOM, 'z_bottom')):
             if hit & bit and raw[name] != int(bool(stop_value & bit)):
-                if allow_transient_close and bit == NOZZLE_CONTACT:
+                if allow_contact_transient and hit == NOZZLE_CONTACT:
                     continue
                 raise FactoryError('Z input changed after latched stop', input=name,
                                    hit=hit, sent_steps=sent)
@@ -149,16 +152,30 @@ class ZHomeProgram(FactoryProgram):
         if hit or raw['nozzle_contact'] != 1 or raw['z_bottom'] != 0:
             raise FactoryError('z_contact_during_bottom_backoff', hit=hit)
 
-    def _z_open_contact(self, lower):
+    def _z_open_contact(self, lower, progress=None):
         p = self.settings
-        allowed = min(self.z_steps - lower, round(p['z_release_mm'] * Z_STEPS_PER_MM))
-        if allowed < 1:
-            raise FactoryError('z_contact_release_outside_bounds')
-        sent, hit, raw = yield from self._z_move(-allowed, p['z_release_speed'],
-                                                 Z_BOTTOM | NOZZLE_CONTACT,
-                                                 Z_BOTTOM | NOZZLE_CONTACT, 0, 0)
-        if not sent or hit != NOZZLE_CONTACT or raw['z_bottom'] != 0:
-            raise FactoryError('z_contact_did_not_release', hit=hit, sent_steps=sent)
+        start = self.z_steps
+        limit = max(lower, start - round(p['z_release_mm'] * Z_STEPS_PER_MM))
+        retry = progress is not None
+        while self.z_steps > limit:
+            # While descending, either initial PC14 level is safe. An open
+            # input still stops the MCU even before its first step.
+            sent, hit, raw = yield from self._z_move(
+                limit - self.z_steps, p['z_release_speed'], Z_BOTTOM | NOZZLE_CONTACT,
+                Z_BOTTOM | NOZZLE_CONTACT, None if retry else 0, 0,
+                allow_contact_transient=retry)
+            if hit != NOZZLE_CONTACT or raw['z_bottom'] != 0:
+                raise FactoryError('z_contact_did_not_release', hit=hit, sent_steps=sent)
+            if raw['nozzle_contact'] == 1 and self.z_steps < start:
+                return True
+            if not retry:
+                raise FactoryError('z_contact_did_not_release', hit=hit, sent_steps=sent)
+            yield from self._z_record_transient(progress, 'transient_openings')
+            if raw['nozzle_contact'] == 1:
+                # No downward step was measured. Restart from below this point.
+                yield from self._module('z_contact_retry', self._z_retry_contact(limit))
+                return False
+        raise FactoryError('z_contact_release_outside_bounds')
 
     def _z_approach(self, approach, clearance):
         p = self.settings
@@ -180,7 +197,7 @@ class ZHomeProgram(FactoryProgram):
             raise FactoryError('z_contact_not_found', limit_steps=upper)
         sent, hit, raw = yield from self._z_move(remaining, self.settings['z_probe_speed'],
                                                  NOZZLE_CONTACT, 0, 1, 0,
-                                                 allow_transient_close=True)
+                                                 allow_contact_transient=True)
         if raw['z_bottom'] != 0:
             raise FactoryError('z_bottom_reasserted', hit=hit)
         if hit == NOZZLE_CONTACT:
@@ -217,41 +234,43 @@ class ZHomeProgram(FactoryProgram):
 
     def _z_repeat_contact(self, lower, upper):
         p = self.settings
-        best, misses, cycles = None, 0, 0
-        transients, consecutive = 0, 0
-        while cycles < p['z_max_cycles']:
+        progress = dict(qualified_cycles=0, non_improvements=0, transient_closures=0,
+                        transient_openings=0, consecutive_transients=0, best_release_steps=None)
+        while progress['qualified_cycles'] < p['z_max_cycles']:
             sent, closed = yield from self._module('z_contact_close', self._z_close_contact(lower, upper))
             if not closed:
-                transients += 1
-                consecutive += 1
-                misses = 0
-                if consecutive > p['z_transient_retries'] or transients > p['z_transient_total']:
-                    yield self._z_progress(cycles, misses, transients, consecutive, best)
-                    raise FactoryError('z_contact_retry_limit', position_steps=self.z_steps,
-                                       transient_closures=transients, consecutive_transients=consecutive,
-                                       qualified_cycles=cycles)
+                yield from self._z_record_transient(progress, 'transient_closures')
                 yield from self._module('z_contact_retry', self._z_retry_contact(lower))
-                yield self._z_progress(cycles, misses, transients, consecutive, best)
                 continue
-            yield from self._module('z_contact_open', self._z_open_contact(lower))
+            opened = yield from self._module('z_contact_open', self._z_open_contact(lower, progress))
+            if not opened:
+                continue
             if not sent:
                 raise FactoryError('z_contact_before_fine_step', release_steps=self.z_steps)
-            consecutive = 0
-            cycles += 1
+            progress['consecutive_transients'] = 0
+            progress['qualified_cycles'] += 1
+            best = progress['best_release_steps']
             if best is None or self.z_steps < best:
-                best, misses = self.z_steps, 0
+                progress.update(best_release_steps=self.z_steps, non_improvements=0)
             else:
-                misses += 1
-            yield self._z_progress(cycles, misses, transients, consecutive, best)
-            if misses == p['z_stable_cycles']:
-                return best, cycles, misses, transients
-        raise FactoryError('z_contact_cycle_limit', best_release_steps=best, cycles=cycles,
-                           transient_closures=transients)
+                progress['non_improvements'] += 1
+            yield self._z_progress(progress)
+            if progress['non_improvements'] == p['z_stable_cycles']:
+                return progress
+        raise FactoryError('z_contact_cycle_limit', cycles=progress['qualified_cycles'], **progress)
 
-    def _z_progress(self, cycles, misses, transients, consecutive, best):
-        return dict(kind='z_progress', qualified_cycles=cycles, non_improvements=misses,
-                    transient_closures=transients, consecutive_transients=consecutive,
-                    best_release_steps=best, position_steps=self.z_steps)
+    def _z_record_transient(self, progress, field):
+        progress[field] += 1
+        progress['consecutive_transients'] += 1
+        progress['non_improvements'] = 0
+        yield self._z_progress(progress)
+        total = progress['transient_closures'] + progress['transient_openings']
+        if (progress['consecutive_transients'] > self.settings['z_transient_retries']
+                or total > self.settings['z_transient_total']):
+            raise FactoryError('z_contact_retry_limit', position_steps=self.z_steps, **progress)
+
+    def _z_progress(self, progress):
+        return dict(kind='z_progress', position_steps=self.z_steps, **progress)
 
     def _z_reference(self):
         p = self.settings
@@ -261,15 +280,17 @@ class ZHomeProgram(FactoryProgram):
         lower, upper = max(clearance, approach - span), approach + span
         yield from self._module('z_contact_approach', self._z_approach(approach, clearance))
         yield from self._phase('Z_CONTACT_REFERENCE')
-        best, cycles, misses, transients = yield from self._module(
+        progress = yield from self._module(
             'z_contact_repeat', self._z_repeat_contact(lower, upper))
+        best = progress['best_release_steps']
         yield from self._module('z_contact_settle', self._z_settle(lower, best))
         return dict(method='minimum_release_%d_non_improvements' % p['z_stable_cycles'],
                     release_steps_from_bottom=best,
                     release_mm_from_bottom=round(best / Z_STEPS_PER_MM, 6),
                     probe_lower_steps=lower, probe_upper_steps=upper,
-                    cycles=cycles, non_improvements=misses,
-                    transient_closures=transients, coordinate_saved=False)
+                    cycles=progress['qualified_cycles'], non_improvements=progress['non_improvements'],
+                    transient_closures=progress['transient_closures'],
+                    transient_openings=progress['transient_openings'], coordinate_saved=False)
 
     def run(self, operation='HOME_Z'):
         if operation not in Z_HOME_PROCEDURES:

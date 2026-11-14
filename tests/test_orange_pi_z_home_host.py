@@ -20,6 +20,7 @@ class ZDevice(factory_support.FactoryDevice):
         self.tray = True
         self.release_fault = None
         self.transient_closures = 0
+        self.release_edges = []
         self.z_moves = []
 
     def _raw_z(self, position, contact):
@@ -78,6 +79,14 @@ class ZDevice(factory_support.FactoryDevice):
                 # The MCU latched PC14 while moving. By the time the host
                 # queries the settled inputs, PC14 has opened again.
                 contact_at_end = False
+            if (direction < 0 and mask & value & self.CONTACT and self.contact
+                    and self.release_edges):
+                # Script the MCU's open-edge stop independently of the
+                # subsequent raw sample (which may already be closed again).
+                distance, contact_at_end = self.release_edges.pop(0)
+                if not 0 <= distance <= z:
+                    raise AssertionError('Modeled release edge exceeds move')
+                hit = self.CONTACT
             duration = distance / rate + .02 if distance else .0
             self.motion = dict(
                 token=token, counts=(a, b, z, e), directions=directions, z_start=self.z,
@@ -296,6 +305,73 @@ class ZHomeHostTests(unittest.TestCase):
                     self.assertEqual(len(moves), first + 3)
                     self.assertEqual(progress['qualified_cycles'], 0)
                     self.assertIsNone(progress['best_release_steps'])
+                self.assertFalse(host.device.active())
+                self.assertEqual(host.device.output(6)['duty'], 0)
+
+    def test_release_retries_share_original_remaining_travel_budget(self):
+        for sent in (0, 5):
+            with self.subTest(sent=sent):
+                host = self.host()
+                host.device.release_edges = [(sent, True)]
+                self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
+                             ACK='PAD_AND_CLEARANCE_CHECKED')
+                report = self.finish(host)
+                self.assertEqual(report['phase'], 'done', report)
+                measured = report['factory']['result']['z_home_result']
+                progress = report['factory']['z_home_progress']
+                self.assertEqual((measured['cycles'], measured['transient_openings'],
+                                  measured['transient_closures']), (2, 1, 0))
+                self.assertEqual(progress['transient_openings'], 1)
+                releases = [row for row in host.device.z_moves
+                            if row['direction'] < 0 and row['hit'] == ZDevice.CONTACT]
+                first, retry = releases[:2]
+                self.assertEqual((first['sent'], first['contact_at_end']), (sent, True))
+                self.assertEqual((retry['mask'], retry['value']), (28, 28))
+                self.assertEqual(retry['planned'], first['planned'] - sent)
+                self.assertGreater(retry['sent'], 0)
+                self.assertFalse(retry['contact_at_end'])
+                self.assertFalse(host.device.active())
+
+    def test_zero_step_release_still_open_requires_backoff_and_new_closure(self):
+        host = self.host()
+        host.device.release_edges = [(0, False)]
+        self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
+                     ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        measured = report['factory']['result']['z_home_result']
+        self.assertEqual((measured['cycles'], measured['transient_openings'],
+                          measured['transient_closures']), (2, 1, 0))
+        moves = host.device.z_moves
+        first = next(index for index, row in enumerate(moves)
+                     if row['direction'] < 0 and row['hit'] == ZDevice.CONTACT)
+        release, backoff, reapproach = moves[first:first + 3]
+        self.assertEqual((release['sent'], release['contact_at_end']), (0, False))
+        self.assertEqual((backoff['direction'], backoff['mask'], backoff['value'],
+                          backoff['sent']), (-1, 28, 20, 160))
+        self.assertEqual((reapproach['direction'], reapproach['hit']), (1, ZDevice.CONTACT))
+        self.assertEqual(sum(row['direction'] < 0 and row['hit'] == ZDevice.CONTACT
+                             and row['sent'] > 0 for row in moves), 2)
+        self.assertFalse(host.device.active())
+
+    def test_opening_retries_stop_on_shared_budget_without_qualifying_cycle(self):
+        for share_close in (False, True):
+            with self.subTest(share_close=share_close):
+                host = self.host()
+                host.device.transient_closures = int(share_close)
+                host.device.release_edges = [(0, True)] * (1 if share_close else 2)
+                self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
+                             Z_TRANSIENT_RETRIES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+                report = self.finish(host)
+                self.assertEqual(report['phase'], 'failed', report)
+                factory = report['factory']
+                self.assertEqual(factory['result']['reason'], 'z_contact_retry_limit')
+                progress = factory['z_home_progress']
+                self.assertEqual(progress['qualified_cycles'], 0)
+                self.assertIsNone(progress['best_release_steps'])
+                self.assertEqual(progress['transient_closures'], int(share_close))
+                self.assertEqual(progress['transient_openings'], 1 if share_close else 2)
+                self.assertEqual(host.device.z_moves[-1]['sent'], 0)
                 self.assertFalse(host.device.active())
                 self.assertEqual(host.device.output(6)['duty'], 0)
 

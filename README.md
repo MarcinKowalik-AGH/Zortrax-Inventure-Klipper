@@ -173,8 +173,8 @@ w zakresie serwisowym i odpowiedniego dla rzeczywistego filamentu.
 `INVENTURE_PROCEDURE ACTION=Z_PREPARE` bazuje dolne Z i osie XY, nagrzewa
 T0 i ustawia dyszę nad punktem pomiarowym. `ACTION=HOME_Z` dodaje
 ograniczony dojazd, pomiar kontaktu i rozwarcia PC14 oraz powrót do
-najniższej potwierdzonej pozycji rozwarcia. Krótki impuls PC14 uruchamia
-ograniczone ponowienie. Profil `OEM` stosuje odczytane prędkości odcinków
+najniższej potwierdzonej pozycji rozwarcia. Krótkie zwarcie i krótkie
+rozwarcie PC14 uruchamiają ograniczone ponowienia. Profil `OEM` stosuje odczytane prędkości odcinków
 Z i zachowuje serwisową prędkość precyzyjnego pomiaru.
 [Parametry i polecenia Z](docs/Z_CONTACT_AND_HOMING_R0323.md#rozgrzana-próba-odniesienia-z-w-service)
 
@@ -222,7 +222,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-OEM`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-RELEASE`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza

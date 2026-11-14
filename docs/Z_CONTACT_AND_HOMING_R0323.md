@@ -78,6 +78,11 @@ Przy kolejnym odczycie PC14 był rozwarty, więc próba nie zmierzyła jeszcze
 punktu rozwarcia. Dla tej samej geometrii i ustawienia T0 użyj sprawdzonego
 dojazdu 135 mm oraz zakresu pomiarowego 9 mm.
 
+Kolejna próba z profilem OEM doszła do potwierdzonego zwarcia na
+139,362843 mm od PE12. MCU zatrzymał odjazd (ruch 15) na chwilowym
+rozwarciu PC14 przed pierwszym krokiem. Świeży odczyt znów pokazywał
+zwarcie. W tej próbie nie ukończono żadnego pełnego cyklu pomiarowego.
+
 ```gcode
 INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
@@ -98,7 +103,7 @@ INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROAC
 | `Z_STABLE_CYCLES` | 101 | Kolejne pełne cykle bez znalezienia niższego rozwarcia, 1–101 |
 | `Z_MAX_CYCLES` | 512 | Limit pełnych cykli, od `Z_STABLE_CYCLES + 1` do 512 |
 | `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem, 0,05–0,5 mm |
-| `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Limity ponowień z rzędu i w całym przebiegu, 0–10 / 0–30 |
+| `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Wspólne limity ponowień zwarcia i rozwarcia, z rzędu i w całym przebiegu, 0–10 / 0–30 |
 
 Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
 podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
@@ -106,8 +111,12 @@ Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
 Krótki impuls PC14 w fazie precyzyjnej resetuje licznik stabilności. Jeśli
 styk jest rozwarty w świeżym odczycie po zatrzymaniu MCU, procedura odjeżdża
 w dół i ponawia pomiar w obrębie tego samego okna. Do pełnego cyklu wlicza
-się dopiero utrzymane zwarcie i rozwarcie wykryte osobnym ruchem.
-Stan podaje `factory.z_home_progress`. Procedura zachowuje najmniejszą
+się dopiero utrzymane zwarcie i potwierdzone rozwarcie po rzeczywistym
+kroku odjazdu. Gdy po zatrzymaniu odjazdu PC14 jest znowu zwarty, ponowienie
+odjazdu wykorzystuje resztę pierwotnego limitu `Z_RELEASE_MM`. Przy otwartym
+PC14 i zerowej liczbie kroków program wykonuje ograniczony odjazd i rozpoczyna
+nowy cykl. Raport `factory.z_home_progress` zlicza oba przypadki w polach
+`transient_closures` i `transient_openings`. Procedura zachowuje najmniejszą
 pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
 poprawy. W `factory.result.z_home_result` odczytaj
 `release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`

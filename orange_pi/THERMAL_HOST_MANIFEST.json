@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-RELEASE",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "e8cb598b0829547f900cc1953fca676a479c51c03f92460f5af5562c41eea2b7",
+  "module_sha256": "dfd6617494d9e5aba1d92674116fe05254498358f3891ec9d61d77711bb4d302",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -43,9 +43,10 @@
     "18f75e530ed38f37e074b23dc95537779f1daba1676cb089372e5d4dbcb415f5",
     "58a3ac932e34a0f2e7c94ce86a3223bbbbd16310ed5a109e56f4612e7272e20f",
     "46026fd76758284db039ca7de86b8820dd46341469f1814312d1034fc4280362",
-    "d83db734f1dec6b108515fda32f062dc4b837d529fba1a6adc41b1eadac76033"
+    "d83db734f1dec6b108515fda32f062dc4b837d529fba1a6adc41b1eadac76033",
+    "e8cb598b0829547f900cc1953fca676a479c51c03f92460f5af5562c41eea2b7"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-RELEASE",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -342,9 +343,10 @@
       "allowed_existing_sha256": []
     },
     "inventure_z_home.py": {
-      "sha256": "2a23810408ddf198fa05f7ce8fc8399e1b055cb5aba8aedbf9c0c8fa20448723",
+      "sha256": "09162f3fe98e30f0b2a5613682211b6bc7904c631d3eb2ee0b5fc7e3863385b4",
       "allowed_existing_sha256": [
-        "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916"
+        "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916",
+        "2a23810408ddf198fa05f7ce8fc8399e1b055cb5aba8aedbf9c0c8fa20448723"
       ]
     }
   },
@@ -424,6 +426,12 @@
     "oem_z_planner_speed_limit_mm_s": 20,
     "fine_probe_service_speed_mm_s": 0.2,
     "oem_fine_speed_measured": false,
-    "transient_contact_retry": true
+    "transient_contact_retry": true,
+    "last_observed_close_mm_from_pe12": 139.362843,
+    "last_observed_open_run": 15,
+    "last_observed_open_hit": 8,
+    "last_observed_open_sent_steps": 0,
+    "last_observed_pc14_after_open_stop": 0,
+    "transient_opening_retry": true
   }
 }
