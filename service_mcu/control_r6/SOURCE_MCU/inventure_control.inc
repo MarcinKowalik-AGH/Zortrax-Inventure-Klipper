@@ -7,6 +7,7 @@ DECL_CONSTANT("INVENTURE_OUTPUT_ABI",1);
 DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
+DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_TOOL_MASK 3u
@@ -41,6 +42,10 @@ static struct {
     uint8_t phase,reason,active,high,direction,timer_added,fast_mask,fast_direct,fast_tool;
 } cm;
 static struct timer cm_timer;
+static uint32_t native_z_guard_owner;
+static void native_z_guard_clear(void) {
+    native_z_guard_active=native_z_guard_lost=0;
+}
 static struct {
     struct gpio_pwm pwm;
     uint32_t token,remaining,last_tick,fraction,requested_ms;
@@ -404,6 +409,7 @@ static void control_stop_all(void) {
         sl.sent=cm.sent[3];sl.elapsed=cm.elapsed;sl.active=0;sl.reason=2;
     }
     uint8_t was_native=control_mode==CT_NATIVE;
+    native_z_guard_clear();
     zh_stop();control_motion_cancel();xy_seek_cancel();
     if(motor_test.running) {
         if(motor_test.timer_added)sched_del_timer(&motor_timer);
@@ -423,6 +429,7 @@ static void control_stop_all(void) {
     cool_mask=control_cooling_mask();cool_applied=255;cooling_apply();
 }
 static void control_shutdown(void) {
+    native_z_guard_clear();
     zh_shutdown();
     if(fs.active) {
         fs.active=0;fs.reason=7;transport_live=0;
@@ -491,6 +498,8 @@ static void control_guard(uint32_t now) {
         control_mode=CT_OFF;return;
     }
     if(control_mode==CT_NATIVE) {
+        if(native_z_guard_active && (native_z_guard_lost || (GPIOC->IDR&BIT(13))))
+            trip(7);
         if(door_policy_enabled()&&door_closed_mask()!=3)trip(6);
         if(!control_sensors_valid(control_guard_mask|31,now))trip(4);
         for(unsigned h=0;h<4;h++)if(control_heater_duty[h])control_heat_seen=1;
@@ -557,6 +566,34 @@ void command_inventure_control(uint32_t *args) {
           selected,armed,active,latch,fault,guards,reject);
 }
 DECL_COMMAND_FLAGS(command_inventure_control,HF_IN_SHUTDOWN,"inventure_control action=%c mode=%c");
+
+void command_inventure_native_z_guard(uint32_t *args) {
+    unsigned action=args[0];
+    uint32_t owner=args[1];
+    irqstatus_t flags=irq_save();
+    uint8_t reject=0;
+    if(action>2 || (action && !owner))reject=1;
+    else if(native_z_guard_active && (native_z_guard_lost || (GPIOC->IDR&BIT(13))))
+        trip(7);
+    else if(action==1) {
+        if(control_mode!=CT_NATIVE || !control_ready(timer_read_time()) || (GPIOC->IDR&BIT(13)))
+            reject=3;
+        else if(owner==native_z_guard_owner){} // Retries never rearm a stopped guard.
+        else if(native_z_guard_active)reject=2;
+        else {
+            native_z_guard_owner=owner;
+            native_z_guard_active=1;
+        }
+    } else if(owner && owner!=native_z_guard_owner)reject=4;
+    else if(action==2)native_z_guard_clear();
+    uint8_t active=native_z_guard_active;
+    owner=native_z_guard_owner;
+    irq_restore(flags);
+    sendf("inventure_native_z_guard_state owner=%u active=%c reject=%c",owner,active,reject);
+}
+DECL_COMMAND_FLAGS(command_inventure_native_z_guard,HF_IN_SHUTDOWN,
+    "inventure_native_z_guard action=%c owner=%u");
+
 static uint8_t cm_axis_limits(const uint32_t *args,uint32_t *mask,uint32_t *value) {
     int32_t a=args[1]&BIT(0)?(int32_t)args[2]:-(int32_t)args[2];
     int32_t b=args[1]&BIT(1)?(int32_t)args[3]:-(int32_t)args[3];

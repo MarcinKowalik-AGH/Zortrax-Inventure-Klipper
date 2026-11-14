@@ -15,8 +15,7 @@ class PlanModel:
         self.p['speed_profile'] = options.get('SPEED_PROFILE', 'SERVICE')
         command = dict(Z_APPROACH_MM=3, Z_PROBE_MM=1, ACK=Z_HOME_ACK)
         command.update(options)
-        self.settings = z_home_parameters(command, self.p, required=True,
-                                          native=self.p['speed_profile']=='OEM')
+        self.settings = z_home_parameters(command, self.p, required=True)
         self.program = ZHomeProgram(self.p, self.settings)
         self.position = 0
         self.actions = []
@@ -28,6 +27,7 @@ class PlanModel:
         self.bounce_after_release = False
         self.transient_fine_attempts = set()
         self.fine_attempts = 0
+        self.contact_after_release = {}
 
     def _motion(self, action):
         steps = action['steps']
@@ -61,6 +61,29 @@ class PlanModel:
         return dict(sent_steps=sent, hit=hit, reason='stop_input' if hit else 'completed',
                     end_raw=end_raw)
 
+    def _edge(self, action):
+        self.actions.append((self.program.history[-1], action))
+        operation, limit = action['operation'], action['steps']
+        if operation == 2:
+            self.position -= limit
+            return dict(status=1, sent_steps=limit, end_raw=int(not self.closed))
+        direction = 1 if operation == 0 else -1
+        level = int(operation == 1)
+        for sent in range(limit + 1):
+            threshold = self.release_at if operation == 1 and self.release_at is not None else self.contact_at
+            self.closed = threshold is not None and self.position >= threshold
+            end_raw = int(not self.closed)
+            # r0323's upper bound wins over a closure on the last step.
+            if end_raw == level and (operation == 1 or sent < limit):
+                if operation == 1:
+                    self.releases += 1
+                    self.release_at = self.change_after_release.get(self.releases, self.release_at)
+                    self.contact_at = self.contact_after_release.get(self.releases, self.contact_at)
+                return dict(status=1, sent_steps=sent, end_raw=end_raw)
+            if sent < limit:
+                self.position += direction
+        return dict(status=2, sent_steps=limit, end_raw=end_raw)
+
     def run(self, operation='HOME_Z'):
         generator = self.program.run(operation)
         response = None
@@ -71,14 +94,8 @@ class PlanModel:
                 return action
             if kind == 'z_contact_move':
                 response = self._motion(action)
-            elif kind == 'z_contact_mcu':
-                self.actions.append((self.program.history[-1], action))
-                best = self.contact_at - 1 - self.position
-                self.position += best
-                response = dict(best_steps=best, cycles=1+action['repeats'],
-                                non_improvements=action['repeats'],
-                                up_steps=best+1+action['repeats'],
-                                down_steps=1+action['repeats'])
+            elif kind == 'z_contact_edge':
+                response = self._edge(action)
             elif kind == 'z_verify_open':
                 response = dict(nozzle_contact=int(not self.closed), z_bottom=int(self.position == 0))
             else:
@@ -232,11 +249,12 @@ class ZHomeCoreTests(unittest.TestCase):
         legs = [a for _, a in model.actions if a['kind'] == 'z_contact_move']
         self.assertEqual([(a['steps'], a['speed']) for a in legs],
                          [(5000, OEM_Z_BOTTOM_RELEASE_SPEED), (802, 20.), (1603, 20.)])
-        native = [a for _, a in model.actions if a['kind'] == 'z_contact_mcu']
-        self.assertEqual(native, [dict(kind='z_contact_mcu', start_steps=3*802,
-                                      span_steps=802, interval_us=4000, repeats=1)])
+        edges = [a for _, a in model.actions if a['kind'] == 'z_contact_edge']
+        self.assertEqual([(a['operation'], a['steps']) for a in edges],
+                         [(0, 802), (1, 882), (0, 723), (1, 882), (2, 0)])
+        self.assertEqual({a['interval_us'] for a in edges}, {4000})
         self.assertEqual((result['engine'], result['release_steps_from_bottom']),
-                         ('mcu', model.contact_at-1))
+                         ('host_mcu_edges', model.contact_at-1))
         self.assertFalse(result['coordinate_saved'])
         with self.assertRaisesRegex(FactoryError, 'exceeds the Z travel bound'):
             PlanModel(SPEED_PROFILE='OEM', Z_APPROACH_MM=143, Z_PROBE_MM=9)
@@ -245,15 +263,57 @@ class ZHomeCoreTests(unittest.TestCase):
         accepted = PlanModel(SPEED_PROFILE='OEM', Z_APPROACH_MM=135, Z_PROBE_MM=9)
         self.assertEqual(accepted.settings['z_approach_mm'] + accepted.settings['z_probe_mm'], 144.)
 
-    def test_native_mode_validates_symmetric_span_cadence_and_mcu_limits(self):
+    def test_oem_mode_validates_symmetric_span_and_cadence(self):
         for params, error in (
                 (dict(Z_APPROACH_MM=2, Z_PROBE_MM=1.1), 'bottom clearance'),
                 (dict(Z_PROBE_SPEED=1.), 'interval'),
                 (dict(Z_PROBE_SPEED=.2, Z_RELEASE_SPEED=.3), 'same speed'),
-                (dict(Z_MAX_CYCLES=400), 'MCU cap'),
+                (dict(Z_MAX_CYCLES=513), 'Z_MAX_CYCLES'),
                 (dict(Z_TRANSIENT_RETRIES=1), 'SERVICE profile')):
             with self.subTest(params=params), self.assertRaisesRegex(FactoryError, error):
                 PlanModel(SPEED_PROFILE='OEM', **params)
         tuned = PlanModel(SPEED_PROFILE='OEM', Z_PROBE_SPEED=.2)
         self.assertEqual(tuned.settings['z_contact_interval_us'], 6234)
         self.assertEqual(tuned.settings['z_release_speed'], .2)
+
+    def test_oem_new_minimum_resets_repetitions_and_settles_to_best(self):
+        model = PlanModel(SPEED_PROFILE='OEM')
+        model.change_after_release = {2: 2484, 3: 2486}
+        result = model.run()['z_home_result']
+        self.assertEqual((result['cycles'], result['non_improvements']), (104, 101))
+        self.assertEqual(result['completion_basis'], 'stable_repetitions')
+        self.assertEqual(result['release_steps_from_bottom'], 2483)
+        self.assertEqual(model.position, 2483)
+        self.assertEqual(model.releases, 104)
+        edges = [a for _, a in model.actions if a['kind'] == 'z_contact_edge']
+        self.assertEqual([a['operation'] for a in edges[:-1]], [0, 1]*104)
+        self.assertEqual((edges[-1]['operation'], edges[-1]['steps']), (2, 2))
+        self.assertEqual(3*802 + result['up_steps'] - result['down_steps'], model.position)
+
+    def test_oem_upper_limit_requires_a_prior_release_and_down_limit_fails(self):
+        for initial_contact, release in ((None, None), (2486, 0)):
+            with self.subTest(contact=initial_contact, release=release):
+                model = PlanModel(SPEED_PROFILE='OEM')
+                model.contact_at, model.release_at = initial_contact, release
+                expected = 'z_contact_not_found' if initial_contact is None else 'z_contact_did_not_release'
+                with self.assertRaisesRegex(FactoryError, expected):
+                    model.run()
+                edges = [a for _, a in model.actions if a['kind'] == 'z_contact_edge']
+                self.assertEqual([a['operation'] for a in edges], [0] if initial_contact is None else [0, 1])
+
+        model = PlanModel(SPEED_PROFILE='OEM')
+        model.contact_after_release = {1: None}
+        result = model.run()['z_home_result']
+        self.assertEqual((result['cycles'], result['non_improvements']), (1, 0))
+        self.assertEqual(result['completion_basis'], 'upper_bound_with_best_release')
+        self.assertEqual(result['release_steps_from_bottom'], 2485)
+        self.assertEqual(model.position, 2485)
+
+    def test_oem_accepts_a_zero_step_release_once_a_close_has_moved(self):
+        model = PlanModel(SPEED_PROFILE='OEM', Z_STABLE_CYCLES=1)
+        model.release_at = model.contact_at + 1
+        result = model.run()['z_home_result']
+        self.assertEqual((result['cycles'], result['zero_step_releases']), (2, 2))
+        self.assertEqual(result['release_steps_from_bottom'], 2486)
+        self.assertEqual((result['up_steps'], result['down_steps']), (80, 0))
+        self.assertEqual(model.position, 2486)

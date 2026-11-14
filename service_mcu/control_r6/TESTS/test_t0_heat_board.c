@@ -37,6 +37,10 @@ static struct {
     int32_t net, best;
     uint32_t cycles, misses, up_steps, down_steps;
 } z_home_reply;
+static struct {
+    uint32_t owner,token,operation,active,status,reject,sent,end_raw;
+} z_edge_reply;
+static uint32_t native_z_guard_reply[3];
 #endif
 void sendf(const char*f,...){
 #ifdef TEST_Z_HOME_WIRE
@@ -57,6 +61,31 @@ void sendf(const char*f,...){
         z_home_reply.misses = va_arg(args, unsigned);
         z_home_reply.up_steps = va_arg(args, unsigned);
         z_home_reply.down_steps = va_arg(args, unsigned);
+        va_end(args);
+        return;
+    }
+    if (!strncmp(f, "inventure_z_edge_state ", 23)) {
+        assert(!strcmp(f, "inventure_z_edge_state owner=%u token=%u operation=%c"
+            " active=%c status=%c reject=%c sent=%u end_raw=%c"));
+        va_list args;
+        va_start(args,f);
+        z_edge_reply.owner=va_arg(args,unsigned);
+        z_edge_reply.token=va_arg(args,unsigned);
+        z_edge_reply.operation=va_arg(args,unsigned);
+        z_edge_reply.active=va_arg(args,unsigned);
+        z_edge_reply.status=va_arg(args,unsigned);
+        z_edge_reply.reject=va_arg(args,unsigned);
+        z_edge_reply.sent=va_arg(args,unsigned);
+        z_edge_reply.end_raw=va_arg(args,unsigned);
+        va_end(args);
+        return;
+    }
+    if (!strncmp(f,"inventure_native_z_guard_state ",31)) {
+        assert(!strcmp(f,"inventure_native_z_guard_state owner=%u active=%c reject=%c"));
+        va_list args;
+        va_start(args,f);
+        for(unsigned i=0;i<ARRAY_SIZE(native_z_guard_reply);i++)
+            native_z_guard_reply[i]=va_arg(args,unsigned);
         va_end(args);
         return;
     }

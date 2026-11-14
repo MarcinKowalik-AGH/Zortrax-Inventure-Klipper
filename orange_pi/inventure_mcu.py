@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-HOST'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -27,13 +27,11 @@ FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
     'tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u '
     'fault=%c sequence=%u remaining_ms=%u')
-Z_HOME_COMMAND = ('inventure_z_home action=%c owner=%u token=%u span=%hu '
-    'interval_us=%hu repeats=%c')
-Z_HOME_RESPONSE = ('inventure_z_home_state owner=%u token=%u active=%c status=%c '
-    'reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c up_steps=%u down_steps=%u')
-Z_HOME_STATUS = ('running', 'completed', 'z_contact_not_found', 'z_contact_did_not_release',
-                 'z_contact_mcu_guard', 'z_contact_mcu_time_limit', 'z_contact_mcu_stopped')
-Z_HOME_POLL_S = .25
+Z_EDGE_COMMAND = ('inventure_z_edge action=%c owner=%u token=%u operation=%c '
+    'steps=%hu interval_us=%hu')
+Z_EDGE_RESPONSE = ('inventure_z_edge_state owner=%u token=%u operation=%c active=%c '
+    'status=%c reject=%c sent=%u end_raw=%c')
+Z_EDGE_ERRORS = {4:'z_contact_mcu_guard', 5:'z_contact_mcu_time_limit', 6:'z_contact_mcu_stopped'}
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -462,10 +460,12 @@ class InventureMCU:
         if self.factory_abi==1:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
         self.z_home_abi=int(self.mcu.get_constants().get('INVENTURE_Z_HOME_ABI',0))
-        if self.z_home_abi==1:
+        self.z_edge_abi=int(self.mcu.get_constants().get('INVENTURE_Z_EDGE_ABI',0))
+        self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
+        if self.z_edge_abi==1:
             if self.control_abi!=1 or self.factory_abi!=1:
-                raise self.printer.config_error('MCU Z reference requires CONTROL and FACTORY ABI 1')
-            self.commands['z_home']=self.mcu.lookup_query_command(Z_HOME_COMMAND,Z_HOME_RESPONSE)
+                raise self.printer.config_error('MCU Z edge probing requires CONTROL and FACTORY ABI 1')
+            self.commands['z_edge']=self.mcu.lookup_query_command(Z_EDGE_COMMAND,Z_EDGE_RESPONSE)
         if self.factory_motion_abi==1:
             self.commands['factory_motion_timing']=self.mcu.lookup_query_command(
                 FACTORY_TIMING_QUERY,FACTORY_TIMING_RESPONSE)
@@ -1621,6 +1621,8 @@ class InventureMCU:
             'factory_motion_max_hz':getattr(self,'factory_motion_max_hz',0),
             'factory_motion_tools':getattr(self,'factory_motion_tools',0),
             'z_home_abi':getattr(self,'z_home_abi',0),
+            'z_edge_abi':getattr(self,'z_edge_abi',0),
+            'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
             **{attr:getattr(self,attr,0) for attr,_,_ in AXIS_MOTION_LIMITS},
             'control_state':getattr(self,'control_last',{}),
@@ -1686,12 +1688,17 @@ class InventureMCU:
         return self.control_token
 
     def _control_query(self, action=0, mode=0):
+        was_armed=bool(getattr(self,'control_last',{}).get('armed'))
+        stopping=was_armed and (action==2 or action==1 and mode==0)
+        if stopping:self.printer.send_event('inventure:native_motion_lost')
         p=self._control_send('control',[action,mode],mutate=action==1 and mode!=0)
         self._control_validate(p,{'mode':(0,2),'armed':(0,1),'active':(0,1),
             'latched':(0,1),'fault':(0,255),'guard_mask':(0,255),'reject':(0,5)})
         if bool(p['armed']) != (p['mode']==1 and not p['latched'] and not p['fault']):
             raise ValueError('Invalid R5 MCU ARM response')
         self.control_last=dict(p,mode=CONTROL_MODES[p['mode']],reject=CONTROL_REJECTS[p['reject']])
+        if was_armed and not p['armed'] and not stopping:
+            self.printer.send_event('inventure:native_motion_lost')
         return self.control_last
 
     def _control_service(self):
@@ -2573,16 +2580,16 @@ class InventureMCU:
         except Exception as exc:
             if self.load_test_context is context:
                 factory=context.get('factory')
-                native=factory is not None and factory.get('z_mcu_run') is not None
-                stopped=factory is not None and (factory['move'] is not None or native)
+                edge=factory is not None and factory.get('z_edge_run') is not None
+                stopped=factory is not None and (factory['move'] is not None or edge)
                 reason=str(exc);details=dict(getattr(exc,'details',{}))
                 if stopped:
                     # The MCU retains an already terminal motion across STOP.
                     # Keep ownership until readback finishes, with no renewal.
                     self._control_stop_outputs()
                     if self.load_test_context is not context:return self.reactor.NEVER
-                    if native:
-                        reason=self._factory_failed_z_mcu(context,reason,details)
+                    if edge:
+                        reason=self._factory_failed_z_edge(context,reason,details)
                     else:
                         reason=self._factory_failed_motion(context,reason,details)
                     if self.load_test_context is not context:return self.reactor.NEVER
@@ -2609,7 +2616,7 @@ class InventureMCU:
                 and bool(getattr(self,'factory_motion_tools',1)&(1<<tool)))
 
     def _z_home_mcu_available(self):
-        return getattr(self,'z_home_abi',0)==1 and 'z_home' in self.commands
+        return getattr(self,'z_edge_abi',0)==1 and 'z_edge' in self.commands
 
     def cmd_procedure(self,gcmd):
         from .inventure_factory_core import PROCEDURES, procedure_modules
@@ -2651,13 +2658,12 @@ class InventureMCU:
         try:
             if not z_home and operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
             p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
-            z_native=operation=='HOME_Z' and p['speed_profile']=='OEM'
+            z_edges=operation=='HOME_Z' and p['speed_profile']=='OEM'
             if z_home:
                 if p['tool']!=0:raise ValueError('Z reference uses the model nozzle TOOL=T0')
                 if gcmd.get('TARGET',None) is None:p['target']=200.
                 p['target_requires_override']=False
-                z_settings=z_home_parameters(gcmd,p,required=operation=='HOME_Z' and not read_only,
-                                             native=z_native)
+                z_settings=z_home_parameters(gcmd,p,required=operation=='HOME_Z' and not read_only)
             timeout=p['procedure_timeout']
             fast_available=self._factory_motion_available(p['tool'])
             if read_only:
@@ -2670,8 +2676,8 @@ class InventureMCU:
                     z_home_mcu_available=self._z_home_mcu_available(),
                     modules=modules,**settings),sort_keys=True));return
             if not z_home:require_heated_target(p,operation)
-            if z_native and not self._z_home_mcu_available():
-                raise ValueError('OEM HOME_Z requires the MCU Z reference ABI 1')
+            if z_edges and not self._z_home_mcu_available():
+                raise ValueError('OEM HOME_Z requires RC8-CONTROL-R7-Z-HOST (MCU Z edge ABI 1)')
             if p['speed_profile']=='OEM' and not fast_available:
                 release=FACTORY_DUAL_RELEASE if p['tool'] else FACTORY_MOTION_RELEASE
                 raise ValueError('SPEED_PROFILE=OEM for T%d requires the %s MCU application'%(p['tool'],release))
@@ -2720,85 +2726,77 @@ class InventureMCU:
                 raise ValueError('Unexpected %s before Z reference move (expected %d)'%(name,level))
         return raw
 
-    def _factory_z_mcu_read(self,context,run,action=None):
-        starting=action is not None
-        args=[int(starting),run['owner'],run['token'],0,0,0]
-        if starting:args[3:]=[run['span'],action['interval_us'],run['repeats']]
-        row=self._control_send('z_home',args,mutate=starting,
+    def _factory_z_edge_read(self,context,run,starting=False):
+        operation,steps,interval=run['operation'],run['steps'],run['interval_us']
+        args=[int(starting),run['owner'],run['token'],
+              operation if starting else 0,steps if starting else 0,interval if starting else 0]
+        row=self._control_send('z_edge',args,mutate=starting,
                                owner=context if starting else None)
         if self.load_test_context is not context:raise ValueError('Z reference was stopped')
-        span=run['span']
         self._control_validate(row,{'owner':(0,0xffffffff),'token':(0,0xffffffff),
-            'active':(0,1),'status':(0,len(Z_HOME_STATUS)-1),'reject':(0,255),
-            'net_steps':(-span,span),'best_steps':(-span,span),'cycles':(0,512),
-            'non_improvements':(0,run['repeats']),'up_steps':(0,0xffffffff),
-            'down_steps':(0,0xffffffff)})
+            'operation':(0,2),'active':(0,1),'status':(0,6),'reject':(0,255),
+            'sent':(0,steps),'end_raw':(0,1)})
         if row['reject']:
-            raise ValueError('MCU Z reference rejected (%d)' % row['reject'])
-        if (row['owner'],row['token'])!=(run['owner'],run['token']):
-            raise ValueError('MCU Z reference ownership changed')
+            raise ValueError('MCU Z edge rejected (%d)' % row['reject'])
+        if (row['owner'],row['token'],row['operation'])!=(run['owner'],run['token'],operation):
+            raise ValueError('MCU Z edge ownership changed')
         previous=run.get('last')
-        if (bool(row['active'])!=(row['status']==0)
-                or row['up_steps']-row['down_steps']!=row['net_steps']
-                or row['non_improvements']>max(0,row['cycles']-1)
-                or not row['cycles'] and row['best_steps']
-                or row['status']==1 and (not row['cycles'] or not row['up_steps']
-                                          or row['net_steps']!=row['best_steps'])
-                or previous is not None and (
-                    row['cycles']<previous['cycles'] or row['up_steps']<previous['up_steps']
-                    or row['down_steps']<previous['down_steps']
-                    or previous['cycles'] and row['best_steps']>previous['best_steps'])):
-            raise ValueError('Inconsistent MCU Z reference response')
+        status=row['status'];sent=row['sent']
+        if (bool(row['active'])!=(status==0)
+                or status==3
+                or previous is not None and (sent<previous['sent']
+                    or not previous['active'] and (status,sent,row['end_raw'])!=(
+                        previous['status'],previous['sent'],previous['end_raw']))
+                or status==1 and (row['end_raw']!=int(operation!=0)
+                    or operation==2 and sent!=steps)
+                or status==2 and (operation==2 or sent!=steps)):
+            raise ValueError('Inconsistent MCU Z edge response')
         run['last']=row
-        f=context['factory'];start=run['start_steps']
+        f=context['factory']
         from .inventure_z_home import Z_STEPS_PER_MM
-        f['position'][2]=(start+row['net_steps'])/Z_STEPS_PER_MM
+        signed=sent if operation==0 else -sent
+        f['position'][2]=(run['start_steps']+signed)/Z_STEPS_PER_MM
         f['z_mcu_state']=dict(row)
-        f['z_home_progress']=dict(engine='mcu',qualified_cycles=row['cycles'],
-            non_improvements=row['non_improvements'],position_steps=start+row['net_steps'],
-            best_release_steps=start+row['best_steps'] if row['cycles'] else None,
-            up_steps=row['up_steps'],down_steps=row['down_steps'])
         return row
 
-    def _factory_z_mcu(self,context,action):
+    def _factory_z_edge(self,context,action):
         from .inventure_factory_core import FactoryError
         from .inventure_z_home import Z_STEPS_PER_MM
-        f=context['factory'];now=self.reactor.monotonic();run=f.get('z_mcu_run')
+        f=context['factory'];now=self.reactor.monotonic();run=f.get('z_edge_run')
         if run is None:
             if (not f['reference_valid'] or not f['selection_commanded'] or not context['ready_latched']
                     or not f['session'] or f['mode'] or context['tool']!=0
                     or round(f['position'][2]*Z_STEPS_PER_MM)!=action['start_steps']):
-                raise ValueError('MCU Z reference requires the heated, selected nozzle and its owned approach')
-            self._z_home_inputs({'nozzle_contact':1,'z_bottom':0})
-            if self.load_test_context is not context:raise ValueError('Z reference was stopped')
-            run=dict(owner=f['token'],token=self._control_next_token(),span=action['span_steps'],
-                     repeats=action['repeats'],start_steps=action['start_steps'],next_poll=now)
-            # Claim before START: if confirmation is delayed or lost, the
-            # failure path stops the MCU and can read this exact native run.
-            f['z_mcu_run']=run
-            row=self._factory_z_mcu_read(context,run,action)
+                raise ValueError('MCU Z edge requires the heated, selected nozzle and its owned approach')
+            run=dict(owner=f['token'],token=self._control_next_token(),
+                operation=action['operation'],steps=action['steps'],interval_us=action['interval_us'],
+                start_steps=action['start_steps'],
+                deadline=now+action['steps']*action['interval_us']/1_000_000.+2.)
+            # A lost START reply must still leave enough context to stop and
+            # identify the exact leg. Never reissue a motion request on timeout.
+            f['z_edge_run']=run
+            row=self._factory_z_edge_read(context,run,starting=True)
         else:
-            if now<run['next_poll']:return None
-            row=self._factory_z_mcu_read(context,run)
+            row=self._factory_z_edge_read(context,run)
         if row['active']:
-            run['next_poll']=self.reactor.monotonic()+Z_HOME_POLL_S
+            if self.reactor.monotonic()>=run['deadline']:raise ValueError('MCU Z edge deadline exceeded')
             return None
-        if row['status']!=1:
-            raise FactoryError(Z_HOME_STATUS[row['status']],z_mcu_state=dict(row))
-        f['z_mcu_run']=None
-        return row
+        if row['status'] in Z_EDGE_ERRORS:
+            raise FactoryError(Z_EDGE_ERRORS[row['status']],z_mcu_state=dict(row))
+        f['z_edge_run']=None
+        return dict(status=row['status'],sent_steps=row['sent'],end_raw=row['end_raw'])
 
-    def _factory_failed_z_mcu(self,context,reason,details):
-        run=context['factory']['z_mcu_run'];row=run.get('last')
+    def _factory_failed_z_edge(self,context,reason,details):
+        run=context['factory']['z_edge_run'];row=run.get('last')
         try:
-            if row is None or row['active']:row=self._factory_z_mcu_read(context,run)
+            if row is None or row['active']:row=self._factory_z_edge_read(context,run)
         except Exception:
-            logging.debug('MCU Z reference terminal readback unavailable',exc_info=True)
+            logging.debug('MCU Z edge terminal readback unavailable',exc_info=True)
         if self.load_test_context is not context or row is None:
             return reason
         details['z_mcu_state']=dict(row)
-        if row['status'] in (2,3,4,5):
-            primary=Z_HOME_STATUS[row['status']]
+        if row['status'] in (4,5):
+            primary=Z_EDGE_ERRORS[row['status']]
             if reason!=primary:details['secondary_error']=reason
             return primary
         return reason
@@ -3034,7 +3032,7 @@ class InventureMCU:
         if kind=='z_progress':
             f['z_home_progress']={key:value for key,value in action.items() if key!='kind'}
             return dict(f['snapshot'])
-        if kind=='z_contact_mcu':return self._factory_z_mcu(context,action)
+        if kind=='z_contact_edge':return self._factory_z_edge(context,action)
         if kind=='z_verify_open':
             if now<action.setdefault('until',now+action['delay_s']):return None
             return self._z_home_inputs({'z_bottom':0})

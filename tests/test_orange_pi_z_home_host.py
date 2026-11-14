@@ -30,11 +30,16 @@ class ZDevice(factory_support.FactoryDevice):
         self.release_recovery_closed_blocks = 0
         self.z_moves = []
         self.input_reads = []
-        self.native_probe = None
-        self.native_packets = []
-        self.native_status = 1
-        self.native_invalid = {}
-        self.native_closed_at_finish = False
+        self.edge = None
+        self.edge_packets = []
+        self.edge_starts = []
+        self.edge_error = None
+        self.edge_invalid = {}
+        self.edge_reclose_after_settle = False
+        self.edge_contact_after_release = {}
+        self.edge_release_at = None
+        self.edge_releases = 0
+        self.edge_immediate = False
 
     def _raw_z(self, position, contact):
         return ((self.BOTTOM if position == 0 else 0)
@@ -43,7 +48,7 @@ class ZDevice(factory_support.FactoryDevice):
 
     def _settle(self):
         row = self.motion
-        if self.native_probe is None and row is not None and 'z_start' in row:
+        if self.edge is None and row is not None and 'z_start' in row:
             fraction = self.fraction()
             self.z = row['z_start'] + row['direction'] * round(row['z_steps'] * fraction)
             if fraction == 1. and not row['stopped']:
@@ -53,49 +58,66 @@ class ZDevice(factory_support.FactoryDevice):
 
     def terminate(self, reason, heaters=True):
         super().terminate(reason, heaters)
-        if self.native_probe is not None and self.native_probe['polls'] < 3:
-            self.native_probe.setdefault('stopped', 6)
+        if self.edge is not None and 'terminal' not in self.edge:
+            self.edge.setdefault('stopped', 6)
 
-    def z_home(self, args):
-        action, owner, token, span, interval_us, repeats = args
-        self.native_packets.append(tuple(args))
+    def z_edge(self, args):
+        action, owner, token, operation, steps, interval_us = args
+        self.edge_packets.append(tuple(args))
         if action == 1:
             self._settle()
-            if self.native_probe is not None or self.active_motion():
+            if self.active_motion() or (self.edge is not None and 'terminal' not in self.edge):
                 raise AssertionError('Host attempted overlapping Z motion')
             if not self.session or not self.session['active'] or self.session['token'] != owner:
-                raise AssertionError('Host started OEM Z without an active factory session')
-            self.native_probe = dict(owner=owner, token=token, origin=self.z,
-                                     span=span, repeats=repeats, polls=0)
+                raise AssertionError('Host started edge without an active factory session')
+            self.edge = dict(owner=owner, token=token, origin=self.z, polls=0,
+                             operation=operation, steps=steps, interval_us=interval_us)
+            self.edge_starts.append(self.edge)
         else:
-            self.native_probe['polls'] += 1
-        probe = self.native_probe
-        if (owner, token) != (probe['owner'], probe['token']):
-            raise AssertionError('Host changed native Z owner or token')
-        row = dict(owner=owner, token=token, active=1, status=0, reject=0,
-                   net_steps=0, best_steps=0, cycles=0, non_improvements=0,
-                   up_steps=0, down_steps=0)
-        if probe.get('stopped'):
-            row.update(active=0, status=probe['stopped'])
+            self.edge['polls'] += 1
+        edge = self.edge
+        if (owner, token) != (edge['owner'], edge['token']):
+            raise AssertionError('Host changed Z edge owner or token')
+        if 'terminal' in edge:
+            return dict(edge['terminal'])
+        row = dict(owner=owner, token=token, operation=edge['operation'],
+                   active=1, status=0, reject=0, sent=0, end_raw=int(not self.contact))
+        if not edge.get('stopped') and not self.edge_immediate and edge['polls'] < 2:
             return row
-        if probe['polls'] < 3:
-            return row
-        row.update(active=0, status=self.native_status)
-        if self.native_status == 1:
-            best = self.contact_at - 1 - probe['origin']
-            self.z = probe['origin'] + best
-            self.contact = self.native_closed_at_finish
-            row.update(net_steps=best, best_steps=best, cycles=1+probe['repeats'],
-                       non_improvements=probe['repeats'], up_steps=best+probe['repeats']+1,
-                       down_steps=probe['repeats']+1)
-        elif self.native_status == 2:
-            row.update(net_steps=probe['span'], up_steps=probe['span'])
-        row.update(self.native_invalid)
+        error = edge.get('stopped') or self.edge_error
+        if error:
+            row.update(active=0, status=error)
+        else:
+            status, sent, end_raw = self._edge_result(edge)
+            row.update(active=0, status=status, sent=sent, end_raw=end_raw)
+        row.update(self.edge_invalid)
+        edge['terminal'] = dict(row)
         return row
 
-    def reject_native_guard(self):
+    def _edge_result(self, edge):
+        operation, limit = edge['operation'], edge['steps']
+        if operation == 2:
+            self.z -= limit
+            self.contact = self.edge_reclose_after_settle
+            return 1, limit, 1
+        direction = 1 if operation == 0 else -1
+        level = int(operation == 1)
+        for sent in range(limit + 1):
+            threshold = self.edge_release_at if operation == 1 and self.edge_release_at is not None else self.contact_at
+            self.contact = threshold is not None and self.z >= threshold
+            end_raw = int(not self.contact)
+            if end_raw == level and (operation == 1 or sent < limit):
+                if operation == 1:
+                    self.edge_releases += 1
+                    self.contact_at = self.edge_contact_after_release.get(self.edge_releases, self.contact_at)
+                return 1, sent, end_raw
+            if sent < limit:
+                self.z += direction
+        return 2, limit, end_raw
+
+    def reject_edge_guard(self):
         self.terminate(5)
-        self.native_probe['stopped'] = 4
+        self.edge['stopped'] = 4
 
     def inputs(self):
         self._settle()
@@ -203,7 +225,7 @@ class ZDevice(factory_support.FactoryDevice):
 
 
 class ZHomeHostTests(unittest.TestCase):
-    def host(self, native=False):
+    def host(self, edges=False):
         fixture = factory_support.FactoryHostTests()
         host, _, _ = fixture.host(fast_motion=True, factory_motion_tools=3)
         host.device = ZDevice(host)
@@ -214,9 +236,9 @@ class ZHomeHostTests(unittest.TestCase):
             motion=load_support.Wire(host.device.move),
             motion_driver=load_support.Wire(host.device.driver),
             factory_session=load_support.Wire(host.device.query_factory))
-        if native:
-            host.z_home_abi = 1
-            host.commands['z_home'] = load_support.Wire(host.device.z_home)
+        if edges:
+            host.z_edge_abi = 1
+            host.commands['z_edge'] = load_support.Wire(host.device.z_edge)
         return host
 
     def command(self, host, action='HOME_Z', **values):
@@ -244,20 +266,21 @@ class ZHomeHostTests(unittest.TestCase):
     def test_oem_params_report_engine_and_availability_separately(self):
         for capability in (False, True):
             with self.subTest(capability=capability):
-                host = self.host(native=capability)
+                host = self.host(edges=capability)
                 command = self.command(host, 'PARAMS', PROCEDURE='HOME_Z',
                                        TOOL='T0', SPEED_PROFILE='OEM')
                 report = json.loads(command.lines[0].split(' ', 1)[1])
                 self.assertIs(report['z_home_mcu_available'], capability)
-                self.assertEqual(report['z_home_settings']['z_contact_engine'], 'mcu')
+                self.assertEqual(report['z_home_settings']['z_contact_engine'], 'host_mcu_edges')
                 self.assertEqual(report['z_home_settings']['z_contact_interval_us'], 4000)
                 self.assertIsNone(host.load_test_context)
                 self.assertEqual(host.device.packets, [])
                 self.assertEqual(host.device.factory_packets, [])
-                self.assertEqual(host.device.native_packets, [])
+                self.assertEqual(host.device.edge_packets, [])
 
-    def test_oem_home_z_requires_native_abi_before_any_actuation(self):
+    def test_oem_home_z_requires_edge_abi_before_any_actuation(self):
         host = self.host()
+        host.z_home_abi = 1  # Old MCU whole-loop capability cannot stand in for bounded edges.
         with self.assertRaisesRegex(RuntimeError, 'MCU|ABI'):
             self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
                          Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
@@ -265,13 +288,13 @@ class ZHomeHostTests(unittest.TestCase):
         self.assertEqual(host.device.packets, [])
         self.assertEqual(host.device.factory_packets, [])
 
-    def test_service_stays_on_legacy_contact_actions_with_native_abi_available(self):
-        host = self.host(native=True)
+    def test_service_stays_on_legacy_contact_actions_with_edge_abi_available(self):
+        host = self.host(edges=True)
         self.command(host, SPEED_PROFILE='SERVICE', Z_APPROACH_MM=3,
                      Z_STABLE_CYCLES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
         report = self.finish(host)
         self.assertEqual(report['phase'], 'done', report)
-        self.assertEqual(host.device.native_packets, [])
+        self.assertEqual(host.device.edge_packets, [])
         self.assertEqual([row['direction'] for row in host.device.z_moves
                           if row['hit'] == ZDevice.CONTACT], [1, -1, 1, -1])
 
@@ -316,6 +339,15 @@ class ZHomeHostTests(unittest.TestCase):
         self.assertTrue(host.device.factory_packets)
         self.assertEqual({row[1] for row in host.device.factory_packets}, {0})
         self.assertFalse(host.device.active())
+
+    def test_oem_prepare_does_not_require_or_start_edge_protocol(self):
+        host = self.host()
+        self.command(host, 'Z_PREPARE', SPEED_PROFILE='OEM', TOOL='T0')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        self.assertEqual(report['factory']['result']['terminal'], 'Z_PREPARE')
+        self.assertEqual(host.device.edge_packets, [])
+        self.assertEqual(host.device.z, 0)
 
     def test_t1_refused_before_starting_z_reference(self):
         for action in ('Z_PREPARE', 'HOME_Z'):
@@ -364,7 +396,7 @@ class ZHomeHostTests(unittest.TestCase):
                 self.assertFalse(host.device.active())
 
     def test_oem_host_preserves_logged_probe_envelope_and_uses_audited_rates(self):
-        host = self.host(native=True)
+        host = self.host(edges=True)
         host.device.contact_at = 135 * 802 + 3471
         host.device.z = 135 * 802
         self.command(host, SPEED_PROFILE='OEM', TARGET=200, Z_APPROACH_MM=135,
@@ -377,19 +409,23 @@ class ZHomeHostTests(unittest.TestCase):
         self.assertEqual((moves[3]['rate'], moves[3]['mask'], moves[3]['value']),
                          (16040, 24, 16))
         self.assertEqual(len(moves), 4)
-        start, *polls = host.device.native_packets
-        self.assertEqual(start[0], 1)
-        self.assertEqual(start[1], host.device.factory_packets[0][-2])
-        self.assertNotEqual(start[2], 0)
-        self.assertEqual(start[3:], (7218, 4000, 1))
-        self.assertGreaterEqual(len(polls), 3)
-        self.assertTrue(all(packet == (0, *start[1:3], 0, 0, 0) for packet in polls))
-        self.assertEqual(host.commands['z_home'].retries, [False]+[True]*len(polls))
-        self.assertEqual(host.device.native_probe['origin'], 135*802)
+        edges = host.device.edge_starts
+        self.assertEqual([row['operation'] for row in edges], [0, 1, 0, 1, 2])
+        self.assertEqual((edges[0]['origin'], edges[0]['steps']), (135*802, 7218))
+        self.assertEqual({row['interval_us'] for row in edges}, {4000})
+        self.assertEqual({row['owner'] for row in edges}, {host.device.factory_packets[0][-2]})
+        self.assertEqual(len({row['token'] for row in edges}), 5)
+        self.assertNotIn(0, {row['token'] for row in edges})
+        self.assertEqual([row[0] for row in host.device.edge_packets], [1, 0, 0]*5)
+        self.assertEqual(host.commands['z_edge'].retries, [False, True, True]*5)
+        for start, first, final in zip(host.device.edge_packets[::3],
+                                        host.device.edge_packets[1::3], host.device.edge_packets[2::3]):
+            self.assertEqual(first, final)
+            self.assertEqual(start[1:3], first[1:3])
         self.assertEqual(report['factory']['motion_legs']['z_contact_pad']['target'], [82.8, 68.])
         measured = report['factory']['result']['z_home_result']
         self.assertEqual((measured['engine'], measured['cycles'], measured['non_improvements']),
-                         ('mcu', 2, 1))
+                         ('host_mcu_edges', 2, 1))
         self.assertEqual(measured['completion_basis'], 'stable_repetitions')
         self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at - 1)
         self.assertEqual(measured['up_steps']-measured['down_steps'], 3470)
@@ -397,23 +433,19 @@ class ZHomeHostTests(unittest.TestCase):
         self.assertFalse(host.device.active())
         self.assertEqual(host.device.output(6)['duty'], 0)
 
-    def test_oem_native_status_and_forged_counters_cannot_mark_reference_done(self):
+    def test_oem_bad_edge_status_and_foreign_tokens_cannot_mark_reference_done(self):
         cases = [
-            (2, {}, False, 'z_contact_not_found'),
-            (3, {}, False, 'z_contact_did_not_release'),
-            (4, {}, False, 'z_contact_mcu_guard'),
-            (5, {}, False, 'z_contact_mcu_time_limit'),
-            (6, {}, False, 'z_contact_mcu_stopped'),
-            (1, {'net_steps': 0}, False, 'Inconsistent MCU Z reference response'),
-            (1, {'token': 0}, False, 'MCU Z reference ownership changed'),
-            (1, {}, True, 'Unexpected nozzle_contact'),
+            (4, {}, 'guard'),
+            (5, {}, 'time'),
+            (6, {}, 'stop'),
+            (None, {'sent': 8020}, 'response'),
+            (None, {'token': 0}, 'ownership'),
         ]
-        for status, invalid, closed, reason in cases:
-            with self.subTest(status=status, invalid=invalid, closed=closed):
-                host = self.host(native=True)
-                host.device.native_status = status
-                host.device.native_invalid = invalid
-                host.device.native_closed_at_finish = closed
+        for status, invalid, reason in cases:
+            with self.subTest(status=status, invalid=invalid):
+                host = self.host(edges=True)
+                host.device.edge_error = status
+                host.device.edge_invalid = invalid
                 self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
                              Z_PROBE_MM=1, Z_STABLE_CYCLES=1,
                              ACK='PAD_AND_CLEARANCE_CHECKED')
@@ -422,62 +454,100 @@ class ZHomeHostTests(unittest.TestCase):
                 result = report['factory']['result']
                 self.assertFalse(result['success'])
                 self.assertNotIn('z_home_result', result)
-                self.assertIn(reason, result['reason'])
+                self.assertIn(reason, result['reason'].lower())
                 self.assertEqual(len(host.device.z_moves), 4)
-                start, *polls = host.device.native_packets
+                start, *polls = host.device.edge_packets
                 self.assertEqual(start[0], 1)
-                self.assertGreaterEqual(len(polls), 3)
-                self.assertTrue(all(packet == (0, *start[1:3], 0, 0, 0) for packet in polls))
+                self.assertGreaterEqual(len(polls), 2)
+                self.assertTrue(all(packet[0]==0 and packet[1:3]==start[1:3] for packet in polls))
                 self.assertFalse(host.device.active())
                 self.assertEqual(host.device.output(6)['duty'], 0)
 
-    def test_oem_accepts_mcu_qualified_release_at_travel_limit_before_all_repeats(self):
-        host = self.host(native=True)
-        host.device.native_invalid = dict(cycles=1, non_improvements=0)
+    def test_oem_refuses_freshly_reclosed_pc14_after_successful_mcu_settle(self):
+        host = self.host(edges=True)
+        host.device.edge_reclose_after_settle = True
+        self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3, Z_PROBE_MM=1,
+                     Z_STABLE_CYCLES=1, ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'failed', report)
+        self.assertIn('nozzle_contact', report['factory']['result']['reason'])
+        self.assertEqual(host.device.edge_starts[-1]['operation'], 2)
+        self.assertFalse(host.device.active())
+
+    def test_oem_accepts_prior_release_at_limit_with_immediate_edge_responses(self):
+        host = self.host(edges=True)
+        host.device.edge_contact_after_release = {1: None}
+        host.device.edge_immediate = True
         self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3, Z_PROBE_MM=1,
                      ACK='PAD_AND_CLEARANCE_CHECKED')
         report = self.finish(host)
         self.assertEqual(report['phase'], 'done', report)
-        self.assertEqual(host.device.native_packets[0][-1], 101)
+        self.assertEqual([row['operation'] for row in host.device.edge_starts], [0, 1, 0, 2])
+        self.assertEqual([row[0] for row in host.device.edge_packets], [1]*4)
         measured = report['factory']['result']['z_home_result']
         self.assertEqual((measured['cycles'], measured['non_improvements']), (1, 0))
         self.assertEqual(measured['completion_basis'], 'upper_bound_with_best_release')
-        self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at-1)
+        self.assertEqual(measured['release_steps_from_bottom'], 2485)
         self.assertTrue(all(m['hit'] != host.device.CONTACT for m in host.device.z_moves))
 
-    def test_oem_native_guard_reason_survives_loss_of_factory_lease(self):
-        host = self.host(native=True)
+    def test_oem_edge_guard_reason_survives_loss_of_factory_lease(self):
+        host = self.host(edges=True)
         self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
                      Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
-        self.wait_native_start(host)
-        host.device.reject_native_guard()
+        self.wait_edge_start(host)
+        host.device.reject_edge_guard()
         report = self.finish(host)
         result = report['factory']['result']
-        self.assertEqual((report['phase'], result['reason']), ('failed', 'z_contact_mcu_guard'))
+        self.assertEqual(report['phase'], 'failed', report)
+        self.assertIn('guard', result['reason'].lower())
         self.assertIn('guard/ownership rejected', result['details']['secondary_error'])
-        self.assertEqual(result['details']['z_mcu_state']['status'], 4)
+        self.assertEqual(host.device.edge['terminal']['status'], 4)
         self.assertEqual(len(host.device.z_moves), 4)
         self.assertFalse(host.device.active())
 
-    def test_oem_stop_while_native_loop_active_cancels_without_restart(self):
-        host = self.host(native=True)
+    def test_oem_lost_edge_start_reply_stops_and_queries_the_same_edge(self):
+        host = self.host(edges=True)
+
+        def lost_reply(args):
+            row = host.device.z_edge(args)
+            if args[0] == 1:
+                raise RuntimeError('Simulated lost MCU edge START reply')
+            return row
+
+        host.commands['z_edge'] = load_support.Wire(lost_reply)
+        self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3, Z_PROBE_MM=1,
+                     ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'failed', report)
+        result = report['factory']['result']
+        self.assertIn('lost MCU edge START reply', result['reason'])
+        self.assertEqual(result['details']['z_mcu_state']['status'], 6)
+        start, poll = host.device.edge_packets
+        self.assertEqual((start[0], poll[0]), (1, 0))
+        self.assertEqual(start[1:3], poll[1:3])
+        self.assertEqual(host.commands['z_edge'].retries, [False, True])
+        self.assertEqual(len(host.device.z_moves), 4)
+        self.assertFalse(host.device.active())
+
+    def test_oem_stop_during_edge_cancels_without_restart(self):
+        host = self.host(edges=True)
         self.command(host, SPEED_PROFILE='OEM', Z_APPROACH_MM=3,
                      Z_PROBE_MM=1, ACK='PAD_AND_CLEARANCE_CHECKED')
-        self.wait_native_start(host)
+        self.wait_edge_start(host)
         host.cmd_control_stop(Command())
-        native_packets = list(host.device.native_packets)
+        edge_packets = list(host.device.edge_packets)
         lease_packets = list(host.device.factory_packets)
         host.reactor.pause(host.reactor.now + 5.)
-        self.assertTrue(host.device.native_probe['stopped'])
+        self.assertEqual(host.device.edge['stopped'], 6)
         self.assertEqual(host.load_test_last['phase'], 'stopped')
-        self.assertEqual(host.device.native_packets, native_packets)
+        self.assertEqual(host.device.edge_packets, edge_packets)
         self.assertEqual(host.device.factory_packets, lease_packets)
         self.assertEqual(len(host.device.z_moves), 4)
         self.assertFalse(host.device.active())
 
-    def wait_native_start(self, host):
+    def wait_edge_start(self, host):
         deadline = host.reactor.now + 60.
-        while host.device.native_probe is None:
+        while host.device.edge is None:
             self.assertLess(host.reactor.now, deadline)
             self.assertIsNotNone(host.load_test_context, host.load_test_last)
             host.reactor.pause(host.reactor.now + .1)

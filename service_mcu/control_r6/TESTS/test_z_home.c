@@ -328,6 +328,192 @@ static void ownership_and_exclusion(void)
     assert(!zh.active && !scheduled_count);
 }
 
+static void edge(unsigned action,unsigned owner,unsigned token,unsigned operation,
+                 unsigned steps,unsigned interval)
+{
+    uint32_t args[]={action,owner,token,operation,steps,interval};
+    command_inventure_z_edge(args);
+}
+
+static void edge_terminal(unsigned token,unsigned operation,unsigned status,unsigned sent,
+                          unsigned raw)
+{
+    edge(0,OWNER,token,0,0,0);
+    assert(!z_edge_reply.reject && !z_edge_reply.active);
+    assert(z_edge_reply.owner==OWNER && z_edge_reply.token==token);
+    assert(z_edge_reply.operation==operation && z_edge_reply.status==status);
+    assert(z_edge_reply.sent==sent && z_edge_reply.end_raw==raw);
+    assert(!zh.high && !zh.timer_added && !scheduled_count);
+}
+
+static void host_edge_bounce_and_reversal(void)
+{
+    const unsigned interval=4000;
+    reset(0,0xffff0000u);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,ZH_EDGE_MAX_STEPS,interval);
+    assert(!z_edge_reply.reject && z_edge_reply.active);
+    step_timer(); // Set DIR up, sample open and wait one interval.
+    assert(zh.phase==ZH_SEEK && zh_timer.waketime-mock_now==timer_from_us(interval));
+    step_timer(); // PC14 stays open and the first rising STEP is issued.
+    assert(zh.high && zh.up_steps==1);
+    step_timer();
+    assert(!zh.high && zh_timer.waketime-mock_now==timer_from_us(interval-ZH_HIGH_US));
+    contact(1);step_timer(); // A late closure must stop before another rising STEP.
+    contact(0); // Contact bounces open after the local stop and before the host reads.
+    edge_terminal(TOKEN,ZH_EDGE_CLOSE,ZH_DONE,1,0);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+
+    edge(1,OWNER,TOKEN+1,ZH_EDGE_OPEN,1,interval);
+    step_timer(); // Fresh open sample as DIR goes down returns zero-step release.
+    contact(1); // Reclosure does not change the result.
+    edge_terminal(TOKEN+1,ZH_EDGE_OPEN,ZH_DONE,0,1);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+
+    edge(1,OWNER,TOKEN+2,ZH_EDGE_OPEN,1,interval);
+    step_timer(); // Closed sample commits a down pulse before delay.
+    assert(zh.phase==ZH_RELEASE && !zh.high && !zh.down_steps);
+    assert(zh_timer.waketime-mock_now==timer_from_us(interval));
+    contact(0);
+    step_timer(); // Even with PC14 open now, execute the committed retreat.
+    assert(zh.high && zh.down_steps==1);
+    step_timer();
+    contact(1);
+    edge_terminal(TOKEN+2,ZH_EDGE_OPEN,ZH_DONE,1,1);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+
+    edge(1,OWNER,TOKEN+3,ZH_EDGE_SETTLE,2,interval);
+    while(zh.active) {
+        contact(zh.down_steps<2);
+        step_timer();
+    }
+    edge_terminal(TOKEN+3,ZH_EDGE_SETTLE,ZH_DONE,2,1);
+}
+
+static void host_edge_bounds_guards_and_replay(void)
+{
+    reset(0,0);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,ZH_EDGE_MAX_STEPS+1,INTERVAL_US);
+    assert(z_edge_reply.reject==1 && !zh.active);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,1,ZH_MIN_INTERVAL_US-1);
+    assert(z_edge_reply.reject==1 && !zh.active);
+    edge(1,OWNER,TOKEN,ZH_EDGE_OPEN,0,INTERVAL_US);
+    assert(z_edge_reply.reject==1 && !zh.active);
+    edge(1,OWNER+1,TOKEN,ZH_EDGE_OPEN,1,INTERVAL_US);
+    assert(z_edge_reply.reject==4 && !zh.active);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,1,INTERVAL_US);
+    assert(!z_edge_reply.reject && zh.active);
+    const uint32_t wake=zh_timer.waketime;
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,1,INTERVAL_US);
+    assert(!z_edge_reply.reject && zh.active && zh_timer.waketime==wake);
+    edge(1,OWNER,TOKEN+1,ZH_EDGE_CLOSE,1,INTERVAL_US);
+    assert(z_edge_reply.reject==2 && zh.active && zh_timer.waketime==wake);
+    edge(2,OWNER,TOKEN+1,0,0,0);
+    assert(z_edge_reply.reject==4 && zh.active);
+    while(zh.active)step_timer();
+    edge_terminal(TOKEN,ZH_EDGE_CLOSE,ZH_NO_CONTACT,1,1);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+
+    contact(1);
+    edge(1,OWNER,TOKEN+1,ZH_EDGE_OPEN,1,INTERVAL_US);
+    while(zh.active)step_timer();
+    edge_terminal(TOKEN+1,ZH_EDGE_OPEN,ZH_NO_CONTACT,1,0);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,1,INTERVAL_US);
+    assert(z_edge_reply.reject==4 && !zh.active);
+
+    contact(0);
+    edge(1,OWNER,TOKEN+2,ZH_EDGE_SETTLE,0,INTERVAL_US);
+    step_timer();
+    edge_terminal(TOKEN+2,ZH_EDGE_SETTLE,ZH_DONE,0,1);
+
+    output(1,6,32,1500,250,67);
+    contact(1);
+    edge(1,OWNER,TOKEN+3,ZH_EDGE_SETTLE,0,INTERVAL_US);
+    step_timer();
+    edge_terminal(TOKEN+3,ZH_EDGE_SETTLE,ZH_GUARD,0,0);
+    assert(!fs.active && !co[6].duty && GPIOE->BSRR==(BIT(10)<<16));
+
+    reset(0,0);
+    output(1,6,32,1500,250,67);
+    contact(1);
+    edge(1,OWNER,TOKEN,ZH_EDGE_OPEN,2,INTERVAL_US);
+    step_timer(); // A down pulse is committed but physical guards still apply.
+    GPIOC->IDR|=BIT(13);
+    step_timer();
+    edge_terminal(TOKEN,ZH_EDGE_OPEN,ZH_GUARD,0,0);
+    assert(!fs.active && !co[6].duty && GPIOE->BSRR==(BIT(10)<<16));
+
+    reset(0,0);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,2,INTERVAL_US);
+    step_timer();step_timer();assert(zh.high);
+    edge(2,OWNER,TOKEN,0,0,0);
+    edge_terminal(TOKEN,ZH_EDGE_CLOSE,ZH_STOP,1,1);
+    assert(GPIOB->BSRR==(BIT(8)<<16));
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,2,INTERVAL_US);
+    assert(!z_edge_reply.reject && !zh.active && z_edge_reply.status==ZH_STOP);
+}
+
+static void native_tray_guard(unsigned block_pulse)
+{
+    control_reset(0);
+    uint32_t args[]={1,OWNER};
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[2]==3 && !native_z_guard_active);
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed());
+    GPIOC->IDR|=BIT(13);
+    assert(inventure_filter_gpio(GPIOB,BIT(8),1)==1); // unrelated native operation
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[2]==3 && !native_z_guard_active);
+    GPIOC->IDR&=~BIT(13);
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[0]==OWNER && native_z_guard_reply[1]==1
+        && !native_z_guard_reply[2] && native_z_guard_active);
+    assert(inventure_filter_gpio(GPIOB,BIT(8),1)==1);
+    args[1]=OWNER+1;
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[2]==2 && native_z_guard_active);
+    args[0]=2;
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[2]==4 && native_z_guard_active);
+    args[1]=OWNER;
+    command_inventure_native_z_guard(args);
+    assert(!native_z_guard_reply[2] && !native_z_guard_active);
+    args[0]=1;
+    command_inventure_native_z_guard(args);
+    assert(!native_z_guard_reply[2] && !native_z_guard_active);
+    args[1]=OWNER+1;
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_active);
+    GPIOC->IDR|=BIT(13);
+    if(block_pulse) {
+        assert(inventure_filter_gpio(GPIOB,BIT(8),1)==0 && native_z_guard_lost);
+        GPIOC->IDR&=~BIT(13);
+        assert(inventure_filter_gpio(GPIOB,BIT(8),1)==0);
+        assert(inventure_filter_gpio(GPIOB,BIT(8),0)==0);
+    }
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"tray guard failed to trip");}
+    expect_failure=0;
+    assert(fault==7 && !native_z_guard_active && !native_z_guard_lost);
+    assert(!inventure_is_armed() && control_latched && !control_heater_duty[0]);
+    assert(inventure_filter_gpio(GPIOB,BIT(8),1)==0);
+}
+
+static void native_tray_guard_stop(void)
+{
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    uint32_t args[]={1,OWNER+2};
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_active);
+    control_command(2,0);
+    assert(!native_z_guard_active && !native_z_guard_lost && !inventure_is_armed());
+    args[0]=0;
+    command_inventure_native_z_guard(args);
+    assert(native_z_guard_reply[0]==OWNER+2 && !native_z_guard_reply[1] && !native_z_guard_reply[2]);
+}
+
 int main(void)
 {
     minimum_and_final_settle(0);
@@ -342,5 +528,12 @@ int main(void)
     downward_commit_does_not_override_guards();
     ownership_and_exclusion();
     puts("PASS OEM Z reference: raw PC14 loop, zero-step releases, minimum settle, travel bounds, independent guards and exclusive motor ownership");
+    host_edge_bounce_and_reversal();
+    host_edge_bounds_guards_and_replay();
+    puts("PASS host-owned Z-edge: MCU cadence, local contact/release latch, bounded settle, guards and replay");
+    native_tray_guard(1);
+    native_tray_guard(0);
+    native_tray_guard_stop();
+    puts("PASS native Z tray guard: token ownership, PB8 interlock, latched PC13 fault and global STOP");
     return 0;
 }

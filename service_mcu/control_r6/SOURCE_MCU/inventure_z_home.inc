@@ -2,7 +2,9 @@
 // Leased T0 contact refinement, modeled on r0323 at 0x0801DC70.
 #line 13000 "inventure_z_home.inc"
 DECL_CONSTANT("INVENTURE_Z_HOME_ABI",1);
+DECL_CONSTANT("INVENTURE_Z_EDGE_ABI",1);
 #define ZH_MAX_SPAN 8020u
+#define ZH_EDGE_MAX_STEPS (2u*ZH_MAX_SPAN)
 #define ZH_MIN_INTERVAL_US 1250u
 #define ZH_MAX_INTERVAL_US 25000u
 #define ZH_MAX_REPEATS 101u
@@ -12,16 +14,20 @@ DECL_CONSTANT("INVENTURE_Z_HOME_ABI",1);
 
 enum { ZH_RUNNING,ZH_DONE,ZH_NO_CONTACT,ZH_NO_RELEASE,ZH_GUARD,ZH_TIME,ZH_STOP };
 enum { ZH_START_UP,ZH_SEEK,ZH_START_DOWN,ZH_RELEASE,ZH_START_SETTLE,ZH_SETTLE };
+enum { ZH_EDGE_CLOSE,ZH_EDGE_OPEN,ZH_EDGE_SETTLE };
 static struct zh_state {
     uint64_t elapsed_ticks;
     uint32_t owner,token,stamp,interval,up_steps,down_steps,cycles;
     int32_t net,best;
     uint16_t span,interval_us;
     uint8_t repeats,misses,phase,status,active,high,timer_added;
+    uint8_t edge,operation,end_raw;
 } zh;
 static struct timer zh_timer;
 
 static uint8_t zh_active(void) { return zh.active; }
+
+static uint8_t zh_contact_open(void) { return !!(GPIOC->IDR&BIT(14)); }
 
 static void zh_end(uint8_t status) {
     if(!zh.active)return;
@@ -29,7 +35,9 @@ static void zh_end(uint8_t status) {
     motor_test_write(mt_drivers[2].step_port,mt_drivers[2].step_bit,0);
     zh.active=zh.high=zh.timer_added=0;
     zh.status=status;
-    if(!fs.active || zh.owner!=fs.token || (status!=ZH_DONE && status!=ZH_STOP))
+    if(zh.edge)zh.end_raw=zh_contact_open();
+    if(!fs.active || zh.owner!=fs.token || (status!=ZH_DONE && status!=ZH_STOP
+            && !(zh.edge && status==ZH_NO_CONTACT)))
         motor_test_write(GPIOE,BIT(10),0);
 }
 
@@ -42,6 +50,14 @@ static void zh_shutdown(void) {
 static uint_fast8_t zh_fail(uint8_t status) {
     zh_end(status);
     control_stop_all();
+    return SF_DONE;
+}
+
+static uint_fast8_t zh_edge_finish(uint8_t status,uint8_t raw) {
+    zh_end(status);
+    // Keep the decision sample, including an edge observed before a zero-step
+    // stop. A subsequent host read or GPIO transition cannot rewrite it.
+    zh.end_raw=raw;
     return SF_DONE;
 }
 
@@ -100,8 +116,10 @@ static uint_fast8_t zh_release_pair(struct timer *t,uint32_t now) {
 }
 
 static uint_fast8_t zh_sample_release(struct timer *t,uint32_t now,uint32_t wait) {
-    if(GPIOC->IDR&BIT(14))return zh_release_pair(t,now);
-    if(zh.net<=-(int32_t)zh.span)return zh_fail(ZH_NO_RELEASE);
+    if(zh_contact_open())
+        return zh.edge?zh_edge_finish(ZH_DONE,1):zh_release_pair(t,now);
+    if(zh.net<=-(int32_t)zh.span)
+        return zh.edge?zh_edge_finish(ZH_NO_CONTACT,0):zh_fail(ZH_NO_RELEASE);
     // Like r0323, select the next downward pulse before waiting. PC14
     // opening during this wait does not undo the committed safe retreat.
     zh.phase=ZH_RELEASE;
@@ -125,16 +143,18 @@ static uint_fast8_t zh_event(struct timer *t) {
     case ZH_START_UP:
         motor_test_write(mt_drivers[2].dir_port,mt_drivers[2].dir_bit,1);
         zh.phase=ZH_SEEK;
-        if(zh.net<zh.span && (GPIOC->IDR&BIT(14)))return zh_wait(t,now,zh.interval);
+        if(zh.net<zh.span && zh_contact_open())return zh_wait(t,now,zh.interval);
         // fall through
     case ZH_SEEK:
         if(zh.net>=zh.span) {
+            if(zh.edge)return zh_edge_finish(ZH_NO_CONTACT,zh_contact_open());
             if(zh.cycles)return zh_settle(t,now);
             return zh_fail(ZH_NO_CONTACT);
         }
         // Check again just before moving toward the nozzle. A late
         // closure must not commit an additional upward pulse.
-        if(GPIOC->IDR&BIT(14))return zh_step(t,now,1);
+        if(zh_contact_open())return zh_step(t,now,1);
+        if(zh.edge)return zh_edge_finish(ZH_DONE,0);
         zh.phase=ZH_START_DOWN;
         return zh_wait(t,now,zh.interval);
     case ZH_START_DOWN:
@@ -149,11 +169,26 @@ static uint_fast8_t zh_event(struct timer *t) {
         // fall through
     case ZH_SETTLE:
         if(zh.net>zh.best)return zh_step(t,now,0);
-        if(zh.net!=zh.best || !(GPIOC->IDR&BIT(14)))return zh_fail(ZH_GUARD);
+        if(zh.net!=zh.best || !zh_contact_open())return zh_fail(ZH_GUARD);
+        if(zh.edge)return zh_edge_finish(ZH_DONE,1);
         zh_end(ZH_DONE);
         return SF_DONE;
     }
     return zh_fail(ZH_GUARD);
+}
+
+static uint8_t zh_start_busy(void) {
+    return zh.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
+        || t0_heat_busy() || fan_manual_active() || feeder_running[0] || feeder_running[1]
+        || locks_on[0] || locks_on[1];
+}
+
+static void zh_schedule(uint32_t now) {
+    motor_test_write(mt_drivers[2].step_port,mt_drivers[2].step_bit,0);
+    motor_test_write(GPIOE,BIT(10),1);
+    zh_timer.func=zh_event;
+    zh_timer.waketime=now+zh.interval;
+    sched_add_timer(&zh_timer);
 }
 
 static uint8_t zh_start(uint32_t now,uint32_t owner,uint32_t token,uint32_t span,
@@ -163,21 +198,14 @@ static uint8_t zh_start(uint32_t now,uint32_t owner,uint32_t token,uint32_t span
         return 1;
     if(owner==zh.owner && token==zh.token) {
         // Retries describe the last run and never repeat physical movement.
-        return span!=zh.span || interval_us!=zh.interval_us || repeats!=zh.repeats;
+        return zh.edge || span!=zh.span || interval_us!=zh.interval_us || repeats!=zh.repeats;
     }
     if(!fs.active || owner!=fs.token || owner==zh.owner)return 4;
-    if(zh.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
-            || t0_heat_busy() || fan_manual_active() || feeder_running[0] || feeder_running[1]
-            || locks_on[0] || locks_on[1])
-        return 2;
+    if(zh_start_busy())return 2;
     if(!zh_guard_ok(now,owner))return 3;
     zh=(struct zh_state){.owner=owner,.token=token,.stamp=now,.span=span,.interval_us=interval_us,
         .interval=timer_from_us(interval_us),.repeats=repeats,.active=1,.timer_added=1};
-    motor_test_write(mt_drivers[2].step_port,mt_drivers[2].step_bit,0);
-    motor_test_write(GPIOE,BIT(10),1);
-    zh_timer.func=zh_event;
-    zh_timer.waketime=now+zh.interval;
-    sched_add_timer(&zh_timer);
+    zh_schedule(now);
     return 0;
 }
 
@@ -191,7 +219,7 @@ void command_inventure_z_home(uint32_t *args) {
     if(action==1)reject=zh_start(now,owner,token,args[3],args[4],args[5]);
     else if(action>2)reject=1;
     else if(action==0 && !owner && !token){} // Read-only diagnostics.
-    else if(!owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
+    else if(zh.edge || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
     else if(action==2)zh_stop();
     struct zh_state state=zh;
     irq_restore(irq);
@@ -201,3 +229,44 @@ void command_inventure_z_home(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_z_home,HF_IN_SHUTDOWN,
     "inventure_z_home action=%c owner=%u token=%u span=%hu interval_us=%hu repeats=%c");
+
+static uint8_t zh_edge_start(uint32_t now,uint32_t owner,uint32_t token,unsigned operation,
+                             unsigned steps,unsigned interval_us) {
+    if(!owner || !token || operation>ZH_EDGE_SETTLE || steps>ZH_EDGE_MAX_STEPS
+            || (!steps && operation!=ZH_EDGE_SETTLE)
+            || interval_us<ZH_MIN_INTERVAL_US || interval_us>ZH_MAX_INTERVAL_US)return 1;
+    if(owner==zh.owner && token==zh.token)
+        return !zh.edge || operation!=zh.operation || steps!=zh.span || interval_us!=zh.interval_us;
+    if(!fs.active || owner!=fs.token || (owner==zh.owner
+            && (!zh.edge || (int32_t)(token-zh.token)<=0)))return 4;
+    if(zh_start_busy())return 2;
+    if(!zh_guard_ok(now,owner))return 3;
+    static const uint8_t phases[]={ZH_START_UP,ZH_START_DOWN,ZH_START_SETTLE};
+    zh=(struct zh_state){.owner=owner,.token=token,.stamp=now,.span=steps,
+        .interval_us=interval_us,.interval=timer_from_us(interval_us),.best=-(int32_t)steps,
+        .active=1,.timer_added=1,.phase=phases[operation],.edge=1,.operation=operation,
+        .end_raw=zh_contact_open()};
+    zh_schedule(now);
+    return 0;
+}
+
+void command_inventure_z_edge(uint32_t *args) {
+    unsigned action=args[0];
+    uint32_t owner=args[1],token=args[2];
+    irqstatus_t irq=irq_save();
+    uint32_t now=timer_read_time();
+    zh_guard(now);
+    uint8_t reject=0;
+    if(action==1)reject=zh_edge_start(now,owner,token,args[3],args[4],args[5]);
+    else if(action>2)reject=1;
+    else if(action==0 && !owner && !token){} // Read-only diagnostics.
+    else if(!zh.edge || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
+    else if(action==2)zh_stop();
+    struct zh_state state=zh.edge ? zh : (struct zh_state){0};
+    irq_restore(irq);
+    sendf("inventure_z_edge_state owner=%u token=%u operation=%c active=%c status=%c reject=%c sent=%u end_raw=%c",
+        state.owner,state.token,state.operation,state.active,state.status,reject,
+        state.up_steps+state.down_steps,state.end_raw);
+}
+DECL_COMMAND_FLAGS(command_inventure_z_edge,HF_IN_SHUTDOWN,
+    "inventure_z_edge action=%c owner=%u token=%u operation=%c steps=%hu interval_us=%hu");

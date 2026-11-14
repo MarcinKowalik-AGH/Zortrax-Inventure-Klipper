@@ -42,6 +42,7 @@ static struct gpio_pwm locks[2], feeder_clock;
 static uint8_t auxiliary_ready;
 static volatile uint8_t control_mode,control_latched,control_pwm_bypass;
 static volatile uint16_t control_heater_duty[4];
+static volatile uint8_t native_z_guard_active,native_z_guard_lost;
 static uint8_t control_aux_allowed(void);
 static uint8_t control_busy(void);
 static uint8_t control_door_policy_busy(void);
@@ -119,6 +120,12 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
     if (r == GPIOA && (bit == BIT(2) || bit == BIT(3)) && !door_policy_enabled())
         return 0;
     if (inventure_is_armed()) {
+        // Gate a commissioned native probe's Z STEP at its next rising
+        // edge. Remember loss even if PC13 closes before the guard tick.
+        if (r==GPIOB && bit==BIT(8) && value && native_z_guard_active) {
+            if (GPIOC->IDR&BIT(13))native_z_guard_lost=1;
+            if (native_z_guard_lost)return 0;
+        }
         int fi=fan_index(r,bit);
         if(fi>=0)fan_gpio_observe(r,bit,value);
         transport_gpio(r,bit,value);

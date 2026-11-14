@@ -47,7 +47,7 @@ Wykonuj ją po potwierdzeniu przełączania PC14 i przy osadzonej tacce
 200°C, zgodnie z przygotowaniem T0 w kreatorze poziomowania Inventure.
 Można zmienić ją przez `TARGET`. Procedura utrzymuje temperaturę dyszy
 podczas pomiaru i wyłącza grzałkę po zakończeniu. Profil `OEM` wymaga
-aplikacji MCU `RC8-CONTROL-R7-Z-NATIVE` z `z_home_abi: 1`.
+aplikacji MCU `RC8-CONTROL-R7-Z-HOST` z `z_edge_abi: 1`.
 
 Najpierw przygotuj drukarkę i sprawdź ustawienie dyszy nad środkowym
 srebrnym polem. Ten etap kończy się z platformą na dolnej krańcówce.
@@ -71,7 +71,7 @@ zmierz odstęp w pionie od metalowego pola do końcówki dyszy. W
 `Z_APPROACH_MM` podaj ten odstęp pomniejszony o zapas większy od
 niepewności pomiaru. Pozostała szczelina musi mieścić się w
 `Z_PROBE_MM`. Profil OEM ma domyślnie zakres 10 mm w każdą stronę
-od punktu wejścia w pomiar. MCU zachowuje ten zakres przez cały przebieg.
+od punktu wejścia w pomiar. Klipper wyznacza granice każdego ruchu w tym zakresie.
 W próbie 53 odczyt z MCU wykazał `hit=8` po 3471 krokach precyzyjnego
 dojazdu, na wysokości 139,327930 mm od PE12. Operator potwierdził dotknięcie.
 Przy kolejnym odczycie PC14 był rozwarty, więc próba nie zmierzyła jeszcze
@@ -118,7 +118,7 @@ INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROAC
 | `Z_RELEASE_MM` | 1 mm | Budżet odjazdu serwisowego i odjazdu przy styku na zgrubnym najazdzie |
 | `Z_PROBE_SPEED`, `Z_RELEASE_SPEED` | ok. 0,312 mm/s OEM / 0,2 mm/s SERVICE | OEM używa tego samego odstępu kroków w obu kierunkach. Domyślne 4000 µs to przybliżenie pętli r0323 |
 | `Z_STABLE_CYCLES` | 101 | Kolejne pełne cykle bez znalezienia niższego rozwarcia, 1–101 |
-| `Z_MAX_CYCLES` | 512 | Stały limit bezpieczeństwa w OEM. W SERVICE od `Z_STABLE_CYCLES + 1` do 512 |
+| `Z_MAX_CYCLES` | 512 | Limit od `Z_STABLE_CYCLES + 1` do 512 |
 | `Z_TRANSIENT_BACKOFF_MM` | 0,2 mm | Ograniczony odjazd przed ponownym podejściem w SERVICE, 0,05–0,5 mm |
 | `Z_TRANSIENT_RETRIES`, `Z_TRANSIENT_TOTAL` | 3 / 10 | Wspólne limity ponowień zwarcia i rozwarcia w SERVICE |
 | `Z_RELEASE_RECOVERY_STEPS` | 16 | Maksymalny dodatkowy ruch w dół po niepotwierdzonym rozwarciu w SERVICE |
@@ -127,13 +127,14 @@ INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROAC
 Po zwolnieniu PE12 procedura robi dodatkowy odjazd o 1 mm w górę. Podczas
 podejścia MCU zatrzymuje ruch na PC14 lub przy utracie osadzenia tacki.
 Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
-W profilu OEM host uruchamia jeden pomiar. MCU zmienia kierunek po
-zwarciu, bada PC14 przed pierwszym krokiem w dół i zapisuje rozwarcie także
-wtedy, gdy nastąpiło bez kroku. MCU zachowuje najniższe rozwarcie i wraca
-do tej pozycji przy końcu pomiaru. Po 101 kolejnych cyklach bez poprawy
-normalne kryterium r0323 kończy pętlę. Firmware ogranicza też drogę, czas
-i liczbę cykli oraz sprawdza PE12, PC13 i ważność sesji oraz temperatury.
-Klipper odczytuje postęp bez sterowania zmianami kierunku przez UART.
+W profilu OEM host zleca kolejne najazdy i odjazdy. MCU bada PC14 przed
+pierwszym krokiem i zatrzymuje każdy ruch na właściwym zboczu. Zwraca
+zatrzaśnięty poziom i liczbę podanych kroków, także dla rozwarcia przed
+pierwszym krokiem. Klipper zachowuje najniższe rozwarcie i kończy pętlę po
+101 kolejnych cyklach bez poprawy albo na górnej granicy z wcześniejszą
+próbką. Zleca powrót do najniższego rozwarcia, a MCU potwierdza tam PC14=1.
+Każdy odcinek ma limit drogi i czasu. MCU sprawdza PE12, PC13, ważność sesji
+i temperaturę podczas odcinka. Czas między odcinkami zależy od hosta i UART.
 
 Profil `SERVICE` zachowuje diagnostykę sterowaną z hosta z dodatkowymi
 potwierdzeniami PC14, odjazdami i ograniczonymi ponowieniami. W obu
@@ -170,10 +171,10 @@ Handler homingu Z nie zadaje wprost temperatury dyszy. Interaktywny kreator
 poziomowania i kalibracja wysokości dysz mają własne przygotowanie cieplne.
 R7 SERVICE opuszcza stół przed ruchem XY, co daje prześwit na wybór T0.
 OEM dopuszcza próbkę z zerowym odjazdem przy natychmiastowym rozwarciu.
-Profil OEM zachowuje fabryczną kolejność odczytów PC14 w pętli MCU.
+Profil OEM zachowuje kolejność odczytów PC14 wewnątrz poszczególnych ruchów MCU.
 Profil SERVICE potwierdza taki przypadek dodatkowym odczytem i umożliwia
 krótkie odjazdy diagnostyczne. Oryginał przy braku rozwarcia wykonywał
-jeszcze jeden krok poniżej granicy. MCU `Z-NATIVE` zatrzymuje się na granicy.
+jeszcze jeden krok poniżej granicy. MCU `Z-HOST` zatrzymuje się na granicy.
 MCU sprawdza PC14 również bezpośrednio przed krokiem w górę i po powrocie
 do minimum. Przy odjeździe krok w dół wybrany przy zwartym PC14 jest
 wykonywany po odczekaniu, jeśli lokalne zabezpieczenia nadal pozwalają

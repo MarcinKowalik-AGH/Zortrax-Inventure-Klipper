@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-HOST",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "50c3d8493c73e651a2229ae9cec60f2936d18ab417f5f42eed17f9f39d7de848",
+  "module_sha256": "ad9e586c459671b791fc0f20995b97fd2cd8ce8b22983637570c43e72009c05f",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -48,9 +48,10 @@
     "dfd6617494d9e5aba1d92674116fe05254498358f3891ec9d61d77711bb4d302",
     "6c35b03ba5720419f5da294459972843e5271b75c1764b5d92bbbb3ae8bf7cce",
     "e0af122ce9e5901e61481e3598082d16c0f038d6eb6ac44cec645e90c3d44fe3",
-    "546d846cbe1169ba333052b8edee9f4e9fb8cb040b0f02fe6d5700cc44276630"
+    "546d846cbe1169ba333052b8edee9f4e9fb8cb040b0f02fe6d5700cc44276630",
+    "50c3d8493c73e651a2229ae9cec60f2936d18ab417f5f42eed17f9f39d7de848"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-HOST",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -347,15 +348,20 @@
       "allowed_existing_sha256": []
     },
     "inventure_z_home.py": {
-      "sha256": "6fb24b3b6e15370c05e3407ff5f442a8cbac128c63e9d05cb3fa78a131cad9cb",
+      "sha256": "381d7da9e4eb7dc10ef595067b26ebe2389551fa8115233da8d83605cb38fdff",
       "allowed_existing_sha256": [
         "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916",
         "2a23810408ddf198fa05f7ce8fc8399e1b055cb5aba8aedbf9c0c8fa20448723",
         "09162f3fe98e30f0b2a5613682211b6bc7904c631d3eb2ee0b5fc7e3863385b4",
         "1a00e921ecc49ad7307c7a03d30c91b25dd2f816ec2f2b5b857b94043314402e",
         "a42f433db1d3cbc412531e04526735fd8df342a6698e14dff3f0964a7812f1fb",
-        "d250399238fe4d4707b91f46b2afcbf38874cde8b98f39202003613b8471cc4b"
+        "d250399238fe4d4707b91f46b2afcbf38874cde8b98f39202003613b8471cc4b",
+        "6fb24b3b6e15370c05e3407ff5f442a8cbac128c63e9d05cb3fa78a131cad9cb"
       ]
+    },
+    "inventure_native_z.py": {
+      "sha256": "a3399b18df7d7eecaf660ba49268c2b7b2dc13e0960c5e51cbc9f6218d4e620c",
+      "allowed_existing_sha256": []
     }
   },
   "axis_timer_motion": {
@@ -464,16 +470,19 @@
     "release_recovery_default_max_steps": 16,
     "release_recovery_open_confirmation_min_ms": 25,
     "sample_clearance_default_mm": 0.05,
-    "oem_contact_engine": "mcu",
-    "oem_mcu_release": "RC8-CONTROL-R7-Z-NATIVE",
-    "oem_mcu_abi": 1,
-    "oem_scope": "r0323 contact and release loop in a leased SERVICE motion",
+    "oem_contact_engine": "host_mcu_edges",
+    "oem_mcu_release": "RC8-CONTROL-R7-Z-HOST",
+    "oem_scope": "r0323 repeat and minimum on host; one bounded and guarded PC14 leg at a time on MCU",
     "oem_interval_us": 4000,
     "oem_interval_measured_on_stock": false,
     "oem_max_span_each_direction_steps": 8020,
-    "oem_max_elapsed_s": 600,
     "oem_max_cycles": 512,
-    "oem_native_probe_tested_on_printer": false,
-    "oem_native_probe_fallback_to_host": false
+    "oem_max_edge_elapsed_s": 600,
+    "z_edge_abi": 1,
+    "oem_probe_tested_on_printer": false,
+    "native_tray_guard_abi": 1,
+    "native_working_z_config": "opt-in CoreXY",
+    "native_working_z_command": "INVENTURE_NATIVE_HOME_Z",
+    "native_working_z_tested_on_printer": false
   }
 }

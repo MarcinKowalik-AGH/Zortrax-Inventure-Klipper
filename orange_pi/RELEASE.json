@@ -1,14 +1,14 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
-  "host_module_sha256": "50c3d8493c73e651a2229ae9cec60f2936d18ab417f5f42eed17f9f39d7de848",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-HOST",
+  "host_module_sha256": "ad9e586c459671b791fc0f20995b97fd2cd8ce8b22983637570c43e72009c05f",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 405,
-  "previous_host_commit": "0b647072b6742c862c0a87f1e48e85d30d2c606f",
+  "verified_public_host_tests": 417,
+  "previous_host_commit": "480ca1f7278957b9cfc265077b34c9c966895e85",
   "firmware": {
-    "release": "RC8-CONTROL-R7-Z-NATIVE",
+    "release": "RC8-CONTROL-R7-Z-HOST",
     "bootloader": "InventureBoot 1.7",
-    "ivb_sha256": "34aec089c8c4b65e8e78352c6592b9f0facb72b8c248679774fa4507598a21b0",
+    "ivb_sha256": "1506cc45d4b6154ca1d99f4f2786683b6cd56ce54b404bfc1ade3127363dae30",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "physical_R5_tests": true,
     "physical_qualification_complete": false,
@@ -111,16 +111,16 @@
         "last_transport_trial": "1500ms left DIR1 produced about 2mm by user observation; COMPARE rejected while still active; final pulse counts unavailable"
       }
     },
-    "previous_release": "RC8-CONTROL-R7-T1-TIMING",
+    "previous_release": "RC8-CONTROL-R7-Z-NATIVE",
     "physical_R6_smooth_test": "pending operator",
     "load_stream_abi": 1,
-    "package_filename": "INVENTURE_MCU_CONTROL_R7_Z_NATIVE_BOOT17.zip",
-    "ivb_bytes": 94400,
+    "package_filename": "INVENTURE_MCU_CONTROL_R7_Z_HOST_BOOT17.zip",
+    "ivb_bytes": 95628,
     "factory_abi": 1,
     "physical_R7_factory_test": "Global open-door policy and crossed material trials pending on the printer.",
     "factory_feed_clock": 1,
-    "package_sha256": "fba33e91856e23e0366f3563a328e199668ac5f0417c71524d8543821bd6462d",
-    "motor_test_release": "RC8-CONTROL-R7-Z-NATIVE",
+    "package_sha256": "56ea41e4b4d24c7706240c36fa0900407e7d3af9ba539a2199911407dbf8bb42",
+    "motor_test_release": "RC8-CONTROL-R7-Z-HOST",
     "factory_motion_abi": 1,
     "factory_motion_max_hz": 125000,
     "axis_motion_abi": 1,
@@ -128,10 +128,12 @@
     "door_policy_global": true,
     "door_policy_default_enabled": false,
     "z_home_abi": 1,
-    "application_sha256": "f636661c4932d3c5d39f1bb96a82fe010d56f0de2b77b282a4f47e675dcc9ffb",
+    "application_sha256": "3b0b4a88f03be16400939a6da09040f6037efe92a12c60be2374509a0fb9b482",
     "tested_on_printer": false,
     "validated_compiler": "arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119",
-    "z_home_source_sha256": "9ea8033e35304ab2e261c9adea31ff538cd185544c3e114ce19b436de97433d6"
+    "z_home_source_sha256": "d88e559eb7c3fece5d39d04dc4d4d11eb47fc462b3e22cb4d3c136efa0001e9e",
+    "z_edge_abi": 1,
+    "native_z_guard_abi": 1
   },
   "control": {
     "abi": 1,
@@ -337,7 +339,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-NATIVE",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-HOST",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -619,16 +621,19 @@
     "release_recovery_default_max_steps": 16,
     "release_recovery_open_confirmation_min_ms": 25,
     "sample_clearance_default_mm": 0.05,
-    "oem_contact_engine": "mcu",
-    "oem_mcu_release": "RC8-CONTROL-R7-Z-NATIVE",
-    "oem_mcu_abi": 1,
-    "oem_scope": "r0323 contact and release loop in a leased SERVICE motion",
+    "oem_contact_engine": "host_mcu_edges",
+    "oem_mcu_release": "RC8-CONTROL-R7-Z-HOST",
+    "oem_scope": "r0323 repeat and minimum on host; one bounded and guarded PC14 leg at a time on MCU",
     "oem_interval_us": 4000,
     "oem_interval_measured_on_stock": false,
     "oem_max_span_each_direction_steps": 8020,
-    "oem_max_elapsed_s": 600,
     "oem_max_cycles": 512,
-    "oem_native_probe_tested_on_printer": false,
-    "oem_native_probe_fallback_to_host": false
+    "oem_max_edge_elapsed_s": 600,
+    "z_edge_abi": 1,
+    "oem_probe_tested_on_printer": false,
+    "native_tray_guard_abi": 1,
+    "native_working_z_config": "opt-in CoreXY",
+    "native_working_z_command": "INVENTURE_NATIVE_HOME_Z",
+    "native_working_z_tested_on_printer": false
   }
 }
