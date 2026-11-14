@@ -177,9 +177,13 @@ najniższej pozycji rozwarcia. W profilu `OEM` Klipper prowadzi cykle r0323,
 a MCU wykonuje każdy odcinek osobno i zatrzymuje Z na PC14.
 [Parametry i polecenia Z](docs/Z_CONTACT_AND_HOMING_R0323.md#rozgrzana-próba-odniesienia-z-w-service)
 
-`INVENTURE_NATIVE_HOME_Z` ustawia robocze Z w profilu CoreXY. Klipper
-prowadzi szybki dojazd, a STM32 wykonuje cały wolny cykl PC14 z fabrycznym
-licznikiem powtórzeń. [Przygotowanie profilu i próba](docs/NATIVE_Z_COREXY.md).
+W profilu CoreXY makra `INVENTURE_HOME_X`, `INVENTURE_HOME_Y`,
+`INVENTURE_HOME_XY`, `INVENTURE_HOME_Z` i `INVENTURE_HOME_XYZ` korzystają
+ze wspólnej procedury. X/Y bazują bez grzania, a cykl XY wykonuje Y przed X.
+Z i XYZ nagrzewają T0, ustalają Z=0 w punkcie rozwarcia PC14 i domyślnie
+opuszczają stół do Z=+10 mm. Klipper prowadzi szybki dojazd, a STM32 wykonuje
+wolny pomiar PC14 z fabrycznym licznikiem powtórzeń.
+[Instalacja, makra i nastawy bazowania](docs/NATIVE_Z_COREXY.md#makra-inventure).
 
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
@@ -208,7 +212,11 @@ git clone --depth 1 --single-branch --no-tags --branch orange-pi-all-axis https:
 Instalator wykrywa działającą usługę i właściwy `klippy.py`, zachowuje kopie
 modułów, instaluje adapter, OLED i zgodny transport UART oraz restartuje usługę.
 Przyjmuje także dokładny poprzedni moduł MOTOR-R4. Zachowuje `printer.cfg`,
-750000 baud i aktualną geometrię. Pakiet
+750000 baud i aktualną geometrię. Makra bazowania dla CoreXY dodaje się do
+używanego profilu osobnym plikiem `INVENTURE_HOME.cfg`.
+[Instalacja makr](docs/NATIVE_Z_COREXY.md#makra-inventure).
+
+Pakiet
 `INVENTURE_MCU_CONTROL_R7_Z_OEM_NATIVE_BOOT17.zip` zawiera aplikację
 `INVENTUR.IVB` do bootloadera 1.7. Po wgraniu wykonaj
 `FIRMWARE_RESTART` i odczytaj `INVENTURE_VERSION`. Nowe profile materiałowe
@@ -225,7 +233,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-OEM-NATIVE`, `mcu_release` = `RC8-CONTROL-R7-Z-OEM-NATIVE`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-MACROS`, `mcu_release` = `RC8-CONTROL-R7-Z-OEM-NATIVE`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `z_edge_abi: 1` potwierdza dostępność odcinków HOME_Z zatrzymywanych przez MCU.
 `native_z_refine_abi: 1` potwierdza lokalny cykl PC14 dla natywnego bazowania.

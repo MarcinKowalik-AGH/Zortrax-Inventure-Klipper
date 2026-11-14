@@ -294,8 +294,17 @@ class Command(dict):
     def error(message):
         return ValueError(message)
 
-    def get_float(self, key, default=None, **kwargs):
-        return float(self.get(key, default))
+    def get_command_parameters(self):
+        return self
+
+    def get_float(self, key, default=None, minval=None, maxval=None, above=None, below=None):
+        if key not in self:
+            return default
+        value = float(self[key])
+        if ((minval is not None and value < minval) or (maxval is not None and value > maxval)
+                or (above is not None and value <= above) or (below is not None and value >= below)):
+            raise self.error(key + ' outside the allowed range')
+        return value
 
     def get_int(self, key, default=None, minval=None, maxval=None):
         if key not in self:
@@ -334,6 +343,7 @@ class NativeZBridgeTests(unittest.TestCase):
         self.adapter.coarse_speed = 2.
         self.adapter.fine_speed = .3
         self.adapter.target = 200.
+        self.adapter.reference_target = self.adapter.target
         self.adapter.repeat_count = 2
         self.model.on_shutdown = self.adapter._shutdown
         self.command = Command(ACK=Z_HOME_ACK, Z_APPROACH_MM=135, Z_PROBE_MM=8,
@@ -619,6 +629,15 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertNotIn(('set', 0., 'z'), self.model.calls)
         self.assertFalse(self.adapter.last_result['coordinate_saved'])
 
+    def test_local_refinement_uses_requested_target_for_its_mcu_temperature_band(self):
+        del self.command['Z_STABLE_CYCLES']
+        self.command['TARGET'] = '205'
+        self.adapter.cmd_home(self.command)
+        self.assertTrue(self.adapter.last_result['coordinate_saved'])
+        refine_start = next(call for call in self.model.calls if call[0] == 'refine')
+        self.assertEqual(refine_start[1][-2:], (195, 213))
+        self.assertEqual(self.adapter.target, 200.)
+
     def test_mcu_refinement_lost_handoff_invalidates_xyz_without_gcode_reset(self):
         del self.command['Z_STABLE_CYCLES']
         self.model.bad_guard_reply = 2
@@ -641,6 +660,248 @@ class NativeZBridgeTests(unittest.TestCase):
         self.assertNotIn(('set', 0., 'z'), self.model.calls)
         self.assertEqual(self.model.axes, '')
         self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
+
+class HomeSequenceModel(Model):
+    def __init__(self):
+        super().__init__()
+        self.axes = ''
+        self.position = [50., 60., 30., 0.]
+        self.heater_target = 0.
+        self.min_temp, self.max_temp = 0., 220.
+        self.speeds = []
+        self.native_mode = True
+        self.print_state = 'standby'
+        self.fail_axis = None
+        self.heater_busy = False
+        self.stats = types.SimpleNamespace(get_status=lambda _: {'state': self.print_state})
+        self.axis_rails = [
+            types.SimpleNamespace(homing_speed=5., second_homing_speed=2.,
+                                  homing_retract_speed=5., get_range=lambda: (0., 138.)),
+            types.SimpleNamespace(homing_speed=5., second_homing_speed=2.,
+                                  homing_retract_speed=5., get_range=lambda: (0., 138.)),
+            types.SimpleNamespace(homing_speed=8.2849, second_homing_speed=2.,
+                                  homing_retract_speed=8.2849, get_range=lambda: (-.7, 145.),
+                                  get_homing_info=lambda: types.SimpleNamespace(
+                                      positive_dir=True, retract_dist=0., position_endstop=145.)),
+        ]
+
+    @property
+    def rails(self):
+        return self.axis_rails
+
+    def lookup_object(self, name, default=None):
+        if name == 'print_stats':
+            return self.stats
+        if name in ('gcode', 'gcode_move', 'heaters', 'homing', 'toolhead'):
+            return self
+        return default
+
+    def _control_query(self):
+        return dict(mode='NATIVE' if self.native_mode else 'SERVICE',
+                    armed=self.native_mode, latched=0, fault=0)
+
+    def _z_home_inputs(self, expected):
+        raw = super()._z_home_inputs(expected)
+        raw['nozzle_contact'] = int(not self.endstop.query_endstop(0))
+        if any(raw[name] != setting for name, setting in expected.items()):
+            raise ValueError('Unexpected home input')
+        return raw
+
+    def get_position(self):
+        return list(self.position)
+
+    def set_position(self, position, homing_axes=''):
+        self.position = list(position)
+        self.axes = ''.join(axis for axis in 'xyz' if axis in self.axes + homing_axes)
+
+    def manual_move(self, position, speed):
+        self.calls.append(('move', tuple(position), speed))
+        for axis, value in enumerate(position):
+            if value is not None:
+                if axis == 2:
+                    self.physical_z += value - self.position[axis]
+                self.position[axis] = value
+
+    def cmd_G28(self, gcmd):
+        axis, = (letter for letter in 'XYZ' if letter in gcmd)
+        self.calls.append(('G28', axis))
+        axis = axis.lower()
+        index = 'xyz'.index(axis)
+        rail = self.axis_rails[index]
+        self.speeds.append((axis, rail.homing_speed, rail.second_homing_speed,
+                            rail.homing_retract_speed))
+        if self.fail_axis == axis:
+            raise ValueError('Test endstop never latched')
+        self.position[index] = 145. if axis == 'z' else 0.
+        self.set_position(self.position, axis)
+        if axis == 'z':
+            self.physical_z = 145.
+
+    @staticmethod
+    def create_gcode_command(name, line, params):
+        return Command(**params)
+
+    def get_temp(self, eventtime):
+        return self.heater_target, self.heater_target
+
+    def set_temperature(self, heater, target, wait=False):
+        self.calls.append(('heat', target, wait))
+        heater.set_temp(target)
+
+    def check_busy(self, eventtime):
+        return self.heater_busy
+
+    def panel_temperature(self, tool, now):
+        return self.heater_target, 'valid'
+
+
+class NativeHomeSequenceTests(unittest.TestCase):
+    def setUp(self):
+        with mock.patch.dict(sys.modules, {
+            'orange_pi.homing': types.SimpleNamespace(HomingMove=HomingMove),
+        }):
+            module = importlib.import_module('orange_pi.inventure_native_z')
+        model = self.model = HomeSequenceModel()
+        self.adapter = module.InventureNativeZ.__new__(module.InventureNativeZ)
+        for name in ('printer', 'reactor', 'board', 'toolhead', 'kin', 'z_enable',
+                     'gcode', 'heaters'):
+            setattr(self.adapter, name, model)
+        self.adapter.bottom = model.bottom
+        self.adapter.endstop = model.endstop
+        self.adapter.guard = object()
+        self.adapter.refine = model.refine
+        self.adapter.running = self.adapter.interrupted = False
+        self.adapter.last_result = None
+        self.adapter.pad_x, self.adapter.pad_y = 82.8, 68.
+        self.adapter.bottom_position = 145.
+        self.adapter.bottom_release = 5.
+        self.adapter.coarse_speed = 20.
+        self.adapter.repeat_count = 101
+        self.adapter.target = 200.
+        self.adapter.xy_speed_factor = 1.5
+        self.adapter.xy_clearance = 10.
+        self.adapter.pad_speed = 80.
+        self.adapter.park_z = 10.
+        self.adapter.park_speed = 5.
+        self.adapter.heat_timeout = 300.
+        self.adapter.cmd_home = self.reference
+
+    def reference(self, command):
+        self.model.calls.append(('reference', dict(command)))
+        self.model.set_position([82.8, 68., 0., 0.], 'z')
+        self.model.physical_z = self.model.threshold + 1. / Z_STEPS_PER_MM
+        self.adapter.last_result = dict(reference_established=True, coordinate_saved=True)
+
+    def test_xy_uses_y_then_x_with_temporary_clearance_and_scaled_speeds(self):
+        self.adapter.cmd_home_axes(Command(AXES='XY'))
+        self.assertEqual([call for call in self.model.calls if call[0] == 'G28'],
+                         [('G28', 'Z'), ('G28', 'Y'), ('G28', 'X')])
+        self.assertEqual(self.model.speeds[1:], [('y', 7.5, 3., 7.5), ('x', 7.5, 3., 7.5)])
+        self.assertEqual(self.model.axes, 'xy')
+        self.assertEqual(self.model.rails[0].homing_speed, 5.)
+        self.assertEqual(self.model.rails[1].second_homing_speed, 2.)
+        self.assertFalse(any(call[0] == 'heat' for call in self.model.calls))
+
+    def test_x_and_y_can_be_homed_independently_with_known_clearance(self):
+        for axis in ('X', 'Y'):
+            with self.subTest(axis=axis):
+                self.model.calls = []
+                self.model.axes = 'z'
+                self.adapter.last_result = dict(reference_established=True, coordinate_saved=True)
+                self.adapter.cmd_home_axes(Command(AXES=axis, XY_SPEED_FACTOR='1.2'))
+                self.assertEqual([call for call in self.model.calls if call[0] == 'G28'],
+                                 [('G28', axis)])
+                self.assertEqual(self.model.speeds[-1], (axis.lower(), 6., 2.4, 6.))
+                self.assertIn('z', self.model.axes)
+
+    def test_xyz_uses_native_reference_then_parks_absolutely_and_restores_heat(self):
+        self.model.heater_target = 180.
+        self.adapter.cmd_home_axes(Command(AXES='XYZ', ACK=Z_HOME_ACK, TARGET='205',
+                                           PARK_Z='12', PARK_SPEED='4', PAD_SPEED='65',
+                                           Z_APPROACH_MM='142', Z_PROBE_MM='3'))
+        self.assertEqual([call for call in self.model.calls if call[0] == 'G28'],
+                         [('G28', 'Z'), ('G28', 'Y'), ('G28', 'X')])
+        calls = self.model.calls
+        reference = next(i for i, call in enumerate(calls) if call[0] == 'reference')
+        self.assertEqual(calls[reference][1]['ACK'], Z_HOME_ACK)
+        self.assertEqual(float(calls[reference][1]['Z_APPROACH_MM']), 142.)
+        self.assertEqual(float(calls[reference][1]['Z_PROBE_MM']), 3.)
+        self.assertTrue(any(move[0] == 'move' and move[1][:2] == (82.8, 68.)
+                            and move[2] == 65. for move in calls[:reference]))
+        self.assertIn(('heat', 205., False), calls[:reference])
+        self.assertIn(('move', (None, None, 12.), 4.), calls[reference + 1:])
+        self.assertEqual(self.model.position, [82.8, 68., 12., 0.])
+        self.assertEqual(self.model.axes, 'xyz')
+        self.assertEqual(self.model.heater_target, 180.)
+
+    def test_z_preserves_xy_homing_and_parks_ten_mm_without_changing_reference(self):
+        self.model.axes = 'xy'
+        self.adapter.cmd_home_axes(Command(AXES='Z', ACK=Z_HOME_ACK))
+        self.assertEqual([call for call in self.model.calls if call[0] == 'G28'], [('G28', 'Z')])
+        self.assertEqual(self.model.position, [82.8, 68., 10., 0.])
+        self.assertAlmostEqual(self.model.physical_z,
+                               self.model.threshold + 1. / Z_STEPS_PER_MM + 10.)
+        self.assertTrue(self.adapter.last_result['coordinate_saved'])
+        self.assertEqual(self.model.heater_target, 0.)
+
+    def test_bad_preflight_inputs_leave_motion_and_heating_untouched(self):
+        cases = [
+            (Command(AXES='Z', ACK=Z_HOME_ACK), {}),
+            (Command(AXES='XYZ'), {}),
+            (Command(AXES='XYZ', ACK=Z_HOME_ACK, PARK_Z='200'), {}),
+            (Command(AXES='XYZ', ACK=Z_HOME_ACK, TARGET='nan'), {}),
+            (Command(AXES='XY', XY_SPEED_FACTOR='nan'), {}),
+            (Command(AXES='XYZ', ACK=Z_HOME_ACK, PAD_SPEED='nan'), {}),
+            (Command(AXES='Y'), {'native_mode': False}),
+            (Command(AXES='X'), {'print_state': 'printing'}),
+        ]
+        for command, options in cases:
+            with self.subTest(command=command, options=options):
+                self.setUp()
+                for key, value in options.items():
+                    setattr(self.model, key, value)
+                with self.assertRaises(ValueError):
+                    self.adapter.cmd_home_axes(command)
+                self.assertEqual(self.model.calls, [])
+
+    def test_native_endstop_failure_restores_speeds_and_stops_composite(self):
+        self.model.fail_axis = 'y'
+        with self.assertRaises(ValueError):
+            self.adapter.cmd_home_axes(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        self.assertEqual([call for call in self.model.calls if call[0] == 'G28'],
+                         [('G28', 'Z'), ('G28', 'Y')])
+        self.assertEqual(self.model.rails[1].homing_speed, 5.)
+        self.assertEqual(self.model.rails[1].second_homing_speed, 2.)
+        self.assertEqual(self.model.rails[1].homing_retract_speed, 5.)
+        self.assertFalse(any(call[0] in ('heat', 'reference') for call in self.model.calls))
+
+    def test_closed_contact_at_bottom_blocks_lateral_homing(self):
+        self.adapter.endstop = types.SimpleNamespace(query_endstop=lambda _: True)
+        with self.assertRaisesRegex(ValueError, 'PC14'):
+            self.adapter.cmd_home_axes(Command(AXES='XY'))
+        self.assertEqual([call for call in self.model.calls if call[0] == 'G28'], [('G28', 'Z')])
+        self.assertNotIn('z', self.model.axes)
+
+    def test_probe_failure_clears_heat_skips_post_reference_move(self):
+        self.model.axes = 'xy'
+        self.model.heater_target = 180.
+        self.adapter.cmd_home = mock.Mock(side_effect=ValueError('Test probe failed'))
+        with self.assertRaises(ValueError):
+            self.adapter.cmd_home_axes(Command(AXES='Z', ACK=Z_HOME_ACK))
+        self.adapter.cmd_home.assert_called_once()
+        self.assertEqual(self.model.heater_target, 0.)
+        self.assertFalse(any(call[0] == 'move' and call[1][:2] == (None, None)
+                             for call in self.model.calls))
+
+    def test_heat_timeout_cools_without_running_contact_refinement(self):
+        self.model.axes = 'xy'
+        self.model.heater_busy = True
+        self.adapter.heat_timeout = 2.
+        with self.assertRaisesRegex(ValueError, 'temperature|heat|timeout'):
+            self.adapter.cmd_home_axes(Command(AXES='Z', ACK=Z_HOME_ACK))
+        self.assertFalse(any(call[0] == 'reference' for call in self.model.calls))
+        self.assertEqual(self.model.heater_target, 0.)
 
 
 if __name__ == '__main__':

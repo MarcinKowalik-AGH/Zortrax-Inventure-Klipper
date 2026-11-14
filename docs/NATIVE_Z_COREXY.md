@@ -1,9 +1,11 @@
 # Inventure — kontaktowe bazowanie w natywnym CoreXY
 
-`INVENTURE_NATIVE_HOME_Z` wyznacza robocze Z=0 bieżącej sesji Klippera.
-Stół zatrzymuje się na zweryfikowanym rozwarciu PC14, a po pomiarze
-zostaje nad tym samym polem. Współrzędna nie przetrwa restartu ani
-wyłączenia napędu. `G28` zachowuje znaczenie nadane w konfiguracji.
+Makra `INVENTURE_HOME_*` składają bazowanie z natywnych ruchów krańcowych,
+przygotowania T0, pomiaru PC14 i końcowego prześwitu. Przy pomiarze Z
+Klipper przypisuje Z=0 zweryfikowanemu rozwarciu PC14, po czym stół
+opuszcza się do zadanego Z. Referencja obowiązuje w bieżącej sesji przy
+włączonym napędzie. Polecenie `G28` zachowuje znaczenie z konfiguracji,
+w tym `G28 Z` dla dolnej krańcówki PE12.
 
 ## Profil i wejścia
 
@@ -44,7 +46,71 @@ nozzle_temperature: 200
 coarse_speed: 20
 ```
 
-## Profil próbny na Orange Pi
+## Makra Inventure
+
+Zaktualizuj hosta na Orange Pi przez SSH. Następnie skopiuj plik makr do
+katalogu aktywnego `printer.cfg`.
+
+```bash
+git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py" &&
+install -m 0644 "$HOME/inventure-orange-pi/config/INVENTURE_HOME.cfg" "$HOME/printer_data/config/INVENTURE_HOME.cfg"
+```
+
+Dodaj raz tę linię w używanym profilu CoreXY, nad blokiem `SAVE_CONFIG`,
+jeśli ten blok istnieje.
+
+```ini
+[include INVENTURE_HOME.cfg]
+```
+
+W Fluidd wykonaj `RESTART`, odczytaj `INVENTURE_VERSION` i sprawdź
+`native_z_refine_abi: 1`. Przed uruchomieniem makr wykonaj
+`INVENTURE_CONTROL MODE=NATIVE`. Do bazowania kontaktowego T0 musi być fizycznie wysunięta,
+tacka osadzona, a skonfigurowane `pad_x` i `pad_y` sprawdzone na zimno.
+`ACK=PAD_AND_CLEARANCE_CHECKED` potwierdza te warunki oraz wolną drogę stołu.
+Makra korzystają z już wgranego firmware `RC8-CONTROL-R7-Z-OEM-NATIVE`.
+
+| Zadanie | Polecenie we Fluidd | Kolejność |
+|---|---|---|
+| X | `INVENTURE_HOME_X` | Prześwit Z, krańcówka X |
+| Y | `INVENTURE_HOME_Y` | Prześwit Z, krańcówka Y |
+| XY | `INVENTURE_HOME_XY` | Prześwit Z, krańcówka Y, krańcówka X |
+| Z | `INVENTURE_HOME_Z ACK=PAD_AND_CLEARANCE_CHECKED` | Wymaga bazowanych XY. PE12, dojazd T0 nad pole, grzanie, PC14, końcowy prześwit |
+| XYZ | `INVENTURE_HOME_XYZ ACK=PAD_AND_CLEARANCE_CHECKED` | PE12, Y, X, dojazd T0 nad pole, grzanie, PC14, końcowy prześwit |
+
+X, Y i XY działają bez grzania. Gdy robocze Z jest potwierdzone, stół
+pozostaje na pozycji dającej wymagany prześwit lub opuszcza się do niej
+przed ruchem bocznym. Gdy robocze Z jest nieznane, makro używa dolnej
+krańcówki PE12 do zapewnienia prześwitu. Takie przygotowanie nie ustala
+zera kontaktowego.
+
+| Parametr | Domyślnie | Makra i działanie |
+|---|---:|---|
+| `XY_SPEED_FACTOR` | 1,5 | X, Y, XY, XYZ. Mnożnik prędkości obu najazdów oraz odjazdu od krańcówki XY. W profilu próbnym najazdy 5 i 2 mm/s dają 7,5 i 3 mm/s. |
+| `XY_CLEARANCE` | 10 mm | X, Y, XY. Minimalna wartość roboczego Z przed ruchem bocznym, jeśli Z jest znane. |
+| `TARGET` | 200°C w profilu próbnym | Z, XYZ. Cel grzania T0 podczas pomiaru. |
+| `PAD_SPEED` | 80 mm/s | Z, XYZ. Prędkość ruchu XY do pola kontaktowego. |
+| `PARK_Z` | 10 mm | Z, XYZ. Końcowa pozycja stołu względem zmierzonego Z=0. |
+| `PARK_SPEED` | 5 mm/s | Z, XYZ. Prędkość opuszczania stołu po pomiarze. |
+| `Z_APPROACH_MM` | `bottom_position` − 2 mm | Z, XYZ. Droga od PE12 do początku dokładnego pomiaru. |
+| `Z_PROBE_MM` | 10 mm | Z, XYZ. Maksymalny zakres pomiaru STM32 po każdej stronie pozycji początkowej. |
+
+Przykładowa próba z indywidualnymi nastawami, po fizycznym potwierdzeniu
+T0 i pola kontaktowego.
+
+```gcode
+INVENTURE_CONTROL MODE=NATIVE
+INVENTURE_HOME_XYZ ACK=PAD_AND_CLEARANCE_CHECKED TARGET=200 XY_SPEED_FACTOR=1.5 PARK_Z=10
+GET_POSITION
+```
+
+Po sukcesie oczekuj `Z=10.000` w odczycie pozycji, z zerem na punkcie
+rozwarcia. Końcowe 10 mm jest nastawą makra. Odczytana opcjonalna
+sekwencja r0323 przechodzi przez Z=1 mm i XY=0,0, następnie wraca do Z=0.
+[Sekwencja fabryczna](Z_CONTACT_AND_HOMING_R0323.md#sekwencja-firmware-161-r0323).
+
+## Profil próbny i ręczna diagnostyka
 
 Plik [`INVENTURE_NATIVE_Z_TEST.cfg`](../config/INVENTURE_NATIVE_Z_TEST.cfg)
 zawiera osobny profil do sprawdzenia bazowania. Adres `/dev/ttyS1` i 750000
@@ -119,9 +185,10 @@ i zachowaj pełny `klippy.log` z tej sesji.
 Po błędzie w rozpoczętej procedurze host zeruje cel T0 i zatrzymuje MCU,
 jeśli rozpoczął uzbrajanie ochrony ruchu. Aby wrócić do SERVICE,
 po ostygnięciu przywróć wypisaną wcześniej kopię `printer.cfg` i wykonaj
-`FIRMWARE_RESTART`. Profil przeszedł uruchomienie w trybie symulacji
-Klippera z rzeczywistym słownikiem MCU. Fizyczna próba tej ścieżki
-pozostaje do wykonania.
+`FIRMWARE_RESTART`. Próba ręczna z 14 listopada 2026 r. zakończyła się
+po 102 cyklach, w tym 101 bez poprawy. Rozwarcie wypadło 139,369077 mm
+od PE12, a `GET_POSITION` potwierdził Z=0. Złożone makra i zwiększona
+prędkość bazowania XY czekają na próbę na drukarce.
 
 ## Kontrolowana próba na własnym profilu CoreXY
 
@@ -152,10 +219,9 @@ ustanawia Z=0 na zmierzonym rozwarciu. Przy braku styku,
 braku rozwarcia lub utracie zabezpieczenia czynność zwraca błąd.
 Po prawidłowym wyniku `V9_NATIVE_Z` podaje `coordinate_saved: true`,
 `persistence: current_klipper_session` oraz `completion_basis`.
-Ten moduł nie generuje siatki kompensacji. Zmiany grzania i wybór
-pozycji po bazowaniu należą do używanej procedury użytkownika.
+Pomiar siatki kompensacji jest osobną procedurą. Przy ręcznym wywołaniu
+`INVENTURE_NATIVE_HOME_Z` operator steruje grzaniem i końcową pozycją.
 
 Model sprawdza własność ochrony, pozycje natywne oraz unieważnienie
-referencji przy wyłączeniu napędu i błędzie. Aktualna konfiguracja
-serwisowa nie uruchamia tego modułu i nie ma jeszcze odbioru
-ruchowego nowej natywnej ścieżki.
+referencji przy wyłączeniu napędu i błędzie. Konfiguracja serwisowa
+korzysta z odrębnego `INVENTURE_PROCEDURE ACTION=HOME_Z`.

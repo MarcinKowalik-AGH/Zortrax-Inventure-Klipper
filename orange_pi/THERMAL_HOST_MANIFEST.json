@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM-NATIVE",
+  "release": "RC8-CONTROL-R7-UIFAST-HOME-MACROS",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "c04da0203de19490f27c923a84bee8fbf4d6df276f3b9ce3dbc9305d65151c5e",
+  "module_sha256": "d81c58a5e9b00fd6f184b57ddd09c6a8a6c2bbb4d0949b742beee197823952e2",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -50,9 +50,10 @@
     "e0af122ce9e5901e61481e3598082d16c0f038d6eb6ac44cec645e90c3d44fe3",
     "546d846cbe1169ba333052b8edee9f4e9fb8cb040b0f02fe6d5700cc44276630",
     "50c3d8493c73e651a2229ae9cec60f2936d18ab417f5f42eed17f9f39d7de848",
-    "ad9e586c459671b791fc0f20995b97fd2cd8ce8b22983637570c43e72009c05f"
+    "ad9e586c459671b791fc0f20995b97fd2cd8ce8b22983637570c43e72009c05f",
+    "c04da0203de19490f27c923a84bee8fbf4d6df276f3b9ce3dbc9305d65151c5e"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-Z-OEM-NATIVE",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-HOME-MACROS",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -361,11 +362,12 @@
       ]
     },
     "inventure_native_z.py": {
-      "sha256": "58d6b156240cbe6aac6650b4743a56948723f475e74c00c6068487baaac687dc",
+      "sha256": "ff832a4dfa3fe0b46a693a58a9140a4f0678a6f03a5543e41e6b16f0ab662485",
       "allowed_existing_sha256": [
         "a3399b18df7d7eecaf660ba49268c2b7b2dc13e0960c5e51cbc9f6218d4e620c",
         "3f73bb0d92b5f19bc6b9973f8a1f161486d68e23fde7ca5ad2a7d390c35d28e7",
-        "5f33a5aaf309daeb137523181aeeedb4141441bddabff9ffbe99a7eaa8fe41fa"
+        "5f33a5aaf309daeb137523181aeeedb4141441bddabff9ffbe99a7eaa8fe41fa",
+        "58d6b156240cbe6aac6650b4743a56948723f475e74c00c6068487baaac687dc"
       ]
     }
   },
@@ -488,13 +490,17 @@
     "native_tray_guard_abi": 1,
     "native_working_z_config": "opt-in CoreXY",
     "native_working_z_command": "INVENTURE_NATIVE_HOME_Z",
-    "native_working_z_tested_on_printer": false,
+    "native_working_z_tested_on_printer": true,
     "native_z_refine_abi": 1,
     "native_refine_engine": "stm32_local",
     "native_refine_interval_us": 4000,
     "native_refine_required_non_improvements": 101,
     "native_refine_max_span_steps": 8020,
     "native_coarse_speed_mm_s": 20.0,
-    "native_probe_start_z_mm": 2.0
+    "native_probe_start_z_mm": 2.0,
+    "native_home_macros_cfg": "config/INVENTURE_HOME.cfg",
+    "native_home_macros_tested_on_printer": false,
+    "native_home_macros_xy_speed_factor": 1.5,
+    "native_home_macros_park_z_mm": 10
   }
 }
