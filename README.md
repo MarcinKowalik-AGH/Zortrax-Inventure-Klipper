@@ -222,7 +222,7 @@ INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_SENSORS
 ```
 
-Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-RETRY`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
+Oczekiwane `host_revision` = `RC8-CONTROL-R7-UIFAST-HOME-Z-VERIFY`, `mcu_release` = `RC8-CONTROL-R7-T1-TIMING`,
 `control_abi: 1`, `motion_abi: 1`, `output_abi: 1`, `baud_match: true`.
 `door_policy_global: true` i `door_policy_default_enabled: false` opisują
 politykę osłon tego wydania. `INVENTURE_DOOR_POLICY ENABLE=1` włącza

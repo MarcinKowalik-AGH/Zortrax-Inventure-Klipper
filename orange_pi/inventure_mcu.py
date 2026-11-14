@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-RETRY'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-Z-VERIFY'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -2924,6 +2924,9 @@ class InventureMCU:
         if kind=='z_progress':
             f['z_home_progress']={key:value for key,value in action.items() if key!='kind'}
             return dict(f['snapshot'])
+        if kind=='z_verify_open':
+            if now<action.setdefault('until',now+action['delay_s']):return None
+            return self._z_home_inputs({'z_bottom':0})
         if kind=='heat':
             if not f['heat_started']:
                 temperature,state=self.panel_temperature(context['tool'],now)

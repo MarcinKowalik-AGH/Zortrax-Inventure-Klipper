@@ -89,6 +89,11 @@ rozwarcie na 111 762 krokach (139,354115 mm). Przy czwartym zwarciu
 końcowym a sprawdzeniem przed odjazdem. Przebieg przerwano przed pomiarem
 stabilności. `HOME-Z-RETRY` obsługuje również tę zmianę stanu.
 
+Kolejny log z `HOME-Z-RETRY` potwierdził 3 pełne cykle i pośrednie minimum
+111 759 kroków (139,350374 mm). Próba zakończyła się na limicie ponowień.
+Ostatni ruch 67 zatrzymał się na rozwarciu bez kroku w dół i ze świeżym
+odczytem PC14=1. `HOME-Z-VERIFY` sprawdza taki odczyt ponownie na postoju.
+
 ```gcode
 INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
@@ -117,15 +122,17 @@ Kontakt przed osiągnięciem początku precyzyjnego pomiaru przerywa pomiar.
 Krótki impuls PC14 w fazie precyzyjnej resetuje licznik stabilności. Jeśli
 styk jest rozwarty w świeżym odczycie po zatrzymaniu MCU, procedura odjeżdża
 w dół i ponawia pomiar w obrębie tego samego okna. Do pełnego cyklu wlicza
-się dopiero utrzymane zwarcie i potwierdzone rozwarcie po rzeczywistym
-kroku odjazdu. Najazd precyzyjny zatrzymany przez PC14 przy zerowej liczbie
+się dopiero zwarcie po co najmniej jednym kroku w górę oraz potwierdzone
+rozwarcie. Najazd precyzyjny zatrzymany przez PC14 przy zerowej liczbie
 kroków traktuje się jak próbę do ponowienia. Odjazd awaryjny w dół pozostaje
 ograniczony odległością oraz sygnałami PE12 i PC13. Następny najazd wymaga
 potwierdzenia rozwarcia po odjeździe. Gdy po zatrzymaniu odjazdu PC14 jest znowu zwarty, ponowienie
 odjazdu wykorzystuje resztę pierwotnego limitu `Z_RELEASE_MM`. Przy otwartym
-PC14 i zerowej liczbie kroków program wykonuje ograniczony odjazd i rozpoczyna
-nowy cykl. Raport `factory.z_home_progress` zlicza oba przypadki w polach
-`transient_closures` i `transient_openings`. Procedura zachowuje najmniejszą
+PC14 i zerowej liczbie kroków program czeka co najmniej 25 ms na drugi
+świeży odczyt bez ruchu. Potwierdzone rozwarcie zalicza do `zero_step_releases`.
+Ponowne zwarcie zużywa limit ponowień. Raport `factory.z_home_progress`
+zlicza krótkie zdarzenia w `transient_closures` i `transient_openings`.
+Procedura zachowuje najmniejszą
 pozycję rozwarcia liczoną od PE12 i kończy po 101 kolejnych cyklach bez
 poprawy. W `factory.result.z_home_result` odczytaj
 `release_steps_from_bottom`, `release_mm_from_bottom`, `cycles`
@@ -161,8 +168,11 @@ Handler homingu Z nie zadaje wprost temperatury dyszy. Interaktywny kreator
 poziomowania i kalibracja wysokości dysz mają własne przygotowanie cieplne.
 R7 SERVICE opuszcza stół przed ruchem XY, co daje prześwit na wybór T0.
 OEM dopuszcza próbkę z zerowym odjazdem przy natychmiastowym rozwarciu.
-R7 SERVICE ponawia taki styk. Powtórzenia `HOME_Z` dotyczą jednego pola.
-Pomiar kilku pól i regulacja płaszczyzny należą do osobnej procedury.
+R7 SERVICE potwierdza taki przypadek dodatkowym odczytem. Powtórzenia `HOME_Z`
+dotyczą jednego pola. Pomiar kilku pól i regulacja płaszczyzny należą do
+osobnej procedury. Fabryczne bazowanie `.zcode` po pomiarze może wywołać
+`0x0801D604` (Z=1 mm, XY=0,0, Z=0 w układzie roboczym). Osobny etap
+przygotowania poziomowania wywołuje `0x0801DBD0`, które zadaje Z=40 mm.
 
 Przy pustym rekordzie głębokości r0323 przyjmuje 135 000 µm jako datum
 obliczeniowe dolnego Z. Po zwolnieniu PE12 i dodatkowym odjeździe o 1 mm

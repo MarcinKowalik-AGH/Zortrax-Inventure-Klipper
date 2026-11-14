@@ -24,9 +24,11 @@ class ZDevice(factory_support.FactoryDevice):
         self.closures = 0
         self.reclose_before_retreat = False
         self.reclose_before_fine = False
+        self.reclose_before_open_verification = False
         self.contact_stays_closed_after_retreat = False
         self.release_edges = []
         self.z_moves = []
+        self.input_reads = []
 
     def _raw_z(self, position, contact):
         return ((self.BOTTOM if position == 0 else 0)
@@ -48,6 +50,7 @@ class ZDevice(factory_support.FactoryDevice):
         self.h.inputs_received = self.now()
         raw = self._raw_z(self.z, self.contact)
         row = self.motion
+        self.input_reads.append((self.run, self.now(), self.z, bool(raw & self.CONTACT)))
         if row and self.now() >= row['until'] and row.pop('reclose_after_read', False):
             row['contact_at_end'] = True
         return dict(raw_mask=raw, raw={
@@ -74,7 +77,7 @@ class ZDevice(factory_support.FactoryDevice):
             if not hit:
                 for step in range(1, z + 1):
                     position = self.z + step * direction
-                    if self.contact_at is not None:
+                    if self.contact_at is not None and (direction > 0 or self.contact):
                         contact_at_end = position >= self.contact_at
                     raw = self._raw_z(position, contact_at_end)
                     if self.contact and direction < 0 and self.release_fault is not None:
@@ -98,6 +101,9 @@ class ZDevice(factory_support.FactoryDevice):
                 if not 0 <= distance <= z:
                     raise AssertionError('Modeled release edge exceeds move')
                 hit = self.CONTACT
+                if not distance and not contact_at_end and self.reclose_before_open_verification:
+                    reclose_after_read = True
+                    self.reclose_before_open_verification = False
             if (direction < 0 and hit == self.CONTACT and distance
                     and not contact_at_end and self.reclose_before_fine):
                 self.reclose_before_fine = False
@@ -114,7 +120,7 @@ class ZDevice(factory_support.FactoryDevice):
             if not distance:
                 self.motion['fraction'] = 1.
             self.z_moves.append(dict(
-                direction=direction, planned=z, sent=distance, rate=rate,
+                run=self.run, direction=direction, planned=z, sent=distance, rate=rate,
                 max_ms=ms, mask=mask, value=value, hit=hit,
                 contact_at_start=self.contact, contact_at_end=contact_at_end))
         else:
@@ -350,24 +356,59 @@ class ZHomeHostTests(unittest.TestCase):
                 self.assertFalse(retry['contact_at_end'])
                 self.assertFalse(host.device.active())
 
-    def test_zero_step_release_still_open_requires_backoff_and_new_closure(self):
+    def test_stationary_open_verification_qualifies_two_zero_step_releases(self):
+        host = self.host()
+        host.device.release_edges = [(0, False)] * 2
+        self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
+                     ACK='PAD_AND_CLEARANCE_CHECKED')
+        report = self.finish(host)
+        self.assertEqual(report['phase'], 'done', report)
+        factory = report['factory']
+        measured = factory['result']['z_home_result']
+        self.assertEqual((measured['cycles'], measured['zero_step_releases'],
+                          measured['transient_openings']), (2, 2, 0))
+        self.assertEqual(factory['z_home_progress']['zero_step_releases'], 2)
+        self.assertEqual(measured['release_steps_from_bottom'], host.device.contact_at)
+        releases = [row for row in host.device.z_moves
+                    if row['direction'] < 0 and row['hit'] == ZDevice.CONTACT]
+        self.assertEqual(len(releases), 2)
+        for release in releases:
+            self.assertEqual((release['sent'], release['contact_at_end']), (0, False))
+            self.assert_stationary_samples(host, release, (True, True))
+        self.assertFalse(any(row['mask'] == row['value'] == 20 and row['direction'] < 0
+                             for row in host.device.z_moves))
+        self.assertFalse(host.device.active())
+        self.assertEqual(host.device.output(6)['duty'], 0)
+
+    def assert_stationary_samples(self, host, release, opened):
+        reads = [(when, z, is_open) for run, when, z, is_open in host.device.input_reads
+                 if run == release['run']]
+        self.assertGreaterEqual(len(reads), 2)
+        self.assertGreaterEqual(reads[1][0] - reads[0][0], .025 - 1.e-8)
+        self.assertEqual(reads[0][1], reads[1][1])
+        self.assertEqual((reads[0][2], reads[1][2]), opened)
+
+    def test_zero_step_release_reclosed_at_verification_retries_with_same_bound(self):
         host = self.host()
         host.device.release_edges = [(0, False)]
+        host.device.reclose_before_open_verification = True
         self.command(host, Z_APPROACH_MM=3, Z_STABLE_CYCLES=1,
                      ACK='PAD_AND_CLEARANCE_CHECKED')
         report = self.finish(host)
         self.assertEqual(report['phase'], 'done', report)
         measured = report['factory']['result']['z_home_result']
         self.assertEqual((measured['cycles'], measured['transient_openings'],
-                          measured['transient_closures']), (2, 1, 0))
+                          measured['transient_closures'], measured['zero_step_releases']),
+                         (2, 1, 0, 0))
         moves = host.device.z_moves
         first = next(index for index, row in enumerate(moves)
                      if row['direction'] < 0 and row['hit'] == ZDevice.CONTACT)
-        release, backoff, reapproach = moves[first:first + 3]
+        release, retry = moves[first:first + 2]
         self.assertEqual((release['sent'], release['contact_at_end']), (0, False))
-        self.assertEqual((backoff['direction'], backoff['mask'], backoff['value'],
-                          backoff['sent']), (-1, 20, 20, 160))
-        self.assertEqual((reapproach['direction'], reapproach['hit']), (1, ZDevice.CONTACT))
+        self.assert_stationary_samples(host, release, (True, False))
+        self.assertEqual((retry['direction'], retry['mask'], retry['value'],
+                          retry['planned']), (-1, 28, 28, release['planned']))
+        self.assertGreater(retry['sent'], 0)
         self.assertEqual(sum(row['direction'] < 0 and row['hit'] == ZDevice.CONTACT
                              and row['sent'] > 0 for row in moves), 2)
         self.assertFalse(host.device.active())
