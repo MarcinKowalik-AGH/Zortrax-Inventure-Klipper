@@ -177,8 +177,8 @@ class ZHomeCoreTests(unittest.TestCase):
         backoff = moves[8]
         self.assertEqual(backoff['steps'], -160)
         self.assertEqual((backoff['stop_mask'], backoff['stop_value']),
-                         (Z_BOTTOM | NOZZLE_CONTACT, Z_BOTTOM))
-        self.assertEqual(backoff['initial_raw'], dict(z_bottom=0, nozzle_contact=1))
+                         (Z_BOTTOM, Z_BOTTOM))
+        self.assertEqual(backoff['initial_raw'], dict(z_bottom=0))
         self.assertGreater(moves[9]['steps'], 0)
         modules = [a['name'] for _, a in model.actions if a.get('state') == 'done']
         self.assertEqual(modules.count('z_contact_retry'), 1)

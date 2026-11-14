@@ -83,6 +83,12 @@ Kolejna próba z profilem OEM doszła do potwierdzonego zwarcia na
 rozwarciu PC14 przed pierwszym krokiem. Świeży odczyt znów pokazywał
 zwarcie. W tej próbie nie ukończono żadnego pełnego cyklu pomiarowego.
 
+Próba `HOME-Z-RELEASE` potwierdziła trzy pełne cykle i najniższe zmierzone
+rozwarcie na 111 762 krokach (139,354115 mm). Przy czwartym zwarciu
+(ruch 35, trzy kroki w górę) PC14 zmienił stan między świeżym odczytem
+końcowym a sprawdzeniem przed odjazdem. Przebieg przerwano przed pomiarem
+stabilności. `HOME-Z-RETRY` obsługuje również tę zmianę stanu.
+
 ```gcode
 INVENTURE_PROCEDURE ACTION=HOME_Z TOOL=T0 TARGET=200 SPEED_PROFILE=OEM Z_APPROACH_MM=135 Z_PROBE_MM=9 ACK=PAD_AND_CLEARANCE_CHECKED
 ```
@@ -112,7 +118,10 @@ Krótki impuls PC14 w fazie precyzyjnej resetuje licznik stabilności. Jeśli
 styk jest rozwarty w świeżym odczycie po zatrzymaniu MCU, procedura odjeżdża
 w dół i ponawia pomiar w obrębie tego samego okna. Do pełnego cyklu wlicza
 się dopiero utrzymane zwarcie i potwierdzone rozwarcie po rzeczywistym
-kroku odjazdu. Gdy po zatrzymaniu odjazdu PC14 jest znowu zwarty, ponowienie
+kroku odjazdu. Najazd precyzyjny zatrzymany przez PC14 przy zerowej liczbie
+kroków traktuje się jak próbę do ponowienia. Odjazd awaryjny w dół pozostaje
+ograniczony odległością oraz sygnałami PE12 i PC13. Następny najazd wymaga
+potwierdzenia rozwarcia po odjeździe. Gdy po zatrzymaniu odjazdu PC14 jest znowu zwarty, ponowienie
 odjazdu wykorzystuje resztę pierwotnego limitu `Z_RELEASE_MM`. Przy otwartym
 PC14 i zerowej liczbie kroków program wykonuje ograniczony odjazd i rozpoczyna
 nowy cykl. Raport `factory.z_home_progress` zlicza oba przypadki w polach

@@ -195,13 +195,15 @@ class ZHomeProgram(FactoryProgram):
         remaining = upper - self.z_steps
         if remaining < 1:
             raise FactoryError('z_contact_not_found', limit_steps=upper)
+        # The MCU stops on PC14 low before the first upward step. A reclosed
+        # contact during preflight must enter recovery as a zero-step stop.
         sent, hit, raw = yield from self._z_move(remaining, self.settings['z_probe_speed'],
-                                                 NOZZLE_CONTACT, 0, 1, 0,
+                                                 NOZZLE_CONTACT, 0, None, 0,
                                                  allow_contact_transient=True)
         if raw['z_bottom'] != 0:
             raise FactoryError('z_bottom_reasserted', hit=hit)
         if hit == NOZZLE_CONTACT:
-            return sent, raw['nozzle_contact'] == 0
+            return sent > 0 and raw['nozzle_contact'] == 0
         if raw['nozzle_contact'] == 0:
             yield from self._module('z_contact_open', self._z_open_contact(lower))
             raise FactoryError('z_contact_not_latched', release_steps=self.z_steps)
@@ -217,7 +219,10 @@ class ZHomeProgram(FactoryProgram):
         allowed = min(self.z_steps - lower, backoff)
         if allowed < 1:
             raise FactoryError('z_contact_retry_outside_bounds', position_steps=self.z_steps)
-        hit, raw = yield from self._z_down_open(allowed)
+        # This retreat discards the sample and separates the surfaces even if
+        # PC14 reclosed. PE12 and the tray still stop the downward move.
+        _, hit, raw = yield from self._z_move(-allowed, self.settings['z_release_speed'],
+                                              Z_BOTTOM, Z_BOTTOM, None, 0)
         if hit or raw['nozzle_contact'] != 1 or raw['z_bottom'] != 0:
             raise FactoryError('z_contact_changed_during_retry_backoff', hit=hit,
                                position_steps=self.z_steps)
@@ -237,7 +242,7 @@ class ZHomeProgram(FactoryProgram):
         progress = dict(qualified_cycles=0, non_improvements=0, transient_closures=0,
                         transient_openings=0, consecutive_transients=0, best_release_steps=None)
         while progress['qualified_cycles'] < p['z_max_cycles']:
-            sent, closed = yield from self._module('z_contact_close', self._z_close_contact(lower, upper))
+            closed = yield from self._module('z_contact_close', self._z_close_contact(lower, upper))
             if not closed:
                 yield from self._z_record_transient(progress, 'transient_closures')
                 yield from self._module('z_contact_retry', self._z_retry_contact(lower))
@@ -245,8 +250,6 @@ class ZHomeProgram(FactoryProgram):
             opened = yield from self._module('z_contact_open', self._z_open_contact(lower, progress))
             if not opened:
                 continue
-            if not sent:
-                raise FactoryError('z_contact_before_fine_step', release_steps=self.z_steps)
             progress['consecutive_transients'] = 0
             progress['qualified_cycles'] += 1
             best = progress['best_release_steps']
