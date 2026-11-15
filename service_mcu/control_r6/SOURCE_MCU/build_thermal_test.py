@@ -9,7 +9,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-NOZZLE-Z'
+MCU_RELEASE = 'RC8-CONTROL-R7-NOZZLE-Z-DUAL'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -54,6 +54,18 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     provenance['patched_sha256'].update({'src/stm32/'+name:digest for name,digest in changes.items()})
     provenance['version'] = MCU_RELEASE
     provenance['p4_mode']='InventureBoot 1.7 journal; forced baud disabled'
+    # The pinned archive has no .git, so upstream would otherwise include
+    # the build clock and hostname in the dictionary embedded in the image.
+    identity_inputs = json.dumps(provenance, sort_keys=True).encode()
+    build_identity = MCU_RELEASE + '-' + base.sha(identity_inputs)[:12]
+    version_source = root / 'scripts/buildcommands.py'
+    original_version_source = version_source.read_text()
+    old_version_call = 'self.version = build_version(options.extra, cleanbuild)'
+    if original_version_source.count(old_version_call) != 1:
+        sys.exit('Unexpected pinned Klipper version generator')
+    version_source.write_text(original_version_source.replace(
+        old_version_call, f'self.version = {build_identity!r} + options.extra'))
+    provenance['patched_sha256']['scripts/buildcommands.py'] = base.sha(version_source.read_bytes())
     (root/'.inventure-v9-patch.json').write_text(json.dumps(provenance,indent=2,sort_keys=True)+'\n')
     cfg = root / '.config'
     config = cfg.read_text()
@@ -69,6 +81,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     base.validate(root, out)
     dictionary = json.loads((out / 'klipper.dict').read_text())
     c = dictionary['config']
+    assert dictionary['version'] == build_identity
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
@@ -85,6 +98,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NATIVE_Z_GUARD_ABI'] == 1
     assert c['INVENTURE_NATIVE_Z_REFINE_ABI'] == 1
     assert c['INVENTURE_NOZZLE_Z_TEST_ABI'] == 1
+    assert c['INVENTURE_NOZZLE_Z_DUAL_ABI'] == 1
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
@@ -135,12 +149,14 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert bytes.fromhex(base.sha(app)) == ivb[32:64]
     assert embedded_dictionary_matches(app, dictionary)
     report = dict(mcu_release=c['INVENTURE_MCU_RELEASE'], motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'],
+                  build_identity=build_identity,
                   motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   z_home_abi=c['INVENTURE_Z_HOME_ABI'],
                   z_edge_abi=c['INVENTURE_Z_EDGE_ABI'],
                   native_z_guard_abi=c['INVENTURE_NATIVE_Z_GUARD_ABI'],
                   native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
+                  nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

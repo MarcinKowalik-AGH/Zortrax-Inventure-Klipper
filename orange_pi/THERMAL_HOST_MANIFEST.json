@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-POLL",
+  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DUAL",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "5b543a2a835d1904927ef8d36e284468f87c80c41633e0210564d4f8474f5275",
+  "module_sha256": "530062a865befedf997c2ae805c1528f41e7fdc852d0b8d140f3a765226267a0",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -56,9 +56,10 @@
     "1cb1f3ca747132f80d158a588089c9263c36b22203900fe464babec570de7b1d",
     "9264e864f0e23c488dfc666305b15d92c9b6cf4cc1148c5936623b92801d51fd",
     "5d3d98d46ce571b2c7c11677a791bfa90011afeae8fe041915ee6ca41f9518b4",
-    "a3d1176125c4431fa9db7e479c439cc7baf4cae959ffa9f9cff1b247dc92b810"
+    "a3d1176125c4431fa9db7e479c439cc7baf4cae959ffa9f9cff1b247dc92b810",
+    "5b543a2a835d1904927ef8d36e284468f87c80c41633e0210564d4f8474f5275"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-POLL",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DUAL",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -224,7 +225,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329",
+  "factory_core_sha256": "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -329,7 +330,8 @@
     "e151976868b0b82f1854f327d5b6d5a907aa70510a42d0c7e79060b8a7bc3f01",
     "eb8a73d8a87045903ffbbace6672ac2a2aaf847c74a17cde0f7651ace3f6d403",
     "ccd0be69ffe27d6928ae9e440d7519bdc5abc828509480bd98839fa92e0123df",
-    "a02dc61dbb7d74eee377a8f5543fe9183b6f5e0227528c99d5ce9bf126d33b65"
+    "a02dc61dbb7d74eee377a8f5543fe9183b6f5e0227528c99d5ce9bf126d33b65",
+    "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -356,7 +358,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_z_home.py": {
-      "sha256": "80c33a3181fbb3b52309ab10726e2d1b248a700e7c93ce91cc8ff04580fa7874",
+      "sha256": "14df0c37f886fdf2fc70f3a502d26676851f89be07bda3ab4b29aa5f6e248596",
       "allowed_existing_sha256": [
         "0e3bd37be50f4a8e8f5d4ad7de644f95645d489ee6a29316e826978664c29916",
         "2a23810408ddf198fa05f7ce8fc8399e1b055cb5aba8aedbf9c0c8fa20448723",
@@ -365,7 +367,8 @@
         "a42f433db1d3cbc412531e04526735fd8df342a6698e14dff3f0964a7812f1fb",
         "d250399238fe4d4707b91f46b2afcbf38874cde8b98f39202003613b8471cc4b",
         "6fb24b3b6e15370c05e3407ff5f442a8cbac128c63e9d05cb3fa78a131cad9cb",
-        "381d7da9e4eb7dc10ef595067b26ebe2389551fa8115233da8d83605cb38fdff"
+        "381d7da9e4eb7dc10ef595067b26ebe2389551fa8115233da8d83605cb38fdff",
+        "80c33a3181fbb3b52309ab10726e2d1b248a700e7c93ce91cc8ff04580fa7874"
       ]
     },
     "inventure_native_z.py": {
@@ -515,7 +518,7 @@
     "command": "INVENTURE_NOZZLE_Z_TEST",
     "macro": "ZORTRAX_NOZZLE_Z_TEST",
     "mcu_abi": 1,
-    "mcu_release": "RC8-CONTROL-R7-NOZZLE-Z",
+    "mcu_release": "RC8-CONTROL-R7-NOZZLE-Z-DUAL",
     "speed_profile": "OEM",
     "samples": {
       "T0": 2,
@@ -523,6 +526,10 @@
     },
     "coordinate_saved": false,
     "tested_on_printer": false,
-    "documentation": "docs/NOZZLE_Z_TEST_R0323.md"
+    "documentation": "docs/NOZZLE_Z_TEST_R0323.md",
+    "dual_abi": 1,
+    "shared_xy_and_pe12_reference": true,
+    "heating": "both nozzles during PE12 seek and coarse Z approach",
+    "clearance_mm": 10
   }
 }

@@ -541,11 +541,12 @@ class FactoryProgram:
     def home(self, y_first=False):
         return (yield from self._module('home', self._home_steps(y_first)))
 
-    def _home_steps(self, y_first):
+    def _home_steps(self, y_first, include_z=True):
         p = self.p
         yield from self._phase('HOME')
         horizontal = ('Y', 'X') if y_first else ('X', 'Y')
-        for axis, maximum, speed in (('Z', p['home_z_max'], p['z_speed']),
+        vertical = (('Z', p['home_z_max'], p['z_speed']),) if include_z else ()
+        for axis, maximum, speed in (*vertical,
                 *((axis, p['home_xy_max'], p['home_speed']) for axis in horizontal)):
             result = yield dict(kind='home', axis=axis, max_mm=maximum, speed=speed)
             if isinstance(result, dict) and result.get('ok') is False:

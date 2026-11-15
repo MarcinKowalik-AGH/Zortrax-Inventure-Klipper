@@ -24,10 +24,21 @@ class FactoryDevice(support.Device):
         return super().active() or bool(self.session and self.session['active'])
 
     def out(self,args):
-        self.allow_output=bool(self.session and self.session['active']
-                               and args[0]==1 and args[1]==6+self.session['tool'])
+        s=self.session
+        self.allow_output=bool(s and s['active'] and args[0]==1 and (
+            args[1]==6+s['tool'] or s.get('dual') and args[1] in (6,7)))
         try:return super().out(args)
         finally:self.allow_output=False
+
+    def refresh_heaters(self,context):
+        # Other cases can replace this ideal plant with independent heater ramps.
+        heaters=(context.get('factory') or {}).get('dual_heaters') or (context,)
+        for heater in heaters:
+            tool=heater['tool']
+            if self.output(6+tool)['duty']:
+                target=heater['target']
+                self.h.temperatures[tool]=target
+                self.h.raw_adc[tool]=round(target*4095./660.)
 
     def fraction(self):
         if self.motion is None:return 0.
@@ -86,7 +97,8 @@ class FactoryDevice(support.Device):
             self.terminate(6);self.last_update=now;return
         t=self.h.temperatures[s['tool']]
         moving_e=bool(self.motion and self.motion['counts'][3] and super().active_motion())
-        if t>=s['high'] or (s['mode'] or moving_e) and t<s['low']:
+        if (t>=s['high'] or (s['mode'] or moving_e) and t<s['low']
+                or s.get('dual') and max(self.h.temperatures[:2])>=s['high']):
             self.terminate(4);self.last_update=now;return
         mode=s['mode']
         # A/B requests are physical model events, independent of renew packets.
@@ -113,22 +125,29 @@ class FactoryDevice(support.Device):
     def query_factory(self,args):
         action,tool,mode,monitor,duration,budget,lease,low,high,token,sequence=args
         self.factory_packets.append(tuple(args));self.update();reject=0
-        if action==1:
+        if action in (1,4):
             if self.session is None or self.session['token']!=token:
                 self.session=dict(token=token,tool=tool,mode=mode,monitor=monitor,
                     duration=duration,budget=budget,low=low,high=high,sequence=sequence,
-                    deadline=self.now()+lease/1000.,active=1,reason=0)
+                    deadline=self.now()+lease/1000.,active=1,reason=0,dual=action==4)
                 self.mode_history.append(mode)
                 if mode==1:self.auto_entries+=1
         elif action==2:
             if not self.session or not self.session['active'] or token!=self.session['token']:reject=4
+            elif tool!=self.session['tool']:reject=1
             elif sequence>self.session['sequence']:
                 if mode!=self.session['mode']:
                     self.running=False;self.mode_history.append(mode)
                     if mode==1:self.auto_entries+=1;self.next_auto=self.now()
                 self.session.update(mode=mode,monitor=monitor,sequence=sequence,
                                     deadline=self.now()+lease/1000.)
-        elif action==3:self.terminate(2,heaters=False)
+        elif action==3:self.terminate(2,heaters=bool(self.session and self.session['dual']))
+        elif action==5:
+            s=self.session
+            if not s or not s['active'] or not s['dual'] or token!=s['token'] or s['tool']!=0:
+                reject=4
+            elif (tool,mode,monitor,sequence)!=(1,0,0,s['sequence']+1):reject=1
+            else:s.update(tool=1,sequence=sequence,deadline=self.now()+lease/1000.)
         self.update()
         s=self.session or dict(token=token,tool=tool,mode=0,active=0,reason=0,sequence=0,deadline=0.)
         age=0xffffffff if self.last_edge is None else round((self.now()-self.last_edge)*1000)
@@ -157,11 +176,7 @@ class FactoryHostTests(unittest.TestCase):
             # An ideal settled heater is sufficient here. Temperature dynamics
             # are verified separately against the retained PID plant tests.
             context=h.load_test_context
-            if context is not None:
-                i=context['tool']
-                if h.device.output(6+i)['duty']:
-                    target=context['target']
-                    h.temperatures[i]=target;h.raw_adc[i]=round(target*4095./660.)
+            if context is not None:h.device.refresh_heaters(context)
             h.device.update()
         h.refresh=refresh
         return h,ops,p13

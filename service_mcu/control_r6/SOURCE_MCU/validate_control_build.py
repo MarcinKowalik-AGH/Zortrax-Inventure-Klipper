@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-NOZZLE-Z'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-NOZZLE-Z-DUAL'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -284,6 +284,8 @@ def check_dictionary(path: Path) -> dict:
                               'non_improvements=%c up_steps=%u down_steps=%u')
     if conf.get('INVENTURE_NOZZLE_Z_TEST_ABI') != 1:
         raise ValueError('R7 missing two-nozzle Z test ABI')
+    if conf.get('INVENTURE_NOZZLE_Z_DUAL_ABI') != 1:
+        raise ValueError('R7 missing dual-nozzle shared Z reference ABI')
     if (nozzle_z_test_command not in d.get('commands', {})
             or nozzle_z_test_response not in d.get('responses', {})):
         raise ValueError('R7 missing exact two-nozzle Z test command or response schema')
@@ -327,6 +329,7 @@ def check_dictionary(path: Path) -> dict:
             'native_z_refine_exact_command_schema':native_z_refine_command,
             'native_z_refine_exact_response_schema':native_z_refine_response,
             'NOZZLE_Z_TEST_ABI':conf['INVENTURE_NOZZLE_Z_TEST_ABI'],
+            'NOZZLE_Z_DUAL_ABI':conf['INVENTURE_NOZZLE_Z_DUAL_ABI'],
             'nozzle_z_test_exact_command_schema':nozzle_z_test_command,
             'nozzle_z_test_exact_response_schema':nozzle_z_test_response,
             'axis_exact_command_schema':axis_command, **rc5}

@@ -69,7 +69,7 @@ static void sl_guard(uint32_t now);
 static struct {
     uint32_t token,sequence,deadline,lease_ms,duration_ms,budget_steps;
     int16_t min_c,max_c;
-    uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor;
+    uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z;
 } fs;
 static void fs_guard(uint32_t now);
 static void fs_age_update(uint32_t now);
@@ -112,6 +112,14 @@ static int16_t control_temp(unsigned i,uint32_t now,uint8_t *valid) {
     *valid=!!(seen&BIT(i)) && (uint32_t)(now-stamp)<MS(1000)
         && raw>(i<2?8:0) && raw<4095;
     return i<2?(int32_t)raw*660/4095:lut_temperature(raw);
+}
+static uint8_t fs_nozzle_temperature_ok(unsigned tool,uint32_t now,uint8_t require_hot) {
+    uint8_t valid;
+    int16_t t=control_temp(tool,now,&valid);
+    return valid && (!require_hot || t>=fs.min_c) && t<fs.max_c && co[6+tool].reason<3;
+}
+static uint8_t fs_owns_output(unsigned i) {
+    return fs.active && (i==6+fs.tool || (fs.dual_nozzle_z && (i==6 || i==7)));
 }
 static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     for(unsigned i=0;i<8;i++)if(mask&BIT(i)) {
@@ -653,8 +661,11 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
                 || locks_on[0] || locks_on[1]))reject=2;
         if(!reject && direct && args[5] && !cm_axis_e_ready(tool,now))reject=5;
         if(!reject && fs.active && args[5]) {
-            uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
-            if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
+            if(fs.dual_nozzle_z)reject=2;
+            else {
+                uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
+                if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
+            }
         }
         if(!reject && (zh_active() || sl.active || cm.active || motor_test.running || xy_seek_busy()
                 || t0_heat_busy() || fan_manual_active()))reject=2;
@@ -732,9 +743,9 @@ void command_inventure_output(uint32_t *args) {
         if(duty!=co[i].requested_duty || duration!=co[i].requested_ms || limit!=co[i].limit)reject=1;
     } else if(action==1) {
         if(control_mode!=CT_SERVICE || !control_ready(now))reject=3;
-        else if((fs.active && i!=6+fs.tool) || (sl.active && i!=6+sl.tool)
+        else if((fs.active && !fs_owns_output(i)) || (sl.active && i!=6+sl.tool)
                 || (cm.active && !(sl.active && i==6+sl.tool && cm.token==sl.token)
-                    && !(fs.active && i==6+fs.tool)
+                    && !fs_owns_output(i)
                     && !(cm.fast_direct && cm.planned[3] && i==6u+cm.fast_tool))
                 || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active())reject=2;
         else if(i>=6 && (limit<40 || limit>control_max[th_heaters[i-6].sensor]
@@ -891,67 +902,89 @@ static void fs_set_mode(unsigned mode,unsigned monitor,uint32_t now) {
 }
 static void fs_normal_stop(void) {
     fs.active=0;fs.reason=2;transport_live=0;transport_selected=255;
-    zh_stop();control_motion_cancel();motor_test_write(GPIOE,BIT(10),0);
+    zh_stop();control_motion_cancel();
     for(unsigned i=0;i<2;i++)transport_stop_channel(i);
     gpio_pwm_write(feeder_clock,0);
-    // The selected heater's independent short lease remains owned by the
-    // host PID. Emergency/global STOP and faults always cut all outputs.
+    if(fs.dual_nozzle_z) {
+        control_output_off(6);control_output_off(7);
+    }
+    motor_test_write(GPIOE,BIT(10),0);
+    // The normal filament session's selected heater retains its host PID lease.
 }
 static void factory_external_stop(unsigned i) {
-    if(fs.active && i==fs.tool)control_stop_all();
+    if(fs.active && (i==fs.tool || fs.dual_nozzle_z))control_stop_all();
 }
 static void fs_guard(uint32_t now) {
     if(!fs.active)return;
-    uint8_t why=0,valid;int16_t t=control_temp(fs.tool,now,&valid);
+    uint8_t why=0;
     if(!control_ready(now))why=6;
     else if(iv9_due(now,fs.deadline))why=3;
-    else if(!valid || ((fs.mode!=IVT_STOP || (cm.active && cm.planned[3])) && t<fs.min_c) || t>=fs.max_c
-            || !control_sensors_valid(control_guard_mask|31,now) || co[6+fs.tool].reason>=3)why=4;
+    else if(!fs_nozzle_temperature_ok(fs.tool,now,fs.mode!=IVT_STOP || (cm.active && cm.planned[3]))
+            || (fs.dual_nozzle_z && !fs_nozzle_temperature_ok(1-fs.tool,now,0))
+            || !control_sensors_valid(control_guard_mask|31,now))why=4;
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
             || transport_selected!=fs.tool || transport[fs.tool].fault
-            || !transport[fs.tool].configured || cm.phase==CM_FAILED)why=5;
+            || !transport[fs.tool].configured || cm.phase==CM_FAILED
+            || (fs.dual_nozzle_z && (GPIOC->IDR&BIT(13))))why=5;
     if(why){control_stop_all();fs.reason=why;}
 }
 #include "inventure_z_home.inc"
+static void fs_configure_tool(unsigned tool) {
+    fs.tool=tool;transport_selected=tool;transport_live=1;
+    struct ivt_state *s=&transport[tool];
+    s->configured=s->cartridge=1;s->duration=MS(fs.duration_ms);
+    s->assigned_budget=fs.budget_steps;s->budget=fs.budget_steps;s->retry=s->fault=0;
+}
+static uint8_t fs_dual_nozzle_z_clearance(void) {
+    return !zh.active && zh.nozzle_test && zh.owner==fs.token && zh.tool==0 && zh.status==ZH_DONE
+        && cm.run==zh.motion_run+1 && cm.phase==CM_DONE && cm.reason==CR_COMPLETE && !cm.active
+        && !cm.planned[0] && !cm.planned[1] && !cm.planned[3] && !(cm.direction&BIT(2))
+        && cm.planned[2]==ZH_MAX_SPAN && cm.sent[2]==ZH_MAX_SPAN
+        && (GPIOE->ODR&BIT(10)) && zh_contact_open() && !(GPIOC->IDR&BIT(13));
+}
 void command_inventure_factory_session(uint32_t *args) {
     unsigned action=args[0],tool=args[1],mode=args[2],monitor=args[3],duration=args[4];
     uint32_t budget=args[5],lease=args[6],token=args[9],sequence=args[10];
     int16_t minimum=args[7],maximum=args[8];
     irqstatus_t irq=irq_save();uint32_t now=timer_read_time();uint8_t reject=0;
     fs_age_update(now);zh_guard(now);fs_guard(now);
-    if(action>3)reject=1;
+    uint8_t start=action==1 || action==4;
+    uint8_t dual=action==4;
+    if(action>5)reject=1;
     else if(action==3) {
         if(!token || token!=fs.token)reject=4;
         else if(fs.active)fs_normal_stop();
-    } else if(action==1 && token && token==fs.token) {
+    } else if(start && token && token==fs.token) {
         // An old START never renews or revives the previous session.
-        if(tool!=fs.tool || mode!=fs.start_mode || monitor!=fs.start_monitor
+        if(dual!=fs.dual_nozzle_z || tool!=fs.tool || mode!=fs.start_mode || monitor!=fs.start_monitor
                 || duration!=fs.duration_ms || budget!=fs.budget_steps || lease!=fs.lease_ms
                 || minimum!=fs.min_c || maximum!=fs.max_c || sequence)reject=1;
-    } else if(action==1) {
+    } else if(start) {
         if(tool>1 || mode>IVT_GATED || monitor>1 || !duration || duration>1500
                 || !budget || budget>960000 || lease<250 || lease>1500 || !token || sequence
-                || minimum<180 || minimum>230 || maximum<=minimum+5 || maximum>250)reject=1;
+                || minimum<180 || minimum>230 || maximum<=minimum+5 || maximum>250
+                || (dual && (tool || mode!=IVT_STOP || monitor)))reject=1;
         if(!reject && (fs.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
                 || t0_heat_busy() || fan_manual_active() || transport_live || assist_pending[0] || assist_pending[1]
                 || feeder_running[0] || feeder_running[1] || locks_on[0] || locks_on[1]))reject=2;
-        for(unsigned i=0;i<10;i++)if(!reject && i!=6+tool && co[i].duty)reject=2;
+        for(unsigned i=0;i<10;i++)if(!reject && (dual || i!=6+tool) && co[i].duty)reject=2;
         uint8_t valid;int16_t t=control_temp(tool<2?tool:0,now,&valid);
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now) || !auxiliary_ready
                 || !valid || (mode!=IVT_STOP && t<minimum) || t>=maximum || co[6+tool].reason>=3
                 || !control_sensors_valid(control_guard_mask|31,now)
                 || (door_policy_enabled()&&door_closed_mask()!=3)))reject=3;
+        if(!reject && dual) {
+            uint8_t other_valid;int16_t other_t=control_temp(1,now,&other_valid);
+            if(!other_valid || other_t>=maximum || co[7].reason>=3 || (GPIOC->IDR&BIT(13)))reject=3;
+        }
         if(!reject) {
             for(unsigned i=0;i<2;i++)transport_stop_channel(i);
             gpio_pwm_write(feeder_clock,0);
             fs.token=token;fs.sequence=0;fs.deadline=now+MS(lease);fs.lease_ms=lease;
             fs.duration_ms=duration;fs.budget_steps=budget;fs.min_c=minimum;fs.max_c=maximum;
-            fs.tool=tool;fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
-            fs.start_mode=mode;fs.start_monitor=monitor;
-            transport_selected=tool;transport_live=1;
-            struct ivt_state *s=&transport[tool];
-            s->configured=s->cartridge=1;s->duration=MS(duration);
-            s->assigned_budget=budget;s->budget=budget;s->retry=s->fault=0;
+            fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
+            fs.start_mode=mode;fs.start_monitor=monitor;fs.dual_nozzle_z=dual;
+            fs_configure_tool(tool);
             cm.phase=CM_IDLE;cm.reason=CR_NONE;
             fs_set_mode(mode,monitor,now);
         }
@@ -959,6 +992,7 @@ void command_inventure_factory_session(uint32_t *args) {
         uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
         if(!fs.active || token!=fs.token || !sequence || sequence<fs.sequence)reject=4;
         else if(tool!=fs.tool || mode>IVT_GATED || monitor>1 || duration!=fs.duration_ms
+                || (fs.dual_nozzle_z && (mode!=IVT_STOP || monitor))
                 || budget!=fs.budget_steps || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
         else if(zh_active() && (mode!=IVT_STOP || monitor!=fs.monitor))reject=2;
         else if(mode!=IVT_STOP && (!valid || t<fs.min_c || t>=fs.max_c
@@ -967,6 +1001,17 @@ void command_inventure_factory_session(uint32_t *args) {
             if(mode!=fs.mode || monitor!=fs.monitor)reject=1;
         } else {
             fs.sequence=sequence;fs.deadline=now+MS(lease);fs_set_mode(mode,monitor,now);
+        }
+    } else if(action==5) {
+        if(!fs.active || !fs.dual_nozzle_z || token!=fs.token || fs.tool || !sequence
+                || sequence!=fs.sequence+1)reject=4;
+        else if(tool!=1 || mode!=IVT_STOP || monitor || duration!=fs.duration_ms || budget!=fs.budget_steps
+                || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
+        else if(!fs_dual_nozzle_z_clearance())reject=3;
+        else {
+            transport_stop_channel(0);
+            fs_configure_tool(1);
+            fs.sequence=sequence;fs.deadline=now+MS(lease);
         }
     }
     unsigned i=fs.tool;struct ivt_state s=transport[i];

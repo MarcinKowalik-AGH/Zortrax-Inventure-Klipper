@@ -811,6 +811,115 @@ static void nozzle_test_return_to_bottom(void)
     assert(!fs.active && GPIOE->BSRR==(BIT(10)<<16));
 }
 
+static void dual_nozzle_reset(void)
+{
+    memset(&zh,0,sizeof(zh));
+    memset(&sl,0,sizeof(sl));
+    control_reset(0xffff0000u);
+    mock_probe_adc[0]=mock_probe_adc[1]=166;
+    z_home_adc();
+    factory_lease(4,0,IVT_STOP,0);
+    assert(fs.active && fs.dual_nozzle_z && !factory_reply[3]);
+    GPIOE->ODR|=BIT(10); // Mock BSRR writes do not update the output latch.
+}
+
+static void dual_nozzle_finish_probe(unsigned tool,unsigned token)
+{
+    nozzle_test(1,OWNER,token,5,INTERVAL_US,1);
+    assert(zh.active && !nozzle_z_reply.reject && nozzle_z_reply.tool==tool);
+    while(zh.active) {
+        contact(zh.phase<=ZH_SEEK ? zh.net>=2 : zh.net>1);
+        step_timer();
+    }
+    nozzle_test_terminal(tool,token,ZH_DONE);
+    assert(fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+}
+
+static void dual_nozzle_reference(void)
+{
+    dual_nozzle_reset();
+    motion(1,0,0,0,5,0,2000,10,1000,0,0,0,TOKEN-1);
+    assert(cm.active);
+    output(1,6,32,1500,240,67);
+    output(1,7,64,1500,240,68);
+    output(1,8,64,1500,60,69);
+    assert(co[6].duty==32 && co[7].duty==64 && !co[8].duty);
+    while(cm.active)motion_tick();
+
+    mock_probe_adc[0]=1427;
+    z_home_adc();
+    nozzle_test(1,OWNER,TOKEN,5,INTERVAL_US,1);
+    assert(!zh.active && nozzle_z_reply.reject==3);
+    mock_probe_adc[1]=1427;
+    z_home_adc();
+    probe(1,OWNER,TOKEN,5,INTERVAL_US,1);
+    assert(!zh.active && z_home_reply.reject==4);
+    edge(1,OWNER,TOKEN,ZH_EDGE_CLOSE,5,INTERVAL_US);
+    assert(!zh.active && z_edge_reply.reject==4);
+    factory_lease(2,0,IVT_FORWARD,1);
+    assert(factory_reply[3]==1 && !TIM9->CCR2);
+    motion(1,0,0,0,0,5,2000,10,1000,0,0,0,TOKEN+1);
+    assert(!cm.active && !cm.planned[3]);
+    factory_lease(5,1,IVT_STOP,1);
+    assert(factory_reply[3]==3 && fs.tool==0);
+
+    dual_nozzle_finish_probe(0,TOKEN);
+    factory_lease(5,1,IVT_STOP,1);
+    assert(factory_reply[3]==3 && fs.tool==0);
+    dual_nozzle_finish_probe(0,TOKEN+1);
+
+    motion(1,0,0,0,ZH_MAX_SPAN,0,3200,10,6000,BIT(2)|BIT(4),BIT(2)|BIT(4),0,TOKEN+2);
+    assert(cm.active);
+    uint32_t last=mock_now,seq=0;
+    while(cm.active) {
+        motion_tick();
+        if((uint32_t)(mock_now-last)>=MS(200)) {
+            z_home_adc();
+            factory_lease(2,0,IVT_STOP,++seq);
+            output(1,6,32,1500,240,100+seq);
+            output(1,7,64,1500,240,200+seq);
+            last=mock_now;
+        }
+    }
+    assert(cm.reason==CR_COMPLETE && cm.sent[2]==ZH_MAX_SPAN);
+    z_home_adc();
+    GPIOE->ODR&=~BIT(10);
+    factory_lease(5,1,IVT_STOP,seq+1);
+    assert(factory_reply[3]==3 && fs.tool==0);
+    GPIOE->ODR|=BIT(10);
+    contact(1);
+    factory_lease(5,1,IVT_STOP,seq+1);
+    assert(factory_reply[3]==3 && fs.tool==0);
+    contact(0);
+    factory_lease(5,1,IVT_STOP,seq+2);
+    assert(factory_reply[3]==4 && fs.tool==0);
+    factory_lease(5,1,IVT_STOP,++seq);
+    assert(!factory_reply[3] && fs.active && fs.tool==1 && fs.token==OWNER && fs.sequence==seq);
+    assert(GPIOE->BSRR==BIT(10) && co[6].duty==32 && co[7].duty==64 && !TIM9->CCR2);
+
+    factory_lease(2,1,IVT_STOP,++seq);
+    assert(!factory_reply[3]);
+    dual_nozzle_finish_probe(1,TOKEN+3);
+    dual_nozzle_finish_probe(1,TOKEN+4);
+    factory_lease(3,1,IVT_STOP,0);
+    assert(!fs.active && !co[6].duty && !co[7].duty && GPIOE->BSRR==(BIT(10)<<16));
+}
+
+static void dual_nozzle_secondary_heater_guard(void)
+{
+    dual_nozzle_reset();
+    mock_probe_adc[0]=mock_probe_adc[1]=1427;
+    z_home_adc();
+    output(1,6,32,1500,240,67);
+    output(1,7,32,1500,240,68);
+    nozzle_test(1,OWNER,TOKEN,5,INTERVAL_US,1);
+    assert(zh.active);
+    mock_probe_adc[1]=166;
+    step_timer();
+    nozzle_test_terminal(0,TOKEN,ZH_GUARD);
+    assert(!fs.active && !co[6].duty && !co[7].duty && !zh.up_steps && !zh.down_steps);
+}
+
 int main(void)
 {
     minimum_and_final_settle(0);
@@ -841,5 +950,8 @@ int main(void)
     nozzle_test_lost_contact();
     nozzle_test_return_to_bottom();
     puts("PASS nozzle Z test: T0/T1 sensing, 201/101 misses, span, wrapped replay, local guards and held PE12 retreat");
+    dual_nozzle_reference();
+    dual_nozzle_secondary_heater_guard();
+    puts("PASS dual nozzle Z: shared ownership, both heaters, exact clearance, probe exclusion and secondary guards");
     return 0;
 }

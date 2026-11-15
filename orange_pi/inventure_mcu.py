@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-POLL'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DUAL'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -473,6 +473,7 @@ class InventureMCU:
         self.z_home_abi=int(self.mcu.get_constants().get('INVENTURE_Z_HOME_ABI',0))
         self.z_edge_abi=int(self.mcu.get_constants().get('INVENTURE_Z_EDGE_ABI',0))
         self.nozzle_z_test_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_Z_TEST_ABI',0))
+        self.nozzle_z_dual_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_Z_DUAL_ABI',0))
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
@@ -1646,6 +1647,7 @@ class InventureMCU:
             'z_home_abi':getattr(self,'z_home_abi',0),
             'z_edge_abi':getattr(self,'z_edge_abi',0),
             'nozzle_z_test_abi':getattr(self,'nozzle_z_test_abi',0),
+            'nozzle_z_dual_abi':getattr(self,'nozzle_z_dual_abi',0),
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
@@ -1996,7 +1998,10 @@ class InventureMCU:
         if action==1 and power==0:action=2
         if action==1 and channel>=6 and limit<40:raise gcmd.error('Heaters require LIMIT>=40')
         load_context=getattr(self,'load_test_context',None)
-        if action==2 and load_context is not None and channel==load_context['tool']+6:
+        dual=(load_context or {}).get('factory') or {}
+        if action==2 and load_context is not None and (channel==load_context['tool']+6
+                or 'dual_heaters' in dual and channel in (6,7)):
+            self._nozzle_z_finish('stopped',reason='heater_off')
             self._load_test_cancel('heater_off')
             self._control_abort()
         attempted=False
@@ -2264,6 +2269,10 @@ class InventureMCU:
                 result['factory']['z_home_progress']=f.get('z_home_progress')
                 if 'z_mcu_state' in f:result['factory']['z_mcu_state']=f['z_mcu_state']
                 if 'nozzle_z_state' in f:result['factory']['nozzle_z_state']=f['nozzle_z_state']
+                if 'dual_heaters' in f:
+                    result['factory']['nozzle_temperatures_c']={
+                        'T%d'%heater['tool']:self.panel_temperature(heater['tool'],now)[0]
+                        for heater in f['dual_heaters']}
             cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
@@ -2454,23 +2463,25 @@ class InventureMCU:
         if type(counter) is not int:raise ValueError('Missing F0 hotend fan tachometer')
         if counter!=context['fan_counter']:
             context['fan_counter']=counter;context['fan_deadline']=now+10.
-        if max(values[:2])>40 or context['duty']:
+        dual_heaters=(context.get('factory') or {}).get('dual_heaters')
+        if max(values[:2])>40 or context['duty'] or any(h['duty'] for h in dual_heaters or ()):
             if now>=context['fan_deadline']:raise ValueError('No F0 hotend cooling fan pulses for 10 seconds')
         else:context['fan_deadline']=now+10.
         if not context['reached_target'] and not context.get('factory_preparing',False):
             if now-context['start']>=300.:raise ValueError('Nozzle did not reach target within 300 seconds')
-            if now-context['start']>=60. and temperature<context['start_temperature']+5.:
+            if dual_heaters is None and now-context['start']>=60. and temperature<context['start_temperature']+5.:
                 raise ValueError('Nozzle temperature did not rise by 5C within 60 seconds')
         return temperature
 
-    def _load_test_output(self,context,duty):
-        state=self._output_query(context['tool']+6,1 if duty else 2,duty,
-            1500 if duty else 0,context['limit'],owner=context)
+    def _load_test_output(self,context,duty,heater=None):
+        heater=context if heater is None else heater
+        state=self._output_query(heater['tool']+6,1 if duty else 2,duty,
+            1500 if duty else 0,heater['limit'],owner=context)
         if state['reject']:raise ValueError(state['reject'])
         if state['duty']!=duty:raise ValueError('MCU did not apply the requested heater power')
         if not duty and (state['reason']!='operator_off' or state['remaining_ms']):
             raise ValueError('MCU did not confirm a fresh heater OFF')
-        context['duty']=duty;context['output_token']=state['token']
+        heater['duty']=duty;heater['output_token']=state['token']
         return state
 
     def _load_test_capture(self,context,baseline=False):
@@ -2500,13 +2511,14 @@ class InventureMCU:
             has_unfinished_jog=context.get('jog') is not None or context.get('stream') is not None,
             flow_mark=context.get('flow_mark'))
 
-    def _load_test_check_output(self,context):
-        output=self._output_query(context['tool']+6)
+    def _load_test_check_output(self,context,heater=None):
+        heater=context if heater is None else heater
+        output=self._output_query(heater['tool']+6)
         if self.load_test_context is not context:raise ValueError('Load test was stopped')
         if output['reject'] or output['reason'] in ('temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown'):
             raise ValueError('MCU heater guard: '+str(output['reason']))
-        if context['duty'] and (output['duty']!=context['duty'] or not output['remaining_ms']
-                or output['token']!=context['output_token']):
+        if heater['duty'] and (output['duty']!=heater['duty'] or not output['remaining_ms']
+                or output['token']!=heater['output_token']):
             raise ValueError('Heater power lease expired or changed; restart the test explicitly')
 
     def _load_test_start_window(self,context):
@@ -2682,8 +2694,16 @@ class InventureMCU:
         return dict(phase='running',action=batch['action'],tool=batch['tool'],
                     stage=factory.get('phase'), tools=batch['results'],
                     temperature_c=self.panel_temperature(batch['tool'],self.reactor.monotonic())[0],
+                    nozzle_temperatures_c={name:self.panel_temperature(index,self.reactor.monotonic())[0]
+                                           for index,name in enumerate(('T0','T1'))},
                     mcu_sample=factory.get('nozzle_z_state'),coordinate_saved=False,
                     oled_bulk_hold=bool(getattr(self,'thermal_display_held',False)))
+
+    def _nozzle_z_record(self,factory,tool,readings,pad):
+        stroke=factory['motion_legs']['selector_press']
+        self.nozzle_z_context['results']['T%d'%tool]=dict(readings=readings,pad_raw_xy=pad,
+            selector_press=dict(start_raw_xy=stroke['start'],target_raw_xy=stroke['target'],
+                                reason=stroke['reason']))
 
     def _nozzle_z_tick(self,batch,eventtime):
         from .inventure_z_home import nozzle_z_comparison
@@ -2699,21 +2719,13 @@ class InventureMCU:
                 self._nozzle_z_finish('failed',tool=batch['tool'],reason=result['reason'],
                                       details=result.get('details',{}))
                 return self.reactor.NEVER
-            name='T%d'%batch['tool']
-            stroke=factory['motion_legs']['selector_press']
-            batch['results'][name]=dict(readings=result['readings'],pad_raw_xy=result['pad_raw_xy'],
-                selector_press=dict(start_raw_xy=stroke['start'],target_raw_xy=stroke['target'],
-                                    reason=stroke['reason']))
             if batch['action']=='PREPARE':
-                self._nozzle_z_finish('prepared',tool=name,table_at_bottom=True)
-            elif batch['tool']==0:
-                batch['tool']=1
-                batch['child']=self._factory_start(batch['gcmd'],operation='NOZZLE_Z_MEASURE',
-                                                   nozzle_parameters=batch['parameters'][1])
-                return self.reactor.monotonic()+.2
+                self._nozzle_z_record(factory,batch['tool'],result['readings'],result['pad_raw_xy'])
+                self._nozzle_z_finish('prepared',tool='T%d'%batch['tool'],table_at_bottom=True)
             else:
                 comparison=nozzle_z_comparison(batch['results'],batch['max_spread_mm'])
-                self._nozzle_z_finish('done',table_at_bottom=True,measurement=comparison)
+                self._nozzle_z_finish('done',table_at_bottom=False,measurement=comparison,
+                                      reference='single_xy_home_and_pe12',clearance_mm=10.)
         except Exception as exc:
             self._nozzle_z_finish('failed',tool=batch['tool'],reason=str(exc),
                                   details=dict(getattr(exc,'details',{})))
@@ -2745,6 +2757,8 @@ class InventureMCU:
         else:
             if gcmd.get('TOOL',None) is not None:raise gcmd.error('START measures both T0 and T1')
             if gcmd.get('ACK','')!=NOZZLE_Z_ACK:raise gcmd.error('START requires ACK='+NOZZLE_Z_ACK)
+            if getattr(self,'nozzle_z_dual_abi',0)!=1:
+                raise gcmd.error('START requires the RC8-CONTROL-R7-NOZZLE-Z-DUAL MCU application')
             tools=[0,1]
 
         class NozzleParameters:
@@ -2851,6 +2865,7 @@ class InventureMCU:
         )
         from .inventure_z_home import Z_HOME_PROCEDURES, ZHomeProgram, z_home_parameters
         nozzle_test=nozzle_parameters is not None
+        dual=operation=='NOZZLE_Z_MEASURE'
         z_home=operation in Z_HOME_PROCEDURES or nozzle_test
         z_settings=None
         try:
@@ -2895,10 +2910,11 @@ class InventureMCU:
             if getattr(self,'load_test_context',None) is not None:
                 raise ValueError('Load test already active; use STATUS or STOP')
             if z_home:
-                self._z_home_inputs({'nozzle_contact':1})
+                self._z_home_inputs({} if dual else {'nozzle_contact':1})
                 z_program=ZHomeProgram(p,z_settings)
-                program=(z_program.run_nozzle(operation=='NOZZLE_Z_PREPARE') if nozzle_test
-                         else z_program.run(operation))
+                if dual:program=z_program.run_nozzle_dual(*self.nozzle_z_context['parameters'][1])
+                elif nozzle_test:program=z_program.run_nozzle(prepare=True)
+                else:program=z_program.run(operation)
             else:program=FactoryProgram(p).run(operation)
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
@@ -2922,6 +2938,12 @@ class InventureMCU:
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
         if z_home:context['factory']['z_home_settings']=z_settings
+        if dual:
+            heaters=[]
+            for index,(plan,_) in sorted(self.nozzle_z_context['parameters'].items()):
+                heaters.append(dict(tool=index,target=plan['target'],power=plan['max_power'],
+                                    limit=round(plan['target']+20),duty=0,output_token=None))
+            context['factory']['dual_heaters']=heaters
         self._load_test_emit(context)
         if nozzle_test:return context
 
@@ -3088,14 +3110,18 @@ class InventureMCU:
             return primary
         return reason
 
-    def _factory_session(self,context,mode=None,monitor=None):
+    def _factory_session(self,context,mode=None,monitor=None,next_tool=None):
         f=context['factory'];p=f['parameters'];starting=not f['session']
         if mode is not None:f['mode']=mode
         if monitor is not None:f['monitor']=monitor
         seq=f['sequence']+1
         from .inventure_factory_core import feeder_budget
         budget=feeder_budget(p)
-        row=self._control_send('factory_session',[1 if starting else 2,context['tool'],
+        tool=context['tool'] if next_tool is None else next_tool
+        if next_tool is not None:action=5
+        elif starting:action=4 if 'dual_heaters' in f else 1
+        else:action=2
+        row=self._control_send('factory_session',[action,tool,
             f['mode'],f['monitor'],p['feeder_ms'],budget,1500,
             round(max(180.,context['target']-25.)),round(context['target']+10.),f['token'],seq],
             mutate=True,owner=context)
@@ -3105,12 +3131,12 @@ class InventureMCU:
             'pulses':(0,0xffffffff),'pulse_age_ms':(0,0xffffffff),'starts':(0,0xffffffff),
             'fault':(0,255),'sequence':(0,0xffffffff),'remaining_ms':(0,1500)})
         if (row['token']!=f['token'] or not row['active'] or row['reject'] or row['reason']
-                or row['tool']!=context['tool'] or row['mode']!=f['mode']
+                or row['tool']!=tool or row['mode']!=f['mode']
                 or row['fault'] or row['sequence']!=seq or not row['remaining_ms']):
             raise ValueError('MCU factory guard/ownership rejected: '+json.dumps(row,sort_keys=True))
         if row['mode']==2 and not row['running']:
             raise ValueError('MCU did not start forward cassette feed: '+json.dumps(row,sort_keys=True))
-        if f['snapshot']:
+        if f['snapshot'] and next_tool is None:
             from .inventure_factory_core import delta32
             delta32(row['pulses'],f['snapshot']['pulses']);delta32(row['starts'],f['snapshot']['starts'])
         f.update(session=True,sequence=seq,snapshot=dict(row))
@@ -3118,15 +3144,21 @@ class InventureMCU:
 
     def _factory_begin_move(self,context,action):
         from .inventure_factory_core import MAX_MASTER_RATE,FACTORY_MOTION_MAX_RATE
-        f=context['factory'];p=f['parameters'];pos=f['position']
+        f=context['factory'];p=f.get('motion_parameters',f['parameters']);pos=f['position']
         releasing=action['kind']=='home_release'
         home=action['kind']=='home' or releasing
         probe=action['kind']=='z_contact_move'
         e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
         z=pos[2];mask=0
         if probe:
-            from .inventure_z_home import Z_STEPS_PER_MM
-            if not f['reference_valid'] or not f['selection_commanded'] or not context['ready_latched']:
+            from .inventure_z_home import Z_BOTTOM, Z_STEPS_PER_MM
+            dual='dual_heaters' in f
+            clearance=(dual and action.get('stage')=='clearance' and not f['homed']
+                       and -10*Z_STEPS_PER_MM<=action['steps']<0
+                       and action['stop_mask']==action['stop_value']==Z_BOTTOM)
+            coarse=dual and action.get('stage')=='coarse' and f['heat_started']
+            qualified=f['reference_valid'] and f['selection_commanded'] and (context['ready_latched'] or coarse)
+            if not (qualified or clearance):
                 raise ValueError('Z probe requires the heated, selected nozzle and a valid lower reference')
             self._z_home_inputs(action['initial_raw'])
             if self.load_test_context is not context:raise ValueError('Z reference was stopped')
@@ -3142,7 +3174,9 @@ class InventureMCU:
             mask={'X':1,'Y':2,'Z':4}[axis]
             stop_value=0 if releasing else mask
         else:
-            if not f['reference_valid']:raise ValueError('Factory motion has no owned homing reference')
+            xy_ready='dual_heaters' in f and not e and {'X','Y'}.issubset(f['homed'])
+            if not f['reference_valid'] and not xy_ready:
+                raise ValueError('Factory motion has no owned homing reference')
             if not p['min_x']<=x<=p['max_x'] or not p['min_y']<=y<=p['max_y']:
                 raise ValueError('Factory motion outside service envelope')
             dx=x-pos[0];dy=y-pos[1];dz=0.;length=math.hypot(dx,dy) or abs(e)
@@ -3299,6 +3333,54 @@ class InventureMCU:
         f['move']=None
         return dict(snap,ok=ok,sent_steps=m['accounted'])
 
+    def _dual_nozzle_heat_start(self,context,now):
+        f=context['factory']
+        for heater in f['dual_heaters']:
+            temperature,state=self.panel_temperature(heater['tool'],now)
+            if state!='valid' or temperature>=heater['target']+10.:
+                raise ValueError('T%d is outside the dual nozzle heating window'%heater['tool'])
+            heater.update(start_temperature=temperature,
+                pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
+        context.update(factory_preparing=False,start=now,deadline=min(now+300.,f['total_deadline']))
+        f['heat_started']=True
+        self._dual_nozzle_heat_tick(context,now)
+
+    def _dual_nozzle_heat_tick(self,context,now):
+        f=context['factory'];heaters=f['dual_heaters']
+        poll=now>=f.get('next_dual_heater_io',0.)
+        for heater in heaters:
+            tool=heater['tool'];target=heater['target']
+            temperature,state=self.panel_temperature(tool,now)
+            if state!='valid' or temperature>=target+10.:
+                raise ValueError('T%d is outside the dual nozzle heating window'%tool)
+            if context['ready_latched'] and not target-10.<=temperature<=target+8.:
+                raise ValueError('T%d left the Z reference temperature band'%tool)
+            start_temperature=heater['start_temperature']
+            if (not context['reached_target'] and now-context['start']>=60.
+                    and start_temperature<target-5. and temperature<start_temperature+5.):
+                raise ValueError('T%d did not heat by 5 C in 60 seconds'%tool)
+            heater['temperature']=temperature
+        if poll:
+            for heater in heaters:self._load_test_check_output(context,heater)
+        for heater in heaters:
+            duty=self._load_test_pid(heater,heater['temperature'],now)
+            if (poll and (duty or heater['duty'])) or (not duty and heater['duty']):
+                self._load_test_output(context,duty,heater)
+        if poll:f['next_dual_heater_io']=self.reactor.monotonic()+NOZZLE_Z_POLL_INTERVAL
+        context['duty']=heaters[context['tool']]['duty']
+
+    def _dual_nozzle_heat_ready(self,context,now):
+        if not all(abs(heater['temperature']-heater['target'])<=2.
+                   for heater in context['factory']['dual_heaters']):
+            context['ready_since']=None
+            return False
+        if context['ready_since'] is None:context['ready_since']=now
+        if now-context['ready_since']<2.:return False
+        context.update(ready_latched=True,reached_target=True)
+        if context['hold_started'] is None:
+            context.update(hold_started=now,deadline=now+context['hold_duration'])
+        return True
+
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
         if kind=='module':
@@ -3326,6 +3408,23 @@ class InventureMCU:
             return dict(f['snapshot'])
         if kind=='z_contact_edge':return self._factory_z_edge(context,action)
         if kind=='nozzle_z_refine':return self._factory_nozzle_z_refine(context,action)
+        if kind=='z_inputs':return self._z_home_inputs(action['expected'])
+        if kind=='dual_heat_start':
+            self._dual_nozzle_heat_start(context,now)
+            return dict(f['snapshot'])
+        if kind=='dual_heat_wait':
+            return dict(f['snapshot']) if self._dual_nozzle_heat_ready(context,now) else None
+        if kind=='dual_switch_tool':
+            row=self._factory_session(context,next_tool=1)
+            context['tool']=self.nozzle_z_context['tool']=1
+            f['motion_parameters'],f['z_home_settings']=self.nozzle_z_context['parameters'][1]
+            f['selection_commanded']=False
+            f['motion_legs'].pop('selector_press',None)
+            context['ready_since']=None
+            return row
+        if kind=='nozzle_z_record':
+            self._nozzle_z_record(f,action['tool'],action['readings'],action['pad_raw_xy'])
+            return dict(f['snapshot'])
         if kind=='z_verify_open':
             if now<action.setdefault('until',now+action['delay_s']):return None
             return self._z_home_inputs({'z_bottom':0})
@@ -3357,7 +3456,7 @@ class InventureMCU:
             if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')
             if 'z_home_settings' in f:
                 self._z_home_inputs({'nozzle_contact':1,
-                    'z_bottom':int(f['operation'] in ('Z_PREPARE','NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE'))})
+                    'z_bottom':int(f['operation'] in ('Z_PREPARE','NOZZLE_Z_PREPARE'))})
                 if self.load_test_context is not context:return None
             f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
             self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
@@ -3376,12 +3475,19 @@ class InventureMCU:
         if 'z_home_settings' in f and context['ready_latched']:
             if not context['target']-10.<=temperature<=context['target']+8.:
                 raise ValueError('Nozzle left the Z reference temperature band')
-        if context['output_token'] is None:self._load_test_output(context,0)
-        self._load_test_check_output(context)
+        dual=f.get('dual_heaters')
+        if dual is not None:
+            for heater in dual:
+                if heater['output_token'] is None:self._load_test_output(context,0,heater)
+        else:
+            if context['output_token'] is None:self._load_test_output(context,0)
+            self._load_test_check_output(context)
         if not waiting:self._factory_session(context)
         if f['heat_started']:
-            duty=self._load_test_pid(context,temperature,now)
-            if duty or context['duty']:self._load_test_output(context,duty)
+            if dual is not None:self._dual_nozzle_heat_tick(context,now)
+            else:
+                duty=self._load_test_pid(context,temperature,now)
+                if duty or context['duty']:self._load_test_output(context,duty)
         if not waiting:
             for _ in range(12):
                 if self.load_test_context is not context:return

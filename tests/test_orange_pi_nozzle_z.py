@@ -64,12 +64,65 @@ class NozzlePlanModel(PlanModel):
                                 pulse_age_ms=4294967295, fault=0)
 
 
+class DualNozzleDevice(z_host_support.ZDevice):
+    def __init__(self, host):
+        super().__init__(host)
+        self.contact_at = None
+        self.motion_starts = []
+        self.power_started = {}
+        self.stepper_enabled = False
+        self.switch_height = None
+
+    def move(self, args):
+        if args[0] == 1:
+            self.motion_starts.append(dict(t=self.now(), arguments=tuple(args),
+                duty=(self.output(6)['duty'], self.output(7)['duty']),
+                temperatures=tuple(self.h.temperatures[:2])))
+            self.stepper_enabled = True
+        return super().move(args)
+
+    def terminate(self, reason, heaters=True):
+        self.stepper_enabled = False
+        super().terminate(reason, heaters)
+
+    def query_factory(self, args):
+        if args[0] == 5:
+            self._settle()
+            retreat = self.z_moves[-1]
+            assert self.stepper_enabled and not self.active_motion() and not self.contact
+            assert retreat['direction'] == -1 and retreat['sent'] == 10 * Z_STEPS_PER_MM
+            self.switch_height = self.z
+        return super().query_factory(args)
+
+    def refresh_heaters(self, context):
+        # Slow enough that firmware must finish the coarse approach and then
+        # wait for T1. Both independent PWM leases must continue during travel.
+        for heater in context['factory']['dual_heaters']:
+            tool = heater['tool']
+            if tool not in self.power_started and self.output(6 + tool)['duty']:
+                self.power_started[tool] = self.now()
+            if tool in self.power_started:
+                elapsed = self.now() - self.power_started[tool]
+                target = min(heater['target'], 25. + elapsed * (14. if not tool else 6.))
+                self.h.temperatures[tool] = target
+                self.h.raw_adc[tool] = round(target * 4095. / 660.)
+
+
 class NozzleZTests(unittest.TestCase):
     def _record_oled_holds(self,host,initially_held=False):
         calls=[]
         host.thermal_display_held=initially_held
         host.printer.objects['inventure_oled']=types.SimpleNamespace(set_thermal_test_hold=calls.append)
         return calls
+
+    def _dual_host(self):
+        host = z_host_support.ZHomeHostTests().host()
+        host.device = device = DualNozzleDevice(host)
+        host._fresh_inputs = device.inputs
+        host.commands.update(control=Wire(device.control), output=Wire(device.out),
+            motion=Wire(device.move), motion_driver=Wire(device.driver),
+            factory_session=Wire(device.query_factory))
+        return host
 
     def test_cold_prepare_selects_each_nozzle_without_moving_up_or_heating(self):
         for tool in ('T0', 'T1'):
@@ -116,10 +169,10 @@ class NozzleZTests(unittest.TestCase):
         self.assertFalse(comparison['coordinate_saved'])
 
     def _run_owned_samples(self,t1_failure=None,service_loss=False):
-        host=z_host_support.ZHomeHostTests().host()
+        host=self._dual_host()
         holds=self._record_oled_holds(host)
         device=host.device
-        device.contact_at=None
+        device.z=20*Z_STEPS_PER_MM
         starts=[]
         state={}
 
@@ -132,6 +185,7 @@ class NozzleZTests(unittest.TestCase):
                 self.assertEqual(owner,device.session['token'])
                 self.assertLess(device.z,147*Z_STEPS_PER_MM)
                 self.assertEqual((interval,repeats),(4000,201))
+                self.assertTrue(all(198.<=value<=202. for value in host.temperatures[:2]))
                 starts.append((tool,device.z,owner,token))
                 state.update(owner=owner,token=token,tool=tool,active=1,status=0,
                              reject=0,net_steps=0,best_steps=0,cycles=0,
@@ -169,6 +223,9 @@ class NozzleZTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'NOZZLE-Z'):host.cmd_nozzle_z_test(start)
         host.nozzle_z_test_abi=1
         host.commands['nozzle_z_test']=Wire(local_refine)
+        with self.assertRaisesRegex(RuntimeError,'NOZZLE-Z-DUAL'):
+            host.cmd_nozzle_z_test(start)
+        host.nozzle_z_dual_abi=1
         with self.assertRaisesRegex(RuntimeError,'T1 pad coordinates must be given together'):
             host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD',T1_PAD_X=72))
         self.assertEqual(device.packets,[])
@@ -197,8 +254,24 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual([(tool,z) for tool,z,_,_ in starts],
                          [(tool,137*Z_STEPS_PER_MM) for tool in (0,0,1,1,1)])
         self.assertEqual(len({token for _,_,_,token in starts}),5)
-        self.assertEqual(len({owner for _,_,owner,_ in starts}),2)
-        self.assertEqual((device.z,device.output(6)['duty'],device.output(7)['duty']),(0,0,0))
+        self.assertEqual(len({owner for _,_,owner,_ in starts}),1)
+        self.assertEqual({packet[9] for packet in device.factory_packets},{starts[0][2]})
+        self.assertEqual([packet[0] for packet in device.factory_packets
+                          if packet[0] in (1,4,5)],[4,5])
+        self.assertEqual(device.switch_height,127*Z_STEPS_PER_MM+250)
+        self.assertEqual((device.z,device.output(6)['duty'],device.output(7)['duty']),
+                         (127*Z_STEPS_PER_MM+210,0,0))
+        homing = [move for move in device.motion_starts
+                  if move['arguments'][9]==move['arguments'][10] and move['arguments'][9] in (1,2,4)]
+        self.assertEqual([move['arguments'][9] for move in homing],[2,1,4])
+        self.assertEqual(homing[0]['duty'],(0,0))
+        self.assertEqual(homing[1]['duty'],(0,0))
+        self.assertTrue(all(homing[2]['duty']))
+        self.assertLess(max(device.power_started.values()),homing[2]['t']+1.)
+        coarse_rise = next(move for move in device.motion_starts
+                           if move['arguments'][4]>100*Z_STEPS_PER_MM and move['arguments'][1]&4)
+        self.assertTrue(all(coarse_rise['duty']))
+        self.assertLess(coarse_rise['temperatures'][1], 198.)
 
     def test_host_reports_t1_probe_failure_after_factory_owner_disappears(self):
         for status,cycles,reason in ((5,512,'z_contact_cycle_limit'),
@@ -231,17 +304,17 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
     def test_active_sample_paces_reports_and_leases_but_keeps_heater_and_cable_checks(self):
-        host=z_host_support.ZHomeHostTests().host()
+        host=self._dual_host()
         device=host.device
-        device.contact_at=None
         host.nozzle_z_test_abi=1
-        times={name:[] for name in ('control','factory_session','output','probe','pid')}
+        host.nozzle_z_dual_abi=1
+        times={name:[] for name in ('control','factory_session','T0','T1','probe','pid')}
         for name in ('control','factory_session','output'):
             callback=host.commands[name].callback
 
             def record(args,key=name,send=callback):
-                if key!='output' or args[0]==0:
-                    times[key].append(host.reactor.now)
+                if key!='output':times[key].append(host.reactor.now)
+                elif args[0]==0:times['T%d'%(args[1]-6)].append(host.reactor.now)
                 return send(args)
 
             host.commands[name]=Wire(record)
@@ -282,9 +355,10 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual(len(times['probe']),3)
         self.assertEqual(times['control'],times['probe'])
         self.assertEqual(times['factory_session'],times['probe'])
-        self.assertEqual(len(times['output']),10)
-        self.assertEqual(times['output'],times['pid'])
-        for trace,period in ((times['probe'],.3),(times['output'],.1)):
+        self.assertEqual(times['T0'],times['T1'])
+        self.assertGreaterEqual(len(times['T0']),3)
+        self.assertEqual(len(times['pid']),20)
+        for trace,period in ((times['probe'],.3),(times['T0'],.3),(times['pid'][::2],.1)):
             for before,after in zip(trace,trace[1:]):
                 self.assertAlmostEqual(after-before,period)
 
@@ -319,6 +393,7 @@ class NozzleZTests(unittest.TestCase):
                 self.assertEqual(host.nozzle_z_last['phase'],'prepared')
                 self.assertFalse(host.thermal_display_held)
                 self.assertEqual(holds,[])
+                self.assertFalse(any(packet[:2]==('output',1) for packet in host.device.packets))
 
     def test_stop_restores_the_prior_oled_hold(self):
         for initially_held in (False,True):
@@ -326,6 +401,7 @@ class NozzleZTests(unittest.TestCase):
                 host=z_host_support.ZHomeHostTests().host()
                 holds=self._record_oled_holds(host,initially_held)
                 host.nozzle_z_test_abi=1
+                host.nozzle_z_dual_abi=1
                 host.commands['nozzle_z_test']=Wire(lambda args: self.fail('Unexpected probe'))
                 host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD'))
                 host.reactor.pause(host.reactor.now+.5)
@@ -339,6 +415,21 @@ class NozzleZTests(unittest.TestCase):
                     self.assertNotIn(False,holds)
                 else:
                     self.assertEqual(holds,[True,False])
+
+    def test_turning_off_the_other_heater_cancels_dual_calibration(self):
+        host=z_host_support.ZHomeHostTests().host()
+        self._record_oled_holds(host)
+        host.nozzle_z_test_abi=host.nozzle_z_dual_abi=1
+        host.commands['nozzle_z_test']=Wire(lambda args: self.fail('Unexpected probe'))
+        host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD'))
+        host.reactor.pause(host.reactor.now+.5)
+        host.cmd_output(Command(ACTION='OFF',CHANNEL='T1'))
+        self.assertIsNone(host.load_test_context)
+        self.assertEqual(host.nozzle_z_last['reason'],'heater_off')
+        self.assertFalse(host.thermal_display_held)
+        before=len(host.device.packets)
+        host.reactor.pause(host.reactor.now+.5)
+        self.assertFalse(any(p[:2]==('output',1) for p in host.device.packets[before:]))
 
     def test_failing_stages_cannot_report_success(self):
         for rises, fault, error in (
