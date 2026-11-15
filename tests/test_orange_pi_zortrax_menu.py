@@ -281,6 +281,90 @@ class MenuServiceTests(unittest.TestCase,MenuFixture):
         obj.state='choose_X';s.last_native_key=None;s._running_view()
         self.assertEqual([x[0] for x in s.view.options if x[1]],['Stop / cancel','Line 7 (neutral)'])
 
+    def _nozzle_xy(self,board):
+        run=dict(phase='idle',run_id=None,lines={},candidate=None)
+        calls=[]
+        def command(gcmd):
+            calls.append(gcmd.values)
+            action=gcmd.get('ACTION')
+            if action=='START':run.update(phase='printing',run_id='pattern-1')
+            elif action=='LINE':
+                run['lines'][gcmd.get('AXIS')]=gcmd.get('LINE')
+                run['candidate']={axis.lower()+'_mm':run['lines'].get(axis,0)*.05
+                                  for axis in ('X','Y')}
+            elif action=='APPLY':run['phase']='applied'
+            elif action=='STOP':run['phase']='stopped'
+        board.nozzle_xy_available=lambda:True
+        board.nozzle_xy_status=lambda:dict(run)
+        board.cmd_nozzle_xy_test=command
+        return run,calls
+
+    def test_nozzle_xy_oled_print_choose_both_axes_review_then_save(self):
+        h,s=self.host();run,calls=self._nozzle_xy(h)
+        h.printer.objects['inventure_alignment']=types.SimpleNamespace(enabled=True,
+            cmd_start=lambda c:self.fail('Legacy route selected over XY test'))
+        s.open('alignment')
+        self.assertEqual(s.view.title,'Print XY test pattern?')
+        self.assertEqual(s.view.selected,0)
+        self.assertEqual(calls,[])
+        s.choose(s.view.token,confirm=True)
+        self.assertEqual(calls,[dict(ACTION='START',ACK='XY_PATTERN_SURFACE_READY')])
+        self.assertEqual(h._control_query()['mode'],'SERVICE')
+        self.assertEqual(s.view.title,'Printing')
+        run['phase']='select'
+        s._tick(h.reactor.now)
+        self.assertEqual(s.view.title,'Choose Left Y')
+        self.assertEqual([s.view.options[i][0] for i in (1,7,13)],
+            ['Line -6','Line 0 (neutral)','Line +6'])
+        s.choose(s.view.token,index=6)
+        self.assertEqual(calls[-1],dict(ACTION='LINE',RUN_ID='pattern-1',AXIS='Y',LINE=-1))
+        self.assertEqual(s.view.title,'Choose Right X')
+        self.assertEqual(len([x for x in s.view.options if x[1] and x[1][0]=='line']),13)
+        s.choose(s.view.token,index=9)
+        self.assertEqual(calls[-1],dict(ACTION='LINE',RUN_ID='pattern-1',AXIS='X',LINE=2))
+        s.choose(s.view.token,index=3)
+        s.choose(s.view.token,index=10)
+        self.assertEqual(calls[-1],dict(ACTION='LINE',RUN_ID='pattern-1',AXIS='X',LINE=3))
+        s.choose(s.view.token,index=1)
+        self.assertEqual(s.view.title,'Save nozzle XY offset?')
+        self.assertIn('X +0.150 mm',[row[0] for row in s.view.options])
+        self.assertIn('Y -0.050 mm',[row[0] for row in s.view.options])
+        self.assertFalse(any(row['ACTION']=='APPLY' for row in calls))
+        s.choose(s.view.token,confirm=True)
+        self.assertEqual(calls[-1],dict(ACTION='APPLY',RUN_ID='pattern-1',ACK='XY_PATTERN_READ'))
+        self.assertEqual(s.view.title,'XY alignment saved')
+        self.assertIsNone(s.active)
+
+    def test_nozzle_xy_oled_binds_external_run_and_rejects_stale_action(self):
+        h,s=self.host();run,calls=self._nozzle_xy(h)
+        run.update(phase='select',run_id='external',lines=dict(X=0,Y=0),candidate=dict(x_mm=0.,y_mm=0.))
+        s._tick(h.reactor.now)
+        s.choose(s.view.token,index=1)
+        token=s.view.token
+        h.reactor.now=s.view.deadline+.1
+        s._tick(h.reactor.now)
+        self.assertNotEqual(s.view.token,token)
+        self.assertEqual(s.view.title,'Review XY')
+        s.choose(s.view.token,index=1)
+        token=s.view.token
+        run['candidate']=dict(x_mm=0.1,y_mm=0.)
+        with self.assertRaises(core.MenuError):s.choose(token,confirm=True)
+        run['run_id']='replacement'
+        s._cancel_active()
+        self.assertEqual(calls,[])
+        self.assertEqual(s.view.title,'Owner changed')
+        s._tick(h.reactor.now)
+        s.choose(s.view.token,index=0)
+        s.choose(s.view.token,confirm=True)
+        self.assertEqual(calls,[dict(ACTION='STOP',RUN_ID='replacement')])
+
+    def test_nozzle_xy_oled_stock_x_only_offers_neutral(self):
+        h,s=self.host();run,_=self._nozzle_xy(h)
+        run.update(phase='select',run_id='stock',x_mode='STOCK_REFERENCE',lines=dict(Y=0))
+        s._tick(h.reactor.now)
+        options=[row[0] for row in s.view.options if row[1] and row[1][0]=='line']
+        self.assertEqual(options,['Line 0 (neutral)'])
+
     def test_changed_native_job_cannot_consume_queued_resume(self):
         h,s=self.host();state={'state':'paused'};sd=types.SimpleNamespace(current_file=io.StringIO(''),is_active=lambda:False)
         cycle=types.SimpleNamespace(enabled=True,stopped=False,cmd_resume=lambda c:self.fail('resumed a replacement file'))

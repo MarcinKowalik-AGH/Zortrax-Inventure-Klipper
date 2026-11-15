@@ -53,7 +53,7 @@ wybierz Zortrax Inventure. Gałąź Service / Tests zachowuje osobną diagnostyk
 | Hotend maintenance → Select nozzle | P04, gdy włączony jest kwalifikowany natywny selektor; w innym przypadku SELECT R7 | Natywny toolframe i wspólny E pozostają pod kontrolą P04. Menu nie przełącza natywnego profilu na SERVICE. |
 | Maintenance → Heat the extruder | Jawny wybór T0/T1, nastawy z profilu, potwierdzenie, istniejący PID HEAT | Po gotowości: Finish / heaters off, Feed 20mm, Retract 20mm. Rzeczywista polaryzacja E zależy od T0/T1; kierunek operatora jest logiczny. |
 | Maintenance → Platform leveling | Natywne P09, jeden pełny pomiar na kolejne potwierdzenie | Pokazuje następne pole, instrukcję pokrętła, obroty i kierunek. Kandydat głębokości oraz deformacja wymagają osobnego potwierdzenia zapisu. |
-| Maintenance → Nozzle alignment | Natywne P10 FULL/Z_ONLY i istniejące przygotowanie/pomiary/wzory | Temperatury są widoczne przed startem. Wybór Y, następnie X; stock_reference dopuszcza tylko neutralne X7. Zapis wspólnego kandydata jest osobnym potwierdzeniem. |
+| Maintenance → Nozzle alignment | [Drukowana kalibracja XY](NOZZLE_XY_ALIGNMENT_R0323.md), a w profilu bez tej procedury wcześniej dostępne natywne P10 | Wybór pary Y po lewej i X po prawej. Menu pokazuje kandydata przed osobnym potwierdzeniem zapisu. |
 | Maintenance → Move the platform | Skończony krok natywnego Z we wspólnej rezerwacji P02 | Wymaga włączonego natywnego ruchu i prawdziwego homed Z. Zachowuje X/Y/E oraz stan parsera. R7 bottom reference nie jest pełnym Z do druku. Nie włącza surowego ruchu przez przytrzymanie. |
 | Maintenance → Fan test | Istniejący test ręczny R7, osobno sześć kanałów, ON/OFF/PASS/FAIL | Zimna drukarka, odczyty tacho i stanu. Wyjście kończy własny test i przywraca politykę chłodzenia; nie anuluje nowego testu z innym numerem run. |
 | Models | Lista plików natywnego virtual_sdcard, niezmienna tożsamość podglądu, P15 CHECK, osobny P15 START | Przeglądanie nie uruchamia druku. Start wymaga aktualnego tokenu P15 i nowego potwierdzenia. |
@@ -62,12 +62,10 @@ wybierz Zortrax Inventure. Gałąź Service / Tests zachowuje osobną diagnostyk
 | Settings → Door lock | Dotychczasowa polityka MCU `INVENTURE_DOOR_POLICY` | Zachowuje jej własne odmowy i reset po restarcie MCU. Brak zapisu fabrycznego NVM przez menu. |
 | Information / Service | Rzeczywiste wersje, UART, temperatury, wejścia, wentylatory i dostępne stany właścicieli | Nie przypisuje drukarce wymyślonego numeru seryjnego ani potwierdzenia fizycznego. |
 
-Poziomowanie i alignment nie są nowymi, równoległymi algorytmami w OLED.
-Menu przekazuje działania do zweryfikowanych wcześniej P09/P10. Moduły
-te nadal sprawdzają referencje XYZ, toolframe, temperatury, geometrię,
-interlocki, własność i możliwość zapisu. R7 SERVICE nie nadaje im brakującej
-referencji kontaktu PC14, nie ustawia żadnych flag kwalifikacji i nie
-przełącza samoczynnie drukarki na kompletny profil natywny.
+Menu przekazuje poziomowanie do P09, a wybory wyrównania XY do tej samej
+procedury drukowania i zapisu co makro Fluidd. W profilach korzystających
+z natywnego P10 obowiązują jego warunki dotyczące referencji XYZ,
+układu narzędzia, temperatur, geometrii, blokad i zapisu.
 
 ## Potwierdzenia i wspólny stan
 

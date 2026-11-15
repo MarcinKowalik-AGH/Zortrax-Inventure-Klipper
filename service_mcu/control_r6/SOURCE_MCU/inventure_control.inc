@@ -8,6 +8,7 @@ DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_TOOL_MASK 3u
@@ -68,10 +69,12 @@ static void sl_guard(uint32_t now);
 // lease, sensor checks, actual feeder starts and actual E accounting.
 static struct {
     uint32_t token,sequence,deadline,lease_ms,duration_ms,budget_steps;
+    uint32_t xy_e_remaining,xy_switch_sequence;
     int16_t min_c,max_c;
-    uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z;
+    uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z,nozzle_xy;
 } fs;
 static void fs_guard(uint32_t now);
+static uint8_t fs_xy_print_position_ready(void);
 static void fs_age_update(uint32_t now);
 static uint8_t zh_active(void);
 static void zh_guard(uint32_t now);
@@ -624,6 +627,16 @@ static uint8_t cm_axis_limits(const uint32_t *args,uint32_t *mask,uint32_t *valu
     *value|=level;
     return 1;
 }
+static uint8_t cm_nozzle_xy_limits(const uint32_t *args,uint32_t *mask,uint32_t *value) {
+    int32_t a=args[1]&BIT(0)?(int32_t)args[2]:-(int32_t)args[2];
+    int32_t b=args[1]&BIT(1)?(int32_t)args[3]:-(int32_t)args[3];
+    uint32_t levels=BIT(4) | (a+b<0?BIT(0):0) | (a-b<0?BIT(1):0);
+    if(args[4] && !(args[1]&BIT(2)))levels|=BIT(2);
+    uint32_t guards=levels|BIT(3); // Stop at contact or if the tray opens.
+    if((*mask&guards)&(*value^levels))return 0;
+    *mask|=guards;*value|=levels;
+    return 1;
+}
 static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned tool) {
     uint8_t reject=0;uint32_t token=args[12],master=0;
     uint32_t stop_mask=args[9],stop_value=args[10];
@@ -639,6 +652,9 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
                 || !cm_axis_limits(args,&stop_mask,&stop_value))
             return 1;
     }
+    uint8_t xy_print=fs.active && fs.nozzle_xy && args[5];
+    if(xy_print && (args[2]>2000000u || args[3]>2000000u
+                    || !cm_nozzle_xy_limits(args,&stop_mask,&stop_value)))return 1;
     if(token==cm.token) {
         for(unsigned i=0;i<4;i++)if(args[i+2]!=cm.planned[i])reject=1;
         if(args[1]!=cm.direction)reject=1;
@@ -661,7 +677,15 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
                 || locks_on[0] || locks_on[1]))reject=2;
         if(!reject && direct && args[5] && !cm_axis_e_ready(tool,now))reject=5;
         if(!reject && fs.active && args[5]) {
-            if(fs.dual_nozzle_z)reject=2;
+            if(xy_print) {
+                // The shortest interval between two DDA E or Z pulses is
+                // floor(master / axis_steps) master periods.
+                if(args[5]>fs.xy_e_remaining
+                        || master/args[5]<(args[6]+CM_AXIS_E_MAX_HZ-1)/CM_AXIS_E_MAX_HZ
+                        || (args[4] && master/args[4]<(args[6]+CM_AXIS_Z_MAX_HZ-1)/CM_AXIS_Z_MAX_HZ))reject=1;
+                else if(!fs_xy_print_position_ready() || !fs_nozzle_temperature_ok(fs.tool,now,1)
+                        || !fs_nozzle_temperature_ok(1-fs.tool,now,0))reject=5;
+            } else if(fs.dual_nozzle_z)reject=2;
             else {
                 uint8_t valid;int16_t t=control_temp(fs.tool,now,&valid);
                 if(!valid || t<fs.min_c || t>=fs.max_c)reject=3;
@@ -687,6 +711,7 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
             cm.hit=cm_input_hit(cm.stop_mask,cm.stop_value);
             if(cm.hit)cm_end(CR_INPUT);
             else {
+                if(xy_print)fs.xy_e_remaining-=args[5];
                 if(fast) {
                     cm_fast_setup(fast_mask);
                     cm_fast_ramp_setup();
@@ -925,7 +950,9 @@ static void fs_guard(uint32_t now) {
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
             || transport_selected!=fs.tool || transport[fs.tool].fault
             || !transport[fs.tool].configured || cm.phase==CM_FAILED
-            || (fs.dual_nozzle_z && (GPIOC->IDR&BIT(13))))why=5;
+            || (fs.dual_nozzle_z && (GPIOC->IDR&BIT(13)))
+            || (fs.nozzle_xy && cm.planned[3] && ((cm.active && !fs_xy_print_position_ready())
+                || (cm.phase==CM_DONE && cm.reason==CR_INPUT))))why=5;
     if(why){control_stop_all();fs.reason=why;}
 }
 #include "inventure_z_home.inc"
@@ -935,9 +962,17 @@ static void fs_configure_tool(unsigned tool) {
     s->configured=s->cartridge=1;s->duration=MS(fs.duration_ms);
     s->assigned_budget=fs.budget_steps;s->budget=fs.budget_steps;s->retry=s->fault=0;
 }
+static uint8_t fs_nozzle_probe_done(unsigned tool) {
+    return !zh.active && zh.nozzle_test && zh.owner==fs.token && zh.tool==tool && zh.status==ZH_DONE;
+}
+static uint8_t fs_xy_print_position_ready(void) {
+    return fs_nozzle_probe_done(fs.tool) && (GPIOE->ODR&BIT(10)) && zh_contact_open()
+        && !(GPIOC->IDR&BIT(13));
+}
 static uint8_t fs_dual_nozzle_z_clearance(void) {
-    return !zh.active && zh.nozzle_test && zh.owner==fs.token && zh.tool==0 && zh.status==ZH_DONE
-        && cm.run==zh.motion_run+1 && cm.phase==CM_DONE && cm.reason==CR_COMPLETE && !cm.active
+    uint32_t moves=cm.run-zh.motion_run;
+    return fs_nozzle_probe_done(0) && (fs.nozzle_xy?(int32_t)moves>0:moves==1)
+        && cm.phase==CM_DONE && cm.reason==CR_COMPLETE && !cm.active
         && !cm.planned[0] && !cm.planned[1] && !cm.planned[3] && !(cm.direction&BIT(2))
         && cm.planned[2]==ZH_MAX_SPAN && cm.sent[2]==ZH_MAX_SPAN
         && (GPIOE->ODR&BIT(10)) && zh_contact_open() && !(GPIOC->IDR&BIT(13));
@@ -948,15 +983,17 @@ void command_inventure_factory_session(uint32_t *args) {
     int16_t minimum=args[7],maximum=args[8];
     irqstatus_t irq=irq_save();uint32_t now=timer_read_time();uint8_t reject=0;
     fs_age_update(now);zh_guard(now);fs_guard(now);
-    uint8_t start=action==1 || action==4;
-    uint8_t dual=action==4;
-    if(action>5)reject=1;
+    uint8_t xy=action==6;
+    uint8_t start=action==1 || action==4 || xy;
+    uint8_t dual=action==4 || xy;
+    if(action>7)reject=1;
     else if(action==3) {
         if(!token || token!=fs.token)reject=4;
         else if(fs.active)fs_normal_stop();
     } else if(start && token && token==fs.token) {
         // An old START never renews or revives the previous session.
-        if(dual!=fs.dual_nozzle_z || tool!=fs.tool || mode!=fs.start_mode || monitor!=fs.start_monitor
+        if(dual!=fs.dual_nozzle_z || xy!=fs.nozzle_xy || tool!=fs.tool
+                || mode!=fs.start_mode || monitor!=fs.start_monitor
                 || duration!=fs.duration_ms || budget!=fs.budget_steps || lease!=fs.lease_ms
                 || minimum!=fs.min_c || maximum!=fs.max_c || sequence)reject=1;
     } else if(start) {
@@ -984,6 +1021,7 @@ void command_inventure_factory_session(uint32_t *args) {
             fs.duration_ms=duration;fs.budget_steps=budget;fs.min_c=minimum;fs.max_c=maximum;
             fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
             fs.start_mode=mode;fs.start_monitor=monitor;fs.dual_nozzle_z=dual;
+            fs.nozzle_xy=xy;fs.xy_e_remaining=budget;fs.xy_switch_sequence=0;
             fs_configure_tool(tool);
             cm.phase=CM_IDLE;cm.reason=CR_NONE;
             fs_set_mode(mode,monitor,now);
@@ -1002,16 +1040,21 @@ void command_inventure_factory_session(uint32_t *args) {
         } else {
             fs.sequence=sequence;fs.deadline=now+MS(lease);fs_set_mode(mode,monitor,now);
         }
-    } else if(action==5) {
-        if(!fs.active || !fs.dual_nozzle_z || token!=fs.token || fs.tool || !sequence
-                || sequence!=fs.sequence+1)reject=4;
+    } else if(action==5 || action==7) {
+        if(!fs.active || !fs.dual_nozzle_z || fs.nozzle_xy!=(action==7)
+                || token!=fs.token || !sequence)reject=4;
         else if(tool!=1 || mode!=IVT_STOP || monitor || duration!=fs.duration_ms || budget!=fs.budget_steps
                 || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
+        else if(fs.nozzle_xy && fs.tool==1 && sequence==fs.xy_switch_sequence) {
+            // Retried switch packets report the active tool without renewal.
+        }
+        else if(fs.tool || sequence!=fs.sequence+1)reject=4;
         else if(!fs_dual_nozzle_z_clearance())reject=3;
         else {
             transport_stop_channel(0);
             fs_configure_tool(1);
             fs.sequence=sequence;fs.deadline=now+MS(lease);
+            if(fs.nozzle_xy)fs.xy_switch_sequence=sequence;
         }
     }
     unsigned i=fs.tool;struct ivt_state s=transport[i];

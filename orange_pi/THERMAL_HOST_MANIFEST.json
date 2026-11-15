@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DUAL",
+  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-XY",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "530062a865befedf997c2ae805c1528f41e7fdc852d0b8d140f3a765226267a0",
+  "module_sha256": "af6f36b94d616ab9e9c7e075854b59540df22691cb31431bf64327f288b89d1d",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -57,9 +57,10 @@
     "9264e864f0e23c488dfc666305b15d92c9b6cf4cc1148c5936623b92801d51fd",
     "5d3d98d46ce571b2c7c11677a791bfa90011afeae8fe041915ee6ca41f9518b4",
     "a3d1176125c4431fa9db7e479c439cc7baf4cae959ffa9f9cff1b247dc92b810",
-    "5b543a2a835d1904927ef8d36e284468f87c80c41633e0210564d4f8474f5275"
+    "5b543a2a835d1904927ef8d36e284468f87c80c41633e0210564d4f8474f5275",
+    "530062a865befedf997c2ae805c1528f41e7fdc852d0b8d140f3a765226267a0"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DUAL",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-XY",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -341,9 +342,10 @@
       "allowed_existing_sha256": []
     },
     "inventure_menu_service.py": {
-      "sha256": "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
+      "sha256": "700a1090dfc9a48b84da275a2261e2338ebc8ec02029bd4481237fc719a05f6d",
       "allowed_existing_sha256": [
-        "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63"
+        "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
+        "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d"
       ]
     },
     "inventure_oem_menu.py": {
@@ -380,6 +382,10 @@
         "58d6b156240cbe6aac6650b4743a56948723f475e74c00c6068487baaac687dc",
         "ff832a4dfa3fe0b46a693a58a9140a4f0678a6f03a5543e41e6b16f0ab662485"
       ]
+    },
+    "inventure_nozzle_xy.py": {
+      "sha256": "f6589eab9de005ca18eddb45f1ea589b0cccb737ba8966ce168d3d1525cdcbe1",
+      "allowed_existing_sha256": []
     }
   },
   "axis_timer_motion": {
@@ -531,5 +537,24 @@
     "shared_xy_and_pe12_reference": true,
     "heating": "both nozzles during PE12 seek and coarse Z approach",
     "clearance_mm": 10
+  },
+  "nozzle_xy_alignment": {
+    "command": "INVENTURE_NOZZLE_XY_TEST",
+    "macro": "ZORTRAX_NOZZLE_XY_TEST",
+    "macro_config": "config/INVENTURE_NOZZLE_XY.cfg",
+    "mcu_release": "RC8-CONTROL-R7-NOZZLE-XY",
+    "mcu_abi": 1,
+    "menu": "Maintenance / Nozzle alignment",
+    "line_min": -6,
+    "line_max": 6,
+    "default_xy_step_mm": 0.05,
+    "default_targets_c": {
+      "T0": 210,
+      "T1": 215
+    },
+    "printed_strokes_per_tool": 28,
+    "storage": "inventure_nozzle_xy.json",
+    "documentation": "docs/NOZZLE_XY_ALIGNMENT_R0323.md",
+    "tested_on_printer": false
   }
 }

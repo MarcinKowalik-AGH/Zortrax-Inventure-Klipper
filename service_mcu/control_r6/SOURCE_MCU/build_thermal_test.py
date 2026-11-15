@@ -9,7 +9,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-NOZZLE-Z-DUAL'
+MCU_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -82,6 +82,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     dictionary = json.loads((out / 'klipper.dict').read_text())
     c = dictionary['config']
     assert dictionary['version'] == build_identity
+    assert c['INVENTURE_MCU_RELEASE'] == MCU_RELEASE
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
@@ -99,6 +100,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NATIVE_Z_REFINE_ABI'] == 1
     assert c['INVENTURE_NOZZLE_Z_TEST_ABI'] == 1
     assert c['INVENTURE_NOZZLE_Z_DUAL_ABI'] == 1
+    assert c['INVENTURE_NOZZLE_XY_ABI'] == 1
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
@@ -157,6 +159,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
+                  nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

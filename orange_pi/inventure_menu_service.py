@@ -66,6 +66,17 @@ class ZortraxMenuService:
     def _enabled(self,name):
         obj=self._obj(name)
         return obj is not None and bool(getattr(obj,'enabled',False)) and not getattr(obj,'stopped',False)
+    def _xy_available(self):
+        check=getattr(self.board,'nozzle_xy_available',None)
+        return callable(check) and check()
+    def _xy_status(self):
+        read=getattr(self.board,'nozzle_xy_status',None)
+        return read() if callable(read) else {}
+    @staticmethod
+    def _xy_line_options(axis,detail):
+        choices=(0,) if axis=='X' and detail.get('x_mode')=='STOCK_REFERENCE' else range(-6,7)
+        return [('Line %+d'%line if line else 'Line 0 (neutral)',('line',dict(axis=axis,line=line)))
+            for line in choices]
     def _native_job(self):
         sd=self._obj('virtual_sdcard');stats=self._status('print_stats')
         f=getattr(sd,'current_file',None)
@@ -76,6 +87,7 @@ class ZortraxMenuService:
         ops=getattr(self._obj('inventure_operations'),'state',None)
         cal=self._status('inventure_calibration')
         filament=self._obj('inventure_filament');level=self._obj('inventure_leveling');align=self._obj('inventure_alignment');pre=self._obj('inventure_preflight')
+        xy=self._xy_status();lines=xy.get('lines') or {}
         return (id(ctx) if ctx is not None else None, f.get('token'),
             None if ctx is None else ctx.get('measurement',{}).get('completed_jogs'),
             getattr(ops,'epoch',None),getattr(self._obj('inventure_materials'),'generation',None),
@@ -85,6 +97,7 @@ class ZortraxMenuService:
             getattr(getattr(level,'session',None),'candidate',None),
             id(getattr(align,'lease',None)),getattr(align,'state',None),
             repr(getattr(align,'candidate',None)),
+            self._xy_available(),xy.get('run_id'),xy.get('phase'),lines.get('X'),lines.get('Y'),repr(xy.get('candidate')),
             getattr(pre,'epoch',None),getattr(getattr(pre,'ticket',None),'token',None),
             tuple(getattr(self.board,'fan_manual_last',{}).get(k) for k in ('run','channel','phase')))
     def _set_view(self,kind,title,options,*,data=None,binding=True):
@@ -108,7 +121,10 @@ class ZortraxMenuService:
         reviews=[]
         if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
         elif action=='leveling':title='Knobs and tray checked?'
-        elif action=='alignment':reviews=['Geometry/materials checked']
+        elif action=='alignment':
+            if self._xy_available():
+                reviews=['Clean, level tray','Filament in T0 and T1','Tool heights checked']
+            else:reviews=['Geometry/materials checked']
         elif action=='check_model':title='Job + spool supply OK?'
         return self._set_view('confirm',title or action.replace('_',' ').title(),
             [('No / Back',('close',{})),('Yes / Start',('execute',dict(action=action,params=dict(params or {}))))]+
@@ -120,6 +136,8 @@ class ZortraxMenuService:
             return dict(available=False,backend=None,reason='Unknown menu action')
         if action in READ_ACTIONS or action in CHOICE_ACTIONS or action.startswith(('sort_','language_')) or action in ('back','go_status','cancel_no','question_no'):
             return dict(available=True,backend='host_view',reason=None)
+        if action=='alignment' and self._xy_available():
+            return dict(available=True,backend='nozzle_xy',reason=None)
         if action in NATIVE_ACTIONS:
             name=NATIVE_ACTIONS[action];enabled=self._enabled(name)
             if action in ('pause','resume','cancel_yes') and not enabled:
@@ -209,11 +227,14 @@ class ZortraxMenuService:
                 if not parsed['target_requires_override']:title+=' at %gC'%parsed['target']
                 title+='?'
         elif action=='alignment':
-            from .inventure_factory_core import parameters
-            for tool in (0,1):
-                p=parameters(Command(self,TOOL='T%d'%tool),getattr(self.board,'procedure_profiles',None))
-                params.setdefault('T%d_TEMP'%tool,p['target'])
-            title='Align %g/%gC?'%(float(params['T0_TEMP']),float(params['T1_TEMP']))
+            if capability['backend']=='nozzle_xy':
+                title='Print XY test pattern?'
+            else:
+                from .inventure_factory_core import parameters
+                for tool in (0,1):
+                    p=parameters(Command(self,TOOL='T%d'%tool),getattr(self.board,'procedure_profiles',None))
+                    params.setdefault('T%d_TEMP'%tool,p['target'])
+                title='Align %g/%gC?'%(float(params['T0_TEMP']),float(params['T1_TEMP']))
         elif action=='spool_load':
             if type(params.get('tool')) is not int or params.get('material_id') not in dict(SUPPORT_MATERIALS if params.get('tool') else MODEL_MATERIALS):
                 raise MenuError('Choose a material from the current spool catalogue')
@@ -340,9 +361,17 @@ class ZortraxMenuService:
             obj=self._obj('inventure_leveling');self._call(obj,'cmd_start',ACK='KNOBS_AND_TRAY_CHECKED')
             self.active=dict(backend='level',object=obj,session=obj.session,action=action)
         elif action=='alignment':
-            obj=self._obj('inventure_alignment');args=dict(ACK='GEOMETRY_AND_MATERIALS_CHECKED',MODE='FULL',X_MODE='stock_reference')
-            args.update(params);self._call(obj,'cmd_start',**args)
-            self.active=dict(backend='align',object=obj,session=getattr(obj,'lease',None),action=action)
+            if self._xy_available():
+                self._service_ready()
+                self._call(self.board,'cmd_nozzle_xy_test',
+                    **dict(params,ACTION='START',ACK='XY_PATTERN_SURFACE_READY'))
+                xy=self._xy_status()
+                if xy.get('run_id') is None:raise MenuError('XY test did not establish a run')
+                self.active=dict(backend='nozzle_xy',object=self.board,run_id=xy['run_id'],action=action)
+            else:
+                obj=self._obj('inventure_alignment');args=dict(ACK='GEOMETRY_AND_MATERIALS_CHECKED',MODE='FULL',X_MODE='stock_reference')
+                args.update(params);self._call(obj,'cmd_start',**args)
+                self.active=dict(backend='align',object=obj,session=getattr(obj,'lease',None),action=action)
         elif action=='spool_load':
             tool=int(params['tool']);material_id=int(params['material_id'])
             if material_id not in dict(SUPPORT_MATERIALS if tool else MODEL_MATERIALS):raise MenuError('Material is outside the audited tool catalogue')
@@ -415,6 +444,7 @@ class ZortraxMenuService:
         if backend=='filament':return getattr(obj,'job',None)==a['job']
         if backend=='level':return getattr(obj,'session',None) is a['session']
         if backend=='align':return getattr(obj,'lease',None)==a['session']
+        if backend=='nozzle_xy':return self._xy_status().get('run_id')==a['run_id']
         if backend=='preflight':return getattr(obj,'epoch',None)==a['epoch']
         return False
 
@@ -439,6 +469,30 @@ class ZortraxMenuService:
             if detail.get('factory'):
                 steps=detail['factory'].get('e_sent_steps',0)
                 options.append(('E %.1fmm nominal'%(steps/960.),None))
+        elif backend=='nozzle_xy':
+            detail=self._xy_status();phase=detail['phase']
+            if phase not in ('printing','select'):
+                self.active=None;self.last=detail
+                candidate=detail.get('candidate')
+                if phase=='applied' and candidate is not None:
+                    return self._info('XY alignment saved','X %+.3f / Y %+.3f mm'%(
+                        candidate['x_mm'],candidate['y_mm']),result=detail)
+                return self._info('XY alignment ended',detail.get('error') or detail.get('reason') or phase,result=detail)
+            if phase=='printing':
+                if detail.get('stage'):options.append((str(detail['stage']).replace('_',' ').title(),None))
+            else:
+                lines=detail.get('lines') or {}
+                candidate=detail.get('candidate')
+                if candidate is not None and all(lines.get(axis) is not None for axis in ('Y','X')):
+                    phase='review_xy'
+                    options += [('Review / save XY',('commit_request',{})),
+                        ('Change left Y',('xy_edit_line',dict(axis='Y'))),
+                        ('Change right X',('xy_edit_line',dict(axis='X'))),
+                        ('Left Y%d / Right X%d'%(lines['Y'],lines['X']),None)]
+                else:
+                    axis='Y' if lines.get('Y') is None else 'X'
+                    phase='choose_left_y' if axis=='Y' else 'choose_right_x'
+                    options += self._xy_line_options(axis,detail)
         else:
             detail=obj.get_status(now);phase=detail.get('state',detail.get('phase','running'))
             if backend=='filament':
@@ -477,7 +531,8 @@ class ZortraxMenuService:
         key=(backend,phase,tuple((x[0],repr(x[1])) for x in options),self._binding())
         if key!=self.last_native_key:
             self.last_native_key=key
-            self._set_view('running',str(phase).replace('_',' ').title(),options,data=dict(backend=backend,phase=phase))
+            title='Review XY' if phase=='review_xy' else str(phase).replace('_',' ').title()
+            self._set_view('running',title,options,data=dict(backend=backend,phase=phase))
         return self.view
 
     def _cancel_active(self):
@@ -492,6 +547,7 @@ class ZortraxMenuService:
         elif backend=='filament':
             if obj.job==active['job']:self._call(obj,'cmd_cancel')
         elif backend in ('level','align'):self._call(obj,'cmd_cancel')
+        elif backend=='nozzle_xy':self._call(obj,'cmd_nozzle_xy_test',ACTION='STOP',RUN_ID=active['run_id'])
         elif backend=='preflight':
             if obj.epoch==active['epoch']:self._call(obj,'cmd_cancel')
         self._info('Operation cancelled','Current owner stopped; no recovery movement requested')
@@ -514,6 +570,15 @@ class ZortraxMenuService:
         if verb=='commit_request':
             active=self.active
             if active is None:raise MenuError('Calibration owner ended')
+            if active['backend']=='nozzle_xy':
+                detail=self._xy_status()
+                candidate=detail.get('candidate');lines=detail.get('lines') or {}
+                if candidate is None or any(lines.get(axis) is None for axis in ('Y','X')):
+                    raise MenuError('Choose both pattern lines before saving XY')
+                labels=[('%s %+.3f mm'%(axis,candidate[axis.lower()+'_mm']),None) for axis in ('X','Y')]
+                return self._set_view('confirm','Save nozzle XY offset?',
+                    [('No / Back',('close',{})),('Yes / Save',('commit',{}))]+labels,
+                    data=dict(candidate=candidate))
             state=active['object'].get_status(self.reactor.monotonic())
             candidate=state.get('candidate_depth_um') if active['backend']=='level' else state.get('candidate')
             labels=[]
@@ -528,6 +593,10 @@ class ZortraxMenuService:
         active=self.active
         if active is None:raise MenuError('Procedure no longer active')
         obj=active['object'];backend=active['backend']
+        if verb=='xy_edit_line' and backend=='nozzle_xy':
+            axis=args['axis']
+            return self._set_view('choice','Choose left Y' if axis=='Y' else 'Choose right X',
+                [('Back',('close',{}))]+self._xy_line_options(axis,self._xy_status()))
         if verb=='continue':
             if backend=='filament':self._call(obj,'cmd_continue',TOKEN=args['owner_token'])
             elif backend=='level':self._call(obj,'cmd_advance',ACK='ADJUSTED_AND_DOORS_CLOSED')
@@ -538,12 +607,17 @@ class ZortraxMenuService:
             self._call(self.board,'cmd_load_test',ACTION='JOG',STEPS=19200,
                 DIR=obj['tool']^int(args['reverse']),RATE=2400)
         elif verb=='line' and backend=='align':self._call(obj,'cmd_line',AXIS=args['axis'],LINE=args['line'])
+        elif verb=='line' and backend=='nozzle_xy':
+            self._call(obj,'cmd_nozzle_xy_test',ACTION='LINE',RUN_ID=active['run_id'],
+                AXIS=args['axis'],LINE=args['line'])
         elif verb=='commit':
             if backend=='level':
                 params={'ACK':'SAVE_HOST_LEVELING'}
                 if args.get('deformed'):params['DEFORMATION_ACK']='ACCEPT_DEFORMED_TRAY'
                 self._call(obj,'cmd_commit',**params)
             elif backend=='align':self._call(obj,'cmd_commit',ACK='SAVE_HOST_ALIGNMENT')
+            elif backend=='nozzle_xy':
+                self._call(obj,'cmd_nozzle_xy_test',ACTION='APPLY',RUN_ID=active['run_id'],ACK='XY_PATTERN_READ')
             else:raise MenuError('This owner has no calibration commit')
         else:raise MenuError('Unknown procedure control')
         self.last_native_key=None;return self._running_view()
@@ -599,7 +673,11 @@ class ZortraxMenuService:
         try:
             filament=self._obj('inventure_filament')
             ctx=getattr(self.board,'load_test_context',None)
-            if self.active is None and ctx is not None:
+            xy=self._xy_status()
+            if self.active is None and xy.get('phase') in ('printing','select'):
+                self.active=dict(backend='nozzle_xy',object=self.board,run_id=xy['run_id'],action='alignment')
+                self.view=None;self.last_native_key=None
+            elif self.active is None and ctx is not None:
                 action='heat_t%d'%ctx['tool'] if ctx.get('factory') is None and ctx.get('cassette_load') is None else 'external_service'
                 self.active=dict(backend='service',object=ctx,action=action)
                 self.view=None;self.last_native_key=None
@@ -607,6 +685,9 @@ class ZortraxMenuService:
                 self.active=dict(backend='filament',object=filament,job=filament.job,action='native_filament')
                 self.view=None;self.last_native_key=None
             if self.active is not None and not self.executing:
+                if (self.active['backend']=='nozzle_xy' and self.view is not None
+                        and eventtime>=self.view.deadline):
+                    self.view=None;self.last_native_key=None
                 if self.view is None or self.view.kind=='running':self._running_view()
             elif self.view is not None and self.reactor.monotonic()>=self.view.deadline:
                 self.view=None

@@ -189,6 +189,12 @@ wolny pomiar PC14 z fabrycznym licznikiem powtórzeń.
 polu PC14. Pomiar wykonuje STM32, a wynik podaje Klipper.
 [Zimna próba ustawienia dysz, pomiar i nastawy](docs/NOZZLE_Z_TEST_R0323.md).
 
+`ZORTRAX_NOZZLE_XY_TEST` drukuje osobny wzorzec położenia T0 i T1 na
+tacce. Wybór par od −6 do +6 wyznacza poprawki dla Y po lewej i X po
+prawej. Środkowa para 0 zachowuje aktualną poprawkę. Kalibrację można
+uruchomić również z menu OLED **Maintenance → Nozzle alignment**.
+[Instalacja makra, wybór linii i nastawy](docs/NOZZLE_XY_ALIGNMENT_R0323.md).
+
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
 SERVICE pomija RFID. Domyślny profil SERVICE obsługuje T0 i T1 oraz

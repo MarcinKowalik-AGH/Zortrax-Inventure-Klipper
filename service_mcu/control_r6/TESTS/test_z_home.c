@@ -811,15 +811,15 @@ static void nozzle_test_return_to_bottom(void)
     assert(!fs.active && GPIOE->BSRR==(BIT(10)<<16));
 }
 
-static void dual_nozzle_reset(void)
+static void dual_nozzle_reset(unsigned action)
 {
     memset(&zh,0,sizeof(zh));
     memset(&sl,0,sizeof(sl));
     control_reset(0xffff0000u);
     mock_probe_adc[0]=mock_probe_adc[1]=166;
     z_home_adc();
-    factory_lease(4,0,IVT_STOP,0);
-    assert(fs.active && fs.dual_nozzle_z && !factory_reply[3]);
+    factory_lease(action,0,IVT_STOP,0);
+    assert(fs.active && fs.dual_nozzle_z && fs.nozzle_xy==(action==6) && !factory_reply[3]);
     GPIOE->ODR|=BIT(10); // Mock BSRR writes do not update the output latch.
 }
 
@@ -837,7 +837,7 @@ static void dual_nozzle_finish_probe(unsigned tool,unsigned token)
 
 static void dual_nozzle_reference(void)
 {
-    dual_nozzle_reset();
+    dual_nozzle_reset(4);
     motion(1,0,0,0,5,0,2000,10,1000,0,0,0,TOKEN-1);
     assert(cm.active);
     output(1,6,32,1500,240,67);
@@ -907,7 +907,7 @@ static void dual_nozzle_reference(void)
 
 static void dual_nozzle_secondary_heater_guard(void)
 {
-    dual_nozzle_reset();
+    dual_nozzle_reset(4);
     mock_probe_adc[0]=mock_probe_adc[1]=1427;
     z_home_adc();
     output(1,6,32,1500,240,67);
@@ -918,6 +918,101 @@ static void dual_nozzle_secondary_heater_guard(void)
     step_timer();
     nozzle_test_terminal(0,TOKEN,ZH_GUARD);
     assert(!fs.active && !co[6].duty && !co[7].duty && !zh.up_steps && !zh.down_steps);
+}
+
+static uint8_t nozzle_xy_motion(unsigned dirs, uint32_t a, uint32_t b, uint32_t z,
+                               uint32_t e, unsigned rate, uint32_t token)
+{
+    uint32_t args[]={1,dirs,a,b,z,e,rate,rate>CM_SERVICE_MAX_HZ?2:10,6000,0,0,0,token};
+    return cm_request(args,mock_now,0,0);
+}
+
+static void nozzle_xy_reference_and_hold(void)
+{
+    dual_nozzle_reset(6);
+    assert(fs.xy_e_remaining==fs.budget_steps);
+    factory_lease(4,0,IVT_STOP,0);
+    assert(factory_reply[3]==1 && fs.nozzle_xy); // The Z-only protocol cannot replay this owner.
+    factory_lease(5,1,IVT_STOP,1);
+    assert(factory_reply[3]==4 && !fs.tool);
+    factory_lease(2,0,IVT_FORWARD,1);
+    assert(factory_reply[3]==1 && !TIM9->CCR2);
+
+    mock_probe_adc[0]=mock_probe_adc[1]=1427;
+    z_home_adc();
+    output(1,6,32,1500,240,67);
+    output(1,7,64,1500,240,68);
+    assert(nozzle_xy_motion(3,100,100,0,40,5000,TOKEN-1)==5); // No T0 probe.
+    dual_nozzle_finish_probe(0,TOKEN);
+    assert(nozzle_xy_motion(7,100,100,80,40,6400,TOKEN+1)==1); // Peak Z rate.
+    assert(nozzle_xy_motion(7,100,100,0,61,10000,TOKEN+1)==1); // Peak E rate.
+    assert(nozzle_xy_motion(7,fs.budget_steps+1,100,0,fs.budget_steps+1,960,TOKEN+1)==1);
+    assert(!cm.active && fs.xy_e_remaining==fs.budget_steps);
+
+    assert(!nozzle_xy_motion(7,100,100,80,40,3200,TOKEN+1));
+    assert(cm.active && fs.xy_e_remaining==fs.budget_steps-40);
+    assert(cm.stop_mask==(BIT(3)|BIT(4)) && cm.stop_value==BIT(4));
+    assert(!nozzle_xy_motion(7,100,100,80,40,3200,TOKEN+1)); // Retry does not charge E again.
+    assert(fs.xy_e_remaining==fs.budget_steps-40);
+    while(cm.active)motion_tick();
+    assert(cm.reason==CR_COMPLETE && cm.sent[0]==100 && cm.sent[1]==100
+        && cm.sent[2]==80 && cm.sent[3]==40 && !TIM9->CCR2);
+    z_home_adc();
+    factory_lease(7,1,IVT_STOP,1);
+    assert(factory_reply[3]==3 && !fs.tool); // Printing is not a descent.
+
+    motion(1,0,0,0,ZH_MAX_SPAN,0,3200,10,6000,BIT(2)|BIT(4),BIT(2)|BIT(4),0,TOKEN+2);
+    uint32_t last=mock_now, seq=0;
+    while(cm.active) {
+        motion_tick();
+        if((uint32_t)(mock_now-last)>=MS(200)) {
+            z_home_adc();
+            factory_lease(2,0,IVT_STOP,++seq);
+            output(1,6,32,1500,240,100+seq);
+            output(1,7,64,1500,240,200+seq);
+            last=mock_now;
+        }
+    }
+    z_home_adc();
+    assert(cm.run-zh.motion_run==2 && cm.reason==CR_COMPLETE && cm.sent[2]==ZH_MAX_SPAN);
+    factory_lease(7,1,IVT_STOP,++seq);
+    assert(!factory_reply[3] && fs.active && fs.tool==1 && fs.sequence==seq);
+    assert(GPIOE->BSRR==BIT(10) && co[6].duty==32 && co[7].duty==64 && !TIM9->CCR2);
+    uint32_t switch_deadline=fs.deadline;
+    factory_lease(7,1,IVT_STOP,seq);
+    assert(!factory_reply[3] && fs.deadline==switch_deadline);
+    assert(nozzle_xy_motion(11,100,100,0,40,5000,TOKEN+3)==5); // T0's probe cannot authorize T1.
+
+    dual_nozzle_finish_probe(1,TOKEN+3);
+    assert(!nozzle_xy_motion(11,100,100,0,40,5000,TOKEN+4));
+    while(cm.active)motion_tick();
+    assert(cm.reason==CR_COMPLETE && cm.sent[3]==40 && fs.xy_e_remaining==fs.budget_steps-80);
+    assert(fs.active && !feeder_running[0] && !feeder_running[1] && !TIM9->CCR2);
+    control_command(2,0);
+    assert(!fs.active && !co[6].duty && !co[7].duty && !scheduled_count);
+}
+
+static void nozzle_xy_local_print_guards(void)
+{
+    for(unsigned guard=0;guard<3;guard++) {
+        dual_nozzle_reset(6);
+        mock_probe_adc[0]=mock_probe_adc[1]=1427;
+        z_home_adc();
+        output(1,6,32,1500,240,67);
+        output(1,7,64,1500,240,68);
+        dual_nozzle_finish_probe(0,TOKEN);
+        assert(!nozzle_xy_motion(3,100,100,0,40,5000,TOKEN+1));
+        motion_tick();
+        if(guard==0) {
+            contact(1);
+            motion_tick();
+            assert(cm.hit==BIT(3) && cm.reason==CR_INPUT);
+        } else if(guard==1)GPIOC->IDR|=BIT(13);
+        else mock_probe_adc[1]=4095;
+        z_home_adc();
+        control_guard(mock_now);
+        assert(!cm.active && !fs.active && !co[6].duty && !co[7].duty && !cm.sent[3]);
+    }
 }
 
 int main(void)
@@ -953,5 +1048,8 @@ int main(void)
     dual_nozzle_reference();
     dual_nozzle_secondary_heater_guard();
     puts("PASS dual nozzle Z: shared ownership, both heaters, exact clearance, probe exclusion and secondary guards");
+    nozzle_xy_reference_and_hold();
+    nozzle_xy_local_print_guards();
+    puts("PASS nozzle XY: guarded XYZ/E, cumulative E budget, exact clearance, replay and both heater guards");
     return 0;
 }
