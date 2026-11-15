@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-UART'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-POLL'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -39,6 +39,9 @@ NOZZLE_Z_RESPONSE = ('inventure_nozzle_z_test_state owner=%u token=%u tool=%c '
                      'cycles=%u non_improvements=%c up_steps=%u down_steps=%u')
 NOZZLE_Z_ERRORS = {**Z_EDGE_ERRORS, 2:'z_contact_not_found', 3:'z_contact_did_not_release'}
 NOZZLE_Z_MCU_MAX_CYCLES = 512
+# Match the native local-Z report period. The STM32 clocks contact steps and
+# keeps its own heartbeat, ownership, heater and sensor limits between polls.
+NOZZLE_Z_POLL_INTERVAL = .25
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -2174,6 +2177,9 @@ class InventureMCU:
 
     def _control_poll(self,eventtime):
         if not self.connected:return self.reactor.NEVER
+        if self._active_nozzle_z_sample(getattr(self,'load_test_context',None)) is not None:
+            # The owned probe tick already checks control and the heater.
+            return eventtime+.5
         try:
             state=self._control_query()
             if getattr(self,'motion_last',{}).get('active'):
@@ -2422,8 +2428,8 @@ class InventureMCU:
         context['duty']=0
         self._load_test_emit(context,phase,reason)
 
-    def _load_test_safety(self,context):
-        self._feeder_service_preflight(allow_active=True,allow_load=True)
+    def _load_test_safety(self,context,control_state=None):
+        self._feeder_service_preflight(allow_active=True,allow_load=True,control_state=control_state)
         if self.load_test_context is not context:raise ValueError('Load test was stopped')
         now=self.reactor.monotonic()
         if now>=context['deadline']:
@@ -3007,6 +3013,13 @@ class InventureMCU:
         return row
 
     @staticmethod
+    def _active_nozzle_z_sample(context):
+        factory=(context.get('factory') or {}) if context is not None else {}
+        action=factory.get('action') or {}
+        if action.get('kind')=='nozzle_z_refine' and 'token' in action:
+            return action
+
+    @staticmethod
     def _nozzle_z_error(row):
         if row['status']==5 and row['cycles']==NOZZLE_Z_MCU_MAX_CYCLES:
             return 'z_contact_cycle_limit'
@@ -3031,7 +3044,9 @@ class InventureMCU:
         if row['cycles']>action['max_cycles'] or (row['active'] and row['cycles']==action['max_cycles']
                                                   and row['non_improvements']!=repeats):
             raise FactoryError('z_contact_cycle_limit',cycles=row['cycles'])
-        if row['active']:return None
+        if row['active']:
+            action['poll_after']=self.reactor.monotonic()+NOZZLE_Z_POLL_INTERVAL
+            return None
         if (row['net_steps']!=row['best_steps'] or not 0<row['net_steps']<span
                 or row['cycles']<repeats+1 or row['non_improvements']!=repeats):
             raise FactoryError('MCU nozzle Z release outside the qualified probe window',state=row)
@@ -3353,26 +3368,31 @@ class InventureMCU:
     def _factory_tick(self,context):
         f=context['factory'];now=self.reactor.monotonic()
         if now>=f['total_deadline']:raise ValueError('Factory procedure timeout')
-        temperature=self._load_test_safety(context)
+        probe=self._active_nozzle_z_sample(context)
+        waiting=probe is not None and now<probe.get('poll_after',0.)
+        # Only a running MCU sample uses the last control response between
+        # polls. Fresh ADC/cable/tach checks and heater readback still run here.
+        temperature=self._load_test_safety(context,control_state=self.control_last if waiting else None)
         if 'z_home_settings' in f and context['ready_latched']:
             if not context['target']-10.<=temperature<=context['target']+8.:
                 raise ValueError('Nozzle left the Z reference temperature band')
         if context['output_token'] is None:self._load_test_output(context,0)
         self._load_test_check_output(context)
-        self._factory_session(context)
+        if not waiting:self._factory_session(context)
         if f['heat_started']:
             duty=self._load_test_pid(context,temperature,now)
             if duty or context['duty']:self._load_test_output(context,duty)
-        for _ in range(12):
-            if self.load_test_context is not context:return
-            if f['action'] is None:
-                try:f['action']=f['program'].send(f['resume'])
-                except StopIteration:raise ValueError('Factory program ended without terminal result')
-                f['resume']=None
-            result=self._factory_action(context,f['action'])
-            if self.load_test_context is not context:return
-            if result is None:break
-            f['resume']=result;f['action']=None
+        if not waiting:
+            for _ in range(12):
+                if self.load_test_context is not context:return
+                if f['action'] is None:
+                    try:f['action']=f['program'].send(f['resume'])
+                    except StopIteration:raise ValueError('Factory program ended without terminal result')
+                    f['resume']=None
+                result=self._factory_action(context,f['action'])
+                if self.load_test_context is not context:return
+                if result is None:break
+                f['resume']=result;f['action']=None
         if now>=context['next_report']:
             context['next_report']=now+5.;self._load_test_emit(context)
 
@@ -3547,7 +3567,8 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
-    def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False):
+    def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False,
+                                  control_state=None):
         if not self.connected:raise ValueError('MCU is disconnected')
         sd=self.printer.lookup_object('virtual_sdcard',None)
         stats=self.printer.lookup_object('print_stats',None)
@@ -3558,7 +3579,7 @@ class InventureMCU:
             raise ValueError('Load test is active; use INVENTURE_STOP first')
         if getattr(self,'feeder_run_context',None) is not None and not allow_run:
             raise ValueError('Feeder run is active; use INVENTURE_STOP first')
-        state=self._control_query()
+        state=self._control_query() if control_state is None else control_state
         if state['mode']!='SERVICE' or state['latched'] or state['fault'] or state['reject']:
             raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
         if state['active'] and not allow_active:

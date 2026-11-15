@@ -49,6 +49,11 @@ Podczas `START` ekran OLED wstrzymuje przesyłanie nowych klatek. Klipper
 nadal odbiera odczyty i aktualizuje postęp w Fluidd. Odświeżanie OLED wraca
 po zakończeniu próby. W razie utraty trybu SERVICE końcowy raport pokazuje
 także ostatni stan sterowania, kabla głowicy i buforów UART.
+W trakcie dokładnej próbki odczyt statusu PC14, potwierdzenie trybu
+SERVICE i odnowienie sesji odbywają się z odstępem co najmniej 250 ms.
+Kontrola aktualności czujników, odczyt grzałki i PID pracują w zwykłym
+cyklu około 100 ms. Impulsy STEP i decyzje kontaktowe pozostają w timerze
+STM32. STM32 pilnuje heartbeat 1000 ms i dzierżaw 1500 ms między odczytami.
 
 | Parametr | Domyślnie | Działanie |
 |---|---:|---|

@@ -230,6 +230,76 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual(details['nozzle_z_state']['cycles'],84)
         self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
+    def test_active_sample_paces_reports_and_leases_but_keeps_heater_and_cable_checks(self):
+        host=z_host_support.ZHomeHostTests().host()
+        device=host.device
+        device.contact_at=None
+        host.nozzle_z_test_abi=1
+        times={name:[] for name in ('control','factory_session','output','probe','pid')}
+        for name in ('control','factory_session','output'):
+            callback=host.commands[name].callback
+
+            def record(args,key=name,send=callback):
+                if key!='output' or args[0]==0:
+                    times[key].append(host.reactor.now)
+                return send(args)
+
+            host.commands[name]=Wire(record)
+
+        pid=host._load_test_pid
+
+        def record_pid(context,temperature,now):
+            times['pid'].append(now)
+            return pid(context,temperature,now)
+
+        host._load_test_pid=record_pid
+        sample=[]
+        state={}
+
+        def refine(args):
+            start,owner,token,span,interval,repeats=args
+            if start:
+                sample.append(host.reactor.now)
+                state.update(owner=owner,token=token,tool=0,active=1,status=0,
+                             reject=0,cycles=0,non_improvements=0,best_steps=0,
+                             net_steps=0,up_steps=0,down_steps=0)
+            else:
+                self.assertEqual((owner,token),(state['owner'],state['token']))
+                times['probe'].append(host.reactor.now)
+                if host.status['cable']:
+                    state.update(active=0,status=6)
+            return dict(state)
+
+        host.commands['nozzle_z_test']=Wire(refine)
+        host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD'))
+        while not sample:
+            self.assertLess(host.reactor.now,250.)
+            host.reactor.pause(host.reactor.now+.05)
+        for trace in times.values():trace.clear()
+        host._control_poll(host.reactor.now)
+        self.assertEqual(times['control'],[])
+        host.reactor.pause(sample[0]+1.05)
+        self.assertEqual(len(times['probe']),3)
+        self.assertEqual(times['control'],times['probe'])
+        self.assertEqual(times['factory_session'],times['probe'])
+        self.assertEqual(len(times['output']),10)
+        self.assertEqual(times['output'],times['pid'])
+        for trace,period in ((times['probe'],.3),(times['output'],.1)):
+            for before,after in zip(trace,trace[1:]):
+                self.assertAlmostEqual(after-before,period)
+
+        # An open PD11 stops the service run on the next heater tick, before
+        # the probe's next scheduled status/renewal request would be due.
+        host.status['cable']=1
+        host.reactor.pause(sample[0]+1.15)
+        self.assertIsNone(host.load_test_context)
+        self.assertEqual(len(times['factory_session']),3)
+        self.assertAlmostEqual(times['probe'][-1]-sample[0],1.1)
+        host.reactor.pause(host.reactor.now+.3)
+        self.assertIn('Extruder cable',host.nozzle_z_last['reason'])
+        self.assertEqual(host.nozzle_z_last['details']['last_cable_pd11_raw'],1)
+        self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
+
     def test_t1_inherits_t0_pad_correction_and_accepts_explicit_pair(self):
         for override,expected in (({},(73.2,67.)),
                                   (dict(T1_PAD_X=72.9,T1_PAD_Y=67.25),(72.9,67.25))):
