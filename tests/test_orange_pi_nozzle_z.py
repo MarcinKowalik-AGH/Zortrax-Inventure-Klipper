@@ -1,5 +1,6 @@
 """R0323 nozzle Z grouping and the diagnostic result, without hardware."""
 import json
+import types
 import unittest
 import test_orange_pi_z_home_host as z_host_support
 
@@ -64,6 +65,12 @@ class NozzlePlanModel(PlanModel):
 
 
 class NozzleZTests(unittest.TestCase):
+    def _record_oled_holds(self,host,initially_held=False):
+        calls=[]
+        host.thermal_display_held=initially_held
+        host.printer.objects['inventure_oled']=types.SimpleNamespace(set_thermal_test_hold=calls.append)
+        return calls
+
     def test_cold_prepare_selects_each_nozzle_without_moving_up_or_heating(self):
         for tool in ('T0', 'T1'):
             with self.subTest(tool=tool):
@@ -108,14 +115,16 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual(comparison['t1_lower_by_mm'], round(24 / Z_STEPS_PER_MM, 6))
         self.assertFalse(comparison['coordinate_saved'])
 
-    def _run_owned_samples(self,t1_failure=None):
+    def _run_owned_samples(self,t1_failure=None,service_loss=False):
         host=z_host_support.ZHomeHostTests().host()
+        holds=self._record_oled_holds(host)
         device=host.device
         device.contact_at=None
         starts=[]
         state={}
 
         def local_refine(args):
+            self.assertTrue(host.thermal_display_held)
             start,owner,token,span,interval,repeats=args
             if start:
                 device._settle()
@@ -127,6 +136,16 @@ class NozzleZTests(unittest.TestCase):
                 state.update(owner=owner,token=token,tool=tool,active=1,status=0,
                              reject=0,net_steps=0,best_steps=0,cycles=0,
                              non_improvements=0,up_steps=0,down_steps=0)
+                if service_loss and tool==0 and len(starts)==2:
+                    running=dict(state)
+                    state.update(active=0,status=4,cycles=84,net_steps=240,
+                                 best_steps=238,up_steps=460,down_steps=220)
+                    # Model a control-guard trip mid-probe: the next read
+                    # sees OFF before a factory lease renewal can run.
+                    host.control_reply.update(mode=0,armed=0)
+                    host.uart_buffer_stats=dict(dropped=2,received_at=host.reactor.now)
+                    device.terminate(6)
+                    return running
                 if tool==1 and t1_failure is not None:
                     running=dict(state)
                     status,cycles=t1_failure
@@ -153,10 +172,15 @@ class NozzleZTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'T1 pad coordinates must be given together'):
             host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD',T1_PAD_X=72))
         self.assertEqual(device.packets,[])
+        self.assertEqual(holds,[])
         host.cmd_nozzle_z_test(start)
         while host.nozzle_z_context is not None:
             self.assertLess(host.reactor.now,600.)
+            self.assertTrue(host.thermal_display_held)
+            self.assertEqual(holds,[True])
             host.reactor.pause(host.reactor.now+.1)
+        self.assertEqual(holds,[True,False])
+        self.assertFalse(host.thermal_display_held)
         report=json.loads(start.lines[-1].split(' ',1)[1])
         return report,device,starts
 
@@ -192,18 +216,59 @@ class NozzleZTests(unittest.TestCase):
                 self.assertEqual([tool for tool,_,_,_ in starts],[0,0,1])
                 self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
+    def test_service_loss_during_second_t0_sample_preserves_diagnostics(self):
+        report,device,starts=self._run_owned_samples(service_loss=True)
+        self.assertEqual((report['phase'],report['tool'],report['reason']),
+                         ('failed',0,'z_contact_mcu_guard'))
+        self.assertEqual([tool for tool,_,_,_ in starts],[0,0])
+        self.assertEqual(report['tools'],{})
+        details=report['details']
+        self.assertIn('Select INVENTURE_CONTROL MODE=SERVICE first',details['secondary_error'])
+        self.assertEqual(details['control_before_stop']['mode'],'OFF')
+        self.assertEqual(details['last_cable_pd11_raw'],0)
+        self.assertEqual(details['uart']['dropped'],2)
+        self.assertEqual(details['nozzle_z_state']['cycles'],84)
+        self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
+
     def test_t1_inherits_t0_pad_correction_and_accepts_explicit_pair(self):
         for override,expected in (({},(73.2,67.)),
                                   (dict(T1_PAD_X=72.9,T1_PAD_Y=67.25),(72.9,67.25))):
             with self.subTest(override=override):
                 host=z_host_support.ZHomeHostTests().host()
+                holds=self._record_oled_holds(host)
                 host.nozzle_z_test_abi=1
                 host.commands['nozzle_z_test']=Wire(lambda args: self.fail('Probe started during PREPARE'))
-                host.cmd_nozzle_z_test(Command(ACTION='PREPARE',TOOL='T1',
-                                               T0_PAD_X=84,T0_PAD_Y=67,**override))
+                prepare=Command(ACTION='PREPARE',TOOL='T1',T0_PAD_X=84,T0_PAD_Y=67,**override)
+                host.cmd_nozzle_z_test(prepare)
                 settings=host.nozzle_z_context['parameters'][1][1]
                 self.assertAlmostEqual(settings['z_probe_x'],expected[0])
                 self.assertEqual(settings['z_probe_y'],expected[1])
+                while host.nozzle_z_context is not None:
+                    self.assertLess(host.reactor.now,250.)
+                    host.reactor.pause(host.reactor.now+.1)
+                self.assertEqual(host.nozzle_z_last['phase'],'prepared')
+                self.assertFalse(host.thermal_display_held)
+                self.assertEqual(holds,[])
+
+    def test_stop_restores_the_prior_oled_hold(self):
+        for initially_held in (False,True):
+            with self.subTest(initially_held=initially_held):
+                host=z_host_support.ZHomeHostTests().host()
+                holds=self._record_oled_holds(host,initially_held)
+                host.nozzle_z_test_abi=1
+                host.commands['nozzle_z_test']=Wire(lambda args: self.fail('Unexpected probe'))
+                host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD'))
+                host.reactor.pause(host.reactor.now+.5)
+                self.assertTrue(host.thermal_display_held)
+                host.cmd_nozzle_z_test(Command(ACTION='STOP'))
+                self.assertIsNone(host.load_test_context)
+                self.assertEqual(host.nozzle_z_last['phase'],'stopped')
+                host.reactor.pause(host.reactor.now+.5)
+                self.assertEqual(host.thermal_display_held,initially_held)
+                if initially_held:
+                    self.assertNotIn(False,holds)
+                else:
+                    self.assertEqual(holds,[True,False])
 
     def test_failing_stages_cannot_report_success(self):
         for rises, fault, error in (

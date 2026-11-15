@@ -45,6 +45,10 @@ się z tego samego położenia w pionie względem PE12. Po grupie stół wraca
 na PE12, a polecenie zatrzymania wyłącza grzanie.
 `ZORTRAX_NOZZLE_Z_TEST ACTION=STATUS` pokazuje bieżący etap lub ostatni wynik.
 Próbę przerywa `ZORTRAX_NOZZLE_Z_TEST ACTION=STOP` albo `INVENTURE_STOP`.
+Podczas `START` ekran OLED wstrzymuje przesyłanie nowych klatek. Klipper
+nadal odbiera odczyty i aktualizuje postęp w Fluidd. Odświeżanie OLED wraca
+po zakończeniu próby. W razie utraty trybu SERVICE końcowy raport pokazuje
+także ostatni stan sterowania, kabla głowicy i buforów UART.
 
 | Parametr | Domyślnie | Działanie |
 |---|---:|---|

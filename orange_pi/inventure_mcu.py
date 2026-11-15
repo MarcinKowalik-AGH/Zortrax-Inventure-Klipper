@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DIAG'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-UART'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -747,6 +747,9 @@ class InventureMCU:
         return stock if valid else None, stock, 'valid' if valid else 'out_of_range'
 
     def _thermal_display_hold(self, hold):
+        batch=getattr(self,'nozzle_z_context',None)
+        if batch is not None and 'display_hold_before' in batch:
+            hold=True
         printer=getattr(self, 'printer', None)
         oled=printer.lookup_object('inventure_oled', None) if printer is not None else None
         if oled is not None:
@@ -2609,6 +2612,10 @@ class InventureMCU:
                 nozzle=action.get('kind')=='nozzle_z_refine' and 'token' in action
                 stopped=factory is not None and (factory['move'] is not None or edge or nozzle)
                 reason=str(exc);details=dict(getattr(exc,'details',{}))
+                if factory is not None and factory.get('operation')=='NOZZLE_Z_MEASURE':
+                    details['control_before_stop']=dict(getattr(self,'control_last',{}))
+                    details['uart']=dict(getattr(self,'uart_buffer_stats',{}))
+                    details['last_cable_pd11_raw']=getattr(self,'status',{}).get('cable')
                 if stopped:
                     # The MCU retains an already terminal motion across STOP.
                     # Keep ownership until readback finishes, with no renewal.
@@ -2651,9 +2658,15 @@ class InventureMCU:
         if batch is None:return
         self.nozzle_z_context=None
         if 'timer' in batch:self.reactor.unregister_timer(batch['timer'])
+        self._nozzle_z_restore_display(batch)
         self.nozzle_z_last=dict(phase=phase, action=batch['action'], tools=batch['results'],
                                 coordinate_saved=False, **result)
         batch['gcmd'].respond_info('V9_NOZZLE_Z_TEST '+json.dumps(self.nozzle_z_last,sort_keys=True))
+
+    def _nozzle_z_restore_display(self,batch):
+        if 'display_hold_before' in batch:
+            try:self._thermal_display_hold(batch['display_hold_before'])
+            except Exception:logging.exception('Inventure nozzle Z: unable to restore OLED refresh')
 
     def _nozzle_z_status(self):
         batch=getattr(self,'nozzle_z_context',None)
@@ -2663,7 +2676,8 @@ class InventureMCU:
         return dict(phase='running',action=batch['action'],tool=batch['tool'],
                     stage=factory.get('phase'), tools=batch['results'],
                     temperature_c=self.panel_temperature(batch['tool'],self.reactor.monotonic())[0],
-                    mcu_sample=factory.get('nozzle_z_state'),coordinate_saved=False)
+                    mcu_sample=factory.get('nozzle_z_state'),coordinate_saved=False,
+                    oled_bulk_hold=bool(getattr(self,'thermal_display_held',False)))
 
     def _nozzle_z_tick(self,batch,eventtime):
         from .inventure_z_home import nozzle_z_comparison
@@ -2780,6 +2794,11 @@ class InventureMCU:
                    max_spread_mm=max_spread)
         self.nozzle_z_context=batch
         try:
+            if not prepare:
+                # Restrict optional OLED traffic for the complete two-tool
+                # run, including the heater and factory lease handoff.
+                batch['display_hold_before']=bool(getattr(self,'thermal_display_held',False))
+                self._thermal_display_hold(True)
             batch['child']=self._factory_start(gcmd,
                 operation='NOZZLE_Z_PREPARE' if prepare else 'NOZZLE_Z_MEASURE',
                 nozzle_parameters=plans[tools[0]])
@@ -2787,6 +2806,7 @@ class InventureMCU:
                                                        self.reactor.monotonic()+.2)
         except Exception:
             self.nozzle_z_context=None
+            self._nozzle_z_restore_display(batch)
             raise
 
     def cmd_procedure(self,gcmd):
