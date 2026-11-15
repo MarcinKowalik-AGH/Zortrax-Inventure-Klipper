@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-PAD'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-DIAG'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -38,6 +38,7 @@ NOZZLE_Z_RESPONSE = ('inventure_nozzle_z_test_state owner=%u token=%u tool=%c '
                      'active=%c status=%c reject=%c net_steps=%i best_steps=%i '
                      'cycles=%u non_improvements=%c up_steps=%u down_steps=%u')
 NOZZLE_Z_ERRORS = {**Z_EDGE_ERRORS, 2:'z_contact_not_found', 3:'z_contact_did_not_release'}
+NOZZLE_Z_MCU_MAX_CYCLES = 512
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -2253,6 +2254,7 @@ class InventureMCU:
                 result['factory']['last_z_move']=f.get('last_z_move')
                 result['factory']['z_home_progress']=f.get('z_home_progress')
                 if 'z_mcu_state' in f:result['factory']['z_mcu_state']=f['z_mcu_state']
+                if 'nozzle_z_state' in f:result['factory']['nozzle_z_state']=f['nozzle_z_state']
             cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
@@ -2603,7 +2605,9 @@ class InventureMCU:
             if self.load_test_context is context:
                 factory=context.get('factory')
                 edge=factory is not None and factory.get('z_edge_run') is not None
-                stopped=factory is not None and (factory['move'] is not None or edge)
+                action=(factory.get('action') or {}) if factory is not None else {}
+                nozzle=action.get('kind')=='nozzle_z_refine' and 'token' in action
+                stopped=factory is not None and (factory['move'] is not None or edge or nozzle)
                 reason=str(exc);details=dict(getattr(exc,'details',{}))
                 if stopped:
                     # The MCU retains an already terminal motion across STOP.
@@ -2612,6 +2616,8 @@ class InventureMCU:
                     if self.load_test_context is not context:return self.reactor.NEVER
                     if edge:
                         reason=self._factory_failed_z_edge(context,reason,details)
+                    elif nozzle:
+                        reason=self._factory_failed_nozzle_z(context,action,reason,details)
                     else:
                         reason=self._factory_failed_motion(context,reason,details)
                     if self.load_test_context is not context:return self.reactor.NEVER
@@ -2961,6 +2967,31 @@ class InventureMCU:
         f['z_edge_run']=None
         return dict(status=row['status'],sent_steps=row['sent'],end_raw=row['end_raw'])
 
+    def _factory_nozzle_z_read(self,context,action,starting=False):
+        f=context['factory'];span=action['span'];repeats=action['repeats']
+        data=[int(starting),f['token'],action['token'],span if starting else 0,
+              action['interval_us'] if starting else 0,repeats if starting else 0]
+        row=self._control_send('nozzle_z_test',data,mutate=starting,owner=context)
+        if self.load_test_context is not context:raise ValueError('Nozzle Z test was stopped')
+        self._control_validate(row,{'owner':(0,0xffffffff),'token':(0,0xffffffff),
+            'tool':(0,1),'active':(0,1),'status':(0,6),'reject':(0,4),
+            'net_steps':(-span,span),'best_steps':(-span,span),'cycles':(0,NOZZLE_Z_MCU_MAX_CYCLES),
+            'non_improvements':(0,repeats),'up_steps':(0,0xffffffff),'down_steps':(0,0xffffffff)})
+        if row['reject']:
+            raise ValueError('MCU nozzle Z sample rejected (%d)'%row['reject'])
+        if (row['owner'],row['token'],row['tool'])!=(f['token'],action['token'],context['tool']):
+            raise ValueError('MCU nozzle Z sample changed tool or ownership')
+        if bool(row['active'])!=(row['status']==0) or row['net_steps']!=row['up_steps']-row['down_steps']:
+            raise ValueError('Inconsistent MCU nozzle Z sample')
+        f['nozzle_z_state']=dict(row)
+        return row
+
+    @staticmethod
+    def _nozzle_z_error(row):
+        if row['status']==5 and row['cycles']==NOZZLE_Z_MCU_MAX_CYCLES:
+            return 'z_contact_cycle_limit'
+        return NOZZLE_Z_ERRORS.get(row['status'])
+
     def _factory_nozzle_z_refine(self,context,action):
         from .inventure_factory_core import FactoryError
         from .inventure_z_home import Z_STEPS_PER_MM
@@ -2972,24 +3003,11 @@ class InventureMCU:
                     or round(f['position'][2]*Z_STEPS_PER_MM)!=action['start_steps']):
                 raise ValueError('Nozzle Z sample requires the owned, heated nozzle at its approach height')
             self._z_home_inputs({'z_bottom':0,'nozzle_contact':1})
+            f.pop('nozzle_z_state',None)
             action['token']=self._control_next_token()
-        data=[int(starting),f['token'],action['token'],span if starting else 0,
-              action['interval_us'] if starting else 0,repeats if starting else 0]
-        row=self._control_send('nozzle_z_test',data,mutate=starting,owner=context)
-        if self.load_test_context is not context:raise ValueError('Nozzle Z test was stopped')
-        self._control_validate(row,{'owner':(0,0xffffffff),'token':(0,0xffffffff),
-            'tool':(0,1),'active':(0,1),'status':(0,6),'reject':(0,4),
-            'net_steps':(-span,span),'best_steps':(-span,span),'cycles':(0,512),
-            'non_improvements':(0,repeats),'up_steps':(0,0xffffffff),'down_steps':(0,0xffffffff)})
-        if row['reject']:
-            raise ValueError('MCU nozzle Z sample rejected (%d)'%row['reject'])
-        if (row['owner'],row['token'],row['tool'])!=(f['token'],action['token'],context['tool']):
-            raise ValueError('MCU nozzle Z sample changed tool or ownership')
-        f['nozzle_z_state']=dict(row)
-        if bool(row['active'])!=(row['status']==0) or row['net_steps']!=row['up_steps']-row['down_steps']:
-            raise ValueError('Inconsistent MCU nozzle Z sample')
+        row=self._factory_nozzle_z_read(context,action,starting=starting)
         if row['status'] in NOZZLE_Z_ERRORS:
-            raise FactoryError(NOZZLE_Z_ERRORS[row['status']],state=row)
+            raise FactoryError(self._nozzle_z_error(row))
         if row['cycles']>action['max_cycles'] or (row['active'] and row['cycles']==action['max_cycles']
                                                   and row['non_improvements']!=repeats):
             raise FactoryError('z_contact_cycle_limit',cycles=row['cycles'])
@@ -3001,6 +3019,24 @@ class InventureMCU:
         if self.load_test_context is not context:raise ValueError('Nozzle Z test was stopped')
         f['position'][2]=(action['start_steps']+row['net_steps'])/Z_STEPS_PER_MM
         return row
+
+    def _factory_failed_nozzle_z(self,context,action,reason,details):
+        f=context['factory']
+        row=f.get('nozzle_z_state')
+        if row is None or row['active']:
+            try:
+                # The MCU keeps terminal probe state across global STOP.
+                row=self._factory_nozzle_z_read(context,action)
+            except Exception:
+                logging.debug('MCU nozzle Z terminal readback unavailable',exc_info=True)
+        if self.load_test_context is not context or row is None:
+            return reason
+        details['nozzle_z_state']=dict(row)
+        if row['status'] not in (2,3,4,5):
+            return reason
+        primary=self._nozzle_z_error(row)
+        if primary!=reason:details['secondary_error']=reason
+        return primary
 
     def _factory_failed_z_edge(self,context,reason,details):
         run=context['factory']['z_edge_run'];row=run.get('last')

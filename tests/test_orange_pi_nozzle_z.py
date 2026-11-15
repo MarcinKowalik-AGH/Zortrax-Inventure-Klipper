@@ -108,7 +108,7 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual(comparison['t1_lower_by_mm'], round(24 / Z_STEPS_PER_MM, 6))
         self.assertFalse(comparison['coordinate_saved'])
 
-    def test_host_runs_owned_samples_and_cuts_both_heaters(self):
+    def _run_owned_samples(self,t1_failure=None):
         host=z_host_support.ZHomeHostTests().host()
         device=host.device
         device.contact_at=None
@@ -127,6 +127,15 @@ class NozzleZTests(unittest.TestCase):
                 state.update(owner=owner,token=token,tool=tool,active=1,status=0,
                              reject=0,net_steps=0,best_steps=0,cycles=0,
                              non_improvements=0,up_steps=0,down_steps=0)
+                if tool==1 and t1_failure is not None:
+                    running=dict(state)
+                    status,cycles=t1_failure
+                    state.update(active=0,status=status,cycles=cycles,net_steps=210,
+                                 best_steps=207,up_steps=1240,down_steps=1030)
+                    # MCU terminates the factory session between the START
+                    # response and the next host lease renewal.
+                    device.terminate(2)
+                    return running
             else:
                 self.assertEqual((owner,token),(state['owner'],state['token']))
                 if state['active']:
@@ -149,6 +158,10 @@ class NozzleZTests(unittest.TestCase):
             self.assertLess(host.reactor.now,600.)
             host.reactor.pause(host.reactor.now+.1)
         report=json.loads(start.lines[-1].split(' ',1)[1])
+        return report,device,starts
+
+    def test_host_runs_owned_samples_and_cuts_both_heaters(self):
+        report,device,starts=self._run_owned_samples()
         self.assertEqual(report['phase'],'done',report)
         self.assertEqual(report['measurement']['delta_steps'],40)
         self.assertEqual(report['tools']['T0']['pad_raw_xy'],[82.8,68.])
@@ -162,6 +175,22 @@ class NozzleZTests(unittest.TestCase):
         self.assertEqual(len({token for _,_,_,token in starts}),5)
         self.assertEqual(len({owner for _,_,owner,_ in starts}),2)
         self.assertEqual((device.z,device.output(6)['duty'],device.output(7)['duty']),(0,0,0))
+
+    def test_host_reports_t1_probe_failure_after_factory_owner_disappears(self):
+        for status,cycles,reason in ((5,512,'z_contact_cycle_limit'),
+                                     (4,458,'z_contact_mcu_guard')):
+            with self.subTest(status=status):
+                report,device,starts=self._run_owned_samples((status,cycles))
+                self.assertEqual(report['phase'],'failed',report)
+                self.assertEqual((report['tool'],report['reason']),(1,reason))
+                self.assertEqual(len(report['tools']['T0']['readings']),2)
+                self.assertNotIn('measurement',report)
+                self.assertIn('factory guard/ownership rejected',report['details']['secondary_error'])
+                row=report['details']['nozzle_z_state']
+                self.assertEqual((row['tool'],row['status'],row['cycles']),(1,status,cycles))
+                self.assertEqual((row['owner'],row['token']),starts[-1][2:])
+                self.assertEqual([tool for tool,_,_,_ in starts],[0,0,1])
+                self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
     def test_t1_inherits_t0_pad_correction_and_accepts_explicit_pair(self):
         for override,expected in (({},(73.2,67.)),

@@ -61,6 +61,10 @@ ostatniej próbki z każdej grupy, zgodnie z wyborem r0323. Dodatnia wartość
 `t1_lower_by_mm` oznacza niżej wysuniętą T1, ponieważ stół pokonał
 krótszą drogę z PE12 do rozwarcia T1.
 Pole `selector_press` pokazuje punkty docisku i wynik ruchu zgłoszony przez MCU.
+Gdy STM32 zatrzyma próbkę, `details.nozzle_z_state` pokazuje końcowy
+stan pomiaru, w tym liczbę cykli i kroków. `z_contact_cycle_limit` oznacza
+osiągnięcie 512 cykli bez ukończenia próbki. Wcześniejsze ukończone serie
+pozostają w `tools`, a obliczenie różnicy wymaga pełnego wyniku obu dysz.
 Skala pomiaru wynosi 802 kroki/mm. Różnica trafia wyłącznie do raportu
 diagnostycznego Klippera z bieżącej sesji. Podczas pomiaru obowiązuje
 aktualna globalna polityka osłon.
