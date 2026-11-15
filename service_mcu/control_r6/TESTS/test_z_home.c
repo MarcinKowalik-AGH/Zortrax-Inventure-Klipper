@@ -2,11 +2,12 @@
 #include "control_test_support.inc"
 
 enum { OWNER = 501, TOKEN = 601, INTERVAL_US = 3000 };
+static unsigned mock_probe_adc[2] = { 1427, 166 };
 
 static void z_home_adc(void)
 {
     control_adc();
-    inventure_adc_observe(ADC1, 10, 1427);
+    heat_adc(mock_probe_adc[0], mock_probe_adc[1]);
 }
 
 static void factory_lease(unsigned action, unsigned tool, unsigned mode, unsigned seq)
@@ -635,6 +636,181 @@ static void native_refine_faults(void)
     assert(!inventure_is_armed() && control_latched && !native_z_refine_held && !zh.active);
 }
 
+static void nozzle_test(unsigned action,unsigned owner,unsigned token,unsigned span,
+                        unsigned interval,unsigned repeats)
+{
+    uint32_t args[]={action,owner,token,span,interval,repeats};
+    command_inventure_nozzle_z_test(args);
+}
+
+static void nozzle_test_reset(unsigned tool)
+{
+    mock_probe_adc[0]=163;
+    mock_probe_adc[1]=166;
+    reset(tool,0xffff0000u);
+}
+
+static void nozzle_test_terminal(unsigned tool,unsigned token,unsigned status)
+{
+    nozzle_test(0,OWNER,token,0,0,0);
+    assert(nozzle_z_reply.owner==OWNER && nozzle_z_reply.token==token);
+    assert(nozzle_z_reply.tool==tool && !nozzle_z_reply.reject && !nozzle_z_reply.active);
+    assert(nozzle_z_reply.status==status && !zh.high && !zh.timer_added && !scheduled_count);
+    assert(nozzle_z_reply.net==(int32_t)nozzle_z_reply.up_steps-(int32_t)nozzle_z_reply.down_steps);
+}
+
+static void nozzle_test_both_tools(unsigned tool,unsigned repeats,uint32_t token)
+{
+    const uint32_t next=token==UINT32_MAX ? 1u : token+1u;
+    nozzle_test_reset(tool);
+    mock_probe_adc[1-tool]=1427;
+    z_home_adc();
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==3 && !zh.active); // The other nozzle is hot.
+    mock_probe_adc[tool]=1427;
+    mock_probe_adc[1-tool]=166;
+    z_home_adc();
+    contact(1);
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==3 && !zh.active);
+    contact(0);
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,ZH_NOZZLE_MAX_REPEATS+1);
+    assert(nozzle_z_reply.reject==1 && !zh.active);
+    nozzle_test(1,OWNER+1,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==4 && !zh.active);
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.active && !nozzle_z_reply.reject && nozzle_z_reply.tool==tool);
+    uint32_t wake=zh_timer.waketime;
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==4 && zh.active && zh_timer.waketime==wake);
+    nozzle_test(1,OWNER,next,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==2 && zh.active && zh_timer.waketime==wake);
+    nozzle_test(2,OWNER,next,0,0,0);
+    assert(nozzle_z_reply.reject==4 && !nozzle_z_reply.owner && zh.active);
+    probe(2,OWNER,token,0,0,0);
+    assert(z_home_reply.reject==4 && zh.active);
+
+    unsigned dispatches=0,seq=0;
+    while(zh.active) {
+        switch(zh.phase) {
+        case ZH_START_UP: case ZH_SEEK:
+            contact(zh.net>=3);
+            break;
+        case ZH_START_DOWN: case ZH_RELEASE:
+            contact(zh.net>2);
+            break;
+        case ZH_START_SETTLE: case ZH_SETTLE:
+            contact(0);
+            break;
+        default:
+            assert(!"unexpected nozzle test phase");
+        }
+        step_timer();
+        if(++dispatches%100==0)factory_lease(2,tool,IVT_STOP,++seq);
+        assert(dispatches<3000);
+    }
+    nozzle_test_terminal(tool,token,ZH_DONE);
+    assert(nozzle_z_reply.misses==repeats && nozzle_z_reply.cycles==repeats+1);
+    assert(nozzle_z_reply.best==2 && nozzle_z_reply.net==2 && fs.active);
+    assert(nozzle_z_reply.up_steps>0 && nozzle_z_reply.down_steps>0);
+    assert(GPIOE->BSRR!=(BIT(10)<<16));
+
+    nozzle_test(1,OWNER,token,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==4 && !zh.active);
+    nozzle_test(1,OWNER,token-1,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==4 && !zh.active);
+    nozzle_test(1,OWNER,next,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.active && !nozzle_z_reply.reject);
+    step_timer();
+    step_timer();
+    assert(zh.high && zh.up_steps==1);
+    output(1,6+tool,32,1500,250,67);
+    assert(co[6+tool].duty);
+    nozzle_test(2,OWNER,next,0,0,0);
+    nozzle_test_terminal(tool,next,ZH_STOP);
+    assert(!fs.active && !co[6+tool].duty && GPIOE->BSRR==(BIT(10)<<16));
+    nozzle_test(1,OWNER,next+1,20,INTERVAL_US,repeats);
+    assert(nozzle_z_reply.reject==4 && !zh.active);
+}
+
+static void nozzle_test_local_guards(void)
+{
+    for(unsigned kind=0;kind<7;kind++) {
+        nozzle_test_reset(1);
+        mock_probe_adc[1]=1427;
+        z_home_adc();
+        output(1,7,32,1500,250,67);
+        assert(co[7].duty);
+        nozzle_test(1,OWNER,TOKEN,20,INTERVAL_US,2);
+        assert(zh.active && !nozzle_z_reply.reject);
+        step_timer();
+        assert(!zh.up_steps);
+        if(kind==0)mock_probe_adc[1]=166; // T0 cannot provide a valid T1 reading.
+        if(kind==1)co[7].reason=3; // Selected heater lease expired.
+        if(kind==2)transport[1].fault=1;
+        if(kind==3)GPIOC->IDR|=BIT(13);
+        if(kind==4)GPIOE->IDR|=BIT(12);
+        if(kind==5)fs.deadline=zh_timer.waketime;
+        if(kind==6)transport_selected=0;
+        step_timer();
+        nozzle_test_terminal(1,TOKEN,ZH_GUARD);
+        assert(!nozzle_z_reply.up_steps && !nozzle_z_reply.down_steps);
+        assert(!fs.active && !co[7].duty && GPIOE->BSRR==(BIT(10)<<16));
+    }
+}
+
+static void nozzle_test_lost_contact(void)
+{
+    nozzle_test_reset(0);
+    mock_probe_adc[0]=1427;
+    z_home_adc();
+    nozzle_test(1,OWNER,TOKEN,5,INTERVAL_US,2);
+    assert(zh.active && !nozzle_z_reply.reject);
+    unsigned dispatches=0;
+    while(zh.active) {
+        // The first release is sound. A later seek hits the travel limit
+        // without contact, so this test cannot return a valid measurement.
+        if(zh.phase==ZH_START_UP || zh.phase==ZH_SEEK)
+            contact(!zh.cycles && zh.net>=3);
+        else
+            contact(zh.net>2);
+        step_timer();
+        assert(++dispatches<40);
+    }
+    nozzle_test_terminal(0,TOKEN,ZH_NO_CONTACT);
+    assert(nozzle_z_reply.cycles==1 && nozzle_z_reply.best==2);
+    assert(nozzle_z_reply.net==5 && !fs.active && GPIOE->BSRR==(BIT(10)<<16));
+}
+
+static void nozzle_test_return_to_bottom(void)
+{
+    nozzle_test_reset(1);
+    mock_probe_adc[1]=1427;
+    z_home_adc();
+    nozzle_test(1,OWNER,TOKEN,5,INTERVAL_US,1);
+    assert(zh.active);
+    while(zh.active) {
+        contact(zh.phase<=ZH_SEEK ? zh.net>=2 : zh.net>1);
+        step_timer();
+    }
+    nozzle_test_terminal(1,TOKEN,ZH_DONE);
+    assert(nozzle_z_reply.net==1 && fs.active && GPIOE->BSRR!=(BIT(10)<<16));
+
+    // Ordinary SERVICE descent takes over from the completed timer and
+    // stops on PE12 without invalidating the owner's held enable.
+    motion(1,0,0,0,20,0,3200,10,1000,BIT(2),BIT(2),0,TOKEN+1);
+    assert(cm.active && !zh.active && GPIOE->BSRR==BIT(10));
+    assert(!(cm.direction&BIT(2)));
+    motion_tick();
+    assert(cm.sent[2]==1);
+    GPIOE->IDR|=BIT(12);
+    motion_tick();
+    assert(cm.sent[2]==1 && !cm.active && cm.hit==BIT(2) && cm.reason==CR_INPUT);
+    assert(fs.active && GPIOE->BSRR==BIT(10));
+    control_command(2,0);
+    assert(!fs.active && GPIOE->BSRR==(BIT(10)<<16));
+}
+
 int main(void)
 {
     minimum_and_final_settle(0);
@@ -659,5 +835,11 @@ int main(void)
     native_refine_run();
     native_refine_faults();
     puts("PASS native Z refine: exact 101 misses, saved DIR, exclusive queue gate, handoff and fault stops");
+    nozzle_test_both_tools(0,201,TOKEN);
+    nozzle_test_both_tools(1,101,UINT32_MAX);
+    nozzle_test_local_guards();
+    nozzle_test_lost_contact();
+    nozzle_test_return_to_bottom();
+    puts("PASS nozzle Z test: T0/T1 sensing, 201/101 misses, span, wrapped replay, local guards and held PE12 retreat");
     return 0;
 }

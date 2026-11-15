@@ -40,6 +40,11 @@ static struct {
 static struct {
     uint32_t owner,token,operation,active,status,reject,sent,end_raw;
 } z_edge_reply;
+static struct {
+    uint32_t owner,token,tool,active,status,reject;
+    int32_t net,best;
+    uint32_t cycles,misses,up_steps,down_steps;
+} nozzle_z_reply;
 static uint32_t native_z_guard_reply[3];
 #endif
 void sendf(const char*f,...){
@@ -79,6 +84,27 @@ void sendf(const char*f,...){
         z_edge_reply.reject=va_arg(args,unsigned);
         z_edge_reply.sent=va_arg(args,unsigned);
         z_edge_reply.end_raw=va_arg(args,unsigned);
+        va_end(args);
+        return;
+    }
+    if (!strncmp(f,"inventure_nozzle_z_test_state ",30)) {
+        assert(!strcmp(f,"inventure_nozzle_z_test_state owner=%u token=%u tool=%c"
+            " active=%c status=%c reject=%c net_steps=%i best_steps=%i cycles=%u"
+            " non_improvements=%c up_steps=%u down_steps=%u"));
+        va_list args;
+        va_start(args,f);
+        nozzle_z_reply.owner=va_arg(args,unsigned);
+        nozzle_z_reply.token=va_arg(args,unsigned);
+        nozzle_z_reply.tool=va_arg(args,unsigned);
+        nozzle_z_reply.active=va_arg(args,unsigned);
+        nozzle_z_reply.status=va_arg(args,unsigned);
+        nozzle_z_reply.reject=va_arg(args,unsigned);
+        nozzle_z_reply.net=va_arg(args,int);
+        nozzle_z_reply.best=va_arg(args,int);
+        nozzle_z_reply.cycles=va_arg(args,unsigned);
+        nozzle_z_reply.misses=va_arg(args,unsigned);
+        nozzle_z_reply.up_steps=va_arg(args,unsigned);
+        nozzle_z_reply.down_steps=va_arg(args,unsigned);
         va_end(args);
         return;
     }

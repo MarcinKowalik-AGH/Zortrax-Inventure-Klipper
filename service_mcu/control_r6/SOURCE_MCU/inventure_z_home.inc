@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Leased T0 contact refinement, modeled on r0323 at 0x0801DC70.
+// Leased contact refinement, modeled on r0323 at 0x0801DC70.
 #line 13000 "inventure_z_home.inc"
 DECL_CONSTANT("INVENTURE_Z_HOME_ABI",1);
 DECL_CONSTANT("INVENTURE_Z_EDGE_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_REFINE_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_Z_TEST_ABI",1);
 #define ZH_MAX_SPAN 8020u
 #define ZH_EDGE_MAX_STEPS (2u*ZH_MAX_SPAN)
 #define ZH_MIN_INTERVAL_US 1250u
 #define ZH_MAX_INTERVAL_US 25000u
 #define ZH_MAX_REPEATS 101u
+#define ZH_NOZZLE_MAX_REPEATS 201u
 #define ZH_MAX_CYCLES 512u
 #define ZH_HIGH_US 10u
 #define ZH_MAX_TICKS (600ull*CONFIG_CLOCK_FREQ)
@@ -26,6 +28,7 @@ static struct zh_state {
     uint8_t repeats,misses,phase,status,active,high,timer_added;
     uint8_t edge,operation,end_raw;
     uint8_t native,native_saved_dir;
+    uint8_t nozzle_test,tool;
 } zh;
 static struct timer zh_timer;
 
@@ -70,17 +73,17 @@ static uint_fast8_t zh_edge_finish(uint8_t status,uint8_t raw) {
     return SF_DONE;
 }
 
-static uint8_t zh_guard_ok(uint32_t now,uint32_t owner) {
+static uint8_t zh_service_guard_ok(uint32_t now,uint32_t owner,unsigned tool) {
     if(!control_ready(now) || control_mode!=CT_SERVICE || !fs.active || fs.token!=owner
-            || fs.tool!=0 || fs.mode!=IVT_STOP || iv9_due(now,fs.deadline)
-            || !transport_live || transport_selected!=0 || !transport[0].configured
-            || transport[0].fault || (door_policy_enabled() && door_closed_mask()!=3)
+            || tool>1 || fs.tool!=tool || fs.mode!=IVT_STOP || iv9_due(now,fs.deadline)
+            || !transport_live || transport_selected!=tool || !transport[tool].configured
+            || transport[tool].fault || (door_policy_enabled() && door_closed_mask()!=3)
             || cm_input_hit(BIT(2)|BIT(4),BIT(2)|BIT(4)))
         return 0;
     uint8_t valid;
-    int16_t temperature=control_temp(0,now,&valid);
+    int16_t temperature=control_temp(tool,now,&valid);
     return valid && temperature>=fs.min_c && temperature<fs.max_c
-        && co[6].reason<3 && control_sensors_valid(control_guard_mask|31,now);
+        && co[6+tool].reason<3 && control_sensors_valid(control_guard_mask|31,now);
 }
 
 static uint8_t zh_native_guard_ok(uint32_t now,uint32_t owner,int16_t min_c,int16_t max_c) {
@@ -109,7 +112,7 @@ static void zh_guard(uint32_t now) {
     zh.stamp=now;
     uint8_t ok=zh.native
         ? zh_native_guard_ok(now,zh.owner,zh.native_min_c,zh.native_max_c)
-        : zh_guard_ok(now,zh.owner);
+        : zh_service_guard_ok(now,zh.owner,zh.tool);
     if(!ok)zh_fail(ZH_GUARD);
     else if(zh.elapsed_ticks>=ZH_MAX_TICKS)zh_fail(ZH_TIME);
 }
@@ -180,7 +183,7 @@ static uint_fast8_t zh_event(struct timer *t) {
     case ZH_SEEK:
         if(zh.net>=zh.span) {
             if(zh.edge)return zh_edge_finish(ZH_NO_CONTACT,zh_contact_open());
-            if(zh.cycles)return zh_settle(t,now);
+            if(zh.cycles && !zh.nozzle_test)return zh_settle(t,now);
             return zh_fail(ZH_NO_CONTACT);
         }
         // Check again just before moving toward the nozzle. A late
@@ -230,11 +233,12 @@ static uint8_t zh_start(uint32_t now,uint32_t owner,uint32_t token,uint32_t span
         return 1;
     if(owner==zh.owner && token==zh.token) {
         // Retries describe the last run and never repeat physical movement.
-        return zh.native || zh.edge || span!=zh.span || interval_us!=zh.interval_us || repeats!=zh.repeats;
+        return zh.native || zh.edge || zh.nozzle_test || span!=zh.span
+            || interval_us!=zh.interval_us || repeats!=zh.repeats;
     }
     if(!fs.active || owner!=fs.token || owner==zh.owner)return 4;
     if(zh_start_busy())return 2;
-    if(!zh_guard_ok(now,owner))return 3;
+    if(!zh_service_guard_ok(now,owner,0))return 3;
     zh=(struct zh_state){.owner=owner,.token=token,.stamp=now,.span=span,.interval_us=interval_us,
         .interval=timer_from_us(interval_us),.repeats=repeats,.active=1,.timer_added=1};
     zh_schedule(now);
@@ -251,9 +255,10 @@ void command_inventure_z_home(uint32_t *args) {
     if(action==1)reject=zh_start(now,owner,token,args[3],args[4],args[5]);
     else if(action>2)reject=1;
     else if(action==0 && !owner && !token){} // Read-only diagnostics.
-    else if(zh.native || zh.edge || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
+    else if(zh.native || zh.edge || zh.nozzle_test || !owner || !token
+            || owner!=zh.owner || token!=zh.token)reject=4;
     else if(action==2)zh_stop();
-    struct zh_state state=zh;
+    struct zh_state state=zh.nozzle_test ? (struct zh_state){0} : zh;
     irq_restore(irq);
     sendf("inventure_z_home_state owner=%u token=%u active=%c status=%c reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c up_steps=%u down_steps=%u",
         state.owner,state.token,state.active,state.status,reject,state.net,state.best,
@@ -261,6 +266,44 @@ void command_inventure_z_home(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_z_home,HF_IN_SHUTDOWN,
     "inventure_z_home action=%c owner=%u token=%u span=%hu interval_us=%hu repeats=%c");
+
+static uint8_t zh_nozzle_test_start(uint32_t now,uint32_t owner,uint32_t token,
+                                    unsigned span,unsigned interval_us,unsigned repeats) {
+    if(!owner || !token || !span || span>ZH_MAX_SPAN || interval_us<ZH_MIN_INTERVAL_US
+            || interval_us>ZH_MAX_INTERVAL_US || !repeats || repeats>ZH_NOZZLE_MAX_REPEATS)
+        return 1;
+    if(!fs.active || owner!=fs.token)return 4;
+    if(owner==zh.owner && (!zh.nozzle_test || (int32_t)(token-zh.token)<=0))return 4;
+    if(zh_start_busy())return 2;
+    if(owner==zh.owner && zh.status!=ZH_DONE)return 4;
+    unsigned tool=fs.tool;
+    if(!zh_service_guard_ok(now,owner,tool) || !zh_contact_open())return 3;
+    zh=(struct zh_state){.owner=owner,.token=token,.stamp=now,.span=span,.interval_us=interval_us,
+        .interval=timer_from_us(interval_us),.repeats=repeats,.active=1,.timer_added=1,
+        .nozzle_test=1,.tool=tool};
+    zh_schedule(now);
+    return 0;
+}
+
+void command_inventure_nozzle_z_test(uint32_t *args) {
+    unsigned action=args[0];
+    uint32_t owner=args[1],token=args[2];
+    irqstatus_t irq=irq_save();
+    uint32_t now=timer_read_time();
+    zh_guard(now);
+    uint8_t reject=0;
+    if(action==1)reject=zh_nozzle_test_start(now,owner,token,args[3],args[4],args[5]);
+    else if(action>2)reject=1;
+    else if(!zh.nozzle_test || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
+    else if(action==2 && zh.active)control_stop_all();
+    struct zh_state state=!reject && zh.nozzle_test ? zh : (struct zh_state){0};
+    irq_restore(irq);
+    sendf("inventure_nozzle_z_test_state owner=%u token=%u tool=%c active=%c status=%c reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c up_steps=%u down_steps=%u",
+        state.owner,state.token,state.tool,state.active,state.status,reject,state.net,state.best,
+        state.cycles,state.misses,state.up_steps,state.down_steps);
+}
+DECL_COMMAND_FLAGS(command_inventure_nozzle_z_test,HF_IN_SHUTDOWN,
+    "inventure_nozzle_z_test action=%c owner=%u token=%u span=%hu interval_us=%hu repeats=%c");
 
 static uint8_t zh_edge_start(uint32_t now,uint32_t owner,uint32_t token,unsigned operation,
                              unsigned steps,unsigned interval_us) {
@@ -272,7 +315,7 @@ static uint8_t zh_edge_start(uint32_t now,uint32_t owner,uint32_t token,unsigned
     if(!fs.active || owner!=fs.token || (owner==zh.owner
             && (!zh.edge || (int32_t)(token-zh.token)<=0)))return 4;
     if(zh_start_busy())return 2;
-    if(!zh_guard_ok(now,owner))return 3;
+    if(!zh_service_guard_ok(now,owner,0))return 3;
     static const uint8_t phases[]={ZH_START_UP,ZH_START_DOWN,ZH_START_SETTLE};
     zh=(struct zh_state){.owner=owner,.token=token,.stamp=now,.span=steps,
         .interval_us=interval_us,.interval=timer_from_us(interval_us),.best=-(int32_t)steps,

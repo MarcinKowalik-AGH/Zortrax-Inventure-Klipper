@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Bounded Inventure SERVICE reference to the release of the T0 nozzle."""
+"""Bounded Inventure SERVICE reference and two-nozzle release measurements."""
 import math
 
 from .inventure_factory_core import FactoryError, FactoryProgram
@@ -15,6 +15,8 @@ Z_RELEASE_RECOVERY_MAX = 16
 Z_BOTTOM_RELEASE_STEPS = 5 * Z_STEPS_PER_MM
 Z_BOTTOM_BACKOFF_STEPS = Z_STEPS_PER_MM
 Z_HOME_ACK = 'PAD_AND_CLEARANCE_CHECKED'
+NOZZLE_Z_ACK = 'BOTH_NOZZLES_OVER_SAME_PAD'
+NOZZLE_Z_SAMPLES = (2, 3)
 OEM_Z_BOTTOM_SPEED = 2_000_000. / 301 / Z_STEPS_PER_MM
 OEM_Z_BOTTOM_RELEASE_SPEED = 2_000_000. / 2001 / Z_STEPS_PER_MM
 OEM_Z_BACKOFF_SPEED = 20.
@@ -31,9 +33,9 @@ Z_HOME_PROCEDURES = {
 }
 
 
-def z_home_parameters(gcmd, p, required=False):
+def z_home_parameters(gcmd, p, required=False, nozzle_test=False):
     """Read SERVICE coordinates and bounds before sending any motion."""
-    if p['tool'] != 0:
+    if p['tool'] != 0 and not nozzle_test:
         raise FactoryError('Z_PREPARE and HOME_Z use TOOL=T0')
     oem = p['speed_profile'] == 'OEM'
 
@@ -56,7 +58,7 @@ def z_home_parameters(gcmd, p, required=False):
         return int(value)
 
     bottom_max = number('HOME_Z_MAX', min(p['home_z_max'], 150.) if oem
-                        else p['home_z_max'], 1., 300.)
+                        else p['home_z_max'], 1., 150. if nozzle_test else 300.)
     travel = min(250., bottom_max)
     approach = number('Z_APPROACH_MM', None, 2., travel)
     span = number('Z_PROBE_MM', 10. if oem else 1., .02, 10.)
@@ -73,7 +75,8 @@ def z_home_parameters(gcmd, p, required=False):
                             .1, OEM_Z_BACKOFF_SPEED if oem else 2.)
     if approach is not None and approach / approach_speed > 595.:
         raise FactoryError('Z coarse approach exceeds 595 seconds at this speed')
-    stable = integer('Z_STABLE_CYCLES', Z_STABLE_CYCLES, 1, Z_STABLE_CYCLES)
+    stable_limit = 201 if nozzle_test else Z_STABLE_CYCLES
+    stable = integer('Z_STABLE_CYCLES', stable_limit, 1, stable_limit)
     cycles = integer('Z_MAX_CYCLES', Z_MAX_CYCLES, stable + 1, Z_MAX_CYCLES)
     default_bottom_speed = (OEM_Z_BOTTOM_SPEED if oem and gcmd.get('Z_SPEED', None) is None
                             else p['z_speed'])
@@ -486,3 +489,79 @@ class ZHomeProgram(FactoryProgram):
         yield from self._phase('DONE')
         yield dict(kind='done', success=True, terminal=operation, cleaning_done=False,
                    z_home_result=result)
+
+    def _measure_nozzle(self, samples):
+        p = self.settings
+        start = round(p['z_approach_mm'] * Z_STEPS_PER_MM)
+        span = round(p['z_probe_mm'] * Z_STEPS_PER_MM)
+        if start - span <= self.z_steps:
+            raise FactoryError('Nozzle probe window reaches the lower clearance')
+        yield from self._z_approach(start, self.z_steps)
+        readings = []
+        for index in range(samples):
+            yield from self._phase('NOZZLE_Z_SAMPLE_%d' % (index + 1))
+            row = yield dict(kind='nozzle_z_refine', start_steps=start, span=span,
+                             interval_us=p['z_contact_interval_us'], repeats=p['z_stable_cycles'],
+                             max_cycles=p['z_max_cycles'])
+            rise = row['net_steps']
+            if type(rise) is not int or not 0 < rise < span:
+                raise FactoryError('Nozzle release outside the positive approach window')
+            self.z_steps += rise
+            readings.append(dict(release_steps_from_bottom=self.z_steps,
+                                 release_mm_from_bottom=round(self.z_steps / Z_STEPS_PER_MM, 6),
+                                 cycles=row['cycles'], non_improvements=row['non_improvements'],
+                                 up_steps=row['up_steps'], down_steps=row['down_steps']))
+            if index + 1 < samples:
+                _, hit, raw = yield from self._z_move(-rise, p['z_backoff_speed'],
+                                                      Z_BOTTOM, Z_BOTTOM, 1, 0)
+                if hit or raw['z_bottom'] or raw['nozzle_contact'] != 1 or self.z_steps != start:
+                    raise FactoryError('Failed to return to the shared nozzle approach height')
+        return readings
+
+    def _return_nozzle_bottom(self):
+        yield from self._phase('Z_RETURN_BOTTOM')
+        _, hit, raw = yield from self._z_move(-self.z_steps - Z_STEPS_PER_MM,
+                                              self.settings['z_bottom_speed'], Z_BOTTOM,
+                                              Z_BOTTOM, 1, 0)
+        if hit != Z_BOTTOM or not raw['z_bottom'] or raw['nozzle_contact'] != 1:
+            raise FactoryError('Nozzle test did not reach the PE12 bottom limit')
+
+    def run_nozzle(self, prepare):
+        operation = 'NOZZLE_Z_PREPARE' if prepare else 'NOZZLE_Z_MEASURE'
+        yield from self.home(y_first=True)
+        if not prepare:
+            yield from self.heat()
+        yield from self.select_tool()
+        yield from self._phase('Z_POSITION_PAD')
+        yield from self._module('z_position_pad', self._move(
+            self.settings['z_probe_x'], self.settings['z_probe_y'], leg='z_contact_pad'))
+        readings = []
+        if not prepare:
+            yield from self._module('z_bottom_release', self._z_leave_bottom())
+            readings = yield from self._module(
+                'measure_nozzle', self._measure_nozzle(NOZZLE_Z_SAMPLES[self.p['tool']]))
+            yield from self._module('z_return_bottom', self._return_nozzle_bottom())
+        yield from self._phase('DONE')
+        yield dict(kind='done', success=True, terminal=operation, cleaning_done=False,
+                   tool='T%d' % self.p['tool'], readings=readings,
+                   pad_raw_xy=[self.settings['z_probe_x'], self.settings['z_probe_y']])
+
+
+def nozzle_z_comparison(results, max_spread_mm):
+    spreads = {}
+    releases = []
+    for tool, count in enumerate(NOZZLE_Z_SAMPLES):
+        name = 'T%d' % tool
+        readings = results[name]['readings']
+        if len(readings) != count:
+            raise FactoryError('Missing nozzle release samples', tool=name)
+        steps = [item['release_steps_from_bottom'] for item in readings]
+        spread = max(steps) - min(steps)
+        spreads[name] = round(spread / Z_STEPS_PER_MM, 6)
+        if spread / Z_STEPS_PER_MM > max_spread_mm:
+            raise FactoryError('Nozzle release spread exceeds MAX_SPREAD_MM', tool=name,
+                               spread_mm=spreads[name])
+        releases.append(steps[-1])  # r0323 uses the last successful sample in each group.
+    delta = releases[0] - releases[1]
+    return dict(delta_steps=delta, t1_lower_by_mm=round(delta / Z_STEPS_PER_MM, 6),
+                spread_mm=spreads, max_spread_mm=max_spread_mm, coordinate_saved=False)

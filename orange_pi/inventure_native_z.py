@@ -73,7 +73,7 @@ class InventureNativeZ:
         self.printer.register_event_handler('klippy:mcu_identify', self._identify)
         self.printer.register_event_handler('klippy:connect', self._connect)
         self.printer.register_event_handler('klippy:shutdown', self._shutdown)
-        self.printer.register_event_handler('inventure:native_motion_lost', self._lost_enable)
+        self.printer.register_event_handler('inventure:native_motion_lost', self._native_motion_lost)
         self.printer.register_event_handler('homing:home_rails_begin', self._home_rails_begin)
         self.board.mcu.register_config_callback(self._build_config)
         gcode = self.printer.lookup_object('gcode')
@@ -143,11 +143,20 @@ class InventureNativeZ:
         if self.last_result is not None and self.last_result.get('reference_established'):
             self.last_result = dict(reference_established=False, coordinate_saved=False, terminal='invalidated',
                                     reason='Native Z drive disabled or MCU shutdown')
-            operations = self.printer.lookup_object('inventure_operations', None)
-            if operations is not None:
-                operations.invalidate('xyz', 'native_z_reference_lost')
-            elif self.kin is not None:
-                self.kin.clear_homing_state('xyz')
+            self._invalidate_native_homing()
+
+    def _native_motion_lost(self):
+        had_reference = self.last_result is not None and self.last_result.get('reference_established')
+        self._lost_enable()
+        if not had_reference:
+            self._invalidate_native_homing()
+
+    def _invalidate_native_homing(self):
+        operations = self.printer.lookup_object('inventure_operations', None)
+        if operations is not None:
+            operations.invalidate('xyz', 'native_z_reference_lost')
+        elif self.kin is not None:
+            self.kin.clear_homing_state('xyz')
 
     def _shutdown(self):
         if self.running:

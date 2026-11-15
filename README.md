@@ -185,6 +185,10 @@ opuszczają stół do Z=+10 mm. Klipper prowadzi szybki dojazd, a STM32 wykonuje
 wolny pomiar PC14 z fabrycznym licznikiem powtórzeń.
 [Instalacja, makra i nastawy bazowania](docs/NATIVE_Z_COREXY.md#makra-inventure).
 
+`ZORTRAX_NOZZLE_Z_TEST` mierzy różnicę wysokości T0 i T1 na wspólnym
+polu PC14. Pomiar wykonuje STM32, a wynik podaje Klipper.
+[Zimna próba ustawienia dysz, pomiar i nastawy](docs/NOZZLE_Z_TEST_R0323.md).
+
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
 SERVICE pomija RFID. Domyślny profil SERVICE obsługuje T0 i T1 oraz

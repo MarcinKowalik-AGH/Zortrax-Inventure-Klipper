@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-HOME-MACROS'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -32,6 +32,12 @@ Z_EDGE_COMMAND = ('inventure_z_edge action=%c owner=%u token=%u operation=%c '
 Z_EDGE_RESPONSE = ('inventure_z_edge_state owner=%u token=%u operation=%c active=%c '
     'status=%c reject=%c sent=%u end_raw=%c')
 Z_EDGE_ERRORS = {4:'z_contact_mcu_guard', 5:'z_contact_mcu_time_limit', 6:'z_contact_mcu_stopped'}
+NOZZLE_Z_COMMAND = ('inventure_nozzle_z_test action=%c owner=%u token=%u '
+                    'span=%hu interval_us=%hu repeats=%c')
+NOZZLE_Z_RESPONSE = ('inventure_nozzle_z_test_state owner=%u token=%u tool=%c '
+                     'active=%c status=%c reject=%c net_steps=%i best_steps=%i '
+                     'cycles=%u non_improvements=%c up_steps=%u down_steps=%u')
+NOZZLE_Z_ERRORS = {**Z_EDGE_ERRORS, 2:'z_contact_not_found', 3:'z_contact_did_not_release'}
 FEEDER_RUN_MAX_S = 50
 # r0323 nozzle controller at 0x08036D6C / algorithm 0x0801C96E.
 # Keep the original 0..255 output units here, not Klipper's PID parameters.
@@ -351,6 +357,7 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
         self.gcode.register_command('INVENTURE_LOAD_TEST',self.cmd_load_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_PROCEDURE',self.cmd_procedure,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_NOZZLE_Z_TEST',self.cmd_nozzle_z_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_SEEK',self.cmd_xy_seek,when_not_ready=True)
@@ -461,12 +468,17 @@ class InventureMCU:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
         self.z_home_abi=int(self.mcu.get_constants().get('INVENTURE_Z_HOME_ABI',0))
         self.z_edge_abi=int(self.mcu.get_constants().get('INVENTURE_Z_EDGE_ABI',0))
+        self.nozzle_z_test_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_Z_TEST_ABI',0))
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
             if self.control_abi!=1 or self.factory_abi!=1:
                 raise self.printer.config_error('MCU Z edge probing requires CONTROL and FACTORY ABI 1')
             self.commands['z_edge']=self.mcu.lookup_query_command(Z_EDGE_COMMAND,Z_EDGE_RESPONSE)
+        if self.nozzle_z_test_abi==1:
+            if self.control_abi!=1 or self.factory_abi!=1:
+                raise self.printer.config_error('MCU nozzle Z testing requires CONTROL and FACTORY ABI 1')
+            self.commands['nozzle_z_test']=self.mcu.lookup_query_command(NOZZLE_Z_COMMAND,NOZZLE_Z_RESPONSE)
         if self.factory_motion_abi==1:
             self.commands['factory_motion_timing']=self.mcu.lookup_query_command(
                 FACTORY_TIMING_QUERY,FACTORY_TIMING_RESPONSE)
@@ -603,6 +615,7 @@ class InventureMCU:
         self.adc_accepting = False
         self.adc_generation += 1
         self.connected = False
+        self._nozzle_z_finish('failed',reason='mcu_shutdown')
         self._load_test_cancel('mcu_shutdown',phase='failed')
         self._feeder_run_cancel('mcu_shutdown',phase='failed',stop=False)
         self.feeder_test_pending_until = None
@@ -752,6 +765,8 @@ class InventureMCU:
             context=getattr(self,'load_test_context',None)
             if start and context is not None and owner is not context:
                 raise ValueError('Load test owns the actuators; use INVENTURE_LOAD_TEST or INVENTURE_STOP')
+            if start and owner is None and getattr(self,'nozzle_z_context',None) is not None:
+                raise ValueError('Nozzle Z test owns the actuators; use INVENTURE_STOP')
             if owner is not None:
                 if context is not owner or not self.connected:
                     raise ValueError('Load test was stopped before the actuator request')
@@ -1623,6 +1638,7 @@ class InventureMCU:
             'factory_motion_tools':getattr(self,'factory_motion_tools',0),
             'z_home_abi':getattr(self,'z_home_abi',0),
             'z_edge_abi':getattr(self,'z_edge_abi',0),
+            'nozzle_z_test_abi':getattr(self,'nozzle_z_test_abi',0),
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
@@ -1729,6 +1745,9 @@ class InventureMCU:
         if mode is not None:
             mode=str(mode).upper()
             if mode not in CONTROL_MODES: raise gcmd.error('MODE must be OFF, SERVICE or NATIVE')
+        if mode is not None and getattr(self,'nozzle_z_context',None) is not None:
+            if mode!='OFF':raise gcmd.error('Nozzle Z test active; use INVENTURE_STOP first')
+            self._nozzle_z_finish('stopped',reason='mode_off')
         if mode is not None and getattr(self,'load_test_context',None) is not None:
             if mode!='OFF':raise gcmd.error('Load test is active; use INVENTURE_STOP first')
             self._load_test_cancel('mode_off')
@@ -1753,6 +1772,7 @@ class InventureMCU:
             guards=getattr(self,'guard_last',{})),sort_keys=True))
 
     def cmd_control_stop(self,gcmd):
+        self._nozzle_z_finish('stopped',reason='operator_stop')
         self._load_test_cancel('operator_stop')
         self._feeder_run_cancel('operator_stop')
         self.feeder_test_pending_until = None
@@ -2620,6 +2640,136 @@ class InventureMCU:
     def _z_home_mcu_available(self):
         return getattr(self,'z_edge_abi',0)==1 and 'z_edge' in self.commands
 
+    def _nozzle_z_finish(self, phase, **result):
+        batch=getattr(self,'nozzle_z_context',None)
+        if batch is None:return
+        self.nozzle_z_context=None
+        if 'timer' in batch:self.reactor.unregister_timer(batch['timer'])
+        self.nozzle_z_last=dict(phase=phase, action=batch['action'], tools=batch['results'],
+                                coordinate_saved=False, **result)
+        batch['gcmd'].respond_info('V9_NOZZLE_Z_TEST '+json.dumps(self.nozzle_z_last,sort_keys=True))
+
+    def _nozzle_z_status(self):
+        batch=getattr(self,'nozzle_z_context',None)
+        if batch is None:return getattr(self,'nozzle_z_last',dict(phase='idle'))
+        child=batch.get('child')
+        factory=child['factory'] if child else {}
+        return dict(phase='running',action=batch['action'],tool=batch['tool'],
+                    stage=factory.get('phase'), tools=batch['results'],
+                    temperature_c=self.panel_temperature(batch['tool'],self.reactor.monotonic())[0],
+                    mcu_sample=factory.get('nozzle_z_state'),coordinate_saved=False)
+
+    def _nozzle_z_tick(self,batch,eventtime):
+        from .inventure_z_home import nozzle_z_comparison
+        if getattr(self,'nozzle_z_context',None) is not batch:return self.reactor.NEVER
+        child=batch['child']
+        if self.load_test_context is child:return self.reactor.monotonic()+.2
+        try:
+            result=child['factory']['result']
+            if result is None:
+                raise ValueError('Nozzle test was interrupted; no offset measured')
+            if not result['success']:
+                self._nozzle_z_finish('failed',tool=batch['tool'],reason=result['reason'],
+                                      details=result.get('details',{}))
+                return self.reactor.NEVER
+            name='T%d'%batch['tool']
+            batch['results'][name]={key:result[key] for key in ('readings','pad_raw_xy')}
+            if batch['action']=='PREPARE':
+                self._nozzle_z_finish('prepared',tool=name,table_at_bottom=True)
+            elif batch['tool']==0:
+                batch['tool']=1
+                batch['child']=self._factory_start(batch['gcmd'],operation='NOZZLE_Z_MEASURE',
+                                                   nozzle_parameters=batch['parameters'][1])
+                return self.reactor.monotonic()+.2
+            else:
+                comparison=nozzle_z_comparison(batch['results'],batch['max_spread_mm'])
+                self._nozzle_z_finish('done',table_at_bottom=True,measurement=comparison)
+        except Exception as exc:
+            self._nozzle_z_finish('failed',tool=batch['tool'],reason=str(exc),
+                                  details=dict(getattr(exc,'details',{})))
+        return self.reactor.NEVER
+
+    def cmd_nozzle_z_test(self,gcmd):
+        from .inventure_factory_core import parameters
+        from .inventure_z_home import NOZZLE_Z_ACK, z_home_parameters
+        action=str(gcmd.get('ACTION','STATUS')).upper()
+        if action=='STATUS':
+            gcmd.respond_info('V9_NOZZLE_Z_TEST '+json.dumps(self._nozzle_z_status(),sort_keys=True))
+            return
+        if action=='STOP':
+            if getattr(self,'nozzle_z_context',None) is not None:
+                self._nozzle_z_finish('stopped',reason='operator_stop')
+                self._control_abort()
+            else:
+                gcmd.respond_info('V9_NOZZLE_Z_TEST '+json.dumps(self._nozzle_z_status(),sort_keys=True))
+            return
+        if action not in ('START','PREPARE'):raise gcmd.error('Use ACTION=PREPARE, START, STATUS or STOP')
+        if getattr(self,'nozzle_z_context',None) is not None:raise gcmd.error('Nozzle Z test already active')
+        if getattr(self,'nozzle_z_test_abi',0)!=1 or 'nozzle_z_test' not in self.commands:
+            raise gcmd.error('Nozzle Z test requires the RC8-CONTROL-R7-NOZZLE-Z MCU application')
+        prepare=action=='PREPARE'
+        if prepare:
+            tool=str(gcmd.get('TOOL','T0')).upper()
+            if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
+            tools=[int(tool[1])]
+        else:
+            if gcmd.get('TOOL',None) is not None:raise gcmd.error('START measures both T0 and T1')
+            if gcmd.get('ACK','')!=NOZZLE_Z_ACK:raise gcmd.error('START requires ACK='+NOZZLE_Z_ACK)
+            if any(gcmd.get('T1_PAD_'+axis,None) is None for axis in ('X','Y')):
+                raise gcmd.error('START requires verified T1_PAD_X and T1_PAD_Y after cold PREPARE')
+            tools=[0,1]
+
+        class NozzleParameters:
+            def __init__(self,index):
+                self.name='T%d'%index
+                self.pad_x=(82.8,72.)[index]
+
+            def get(self,key,default=None):
+                if key=='TOOL':return self.name
+                if key=='SPEED_PROFILE':return 'OEM'
+                if key=='TARGET':return gcmd.get(key,200.)
+                if key=='Z_APPROACH_MM':return gcmd.get(key,137.)
+                if key in ('Z_PROBE_X','Z_PROBE_Y'):
+                    return gcmd.get(self.name+'_PAD_'+key[-1],self.pad_x if key[-1]=='X' else 68.)
+                return gcmd.get(key,default)
+
+        plans={}
+        try:
+            max_spread=float(gcmd.get('MAX_SPREAD_MM',.15))
+            if not math.isfinite(max_spread) or not .005<=max_spread<=.5:
+                raise ValueError('MAX_SPREAD_MM must be 0.005..0.5')
+            for index in tools:
+                name='T%d'%index
+                if sum(gcmd.get(name+'_PAD_'+axis,None) is not None for axis in ('X','Y'))==1:
+                    raise ValueError(name+' pad coordinates must be given together')
+                if not self._factory_motion_available(index):
+                    raise ValueError('Nozzle Z test needs OEM motion for '+name)
+                options=NozzleParameters(index)
+                p=parameters(options,getattr(self,'procedure_profiles',None))
+                if not 200.<=p['target']<=210. or not 1.<=p['max_power']<=40.:
+                    raise ValueError('Nozzle Z test TARGET must be 200..210 C and MAX_POWER 1..40 percent')
+                plans[index]=(p,z_home_parameters(options,p,nozzle_test=True))
+            self._feeder_service_preflight()
+            if prepare:
+                now=self.reactor.monotonic()
+                for index in (0,1):
+                    temperature,state=self.panel_temperature(index,now)
+                    if state!='valid' or temperature>=50.:
+                        raise ValueError('Cold PREPARE requires both nozzles below 50 C')
+        except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
+        batch=dict(action=action,gcmd=gcmd,tool=tools[0],parameters=plans,results={},
+                   max_spread_mm=max_spread)
+        self.nozzle_z_context=batch
+        try:
+            batch['child']=self._factory_start(gcmd,
+                operation='NOZZLE_Z_PREPARE' if prepare else 'NOZZLE_Z_MEASURE',
+                nozzle_parameters=plans[tools[0]])
+            batch['timer']=self.reactor.register_timer(lambda t:self._nozzle_z_tick(batch,t),
+                                                       self.reactor.monotonic()+.2)
+        except Exception:
+            self.nozzle_z_context=None
+            raise
+
     def cmd_procedure(self,gcmd):
         from .inventure_factory_core import PROCEDURES, procedure_modules
         from .inventure_z_home import Z_HOME_PROCEDURES
@@ -2650,18 +2800,24 @@ class InventureMCU:
                 ', '.join((*PROCEDURES,*Z_HOME_PROCEDURES)))
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
-    def _factory_start(self,gcmd,read_only=False,operation='AUTO'):
+    def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None):
         from .inventure_factory_core import (
             parameters, FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
         )
         from .inventure_z_home import Z_HOME_PROCEDURES, ZHomeProgram, z_home_parameters
-        z_home=operation in Z_HOME_PROCEDURES
+        nozzle_test=nozzle_parameters is not None
+        z_home=operation in Z_HOME_PROCEDURES or nozzle_test
         z_settings=None
         try:
+            if not read_only and not nozzle_test and getattr(self,'nozzle_z_context',None) is not None:
+                raise ValueError('Nozzle Z test already active; use INVENTURE_STOP')
             if not z_home and operation not in PROCEDURES:raise ValueError('Unknown procedure '+operation)
-            p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
+            if nozzle_test:
+                p,z_settings=nozzle_parameters
+            else:
+                p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
             z_edges=operation=='HOME_Z' and p['speed_profile']=='OEM'
-            if z_home:
+            if z_home and not nozzle_test:
                 if p['tool']!=0:raise ValueError('Z reference uses the model nozzle TOOL=T0')
                 if gcmd.get('TARGET',None) is None:p['target']=200.
                 p['target_requires_override']=False
@@ -2695,7 +2851,9 @@ class InventureMCU:
                 raise ValueError('Load test already active; use STATUS or STOP')
             if z_home:
                 self._z_home_inputs({'nozzle_contact':1})
-                program=ZHomeProgram(p,z_settings).run(operation)
+                z_program=ZHomeProgram(p,z_settings)
+                program=(z_program.run_nozzle(operation=='NOZZLE_Z_PREPARE') if nozzle_test
+                         else z_program.run(operation))
             else:program=FactoryProgram(p).run(operation)
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
@@ -2707,7 +2865,8 @@ class InventureMCU:
             def get_int(self,*args,**kw):return gcmd.get_int(*args,**kw)
             def error(self,message):return gcmd.error(message)
             def respond_info(self,message):return gcmd.respond_info(message)
-        self.cmd_load_test(HeatCommand())
+        if nozzle_test:self.cmd_load_test(HeatCommand(),nozzle_test=True)
+        else:self.cmd_load_test(HeatCommand())
         context=self.load_test_context;now=self.reactor.monotonic()
         context['factory_preparing']=True;context['deadline']=now+timeout
         context['factory']=dict(parameters=p,program=program,action=None,move=None,
@@ -2719,6 +2878,7 @@ class InventureMCU:
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
         if z_home:context['factory']['z_home_settings']=z_settings
         self._load_test_emit(context)
+        if nozzle_test:return context
 
     def _z_home_inputs(self,expected):
         raw=self._fresh_inputs()['raw']
@@ -2787,6 +2947,47 @@ class InventureMCU:
             raise FactoryError(Z_EDGE_ERRORS[row['status']],z_mcu_state=dict(row))
         f['z_edge_run']=None
         return dict(status=row['status'],sent_steps=row['sent'],end_raw=row['end_raw'])
+
+    def _factory_nozzle_z_refine(self,context,action):
+        from .inventure_factory_core import FactoryError
+        from .inventure_z_home import Z_STEPS_PER_MM
+        f=context['factory'];span=action['span'];repeats=action['repeats']
+        starting='token' not in action
+        if starting:
+            if (not f['reference_valid'] or not f['selection_commanded'] or not context['ready_latched']
+                    or not f['session'] or f['mode'] or f['move'] is not None
+                    or round(f['position'][2]*Z_STEPS_PER_MM)!=action['start_steps']):
+                raise ValueError('Nozzle Z sample requires the owned, heated nozzle at its approach height')
+            self._z_home_inputs({'z_bottom':0,'nozzle_contact':1})
+            action['token']=self._control_next_token()
+        data=[int(starting),f['token'],action['token'],span if starting else 0,
+              action['interval_us'] if starting else 0,repeats if starting else 0]
+        row=self._control_send('nozzle_z_test',data,mutate=starting,owner=context)
+        if self.load_test_context is not context:raise ValueError('Nozzle Z test was stopped')
+        self._control_validate(row,{'owner':(0,0xffffffff),'token':(0,0xffffffff),
+            'tool':(0,1),'active':(0,1),'status':(0,6),'reject':(0,4),
+            'net_steps':(-span,span),'best_steps':(-span,span),'cycles':(0,512),
+            'non_improvements':(0,repeats),'up_steps':(0,0xffffffff),'down_steps':(0,0xffffffff)})
+        if row['reject']:
+            raise ValueError('MCU nozzle Z sample rejected (%d)'%row['reject'])
+        if (row['owner'],row['token'],row['tool'])!=(f['token'],action['token'],context['tool']):
+            raise ValueError('MCU nozzle Z sample changed tool or ownership')
+        f['nozzle_z_state']=dict(row)
+        if bool(row['active'])!=(row['status']==0) or row['net_steps']!=row['up_steps']-row['down_steps']:
+            raise ValueError('Inconsistent MCU nozzle Z sample')
+        if row['status'] in NOZZLE_Z_ERRORS:
+            raise FactoryError(NOZZLE_Z_ERRORS[row['status']],state=row)
+        if row['cycles']>action['max_cycles'] or (row['active'] and row['cycles']==action['max_cycles']
+                                                  and row['non_improvements']!=repeats):
+            raise FactoryError('z_contact_cycle_limit',cycles=row['cycles'])
+        if row['active']:return None
+        if (row['net_steps']!=row['best_steps'] or not 0<row['net_steps']<span
+                or row['cycles']<repeats+1 or row['non_improvements']!=repeats):
+            raise FactoryError('MCU nozzle Z release outside the qualified probe window',state=row)
+        self._z_home_inputs({'z_bottom':0,'nozzle_contact':1})
+        if self.load_test_context is not context:raise ValueError('Nozzle Z test was stopped')
+        f['position'][2]=(action['start_steps']+row['net_steps'])/Z_STEPS_PER_MM
+        return row
 
     def _factory_failed_z_edge(self,context,reason,details):
         run=context['factory']['z_edge_run'];row=run.get('last')
@@ -3035,6 +3236,7 @@ class InventureMCU:
             f['z_home_progress']={key:value for key,value in action.items() if key!='kind'}
             return dict(f['snapshot'])
         if kind=='z_contact_edge':return self._factory_z_edge(context,action)
+        if kind=='nozzle_z_refine':return self._factory_nozzle_z_refine(context,action)
         if kind=='z_verify_open':
             if now<action.setdefault('until',now+action['delay_s']):return None
             return self._z_home_inputs({'z_bottom':0})
@@ -3066,7 +3268,7 @@ class InventureMCU:
             if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')
             if 'z_home_settings' in f:
                 self._z_home_inputs({'nozzle_contact':1,
-                    'z_bottom':int(f['operation']=='Z_PREPARE')})
+                    'z_bottom':int(f['operation'] in ('Z_PREPARE','NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE'))})
                 if self.load_test_context is not context:return None
             f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
             self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
@@ -3100,7 +3302,7 @@ class InventureMCU:
         if now>=context['next_report']:
             context['next_report']=now+5.;self._load_test_emit(context)
 
-    def cmd_load_test(self,gcmd):
+    def cmd_load_test(self,gcmd,nozzle_test=False):
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action in ('AUTO','PARAMS'):
             return self._factory_start(gcmd,read_only=action=='PARAMS')
@@ -3108,6 +3310,7 @@ class InventureMCU:
             raise gcmd.error('Use ACTION=AUTO, PARAMS, HEAT, LOAD, RETRACT, JOG, ZERO, BASELINE, COMPARE, CONFIRM, STATUS or STOP')
         context=getattr(self,'load_test_context',None)
         if action=='STOP':
+            self._nozzle_z_finish('stopped',reason='operator_stop')
             self._load_test_cancel('operator_stop')
             self._control_abort()
             gcmd.respond_info('V9_LOAD_TEST '+json.dumps(self.load_test_last,sort_keys=True));return
@@ -3115,6 +3318,8 @@ class InventureMCU:
             result=self._load_test_report(context) if context is not None else getattr(self,'load_test_last',{'phase':'idle'})
             gcmd.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True));return
         if action in ('HEAT','LOAD','RETRACT'):
+            if not nozzle_test and getattr(self,'nozzle_z_context',None) is not None:
+                raise gcmd.error('Nozzle Z test already active; use INVENTURE_STOP')
             if context is not None:raise gcmd.error('Load test already active; use STATUS or STOP')
             tool=str(gcmd.get('TOOL','T0')).upper()
             if tool not in ('T0','T1'):raise gcmd.error('TOOL must be T0 or T1')
