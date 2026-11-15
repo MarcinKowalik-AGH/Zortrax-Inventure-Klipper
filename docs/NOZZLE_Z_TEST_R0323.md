@@ -11,47 +11,35 @@ nową wersję do katalogu konfiguracji drukarki i użyj istniejącego
 `INVENTURE_CONTROL MODE=SERVICE`. Możesz też wywołać bezpośrednio
 `INVENTURE_NOZZLE_Z_TEST` z tymi samymi argumentami.
 
-## Ustawienie nad polem na zimno
+## Pozycje nad padem
 
-Oczyść końcówki obu dysz i poczekaj, aż obie ostygną poniżej 50°C.
-Osadź tackę i odsłoń metalowe pole
-kontaktowe. Sprawdź przebieg ruchu osobno dla każdej dyszy. Po zakończeniu
-każdego `PREPARE` stół stoi na dolnej krańcówce PE12, a wybrana dysza
-powinna znajdować się dokładnie nad środkiem tego samego pola.
-
-```gcode
-ZORTRAX_NOZZLE_Z_TEST ACTION=PREPARE TOOL=T0
-```
-
-```gcode
-ZORTRAX_NOZZLE_Z_TEST ACTION=PREPARE TOOL=T1
-```
-
-| Dysza | Przewidywana pozycja głowicy w układzie serwisowym R7 | Argumenty do korekty |
+| Dysza | Domyślna pozycja głowicy w układzie serwisowym R7 | Argumenty do korekty |
 |---|---:|---|
 | T0 | X82,8 / Y68,0 mm | `T0_PAD_X`, `T0_PAD_Y` |
 | T1 | X72,0 / Y68,0 mm | `T1_PAD_X`, `T1_PAD_Y` |
 
-Obie wartości wynikają z fabrycznego punktu 14 X67,5/Y65,5 i nominalnego
-przesunięcia X dysz 10,8 mm. Log bazowania na tym egzemplarzu potwierdza
-punkt T0. Punkt T1 wymaga sprawdzenia na zimno. Jeśli dysza nie jest nad
-środkiem, podaj skorygowane współrzędne w `PREPARE`, a następnie użyj ich
-także w `START`. `INVENTURE_INPUTS` odczytane na dolnej krańcówce powinno
-pokazać osadzoną tackę (`tray=0`), zwolniony kontakt (`nozzle_contact=1`)
-i aktywną dolną krańcówkę (`z_bottom=1`).
+Pomiar PC14 na tym egzemplarzu potwierdził punkt T0 X82,8/Y68,0.
+Fabryczne przesunięcie dysz 10,8 mm daje `X_T1 = X_T0 − 10,8`, przy
+tym samym Y. Zmiana pary `T0_PAD_X/Y` przesuwa również wyliczony punkt T1.
+Para `T1_PAD_X/Y` pozwala uwzględnić indywidualną korektę egzemplarza.
+Dla kontroli położenia można wywołać `ACTION=PREPARE TOOL=T1` przy obu
+dyszach poniżej 50°C. Podgląd wybiera dyszę mechanicznie i dojeżdża nad pad
+ze stołem na PE12. Dolna krańcówka odpowiada odczytom `tray=0`,
+`nozzle_contact=1`, `z_bottom=1` w `INVENTURE_INPUTS`.
 
 ## Pomiar
 
-Po sprawdzeniu obu pozycji oraz wolnej drogi stołu wywołaj `START`.
-Podaj `T1_PAD_X` i `T1_PAD_Y`. Jeśli otrzymasz współrzędne inne niż
-w przykładzie, podstaw wynik swojej próby.
+Oczyść dysze, osadź tackę i odsłoń pad. Po potwierdzeniu położeń i wolnej
+drogi stołu wywołaj `START` z fabryczną geometrią lub parametrami korekty.
 
 ```gcode
-ZORTRAX_NOZZLE_Z_TEST ACTION=START T0_PAD_X=82.8 T0_PAD_Y=68 T1_PAD_X=72 T1_PAD_Y=68 ACK=BOTH_NOZZLES_OVER_SAME_PAD
+ZORTRAX_NOZZLE_Z_TEST ACTION=START ACK=BOTH_NOZZLES_OVER_SAME_PAD
 ```
 
-Procedura dla każdej dyszy bazuje dolne Z oraz XY, nagrzewa i przełącza
-selektor. T0 pracuje przed T1. Potem następuje szybki dojazd do początku pomiaru,
+Procedura dla każdej dyszy bazuje dolne Z oraz XY i nagrzewa dyszę. T0
+dociska selektor w prawo od X139,5 do X154,5. T1 dociska go w lewo od
+X15 do X0. Oba ruchy odbywają się przy Y154,5. Po ukończeniu docisku
+głowica wraca z selektora i jedzie nad pad. Potem następuje szybki dojazd do początku pomiaru,
 wolne zwarcia i rozwarcia PC14 w STM32 oraz odjazd. Każda próbka zaczyna
 się z tego samego położenia w pionie względem PE12. Po grupie stół wraca
 na PE12, a polecenie zatrzymania wyłącza grzanie.
@@ -72,6 +60,7 @@ Próbę przerywa `ZORTRAX_NOZZLE_Z_TEST ACTION=STOP` albo `INVENTURE_STOP`.
 ostatniej próbki z każdej grupy, zgodnie z wyborem r0323. Dodatnia wartość
 `t1_lower_by_mm` oznacza niżej wysuniętą T1, ponieważ stół pokonał
 krótszą drogę z PE12 do rozwarcia T1.
+Pole `selector_press` pokazuje punkty docisku i wynik ruchu zgłoszony przez MCU.
 Skala pomiaru wynosi 802 kroki/mm. Różnica trafia wyłącznie do raportu
 diagnostycznego Klippera z bieżącej sesji. Podczas pomiaru obowiązuje
 aktualna globalna polityka osłon.

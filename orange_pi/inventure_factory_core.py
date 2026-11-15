@@ -69,6 +69,8 @@ _T0_OEM_TO_RAW = dict(approach_x=4.5, switch_x=4.5, switch_y=2.5,
 _T1_OEM_TO_RAW = dict(approach_x=4.5, switch_x=4.5, switch_y=2.5,
                       center_x=4.5, center_y=2.5, service_x=4.5,
                       service_y=2.5, wipe_y=2.5)
+# Change in carriage X when placing T1 over a fixed point previously under T0.
+OEM_T0_TO_T1_X_MM = _T1_OEM_TO_RAW['center_x'] - _T0_OEM_TO_RAW['center_x']
 
 
 def uses_r0323_sequence(tool, speed_profile='SERVICE'):

@@ -23,6 +23,7 @@ class NozzlePlanModel(PlanModel):
         self.rises = iter(rises)
         self.sample_starts = []
         self.contact_at = None
+        self.fail_selector = False
         self.fail_retreat = False
         self.fail_bottom = False
 
@@ -57,7 +58,8 @@ class NozzlePlanModel(PlanModel):
             else:
                 if kind == 'home' and action['axis'] == 'Z':
                     self.position = 0
-                response = dict(ok=True, a=0, b=0, starts=0, pulses=0,
+                pressed = not (self.fail_selector and action.get('leg') == 'selector_press')
+                response = dict(ok=pressed, a=0, b=0, starts=0, pulses=0,
                                 pulse_age_ms=4294967295, fault=0)
 
 
@@ -135,12 +137,12 @@ class NozzleZTests(unittest.TestCase):
                                  cycles=202,non_improvements=201,up_steps=rise+202,down_steps=202)
             return dict(state)
 
-        start=Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD',T1_PAD_X=72,T1_PAD_Y=68)
+        start=Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD')
         with self.assertRaisesRegex(RuntimeError,'NOZZLE-Z'):host.cmd_nozzle_z_test(start)
         host.nozzle_z_test_abi=1
         host.commands['nozzle_z_test']=Wire(local_refine)
-        with self.assertRaisesRegex(RuntimeError,'verified T1'):
-            host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD'))
+        with self.assertRaisesRegex(RuntimeError,'T1 pad coordinates must be given together'):
+            host.cmd_nozzle_z_test(Command(ACTION='START',ACK='BOTH_NOZZLES_OVER_SAME_PAD',T1_PAD_X=72))
         self.assertEqual(device.packets,[])
         host.cmd_nozzle_z_test(start)
         while host.nozzle_z_context is not None:
@@ -149,14 +151,34 @@ class NozzleZTests(unittest.TestCase):
         report=json.loads(start.lines[-1].split(' ',1)[1])
         self.assertEqual(report['phase'],'done',report)
         self.assertEqual(report['measurement']['delta_steps'],40)
+        self.assertEqual(report['tools']['T0']['pad_raw_xy'],[82.8,68.])
+        self.assertEqual(report['tools']['T1']['pad_raw_xy'],[72.,68.])
+        self.assertEqual(report['tools']['T0']['selector_press'],
+            dict(start_raw_xy=[139.5,154.5],target_raw_xy=[154.5,154.5],reason='completed'))
+        self.assertEqual(report['tools']['T1']['selector_press'],
+            dict(start_raw_xy=[15.,154.5],target_raw_xy=[0.,154.5],reason='completed'))
         self.assertEqual([(tool,z) for tool,z,_,_ in starts],
                          [(tool,137*Z_STEPS_PER_MM) for tool in (0,0,1,1,1)])
         self.assertEqual(len({token for _,_,_,token in starts}),5)
         self.assertEqual(len({owner for _,_,owner,_ in starts}),2)
         self.assertEqual((device.z,device.output(6)['duty'],device.output(7)['duty']),(0,0,0))
 
+    def test_t1_inherits_t0_pad_correction_and_accepts_explicit_pair(self):
+        for override,expected in (({},(73.2,67.)),
+                                  (dict(T1_PAD_X=72.9,T1_PAD_Y=67.25),(72.9,67.25))):
+            with self.subTest(override=override):
+                host=z_host_support.ZHomeHostTests().host()
+                host.nozzle_z_test_abi=1
+                host.commands['nozzle_z_test']=Wire(lambda args: self.fail('Probe started during PREPARE'))
+                host.cmd_nozzle_z_test(Command(ACTION='PREPARE',TOOL='T1',
+                                               T0_PAD_X=84,T0_PAD_Y=67,**override))
+                settings=host.nozzle_z_context['parameters'][1][1]
+                self.assertAlmostEqual(settings['z_probe_x'],expected[0])
+                self.assertEqual(settings['z_probe_y'],expected[1])
+
     def test_failing_stages_cannot_report_success(self):
         for rises, fault, error in (
+                ((), 'fail_selector', 'Factory motion did not complete'),
                 ((220, None), None, 'z_contact_not_found'),
                 ((0, 215), None, 'Nozzle release outside the positive approach window'),
                 ((220, 215), 'fail_retreat', 'Failed to return to the shared nozzle approach height'),
@@ -168,6 +190,9 @@ class NozzleZTests(unittest.TestCase):
                 with self.assertRaisesRegex(FactoryError, error):
                     model.run()
                 self.assertFalse(any(row['kind'] == 'done' for _, row in model.actions))
+                if fault == 'fail_selector':
+                    self.assertEqual(model.position,0)
+                    self.assertEqual(model.sample_starts,[])
 
     def test_comparison_preserves_negative_sign_and_rejects_spread_or_missing_samples(self):
         def tool(*steps):

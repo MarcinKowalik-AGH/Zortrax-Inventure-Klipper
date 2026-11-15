@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-Z-PAD'
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -2665,7 +2665,8 @@ class InventureMCU:
         child=batch['child']
         if self.load_test_context is child:return self.reactor.monotonic()+.2
         try:
-            result=child['factory']['result']
+            factory=child['factory']
+            result=factory['result']
             if result is None:
                 raise ValueError('Nozzle test was interrupted; no offset measured')
             if not result['success']:
@@ -2673,7 +2674,10 @@ class InventureMCU:
                                       details=result.get('details',{}))
                 return self.reactor.NEVER
             name='T%d'%batch['tool']
-            batch['results'][name]={key:result[key] for key in ('readings','pad_raw_xy')}
+            stroke=factory['motion_legs']['selector_press']
+            batch['results'][name]=dict(readings=result['readings'],pad_raw_xy=result['pad_raw_xy'],
+                selector_press=dict(start_raw_xy=stroke['start'],target_raw_xy=stroke['target'],
+                                    reason=stroke['reason']))
             if batch['action']=='PREPARE':
                 self._nozzle_z_finish('prepared',tool=name,table_at_bottom=True)
             elif batch['tool']==0:
@@ -2690,7 +2694,7 @@ class InventureMCU:
         return self.reactor.NEVER
 
     def cmd_nozzle_z_test(self,gcmd):
-        from .inventure_factory_core import parameters
+        from .inventure_factory_core import OEM_T0_TO_T1_X_MM, parameters
         from .inventure_z_home import NOZZLE_Z_ACK, z_home_parameters
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action=='STATUS':
@@ -2715,36 +2719,45 @@ class InventureMCU:
         else:
             if gcmd.get('TOOL',None) is not None:raise gcmd.error('START measures both T0 and T1')
             if gcmd.get('ACK','')!=NOZZLE_Z_ACK:raise gcmd.error('START requires ACK='+NOZZLE_Z_ACK)
-            if any(gcmd.get('T1_PAD_'+axis,None) is None for axis in ('X','Y')):
-                raise gcmd.error('START requires verified T1_PAD_X and T1_PAD_Y after cold PREPARE')
             tools=[0,1]
 
         class NozzleParameters:
-            def __init__(self,index):
-                self.name='T%d'%index
-                self.pad_x=(82.8,72.)[index]
+            def __init__(self,tool,pad):
+                self.tool=tool
+                self.pad=pad
 
             def get(self,key,default=None):
-                if key=='TOOL':return self.name
+                if key=='TOOL':return self.tool
                 if key=='SPEED_PROFILE':return 'OEM'
                 if key=='TARGET':return gcmd.get(key,200.)
                 if key=='Z_APPROACH_MM':return gcmd.get(key,137.)
-                if key in ('Z_PROBE_X','Z_PROBE_Y'):
-                    return gcmd.get(self.name+'_PAD_'+key[-1],self.pad_x if key[-1]=='X' else 68.)
+                if key=='Z_PROBE_X':return self.pad[0]
+                if key=='Z_PROBE_Y':return self.pad[1]
                 return gcmd.get(key,default)
+
+        def read_pad(tool, fallback):
+            x,y=(gcmd.get(tool+'_PAD_'+axis,None) for axis in ('X','Y'))
+            if x is None and y is None:return fallback
+            if x is None or y is None:raise ValueError(tool+' pad coordinates must be given together')
+            pad=(float(x),float(y))
+            if not all(math.isfinite(value) for value in pad):
+                raise ValueError(tool+' pad coordinates must be finite')
+            return pad
 
         plans={}
         try:
             max_spread=float(gcmd.get('MAX_SPREAD_MM',.15))
             if not math.isfinite(max_spread) or not .005<=max_spread<=.5:
                 raise ValueError('MAX_SPREAD_MM must be 0.005..0.5')
+            t0_pad=read_pad('T0',(82.8,68.))
+            pads={0:t0_pad}
+            if 1 in tools:
+                pads[1]=read_pad('T1',(t0_pad[0]+OEM_T0_TO_T1_X_MM,t0_pad[1]))
             for index in tools:
                 name='T%d'%index
-                if sum(gcmd.get(name+'_PAD_'+axis,None) is not None for axis in ('X','Y'))==1:
-                    raise ValueError(name+' pad coordinates must be given together')
                 if not self._factory_motion_available(index):
                     raise ValueError('Nozzle Z test needs OEM motion for '+name)
-                options=NozzleParameters(index)
+                options=NozzleParameters(name,pads[index])
                 p=parameters(options,getattr(self,'procedure_profiles',None))
                 if not 200.<=p['target']<=210. or not 1.<=p['max_power']<=40.:
                     raise ValueError('Nozzle Z test TARGET must be 200..210 C and MAX_POWER 1..40 percent')
@@ -3222,7 +3235,12 @@ class InventureMCU:
             if action['state']=='start':f['module_stack'].append(name)
             elif action['state']=='done' and f['module_stack'] and f['module_stack'][-1]==name:
                 f['module_stack'].pop()
-                if name=='select_tool':f['selection_commanded']=True
+                if name=='select_tool':
+                    if f['operation'] in ('NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE'):
+                        stroke=f['motion_legs'].get('selector_press')
+                        if stroke is None or stroke['reason']!='completed':
+                            raise ValueError('Nozzle Z test requires a completed mechanical selector press')
+                    f['selection_commanded']=True
                 if name=='clean':f['cleaning_done']=True
             else:raise ValueError('Factory module sequence is invalid')
             f['module_history'].append(dict(name=name,state=action['state'],time_s=round(now-f['started'],3)))
