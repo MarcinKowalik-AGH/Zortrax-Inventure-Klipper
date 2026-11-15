@@ -195,6 +195,11 @@ prawej. Środkowa para 0 zachowuje aktualną poprawkę. Kalibrację można
 uruchomić również z menu OLED **Maintenance → Nozzle alignment**.
 [Instalacja makra, wybór linii i nastawy](docs/NOZZLE_XY_ALIGNMENT_R0323.md).
 
+`ZORTRAX_NOZZLE_PAD_CALIBRATE` przygotowuje obie dysze przez wycofanie
+filamentu, przetarcie, schłodzenie do 160°C i ponowne przetarcie.
+Następnie wyznacza położenie T0 i T1 w XYZ względem wspólnego pola PC14.
+[Instalacja, limity Z i zapis wyniku](docs/NOZZLE_PAD_CALIBRATION.md).
+
 Stan sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`, a próbę
 przerwiesz przez `INVENTURE_STOP`. Włóż kasetę przed startem. Procedura
 SERVICE pomija RFID. Domyślny profil SERVICE obsługuje T0 i T1 oraz

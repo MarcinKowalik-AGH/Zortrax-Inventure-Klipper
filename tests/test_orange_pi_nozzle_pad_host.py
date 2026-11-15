@@ -1,0 +1,266 @@
+"""Exercise pad XYZ calibration against timed heater and contact models."""
+import json
+import math
+from pathlib import Path
+import tempfile
+import unittest
+
+from orange_pi.inventure_z_home import Z_STEPS_PER_MM
+from test_orange_pi_door_policy import Command
+from test_orange_pi_load_test import Wire
+from test_orange_pi_nozzle_z import DualNozzleDevice
+import test_orange_pi_z_home_host as z_host_support
+
+
+class PadDevice(DualNozzleDevice):
+    centers = ((82.74, 68.11), (71.95, 67.96))
+    touch_heights = (round(137.10 * Z_STEPS_PER_MM), round(136.98 * Z_STEPS_PER_MM))
+
+    def __init__(self, host):
+        super().__init__(host)
+        self.calls = []
+        self.e_moves = []
+        self.pad_moves = []
+        self.cold_switches = []
+        self.xy = (0., 0.)
+        self.z = 20 * Z_STEPS_PER_MM
+        self.hot = (240., 235.)
+        self.wipe_moves = []
+        self.ceiling = None
+        self.sealed = False
+        self.heater_update_time = self.now()
+
+    def refresh_heaters(self, context):
+        now = self.now()
+        elapsed = now - self.heater_update_time
+        self.heater_update_time = now
+        for heater in (context.get('factory') or {}).get('dual_heaters', ()):
+            tool = heater['tool']
+            target = heater['target']
+            previous = self.h.temperatures[tool]
+            if previous > target:
+                temperature = max(target, previous - 9. * elapsed)
+            elif self.output(6 + tool)['duty']:
+                temperature = target
+            else:
+                continue
+            self.h.temperatures[tool] = temperature
+            self.h.raw_adc[tool] = round(temperature * 4095. / 660.)
+
+    def _settle(self):
+        super()._settle()
+        row = self.motion
+        if row is not None and 'xy_start' in row:
+            fraction = self.fraction()
+            self.xy = tuple(p + d * fraction for p, d in zip(row['xy_start'], row['xy_delta']))
+
+    def query_factory(self, args):
+        self.calls.append(tuple(args))
+        action, tool, mode, monitor, _, budget, _, low, high, token, seq = args
+        assert mode == monitor == 0
+        if action == 8:
+            assert not self.output(6)['duty'] and not self.output(7)['duty']
+            assert tool == 0 and low == 155 and high == 250
+            wire = [4, *args[1:]]
+        elif action in (9, 10):
+            self._settle()
+            assert self.session['active'] and token == self.session['token']
+            assert seq == self.session['sequence'] + 1
+            assert not self.active_motion() and not self.contact
+            if action == 9:
+                assert self.session['tool'] != tool
+                if self.sealed:
+                    assert 0 <= self.z <= 10 * Z_STEPS_PER_MM
+                if self.z:
+                    retreat = self.z_moves[-1]
+                    assert retreat['direction'] == -1 and retreat['sent'] == 10 * Z_STEPS_PER_MM
+                self.session['tool'] = tool
+                self.ceiling = None
+                if max(self.h.temperatures[:2]) <= 162.:
+                    self.cold_switches.append(tool)
+            else:
+                assert self.session['tool'] == tool
+                assert all(158. <= temp <= 162. for temp in self.h.temperatures[:2])
+                self.sealed = True
+                self.ceiling = budget
+            wire = [2, *args[1:]]
+        else:
+            wire = args
+        return super().query_factory(wire)
+
+    def move(self, args):
+        if args[0] != 1:
+            return super().move(args)
+        self._settle()
+        factory = self.h.load_test_context['factory']
+        original = args
+        _, directions, a, b, z, e, _, _, _, mask, value, _, _ = args
+        origin = self.xy
+        tool = self.session['tool']
+        inside_pad = math.dist(origin, self.centers[tool]) <= 2.5
+        if e:
+            assert not self.sealed and not self.contact and not any((a, b, z))
+            assert self.h.temperatures[tool] >= self.hot[tool] - 2.
+            # Positive wire direction is a retract for T0 and negative for T1.
+            assert bool(directions & 8) == (tool == 0)
+            self.e_moves.append((tool, e))
+        if z:
+            self.contact_at = self.touch_heights[tool] if inside_pad else None
+            if directions & self.BOTTOM and self.sealed:
+                assert self.ceiling is not None and self.z + z <= self.ceiling
+                if mask & self.CONTACT:
+                    assert not value & self.CONTACT and not self.contact
+                    self.pad_moves.append((tool, origin, self.z + z, inside_pad))
+        if a or b:
+            assert not self.contact
+            if 'clean' in factory['module_stack']:
+                self.wipe_moves.append((tool, tuple(self.h.temperatures[:2])))
+            if mask & (self.CONTACT | self.TRAY):
+                # The stock fixture treats any mask on XY as an endstop hit.
+                # This model keeps tray seated and contact open while in XY.
+                args = [*args[:9], mask & 3, value & 3, *args[11:]]
+        reply = super().move(args)
+        if a or b:
+            if mask == 1 or mask == 2:
+                axis = 0 if mask == 1 else 1
+                delta = tuple(-x if i == axis else 0. for i, x in enumerate(origin))
+            else:
+                motor_a = a if directions & 1 else -a
+                motor_b = b if directions & 2 else -b
+                delta = ((motor_a + motor_b) / 1280., (motor_a - motor_b) / 1280.)
+            self.motion.update(xy_start=origin, xy_delta=delta)
+        self.motion_starts[-1]['arguments'] = tuple(original)
+        return reply
+
+
+class NozzlePadHostTests(unittest.TestCase):
+    settings = dict(ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30, T1_Z_MAX=137.20,
+                    T0_TARGET=240, T1_TARGET=235, T0_RETRACT_MM=20, T1_RETRACT_MM=15)
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.config = Path(directory.name) / 'printer.cfg'
+        self.saved = self.config.with_name('inventure_nozzle_pad.json')
+
+    def host(self):
+        host = z_host_support.ZHomeHostTests().host()
+        host.device = device = PadDevice(host)
+        host._fresh_inputs = device.inputs
+        host.printer.get_start_args = lambda: {'config_file': str(self.config)}
+        host.allow_actuators = True
+        host.nozzle_pad_abi = 1
+        host.commands.update(control=Wire(device.control), output=Wire(device.out),
+            motion=Wire(device.move), motion_driver=Wire(device.driver),
+            factory_session=Wire(device.query_factory))
+        return host
+
+    def cmd(self, host, action, **kwargs):
+        command = Command(ACTION=action, **kwargs)
+        host.cmd_nozzle_pad_calibrate(command)
+        rows = [line for line in command.lines if line.startswith('V9_NOZZLE_PAD ')]
+        return json.loads(rows[-1].split(' ', 1)[1]) if rows else None
+
+    def advance(self, host, predicate):
+        limit = host.reactor.now + 900.
+        while not predicate():
+            self.assertLess(host.reactor.now, limit, self.cmd(host, 'STATUS'))
+            host.reactor.pause(host.reactor.now + .5)
+
+    def test_prepares_both_nozzles_and_measures_t0_t1_t0_under_one_owner(self):
+        host = self.host()
+        started = self.cmd(host, 'START', **self.settings)
+        self.assertEqual(started['phase'], 'running')
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        result = self.cmd(host, 'STATUS')
+        device = host.device
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual(result['run_id'], started['run_id'])
+        self.assertEqual(result['hot_targets_c'], {'T0': 240., 'T1': 235.})
+        self.assertEqual(result['measurement_target_c'], 160.)
+        samples = result['sample_temperatures_c']
+        self.assertEqual([sample['tool'] for sample in samples], ['T0', 'T1', 'T0'])
+        for sample in samples:
+            for tool in ('T0', 'T1'):
+                self.assertAlmostEqual(sample[tool], 160., delta=2.)
+        self.assertEqual([row[1] for row in device.calls if row[0] == 9], [1, 0, 1, 0])
+        self.assertEqual([row[1] for row in device.calls if row[0] == 10], [0, 1, 0])
+        self.assertEqual([row[5] for row in device.calls if row[0] == 10],
+            [int(self.settings['T%d_Z_MAX' % tool] * Z_STEPS_PER_MM) for tool in (0, 1, 0)])
+        self.assertEqual({row[9] for row in device.calls}, {device.calls[0][9]})
+        self.assertEqual(device.e_moves, [(0, 19200), (1, 14400)])
+        self.assertEqual(device.calls[0][5], 33600)
+        hot_wipes = [(tool, temps) for tool, temps in device.wipe_moves if temps[tool] > 180.]
+        cold_wipes = [(tool, temps) for tool, temps in device.wipe_moves if temps[tool] < 180.]
+        self.assertEqual({tool for tool, _ in hot_wipes}, {0, 1})
+        self.assertEqual({tool for tool, _ in cold_wipes}, {0, 1})
+        self.assertTrue(all(abs(temps[tool] - device.hot[tool]) <= 2. for tool, temps in hot_wipes))
+        self.assertTrue(all(all(158. <= t <= 162. for t in temps) for _, temps in cold_wipes))
+        homing = [m['arguments'][9] for m in device.motion_starts
+                  if m['arguments'][9] == m['arguments'][10] and m['arguments'][9] in (1, 2, 4)]
+        self.assertEqual(homing, [2, 1, 4])
+        self.assertTrue(any(row[-1] for row in device.pad_moves))
+        self.assertTrue(any(not row[-1] for row in device.pad_moves))
+        for tool in (0, 1):
+            self.assertLessEqual(max(m[2] for m in device.pad_moves if m[0] == tool),
+                                 self.settings['T%d_Z_MAX' % tool] * Z_STEPS_PER_MM)
+        self.assertEqual(device.cold_switches, [0, 1, 0])
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+        self.assertFalse(device.stepper_enabled)
+        candidate = result['candidate']
+        self.assertAlmostEqual(candidate['t1_offset_mm']['X'], 10.79, delta=.035)
+        self.assertAlmostEqual(candidate['t1_offset_mm']['Y'], .15, delta=.035)
+        self.assertAlmostEqual(candidate['t1_lower_by_mm'], .12, delta=.02)
+        self.assertFalse(self.saved.exists())
+        with self.assertRaisesRegex(RuntimeError, 'RUN_ID'):
+            self.cmd(host, 'SAVE', ACK='PAD_RESULT_REVIEWED', RUN_ID='stale')
+        with self.assertRaisesRegex(RuntimeError, 'ACK'):
+            self.cmd(host, 'SAVE', RUN_ID=result['run_id'])
+        saved = self.cmd(host, 'SAVE', ACK='PAD_RESULT_REVIEWED', RUN_ID=result['run_id'])
+        self.assertEqual(saved['phase'], 'saved')
+        record = json.loads(self.saved.read_text())
+        self.assertEqual(record['candidate'], candidate)
+        self.assertEqual(record['sample_temperatures_c'], samples)
+
+    def test_requires_surveyed_limits_before_any_motion_or_heating(self):
+        host = self.host()
+        settings = dict(self.settings)
+        del settings['T1_Z_MAX']
+        with self.assertRaisesRegex(RuntimeError, 'T1_Z_MAX'):
+            self.cmd(host, 'START', **settings)
+        self.assertEqual(host.device.calls, [])
+        self.assertEqual(host.device.motion_starts, [])
+        self.assertFalse(host.device.output(6)['duty'])
+        self.assertFalse(host.device.output(7)['duty'])
+
+    def test_verify_t0_only_arms_the_surveyed_tool_and_cannot_save(self):
+        host = self.host()
+        settings = dict(self.settings, MODE='VERIFY_T0')
+        del settings['T1_Z_MAX']
+        self.cmd(host, 'START', **settings)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'verified', result)
+        self.assertEqual(set(result['measurements']), {'T0'})
+        self.assertIsNone(result['candidate'])
+        self.assertEqual([row[1] for row in host.device.calls if row[0] == 10], [0])
+        self.assertEqual(host.device.e_moves, [(0, 19200), (1, 14400)])
+        with self.assertRaisesRegex(RuntimeError, 'repeatable candidate'):
+            self.cmd(host, 'SAVE', ACK='PAD_RESULT_REVIEWED', RUN_ID=result['run_id'])
+        self.assertFalse(self.saved.exists())
+
+    def test_stop_revokes_ownership_before_further_probe_or_e_motion(self):
+        host = self.host()
+        self.cmd(host, 'START', **self.settings)
+        self.advance(host, lambda: host.device.pad_moves or host.nozzle_z_context is None)
+        self.assertTrue(host.device.pad_moves, self.cmd(host, 'STATUS'))
+        self.cmd(host, 'STOP')
+        count = len(host.device.motion_starts)
+        host.reactor.pause(host.reactor.now + 3.)
+        status = self.cmd(host, 'STATUS')
+        self.assertEqual((status['phase'], status['error']), ('stopped', 'operator_stop'))
+        self.assertEqual(len(host.device.motion_starts), count)
+        self.assertFalse(host.device.active_motion())
+        self.assertFalse(host.device.stepper_enabled)
+        self.assertIsNone(host.load_test_context)
+        self.assertFalse(self.saved.exists())

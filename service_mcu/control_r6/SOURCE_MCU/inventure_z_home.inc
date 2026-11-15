@@ -272,7 +272,7 @@ static uint8_t zh_nozzle_test_start(uint32_t now,uint32_t owner,uint32_t token,
     if(!owner || !token || !span || span>ZH_MAX_SPAN || interval_us<ZH_MIN_INTERVAL_US
             || interval_us>ZH_MAX_INTERVAL_US || !repeats || repeats>ZH_NOZZLE_MAX_REPEATS)
         return 1;
-    if(!fs.active || owner!=fs.token)return 4;
+    if(!fs.active || fs.nozzle_pad || owner!=fs.token)return 4;
     if(owner==zh.owner && (!zh.nozzle_test || (int32_t)(token-zh.token)<=0))return 4;
     if(zh_start_busy())return 2;
     if(owner==zh.owner && zh.status!=ZH_DONE)return 4;

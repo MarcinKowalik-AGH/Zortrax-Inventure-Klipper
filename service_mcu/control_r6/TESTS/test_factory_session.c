@@ -538,10 +538,122 @@ static void axis_thermal_guard(void) {
     puts("PASS axis timer hot E uses selected fresh ADC, permits PID renewals, stops on drop/overheat/stale ADC/lease and preserves legacy E");
 }
 
+static void pad_command(unsigned action,unsigned tool,unsigned budget,unsigned sequence) {
+    uint32_t a[]={action,tool,IVT_STOP,0,1000,budget,1500,PAD_TEMP_MIN_C,250,801,sequence};
+    command_inventure_factory_session(a);
+}
+static void pad_adc(unsigned raw) {
+    control_adc();
+    inventure_adc_observe(ADC1,10,raw);inventure_adc_observe(ADC3,6,raw);
+}
+static void pad_run(unsigned stop_at,unsigned raw,unsigned *sequence) {
+    uint32_t last=mock_now;
+    while(cm.active) {
+        sched_del_timer(&cm_timer);
+        mock_now=cm_timer.waketime;command_inventure_heartbeat(NULL);pad_adc(raw);
+        if(stop_at && cm.sent[2]==stop_at)GPIOC->IDR&=~BIT(14);
+        unsigned r=cm_event(&cm_timer);
+        if(r==SF_RESCHEDULE)sched_add_timer(&cm_timer);
+        else assert(!cm.active && !cm.timer_added);
+        control_guard(mock_now);
+        if((uint32_t)(mock_now-last)>=MS(500)) {
+            pad_command(2,fs.tool,200,++*sequence);
+            assert(fs.active && !factory_reply[3]);last=mock_now;
+        }
+    }
+}
+static void pad_xyz_owner(void) {
+    factory_reset(0,1);unsigned seq=0;
+    pad_command(8,0,200,seq);
+    assert(fs.active && fs.nozzle_pad && !factory_reply[3]);
+    assert(!fs.pad_homed && !fs.pad_ceiling && !TIM9->CCR2);
+    motion(1,4,0,0,100,0,1600,10,1000,0,0,0,802);
+    assert(!cm.active); // No upward move before a genuine PE12 reference.
+    motion(1,8,0,0,0,100,1600,10,1000,0,0,0,803);
+    assert(!cm.active);
+    GPIOE->IDR|=BIT(12);
+    motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,804);
+    assert(!cm.active && fs.pad_homed && !fs.pad_z && cm.hit==BIT(2));
+
+    pad_adc(994);
+    motion(1,8,0,0,0,100,1600,10,1000,0,0,0,805);
+    assert(!cm.active && fs.xy_e_remaining==200);
+    pad_adc(1427);
+    motion(1,0,0,0,0,100,1600,10,1000,0,0,0,806);
+    assert(!cm.active); // T0 forward is disallowed.
+    motion(1,8,0,0,0,100,1600,10,1000,0,0,0,807);
+    assert(cm.active && fs.xy_e_remaining==100 && fs.pad_tool_e[0]==100);
+    pad_run(0,1427,&seq);assert(cm.sent[3]==100 && fs.active);
+    pad_command(9,1,200,++seq);
+    assert(!factory_reply[3] && fs.tool==1 && !TIM9->CCR2);
+    uint32_t deadline=fs.deadline;
+    pad_command(9,1,200,seq);
+    assert(!factory_reply[3] && fs.tool==1 && fs.deadline==deadline);
+    motion(1,0,0,0,0,100,1600,10,1000,0,0,0,808);
+    pad_run(0,1427,&seq);assert(cm.sent[3]==100 && !fs.xy_e_remaining);
+    pad_command(9,0,200,++seq);assert(!factory_reply[3] && fs.tool==0);
+
+    pad_command(10,0,18000,seq+1);assert(factory_reply[3]==3 && !fs.pad_sealed);
+    pad_adc(994);pad_command(10,0,18000,++seq);
+    assert(!factory_reply[3] && fs.pad_sealed && fs.pad_ceiling==18000);
+    pad_command(10,0,19000,seq+1);assert(factory_reply[3]==3 && fs.pad_ceiling==18000);
+    pad_adc(1427);
+    motion(1,8,0,0,0,100,1600,10,1000,0,0,0,809);
+    assert(!cm.active && fs.pad_sealed); // E locked even if reheated.
+    pad_adc(994);GPIOE->IDR&=~BIT(12);GPIOE->ODR|=BIT(10);
+    motion(1,4,0,0,18001,0,3200,10,30000,BIT(3),0,0,810);
+    motion(1,4,0,0,18000,0,3200,10,30000,0,0,0,811);
+    assert(!cm.active && !fs.pad_z); // Absolute cap and explicit PC14 guard.
+    uint32_t old_probe[]={1,801,900,100,4000,5};
+    command_inventure_nozzle_z_test(old_probe);
+    assert(!zh.active); // Old probe cannot bypass position tracking.
+    motion(1,4,0,0,18000,0,3200,10,30000,BIT(3),0,0,812);
+    assert(cm.active);
+    pad_run(17900,994,&seq);
+    assert(cm.hit==BIT(3) && fs.pad_z==17900 && fs.active);
+    GPIOC->IDR|=BIT(14);
+    motion(1,3,30,30,0,0,1600,10,1000,0,0,0,813);
+    assert(!cm.active); // PC14 open alone is insufficient for lateral travel.
+    pad_command(9,1,200,seq+1);
+    assert(factory_reply[3]==3 && fs.tool==0);
+    motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,814);
+    pad_run(0,994,&seq);
+    assert(fs.pad_z==17900-PAD_CHANGE_STEPS);
+    pad_command(9,1,200,seq+1);
+    assert(factory_reply[3]==3 && fs.tool==0); // Exact descent too far from PE12.
+    motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,820);
+    pad_run(0,994,&seq);
+    assert(fs.pad_z==17900-2*PAD_CHANGE_STEPS);
+    pad_command(9,1,200,++seq);
+    assert(!factory_reply[3] && fs.tool==1 && fs.pad_sealed && !fs.pad_ceiling);
+    motion(1,4,0,0,100,0,1600,10,1000,BIT(3),0,0,815);
+    assert(!cm.active); // Prior tool ceiling cannot arm the selected tool.
+    pad_command(10,1,18500,++seq);
+    assert(!factory_reply[3] && fs.pad_ceiling==18500);
+    motion(1,4,0,0,18500-fs.pad_z,0,3200,10,30000,BIT(3),0,0,816);
+    pad_run(0,994,&seq);
+    assert(cm.reason==CR_COMPLETE && !cm.hit && fs.pad_z==18500); // Bounded MISS.
+    motion(1,0,0,0,18500-PAD_PREP_Z_STEPS,0,3200,10,30000,0,0,0,821);
+    pad_run(0,994,&seq);assert(fs.pad_z==PAD_PREP_Z_STEPS);
+    motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,817);
+    pad_run(0,994,&seq);
+    assert(fs.pad_z==PAD_CHANGE_STEPS); // Inclusive 10 mm selector ceiling.
+    pad_command(9,0,200,++seq);assert(!factory_reply[3] && fs.tool==0);
+    pad_command(10,0,18000,++seq);assert(!factory_reply[3]);
+    output(1,6,64,1000,200,501);output(1,7,64,1000,200,502);
+    motion(1,4,0,0,40,0,3200,10,1000,BIT(3),0,0,818);
+    assert(cm.active && co[6].duty && co[7].duty);
+    GPIOC->IDR|=BIT(13);control_guard(mock_now);
+    assert(!fs.active && !cm.active && !co[6].duty && !co[7].duty && control_mode==CT_OFF);
+    motion(1,4,0,0,40,0,3200,10,1000,BIT(3),0,0,819);
+    assert(!cm.active); // A queued pad move cannot execute after owner failure.
+    puts("PASS dedicated pad XYZ owner: bounded hot reverse, measured PE12, per-tool Z ceiling, contact/MISS, clearance, T0-T1-T0 and shutdown");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();
-    axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
+    axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();pad_xyz_owner();
     puts("PASS R7 FACTORY session register suite");return 0;
 }
