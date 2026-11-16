@@ -295,7 +295,7 @@ class NozzlePadHostTests(unittest.TestCase):
         device = host.device
         device.first_sweep_open_steps = 8
         device.unreliable_sweep_seed = (82.8, 68.)
-        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30, EDGE_TOLERANCE_MM=.02)
         host.cmd_nozzle_pad_calibrate(command)
         self.advance(host, lambda: host.nozzle_z_context is None)
         run = host.nozzle_pad_run
@@ -306,6 +306,39 @@ class NozzlePadHostTests(unittest.TestCase):
         result = run['measurements']['T0']
         self.assertEqual(result['scan_method'], 'SWEEP+TAP')
         self.assertLess(math.dist(result['center_xy_mm'], device.centers[0]), .02)
+        self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
+        self.assertFalse(device.contact)
+
+    def test_cold_center_skips_an_unstable_left_tap_and_reports_tenths(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        device = host.device
+        device.first_sweep_open_steps = 8
+        device.unreliable_sweep_seed = (82.8, 68.)
+        interrupted_taps = []
+
+        def inputs():
+            sample = device.inputs()
+            factory = (host.load_test_context or {}).get('factory', {})
+            action = factory.get('action') or {}
+            if (factory.get('phase') == 'X-_TOUCH' and action.get('kind') == 'z_verify_closed'
+                    and math.isclose(device.xy[0], 80.33125, abs_tol=.001)
+                    and sample['raw']['nozzle_contact'] == 0):
+                interrupted_taps.append(device.xy[0])
+                sample['raw']['nozzle_contact'] = 1
+            return sample
+
+        host._fresh_inputs = inputs
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        host.cmd_nozzle_pad_calibrate(command)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        run = host.nozzle_pad_run
+        self.assertEqual(len(interrupted_taps), 2)
+        self.assertEqual(run['phase'], 'verified', run)
+        self.assertEqual(len(command.lines), 1)
+        x, y = run['measurements']['T0']['center_xy_mm']
+        self.assertIn('środek X=%.1f Y=%.1f mm |' % (x, y), command.lines[0])
+        self.assertLess(abs(x - device.centers[0][0]), .05)
         self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
         self.assertFalse(device.contact)
 

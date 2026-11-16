@@ -42,9 +42,11 @@ class SimulatedPad:
         self.unbounded_pad = False
         self.transient = False
         self.cold_settle_misses = 0
+        self.cold_intermittent_contact = None
 
     def _inside(self):
         return bool(self.arms and (self.unbounded_pad
+                    or (self.cold_intermittent_contact is not None and self.cold_intermittent_contact(self.xy))
                     or math.dist(self.xy, self.centers[len(self.arms) - 1]) <= 2.55))
 
     def _inputs(self):
@@ -131,6 +133,9 @@ class SimulatedPad:
                 if kind == 'z_verify_closed' and self.cold_settle_misses:
                     reply['nozzle_contact'] = 1
                     self.cold_settle_misses -= 1
+                if (kind == 'z_verify_closed' and self.cold_intermittent_contact is not None
+                        and self.cold_intermittent_contact(self.xy)):
+                    reply['nozzle_contact'] = 1
                 if kind == 'z_verify_open' and self.swept:
                     self.swept = False
                     if self.sweep_transient:
@@ -198,6 +203,29 @@ class NozzleXYZCoreTests(unittest.TestCase):
         result = model.run()['measurements']['T0']
         self.assertEqual(result['scan_method'], 'SWEEP+TAP')
         self.assertLess(math.dist(result['center_xy_mm'], model.centers[0]), .02)
+
+    def test_cold_center_confirms_open_next_to_an_unstable_scan_limit(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        self.assertEqual(xyz['edge_tolerance_mm'], .1)
+        model = SimulatedPad(xyz)
+        model.sweep_without_opening.add((0, -1))
+        model.cold_intermittent_contact = lambda xy: math.isclose(xy[0], 77.8)
+        result = model.run()['measurements']['T0']
+        self.assertEqual(result['scan_method'], 'SWEEP+TAP')
+        self.assertLess(abs(result['center_xy_mm'][0] - model.centers[0][0]), .05)
+        self.assertTrue(any(a.get('stage') == 'pad_travel' and math.isclose(a['x'], 77.9)
+                            for _, _, a in model.trace))
+
+    def test_cold_center_rejects_an_unresolved_wide_edge(self):
+        model = SimulatedPad(pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True))
+        model.sweep_without_opening.add((0, -1))
+        model.cold_intermittent_contact = lambda xy: 80. <= xy[0] <= 81.
+        with self.assertRaisesRegex(FactoryError, 'Przedział krawędzi PC14') as exc:
+            model.run()
+        low, high = exc.exception.details['edge_interval_mm']
+        self.assertGreater(high - low, .1)
+        self.assertEqual(model._inputs()['nozzle_contact'], 1)
+        self.assertFalse(any(a['kind'] == 'done' for _, _, a in model.trace))
 
     def test_cold_center_requires_measured_contact_inside_the_chord(self):
         xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)

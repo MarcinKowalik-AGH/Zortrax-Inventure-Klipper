@@ -9,7 +9,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R3`. Tryb `CENTER` korzysta z firmware MCU
+`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R4`. Tryb `CENTER` korzysta z firmware MCU
 `RC8-CONTROL-R7-PAD-CENTER`. `INVENTURE_VERSION` po restarcie pokazuje
 `nozzle_pad_cold_abi: 1` dla automatycznej próby na zimno.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
@@ -43,17 +43,20 @@ Jeśli styk rozewrze się w pierwszych 0,25 mm przejazdu albo nie da się
 potwierdzić krawędzi, procedura mierzy obie strony tej osi pionowymi
 dotknięciami. Przy niestabilnym styku w punkcie startu szuka zwarcia do
 2 mm w obie strony wzdłuż tej osi. Potwierdzenie punktu poza polem wymaga
-dwóch dojazdów do limitu próby bez zwarcia. Zakres XY i maksymalny limit Z
-pochodzą z ustawień tego samego przebiegu. Stół opada przed przejazdem
-między punktami dotknięcia. Pomiar Y zaczyna się przy wyznaczonym X.
-Po wyznaczeniu czterech krawędzi stół opuszcza się, a głowica wraca
-nad środek.
+dwóch dojazdów do limitu próby bez zwarcia. Przy niestabilnym odczycie
+procedura zachowuje oba potwierdzone końce przedziału i sprawdza inne
+pozycje. Domyślnie kończy pomiar dotknięciami, gdy przedział krawędzi
+ma szerokość do 0,1 mm. Zakres XY i limit Z pochodzą z ustawień tego
+samego przebiegu. Stół opada przed przejazdem między punktami dotknięcia.
+Pomiar Y zaczyna się przy wyznaczonym X. Po wyznaczeniu czterech krawędzi
+stół opuszcza się, a głowica wraca nad środek.
 
 Na czas próby host wstrzymuje odświeżanie OLED. Fluidd wypisuje jeden
 wiersz z pozycją środka i czterema krawędziami w serwisowym układzie XY
-albo z etapem i przyczyną przerwania. Pozycje znalezionych krawędzi
-trafiają także do `klippy.log`. `ACTION=STATUS` odczytuje bieżący etap
-albo końcowy wynik. `INVENTURE_STOP` przerywa próbę.
+z rozdzielczością 0,1 mm albo z etapem i przyczyną przerwania. Pozycje
+krawędzi i przedziały z prób pionowych trafiają do `klippy.log`.
+`ACTION=STATUS` odczytuje bieżący etap albo końcowy wynik.
+`INVENTURE_STOP` przerywa próbę.
 
 ## Przygotowanie fabrycznej tacki
 

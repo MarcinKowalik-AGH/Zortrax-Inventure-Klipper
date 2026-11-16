@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R3'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R4'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2853,7 +2853,7 @@ class InventureMCU:
                 result=run['measurements']['T0']
                 x,y=result['center_xy_mm']
                 (xm,xp),(ym,yp)=result['edges_mm']
-                gcmd.respond_info('Pad T0 | środek X=%.3f Y=%.3f mm | X−=%.3f X+=%.3f Y−=%.3f Y+=%.3f' %
+                gcmd.respond_info('Pad T0 | środek X=%.1f Y=%.1f mm | X−=%.1f X+=%.1f Y−=%.1f Y+=%.1f' %
                                   (x,y,xm,xp,ym,yp))
             elif phase=='running':
                 context=getattr(self,'load_test_context',None) or {}

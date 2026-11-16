@@ -14,6 +14,7 @@ PAD_TRAVEL_SPEED = 8.
 PAD_MAX_SWEEP_MM = 6.
 PAD_MAX_SWEEP_SPEED = .5
 PAD_MIN_COLD_SWEEP_STEPS = round(.25 * XY_STEPS_PER_MM)
+PAD_COLD_MAX_UNCERTAIN_TAPS = 6
 PAD_MIN_SWEEP_CLEARANCE_STEPS = Z_STEPS_PER_MM // 2
 PAD_EDGE_TAP_HEADROOM_STEPS = round(.05 * Z_STEPS_PER_MM)
 PAD_MAX_Z_SPEED = 3.9
@@ -70,7 +71,7 @@ def pad_xyz_parameters(gcmd, center_only=False):
         retract_speed=number('RETRACT_SPEED', 1.6, .5, 6.),
         scan_radius_mm=number('SCAN_RADIUS_MM', 5. if center_only else 3.5, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
-        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .02, .005, .1),
+        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .1 if center_only else .02, .005, .1),
         z_clearance_mm=clearance,
         z_tap_speed=number('Z_TAP_SPEED', .25 if scan == 'SWEEP' else .8, .2, 1.),
         xy_repeat_mm=number('XY_REPEAT_MM', .08, .01, .25),
@@ -206,25 +207,60 @@ class NozzleXYZProgram(ZHomeProgram):
         def contact(value):
             xy = list(origin)
             xy[axis] = value
-            state = yield from tap(tuple(xy), safe_z, ceiling, tap_speed)
-            if state is None:
-                raise FactoryError('Niestabilny PC14 podczas dotknięcia w punkcie XY', point_mm=_xy_mm(xy))
-            return state
+            return (yield from tap(tuple(xy), safe_z, ceiling, tap_speed))
 
-        if (yield from contact(outside)):
-            endpoint = list(origin)
-            endpoint[axis] = outside
+        inside = origin[axis]
+        endpoint = list(origin)
+        endpoint[axis] = outside
+        name = ('X', 'Y')[axis]
+        label = name + ('+' if outside > inside else '-')
+        state = yield from contact(outside)
+        if state is None:
+            # A noisy limit point can be bypassed within the search range,
+            # provided a nearby point still confirms a fully open contact.
+            direction = 1 if outside > inside else -1
+            for offset_mm in (.1, .2, .4):
+                probe = outside - direction * round(offset_mm * XY_STEPS_PER_MM)
+                if direction * (probe - inside) <= 0:
+                    break
+                state = yield from contact(probe)
+                if state is False:
+                    outside = probe
+                    break
+                if state is True:
+                    break
+            if state is not False:
+                raise FactoryError('PC14 nie potwierdził rozwarcia przy granicy skanu',
+                                   direction=label, point_mm=_xy_mm(endpoint))
+        elif state is True:
             if cold:
                 raise FactoryError('PC14 nadal zwarty na końcu zakresu', point_mm=_xy_mm(endpoint))
             raise FactoryError('Pad edge is outside the qualified scan box',
-                               axis=('X', 'Y')[axis], point_mm=_xy_mm(endpoint))
-        inside = origin[axis]
+                               axis=name, point_mm=_xy_mm(endpoint))
+
+        uncertain = set()
         while abs(inside - outside) > units:
-            midpoint = (inside + outside) // 2
-            if (yield from contact(midpoint)):
+            lower, upper = sorted((inside, outside))
+            known_positions = sorted([lower, upper] + [p for p in uncertain if lower < p < upper])
+            left, right = max(zip(known_positions, known_positions[1:]), key=lambda pair: pair[1] - pair[0])
+            if right - left <= 1 or len(uncertain) >= PAD_COLD_MAX_UNCERTAIN_TAPS:
+                raise FactoryError('Przedział krawędzi PC14 nadal ma %.2f mm' % ((upper - lower) / XY_STEPS_PER_MM),
+                                   direction=label, edge_interval_mm=_xy_mm((lower, upper)))
+            midpoint = (left + right) // 2
+            state = yield from contact(midpoint)
+            if state is None:
+                # Preserve both verified bounds. Probe a different part of the
+                # bracket instead of treating a short closure as either state.
+                uncertain.add(midpoint)
+                logging.info('Inventure pad T0 %s: uncertain tap at %.3f mm, bounds=%s',
+                             label, midpoint / XY_STEPS_PER_MM, _xy_mm((lower, upper)))
+            elif state:
                 inside = midpoint
             else:
                 outside = midpoint
+        if cold:
+            logging.info('Inventure pad T0 %s: confirmed edge bracket %s mm',
+                         label, _xy_mm(tuple(sorted((inside, outside)))))
         return (inside + outside) / 2.
 
     def _sweep_edge(self, origin, axis, outside, safe_z, ceiling, xyz):
