@@ -142,6 +142,29 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(list(result['measurements']), ['T0'])
         self.assertIsNone(result['candidate'])
 
+    def test_empty_nozzles_use_zero_extrusion_and_only_measurement_wipes(self):
+        for mode, scans, wipes in (
+            ('VERIFY_T0', ['T0'], ['XYZ_T0_WIPE_160']),
+            ('FULL', ['T0', 'T1', 'T0_RETURN'], ['XYZ_T0_WIPE_160', 'XYZ_T1_WIPE_160']),
+        ):
+            with self.subTest(mode=mode):
+                settings = dict(PREP='EMPTY', MODE=mode, T0_Z_MAX=139.35)
+                if mode == 'FULL':
+                    settings['T1_Z_MAX'] = 139.15
+                xyz = pad_xyz_parameters(settings)
+                self.assertEqual(xyz['prep'], 'EMPTY')
+                self.assertEqual(xyz['retract_mm'], (0., 0.))
+                self.assertEqual(pad_xyz_e_budget(xyz), 0)
+                model = SimulatedPad(xyz)
+                result = model.run()
+                self.assertEqual(list(result['measurements']), scans)
+                self.assertEqual(result['retract_e_steps'], {'T0': 0, 'T1': 0})
+                actions = [action for _, _, action in model.trace]
+                self.assertFalse(any(action.get('e') for action in actions))
+                phases = [action['name'] for action in actions if action['kind'] == 'phase']
+                self.assertFalse(any('_RETRACT' in phase for phase in phases))
+                self.assertEqual([phase for phase in phases if '_WIPE_' in phase], wipes)
+
     def test_blocked_edge_and_transient_stop_without_extra_lateral_move(self):
         for field, expected in [('unbounded_pad', 'outside the qualified scan box'),
                                 ('transient', 'Unstable PC14 response')]:

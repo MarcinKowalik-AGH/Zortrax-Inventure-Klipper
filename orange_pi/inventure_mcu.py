@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-PAD'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2840,6 +2840,7 @@ class InventureMCU:
             state={key:run.get(key) for key in ('phase','run_id','error','mode','measurements',
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
                    'retract_e_steps','saved_file')}
+            state['prep']=run['params']['prep']
             batch=getattr(self,'nozzle_z_context',None)
             if batch is not None and batch.get('pad') is run:
                 f=(batch.get('child') or {}).get('factory') or {}
@@ -2887,13 +2888,14 @@ class InventureMCU:
         try:
             params=pad_xyz_parameters(gcmd)
             budget=pad_xyz_e_budget(params)
-            plans=self._nozzle_probe_plans(gcmd,(0,1),pad=True,residual=self._read_nozzle_xy_offsets())
+            plans=self._nozzle_probe_plans(gcmd,(0,1),pad=params,residual=self._read_nozzle_xy_offsets())
             self._feeder_service_preflight()
         except (KeyError,OSError,TypeError,ValueError) as exc:
             raise gcmd.error(str(exc))
         run=dict(phase='running',run_id=uuid.uuid4().hex,mode=params['mode'],params=params,budget=budget,
                  measurement_target_c=NOZZLE_PAD_TEMPERATURE,
-                 hot_targets_c={'T%d'%tool:plan['target'] for tool,(plan,_) in plans.items()})
+                 hot_targets_c={'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
+                                else plan['target'] for tool,(plan,_) in plans.items()})
         batch=dict(action='START',pad=run,tool=0,parameters=plans,gcmd=gcmd,results={})
         self.nozzle_pad_run=run
         self.nozzle_z_context=batch
@@ -2997,10 +2999,11 @@ class InventureMCU:
                                   details=dict(getattr(exc,'details',{})))
         return self.reactor.NEVER
 
-    def _nozzle_probe_plans(self,gcmd,tools,alignment=False,residual=None,pad=False):
+    def _nozzle_probe_plans(self,gcmd,tools,alignment=False,residual=None,pad=None):
         from .inventure_factory_core import OEM_T0_TO_T1_X_MM, parameters
         from .inventure_z_home import z_home_parameters
         targets=getattr(self,'nozzle_xy_targets',NOZZLE_XY_TARGETS)
+        pad_empty=pad is not None and pad['prep']=='EMPTY'
 
         class NozzleParameters:
             def __init__(self,tool,pad):
@@ -3011,7 +3014,8 @@ class InventureMCU:
                 if key=='TOOL':return self.tool
                 if key=='SPEED_PROFILE':return 'OEM'
                 if key=='TARGET':
-                    if pad:return gcmd.get(self.tool+'_TARGET',None)
+                    if pad_empty:return None
+                    if pad is not None:return gcmd.get(self.tool+'_TARGET',None)
                     if alignment:return gcmd.get(self.tool+'_TARGET',targets[int(self.tool[1])])
                     return gcmd.get(key,200.)
                 if key=='Z_APPROACH_MM':return gcmd.get(key,137.)
@@ -3035,13 +3039,14 @@ class InventureMCU:
             pads[1]=read_pad('T1',(t0_pad[0]+OEM_T0_TO_T1_X_MM-offsets['X'],
                                   t0_pad[1]-offsets['Y']))
         plans={}
-        target_min,target_limit=(190.,240.) if pad else (200.,230. if alignment else 210.)
+        target_min,target_limit=(190.,240.) if pad is not None else (200.,230. if alignment else 210.)
+        if pad_empty:target_min=180.
         for index in tools:
             name='T%d'%index
             if not self._factory_motion_available(index):
                 raise ValueError('Nozzle calibration needs OEM motion for '+name)
             options=NozzleParameters(name,pads[index])
-            if pad and options.get('TARGET') is None:
+            if pad is not None and not pad_empty and options.get('TARGET') is None:
                 raise ValueError('Pad calibration requires explicit '+name+'_TARGET for the retract material')
             p=parameters(options,getattr(self,'procedure_profiles',None))
             if not target_min<=p['target']<=target_limit or not 1.<=p['max_power']<=40.:
@@ -3220,7 +3225,11 @@ class InventureMCU:
             def get_int(self,*args,**kw):return gcmd.get_int(*args,**kw)
             def error(self,message):return gcmd.error(message)
             def respond_info(self,message):return gcmd.respond_info(message)
-        if nozzle_test:self.cmd_load_test(HeatCommand(),nozzle_test=True)
+        pad_run=self.nozzle_z_context['pad'] if pad else None
+        if pad_run is not None and pad_run['params']['prep']=='EMPTY':
+            p=dict(p,target=NOZZLE_PAD_TEMPERATURE)
+            self.cmd_load_test(HeatCommand(),nozzle_test=True,pad_empty=True)
+        elif nozzle_test:self.cmd_load_test(HeatCommand(),nozzle_test=True)
         else:self.cmd_load_test(HeatCommand())
         context=self.load_test_context;now=self.reactor.monotonic()
         context['factory_preparing']=True;context['deadline']=now+timeout
@@ -3235,8 +3244,9 @@ class InventureMCU:
         if dual:
             heaters=[]
             for index,(plan,_) in sorted(self.nozzle_z_context['parameters'].items()):
-                heaters.append(dict(tool=index,target=plan['target'],power=plan['max_power'],
-                                    limit=round(plan['target']+20),duty=0,output_token=None))
+                target=plan['target'] if pad_run is None else pad_run['hot_targets_c']['T%d'%index]
+                heaters.append(dict(tool=index,target=target,power=plan['max_power'],
+                                    limit=round(target+20),duty=0,output_token=None))
             context['factory']['dual_heaters']=heaters
         if alignment:
             context['factory']['xy_budget']=self.nozzle_z_context['alignment']['budget']
@@ -3874,7 +3884,7 @@ class InventureMCU:
         if now>=context['next_report']:
             context['next_report']=now+5.;self._load_test_emit(context)
 
-    def cmd_load_test(self,gcmd,nozzle_test=False):
+    def cmd_load_test(self,gcmd,nozzle_test=False,pad_empty=False):
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action in ('AUTO','PARAMS'):
             return self._factory_start(gcmd,read_only=action=='PARAMS')
@@ -3924,14 +3934,16 @@ class InventureMCU:
                     channel=int(tool[1]),cassette_direction=int(action!='RETRACT'),
                     started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
+            minimum,maximum=(NOZZLE_PAD_TEMPERATURE,NOZZLE_PAD_TEMPERATURE) if pad_empty else (180.,240.)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
                 power=float(gcmd.get('MAX_POWER',40.))
-                if not math.isfinite(target) or not 180<=target<=240:raise ValueError()
+                if not math.isfinite(target) or not minimum<=target<=maximum:raise ValueError()
                 if not math.isfinite(duration) or not 10<=duration<=LOAD_HOLD_MAX_S:raise ValueError()
                 if not math.isfinite(power) or not 1<=power<=50:raise ValueError()
             except (TypeError,ValueError):
-                raise gcmd.error('TARGET must be 180..240C, MAX_POWER 1..50 percent, DURATION 10..900 seconds of hold')
+                raise gcmd.error('TARGET must be %g..%gC, MAX_POWER 1..50 percent, DURATION 10..900 seconds of hold'
+                                 %(minimum,maximum))
             if plan is not None:
                 windows=math.ceil(plan['total_steps']/(plan['rate']*LOAD_JOG_WINDOW_S))+2
                 margin=5. if plan['smooth'] else windows*.5+30.

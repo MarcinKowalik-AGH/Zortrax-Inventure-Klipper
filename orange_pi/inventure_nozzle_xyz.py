@@ -18,7 +18,7 @@ PAD_PREP_Z_STEPS = 20 * Z_STEPS_PER_MM
 
 
 def pad_xyz_parameters(gcmd):
-    """Require physically qualified Z ceilings and per-tool retract distances."""
+    """Validate the Z ceilings and the preparation for both tools."""
     def number(name, default, low, high, optional=False):
         value = gcmd.get(name, default)
         if value is None:
@@ -36,6 +36,17 @@ def pad_xyz_parameters(gcmd):
     mode = str(gcmd.get('MODE', 'FULL')).strip().upper()
     if mode not in ('FULL', 'VERIFY_T0'):
         raise FactoryError('Pad calibration MODE must be FULL or VERIFY_T0')
+    prep = str(gcmd.get('PREP', 'RETRACT')).strip().upper()
+    if prep not in ('RETRACT', 'EMPTY'):
+        raise FactoryError('Pad calibration PREP must be RETRACT or EMPTY')
+    if prep == 'EMPTY':
+        for name in ('T0_TARGET', 'T1_TARGET', 'T0_RETRACT_MM', 'T1_RETRACT_MM'):
+            if gcmd.get(name, None) is not None:
+                raise FactoryError('PREP=EMPTY uses 160 C and zero retraction; omit ' + name)
+        retract_mm = (0., 0.)
+    else:
+        retract_mm = (number('T0_RETRACT_MM', None, .1, 100.),
+                      number('T1_RETRACT_MM', None, .1, 100.))
     ceilings = tuple(number('T%d_Z_MAX' % tool, None, 20., 150.,
                             optional=tool == 1 and mode == 'VERIFY_T0')
                      for tool in (0, 1))
@@ -46,9 +57,9 @@ def pad_xyz_parameters(gcmd):
             raise FactoryError('T%d_Z_MAX minus Z_CLEARANCE_MM must allow the 20 mm selector stage' % tool)
     return dict(
         mode=mode,
+        prep=prep,
         z_max_mm=ceilings,
-        retract_mm=(number('T0_RETRACT_MM', None, .1, 100.),
-                    number('T1_RETRACT_MM', None, .1, 100.)),
+        retract_mm=retract_mm,
         retract_speed=number('RETRACT_SPEED', 1.6, .5, 6.),
         scan_radius_mm=number('SCAN_RADIUS_MM', 3.5, 3., 6.),
         edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .02, .005, .1),
@@ -251,6 +262,7 @@ class NozzleXYZProgram(ZHomeProgram):
         plans = (pad_plan(self.p, self.settings), pad_plan(t1_p, t1_settings))
         if tuple(plan.p['tool'] for plan in plans) != (0, 1):
             raise FactoryError('Pad calibration requires ordered T0 and T1 plans')
+        empty = xyz['prep'] == 'EMPTY'
         scan_order = (0,) if xyz['mode'] == 'VERIFY_T0' else (0, 1, 0)
         boxes, ceilings = {}, {}
         clearance_steps = round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
@@ -273,18 +285,20 @@ class NozzleXYZProgram(ZHomeProgram):
         if not isinstance(bottom, dict) or bottom.get('ok') is not True:
             raise FactoryError('homing_z_failed')
         self.z_steps = 0
-        yield from self._pick(0, plans)
+        if not empty:
+            yield from self._pick(0, plans)
         yield from self._phase('XYZ_HEAT')
         yield dict(kind='xyz_heat_start')
-        yield dict(kind='xyz_heat_wait')
-        yield from self._prepare_hot(xyz)
-        yield from self._pick(1, plans)
-        yield dict(kind='xyz_heat_wait')
-        yield from self._prepare_hot(xyz)
-        yield from self._phase('XYZ_COOL_160')
-        yield dict(kind='xyz_cool_start')
+        if not empty:
+            yield dict(kind='xyz_heat_wait')
+            yield from self._prepare_hot(xyz)
+            yield from self._pick(1, plans)
+            yield dict(kind='xyz_heat_wait')
+            yield from self._prepare_hot(xyz)
+            yield from self._phase('XYZ_COOL_160')
+            yield dict(kind='xyz_cool_start')
         yield dict(kind='xyz_cool_wait')
-        if len(scan_order) == 1:
+        if not empty and len(scan_order) == 1:
             yield from self._wipe_at_160()
 
         measurements = {}

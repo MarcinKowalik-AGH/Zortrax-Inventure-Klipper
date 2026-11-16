@@ -60,7 +60,7 @@ class PadDevice(DualNozzleDevice):
         assert mode == monitor == 0
         if action == 8:
             assert not self.output(6)['duty'] and not self.output(7)['duty']
-            assert tool == 0 and low == 155 and high == 250
+            assert tool == 0 and low == 155 and high == max(self.hot) + 10
             wire = [4, *args[1:]]
         elif action in (9, 10):
             self._settle()
@@ -232,6 +232,42 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(host.device.motion_starts, [])
         self.assertFalse(host.device.output(6)['duty'])
         self.assertFalse(host.device.output(7)['duty'])
+
+    def test_empty_nozzles_heat_directly_to_measurement_temperature_without_e_motion(self):
+        host = self.host()
+        device = host.device
+        device.hot = (160., 160.)
+        started = self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                           T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.assertEqual(started['hot_targets_c'], {'T0': 160., 'T1': 160.})
+        self.assertEqual([heater['target'] for heater in host.load_test_context['factory']['dual_heaters']],
+                         [160., 160.])
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual((result['phase'], result['run_id']), ('candidate', started['run_id']), result)
+        self.assertEqual([sample['tool'] for sample in result['sample_temperatures_c']],
+                         ['T0', 'T1', 'T0'])
+        self.assertEqual(result['retract_e_steps'], {'T0': 0, 'T1': 0})
+        self.assertEqual(device.calls[0][5], 0)
+        self.assertEqual(device.e_moves, [])
+        self.assertEqual({tool for tool, _ in device.wipe_moves}, {0, 1})
+        self.assertTrue(all(all(158. <= temp <= 162. for temp in temps)
+                            for _, temps in device.wipe_moves))
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+
+    def test_empty_nozzles_reject_filament_preparation_arguments_before_actuation(self):
+        settings = dict(PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                        T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        for argument, value in (('T0_TARGET', 200), ('T1_TARGET', 160),
+                                ('T0_RETRACT_MM', 0), ('T1_RETRACT_MM', 5)):
+            with self.subTest(argument=argument):
+                host = self.host()
+                with self.assertRaisesRegex(RuntimeError, 'PREP=EMPTY'):
+                    self.cmd(host, 'START', **settings, **{argument: value})
+                self.assertEqual(host.device.calls, [])
+                self.assertEqual(host.device.motion_starts, [])
+                self.assertFalse(host.device.output(6)['duty'])
+                self.assertFalse(host.device.output(7)['duty'])
 
     def test_verify_t0_only_arms_the_surveyed_tool_and_cannot_save(self):
         host = self.host()

@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD",
+  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "5143641002fcb20e2ee7f1e5b283f3496521a9019dae47d7ee7ff9084a041605",
+  "module_sha256": "91bfe909c989034ac7570f18340777c6428afd929e44851b1766ca0f0b4795d5",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -59,9 +59,10 @@
     "a3d1176125c4431fa9db7e479c439cc7baf4cae959ffa9f9cff1b247dc92b810",
     "5b543a2a835d1904927ef8d36e284468f87c80c41633e0210564d4f8474f5275",
     "530062a865befedf997c2ae805c1528f41e7fdc852d0b8d140f3a765226267a0",
-    "af6f36b94d616ab9e9c7e075854b59540df22691cb31431bf64327f288b89d1d"
+    "af6f36b94d616ab9e9c7e075854b59540df22691cb31431bf64327f288b89d1d",
+    "5143641002fcb20e2ee7f1e5b283f3496521a9019dae47d7ee7ff9084a041605"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -389,8 +390,10 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
-      "allowed_existing_sha256": []
+      "sha256": "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
+      "allowed_existing_sha256": [
+        "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973"
+      ]
     }
   },
   "axis_timer_motion": {
@@ -578,6 +581,10 @@
     "max_retract_mm_per_tool": 100,
     "storage": "inventure_nozzle_pad.json",
     "documentation": "docs/NOZZLE_PAD_CALIBRATION.md",
-    "tested_on_printer": false
+    "tested_on_printer": false,
+    "preparation": [
+      "RETRACT",
+      "EMPTY"
+    ]
   }
 }

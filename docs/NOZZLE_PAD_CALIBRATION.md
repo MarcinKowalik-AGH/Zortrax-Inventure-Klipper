@@ -13,6 +13,8 @@ firmware MCU `RC8-CONTROL-R7-NOZZLE-PAD`. Po `FIRMWARE_RESTART` sprawdź pole
 `nozzle_pad_abi: 1` w odpowiedzi `INVENTURE_VERSION`.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
 `allow_actuators: True`.
+Tryb pustych dysz `PREP=EMPTY` wymaga hosta
+`RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY` i korzysta z tego samego firmware MCU.
 
 Skopiuj `config/INVENTURE_NOZZLE_PAD.cfg` do katalogu konfiguracji Klippera
 i dołącz plik w `printer.cfg`.
@@ -44,6 +46,15 @@ Potwierdzenie `ACK=PAD_GEOMETRY_MEASURED` oznacza, że te granice
 sprawdzono na danym egzemplarzu dla każdej dyszy objętej pomiarem.
 Po zmianie tacki ustal bezpieczny zakres dla nowej geometrii.
 
+Na fabrycznym padzie zlicowanym z tacką użyj
+[pionowego pomiaru Z w środku pada](NOZZLE_Z_TEST_R0323.md). Pomiar działa
+z pustymi dyszami. Do elektrycznego skanu XY potrzebne jest wyniesione,
+sztywno zamocowane pole przewodzące o płaskim wierzchu i średnicy około
+5 mm, połączone elektrycznie z padem PC14. Sprawdź zwarcie na polu,
+rozwarcie poza nim i prześwit w całym obszarze skanu.
+Dla takiego pola ustal nowe limity podniesienia stołu od PE12.
+W pomiarze względnym obu dysz używa się tego samego nieruchomego pola.
+
 Fabryczna geometria serwisowa w pobliżu środka pola to X82,8 / Y68,0
 dla T0 i X72,0 / Y68,0 dla T1. Dokładne środki zostaną wyznaczone
 z przeciwległych krawędzi. [Odniesienie współrzędnych serwisowych](NOZZLE_Z_TEST_R0323.md#pozycje-nad-padem).
@@ -64,6 +75,10 @@ z przeciwległych krawędzi. [Odniesienie współrzędnych serwisowych](NOZZLE_Z
    się do 20 mm od PE12, a potem o kolejne 10 mm przed przełączeniem
    dyszy. Klipper porównuje pozycje i zmierzone poziomy Z T0 i T1
    oraz różnicę między pierwszym i powtórnym pomiarem T0.
+
+Dla pustych dysz `PREP=EMPTY` grzeje obie dysze bezpośrednio do 160°C.
+Przeciera każdą mierzoną dyszę przed pierwszym pomiarem. Budżet kroków
+ekstrudera E wynosi zero.
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
@@ -94,12 +109,22 @@ ostrokątnych zweryfikowanymi wartościami przed uruchomieniem.
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=VERIFY_T0 ACK=PAD_GEOMETRY_MEASURED T0_Z_MAX=<Z_mm_T0> T0_TARGET=<degC_T0> T1_TARGET=<degC_T1> T0_RETRACT_MM=<mm_T0> T1_RETRACT_MM=<mm_T1>
 ```
 
+Dla pustych dysz i sprawdzonego wyniesionego pola użyj wariantu poniżej.
+Wpisz zmierzony limit zamiast `<Z_mm_T0>`.
+
+```gcode
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=VERIFY_T0 PREP=EMPTY ACK=PAD_GEOMETRY_MEASURED T0_Z_MAX=<Z_mm_T0>
+```
+
 Po sprawdzeniu mapy styku T0 przejdź do pełnej kalibracji. Przywróć stan
 załadowania materiału zgodny z zaplanowanym cofnięciem w nowej sesji.
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=FULL ACK=PAD_GEOMETRY_MEASURED T0_Z_MAX=<Z_mm_T0> T1_Z_MAX=<Z_mm_T1> T0_TARGET=<degC_T0> T1_TARGET=<degC_T1> T0_RETRACT_MM=<mm_T0> T1_RETRACT_MM=<mm_T1>
 ```
+
+W `MODE=FULL PREP=EMPTY` podaj oba limity Z i pomiń parametry temperatury
+i retrakcji obu dysz.
 
 Poleceniem `STATUS` sprawdzisz etap i wynik. Próbę zatrzymuje
 `ACTION=STOP` lub `INVENTURE_STOP`.
@@ -117,10 +142,11 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | Parametr | Wartość lub zakres | Znaczenie |
 |---|---|---|
 | `MODE` | `FULL` domyślnie, `VERIFY_T0` do pierwszej próby | Zakres pomiaru |
+| `PREP` | `RETRACT` domyślnie, `EMPTY` dla dwóch pustych dysz | Przygotowanie dysz |
 | `T0_Z_MAX`, `T1_Z_MAX` | Wartości zweryfikowane na drukarce, powyżej 20 mm o co najmniej jeden krok Z | Najwyższa dozwolona pozycja stołu od dolnej PE12. T1 jest wymagane w trybie `FULL` |
-| `T0_TARGET`, `T1_TARGET` | Jawne cele 190–240°C | Temperatury właściwe dla wycofania obu materiałów |
+| `T0_TARGET`, `T1_TARGET` | Jawne cele 190–240°C dla `PREP=RETRACT` | Temperatury właściwe dla wycofania obu materiałów |
 | `MAX_POWER` | 40% domyślnie, zakres 1–40% | Limit mocy każdej z dwóch grzałek |
-| `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm | Nominalny ruch ekstrudera w kierunku cofania |
+| `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm dla `PREP=RETRACT` | Nominalny ruch ekstrudera w kierunku cofania |
 | `T0_PAD_X/Y`, `T1_PAD_X/Y` | X i Y podawane parami | Przybliżone środki pola w układzie serwisowym. Jawne nazwy to np. `T0_PAD_X` i `T0_PAD_Y` |
 | `SCAN_RADIUS_MM` | 3,5 mm domyślnie, zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka |
 | `EDGE_TOLERANCE_MM` | 0,02 mm domyślnie, zakres 0,005–0,1 mm | Docelowa szerokość przedziału pomiędzy stykiem i jego brakiem |
@@ -165,7 +191,7 @@ liczonej od PE12, T1 wystaje niżej.
 | `t1_lower_by_mm` | Różnica wysokości dysz. Wartość dodatnia oznacza niżej wystającą T1 |
 | `t0_reseat_mm` | Położenie T0 po powrocie pomniejszone o położenie w pierwszym pomiarze |
 
-Po procedurze filament pozostaje cofnięty. Załaduj materiał nad koszem
+Po `PREP=RETRACT` filament pozostaje cofnięty. Załaduj materiał nad koszem
 zgodnie z [procedurą dla właściwego toru](FACTORY_LOAD_2026-11-10.md)
 i potwierdź wypływ przed następnym drukiem.
 

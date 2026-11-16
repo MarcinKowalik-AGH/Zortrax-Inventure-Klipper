@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD",
-  "host_module_sha256": "5143641002fcb20e2ee7f1e5b283f3496521a9019dae47d7ee7ff9084a041605",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
+  "host_module_sha256": "91bfe909c989034ac7570f18340777c6428afd929e44851b1766ca0f0b4795d5",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 479,
-  "previous_host_commit": "776596599c556636b16840b5d19b4f327ae05df5",
+  "verified_public_host_tests": 482,
+  "previous_host_commit": "ae39f4690dca28ecf78c3ed77f1cf69437e5c49b",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD",
+  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -722,6 +722,10 @@
     "ivb_sha256": "1e928c335957330ce6ba3c401ed74f84d931e5a5c98249ed6f3421f33d6d20e8",
     "zip_sha256": "31e6281521be4353ff2ffd1e847c8ae7746fb8830ea93b278f66a7cb65995e41",
     "bootloader": "InventureBoot 1.7",
-    "distribution": "ZIP attached in the ChatGPT conversation"
+    "distribution": "ZIP attached in the ChatGPT conversation",
+    "preparation": [
+      "RETRACT",
+      "EMPTY"
+    ]
   }
 }
