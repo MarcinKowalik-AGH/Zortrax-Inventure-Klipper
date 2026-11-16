@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
 `RC8-CONTROL-R7-UIFAST-PAD-SWEEP-T0` i wgraj firmware MCU
-`RC8-CONTROL-R7-PAD-SWEEP`. Po `FIRMWARE_RESTART` sprawdź, czy
+`RC8-CONTROL-R7-PAD-SWEEP-PC14`. Po `FIRMWARE_RESTART` sprawdź, czy
 `INVENTURE_VERSION` zwraca `nozzle_pad_abi: 1` oraz
 `nozzle_pad_sweep_abi: 1`.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
@@ -62,10 +62,11 @@ Z bez zwarcia PC14. Obie dysze korzystają z tego samego nieruchomego pola.
 2. Przed każdym przejazdem pomiarowym stół podnosi się przy ustalonym XY
    wewnątrz pada. STM32 zatrzymuje Z przy pierwszym zwarciu PC14.
 3. Przy tym samym Z głowica wykonuje powolny przejazd wzdłuż jednej osi.
-   STM32 zatrzymuje głowicę przy pierwszym rozwarciu PC14. Po potwierdzeniu
-   rozwarcia w spoczynku Klipper przyjmuje krawędź w połowie między ostatnim
-   krokiem ze stykiem a pierwszym krokiem bez styku. Stół obniża się przed
-   powrotem nad pole i kolejnym dojazdem Z.
+   STM32 wstrzymuje przejazd przy pierwszym rozwarciu PC14. Jeśli styk wróci
+   przed upływem 150 ms, STM32 wznawia ten sam przejazd. Po 150 ms rozwarcia
+   w spoczynku Klipper przyjmuje krawędź w połowie między ostatnim krokiem
+   ze stykiem a pierwszym krokiem bez styku. Stół obniża się przed powrotem
+   nad pole i kolejnym dojazdem Z.
 4. Para przejazdów X− i X+ wyznacza środek X jako średnią obu krawędzi.
    Para Y− i Y+ odbywa się przy wyznaczonym X. Środek Y jest średnią
    obu krawędzi Y. Drugi przebieg powtarza pomiar od wyznaczonego środka.

@@ -546,17 +546,21 @@ static void pad_adc(unsigned raw) {
     control_adc();
     inventure_adc_observe(ADC1,10,raw);inventure_adc_observe(ADC3,6,raw);
 }
+static void pad_timer_step(unsigned raw) {
+    assert(cm.active && cm.timer_added);
+    sched_del_timer(&cm_timer);
+    mock_now=cm_timer.waketime;command_inventure_heartbeat(NULL);pad_adc(raw);
+    unsigned r=cm_event(&cm_timer);
+    if(r==SF_RESCHEDULE)sched_add_timer(&cm_timer);
+    else assert(!cm.active && !cm.timer_added);
+    control_guard(mock_now);
+}
 static void pad_run(unsigned stop_at,unsigned raw,unsigned *sequence) {
     uint32_t last=mock_now;
     while(cm.active) {
-        sched_del_timer(&cm_timer);
-        mock_now=cm_timer.waketime;command_inventure_heartbeat(NULL);pad_adc(raw);
         if(stop_at && cm.pad_sweep && cm.sent[0]==stop_at)GPIOC->IDR|=BIT(14);
         else if(stop_at && cm.sent[2]==stop_at)GPIOC->IDR&=~BIT(14);
-        unsigned r=cm_event(&cm_timer);
-        if(r==SF_RESCHEDULE)sched_add_timer(&cm_timer);
-        else assert(!cm.active && !cm.timer_added);
-        control_guard(mock_now);
+        pad_timer_step(raw);
         if((uint32_t)(mock_now-last)>=MS(500)) {
             pad_command(2,fs.tool,fs.budget_steps,++*sequence);
             assert(fs.active && !factory_reply[3]);last=mock_now;
@@ -754,10 +758,57 @@ static void pad_sweep_owner(void) {
     puts("PASS pad contact sweep: local Z latch, one orthogonal stroke, exact XY at PC14 release, bounded MISS, measured clearance, replay, and zero-step/thermal/endstop guards");
 }
 
+static void pad_sweep_open_confirmation(void) {
+    unsigned seq;
+    uint32_t sweep=BIT(3)|BIT(4);
+    pad_sweep_setup(&seq);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,931);
+    pad_run(1800,994,&seq);
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,932);
+    while(cm.sent[0]<11)pad_timer_step(994);
+    GPIOC->IDR|=BIT(14);
+    // The independent guard can sample the pin before the motion timer does.
+    control_guard(mock_now);
+    for(unsigned i=0;i<28;i++) {
+        pad_timer_step(994);
+        assert(cm.active && cm.pad_open_pending && !cm.high && !cm.hit);
+        assert(cm.sent[0]==11 && cm.sent[1]==11 && !cm.sent[2] && fs.pad_z==1800);
+    }
+    GPIOC->IDR&=~BIT(14);
+    pad_timer_step(994);
+    assert(cm.active && !cm.pad_open_pending && cm.sent[0]==11);
+    while(cm.sent[0]<123)pad_timer_step(994);
+    GPIOC->IDR|=BIT(14);
+    pad_timer_step(994);
+    uint32_t opened=mock_now;
+    for(unsigned i=1;i<PAD_SWEEP_OPEN_MS;i++) {
+        pad_timer_step(994);
+        assert(cm.active && cm.pad_open_pending && cm.sent[0]==123 && cm.sent[1]==123);
+    }
+    pad_timer_step(994);
+    assert(mock_now-opened==MS(PAD_SWEEP_OPEN_MS));
+    assert(!cm.active && !cm.pad_open_pending && fs.active && cm.reason==CR_INPUT && cm.hit==BIT(3));
+    assert(cm.sent[0]==123 && cm.sent[1]==123 && !cm.sent[2] && fs.pad_z==1800);
+
+    pad_sweep_setup(&seq);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,933);
+    pad_run(1800,994,&seq);
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,934);
+    while(cm.sent[0]<11)pad_timer_step(994);
+    GPIOC->IDR|=BIT(14);
+    pad_timer_step(994);
+    assert(cm.active && cm.pad_open_pending);
+    GPIOB->IDR|=BIT(11);
+    control_guard(mock_now);
+    assert(!cm.active && !fs.active && cm.hit==(BIT(3)|BIT(0)) && cm.sent[0]==11);
+    puts("PASS PC14 sweep debounce: holds exact XY, resumes after transient opening and preserves immediate endstop guards");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();pad_xyz_owner();pad_sweep_owner();
+    pad_sweep_open_confirmation();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

@@ -706,7 +706,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-SWEEP",
+    "mcu_release": "RC8-CONTROL-R7-PAD-SWEEP-PC14",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -719,8 +719,8 @@
     "storage": "inventure_nozzle_pad.json",
     "documentation": "docs/NOZZLE_PAD_CALIBRATION.md",
     "tested_on_printer": false,
-    "ivb_sha256": "250f901617673afeb6264829a8a18defe3746bf75539d372e391e12aa259fa4a",
-    "zip_sha256": "6a18636861d7d6b8978217d00dcd28e4f7d86a0a814b97df9fbac7b17b747c14",
+    "ivb_sha256": "ae61e4ac57e37c60786be8b82caca23cd0df10361ead7a879d02a83fe986a7bc",
+    "zip_sha256": "ce5af2e6b31d70a6cbcce46082c346efc154bae8e3d07426944086789bfe319c",
     "bootloader": "InventureBoot 1.7",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "preparation": [
@@ -728,6 +728,7 @@
       "EMPTY"
     ],
     "sweep_abi": 1,
+    "sweep_open_ms": 150,
     "scan_methods": [
       "SWEEP",
       "TAP"

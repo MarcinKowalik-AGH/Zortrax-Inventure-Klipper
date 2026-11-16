@@ -574,7 +574,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-SWEEP",
+    "mcu_release": "RC8-CONTROL-R7-PAD-SWEEP-PC14",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -592,6 +592,7 @@
       "EMPTY"
     ],
     "sweep_abi": 1,
+    "sweep_open_ms": 150,
     "scan_methods": [
       "SWEEP",
       "TAP"

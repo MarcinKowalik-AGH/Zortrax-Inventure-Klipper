@@ -30,8 +30,10 @@ DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
 #define PAD_CONTACT_MAX_HZ 802u
 #define PAD_SWEEP_MAX_STEPS 3840u
 #define PAD_SWEEP_MAX_HZ 320u
+#define PAD_SWEEP_OPEN_MS 150u
 #define PAD_TEMP_MIN_C 155
 #define PAD_TEMP_MAX_C 165
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS",PAD_SWEEP_OPEN_MS);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_MAX_HZ",CM_FACTORY_MAX_HZ);
@@ -51,8 +53,10 @@ static struct {
     uint32_t elapsed,fraction,last_tick,max_ms,hold_ms,hold_start,period;
     uint32_t fast_accel_half,fast_cruise_ramp,fast_cruise_period;
     uint32_t fast_peak_ticks,fast_peak_late,fast_last_launch;
+    uint32_t pad_open_since;
     uint16_t stop_mask,stop_value,hit;
     uint8_t phase,reason,active,high,direction,timer_added,fast_mask,fast_direct,fast_tool,pad_sweep;
+    uint8_t pad_open_pending;
 } cm;
 static struct timer cm_timer;
 static uint32_t native_z_guard_owner;
@@ -261,7 +265,7 @@ static void cm_end(uint8_t reason) {
     if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT)))motor_test_write(GPIOE,BIT(10),0);
     if(cm.fast_mask)cm_fast_release();
     cm_clear_steps();
-    cm.active=0;cm.reason=reason;
+    cm.active=0;cm.reason=reason;cm.pad_open_pending=0;
     cm.phase=reason==CR_COMPLETE || reason==CR_INPUT?CM_DONE:reason==CR_STOP?CM_STOPPED:CM_FAILED;
 }
 static void control_motion_cancel(void) {
@@ -404,6 +408,22 @@ static uint_fast8_t cm_event(struct timer *timer) {
         else if(!fs_pad_temperature_ok(now))why=CR_THERMAL;
     }
     uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
+    if(!why && cm.pad_sweep && cm.done && hit==BIT(3)) {
+        if(!cm.pad_open_pending) {
+            cm.pad_open_pending=1;cm.pad_open_since=now;
+            cm_clear_steps();
+        }
+        // Hold XY at the first open sample and qualify it there. The debounce
+        // consumes time, never additional travel past the sampled position.
+        if((uint32_t)(now-cm.pad_open_since)<MS(PAD_SWEEP_OPEN_MS)) {
+            timer->waketime=now+MS(1);cm.timer_added=1;return SF_RESCHEDULE;
+        }
+    } else if(!why && cm.pad_open_pending && !hit) {
+        cm.pad_open_pending=0;
+        if(cm.done==cm.master){cm_end(CR_COMPLETE);return SF_DONE;}
+        // Restart at the original rate without catching up missed steps.
+        timer->waketime=now+cm.period-cm.pulse;cm.timer_added=1;return SF_RESCHEDULE;
+    }
     if(!why && hit){cm.hit=hit;why=CR_INPUT;}
     if(why){cm_end(why);return SF_DONE;}
     if(cm.phase==CM_HOLD) {
@@ -575,7 +595,10 @@ static void control_guard(uint32_t now) {
         uint8_t reason=door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
             cm.elapsed>=cm.max_ms?CR_TIME:0;
         uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
-        if(!reason && hit){cm.hit=hit;reason=CR_INPUT;}
+        // cm_event qualifies lone PC14 openings after a sweep has started.
+        if(!reason && hit && !(cm.pad_sweep && cm.done && hit==BIT(3))) {
+            cm.hit=hit;reason=CR_INPUT;
+        }
         if(!reason && cm.fast_direct && cm.planned[3] && !cm_axis_e_ready(cm.fast_tool,now))
             reason=CR_THERMAL;
         if(reason) {
@@ -805,6 +828,7 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
         if(!reject && fast && !cm_fast_available(fast_mask))reject=2;
         if(!reject) {
             cm.pad_sweep=pad && !!(args[2] || args[3]) && !!(stop_mask&stop_value&BIT(3));
+            cm.pad_open_pending=0;
             if(pad) {
                 fs.pad_contact_ready=0;
                 if(cm.pad_sweep && (!fs.pad_sweep_z || (uint32_t)fs.pad_z<fs.pad_sweep_z))
