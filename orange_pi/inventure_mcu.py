@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R2'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2682,8 +2682,10 @@ class InventureMCU:
                 self._load_test_cancel(reason,phase='done' if finished_hold else 'failed')
                 if not stopped:self._control_abort()
         finally:context['busy']=False
-        return (self.reactor.monotonic()+(.1 if context.get('jog') is not None or context.get('factory') is not None else .25)
-                if self.load_test_context is context else self.reactor.NEVER)
+        if self.load_test_context is not context:return self.reactor.NEVER
+        if context.get('cold_pad'):return self.reactor.monotonic()+.2
+        cadence=.1 if context.get('jog') is not None or context.get('factory') is not None else .25
+        return self.reactor.monotonic()+cadence
 
     def _configure_procedures(self,config):
         from .inventure_factory_core import profiles
@@ -2953,6 +2955,9 @@ class InventureMCU:
         self.nozzle_pad_run=run
         self.nozzle_z_context=batch
         try:
+            if center:
+                batch['display_hold_before']=bool(getattr(self,'thermal_display_held',False))
+                self._thermal_display_hold(True)
             batch['child']=self._factory_start(gcmd,operation='NOZZLE_PAD_CALIBRATION',
                                                nozzle_parameters=plans[0])
             batch['timer']=self.reactor.register_timer(lambda t:self._nozzle_z_tick(batch,t),
@@ -3025,6 +3030,8 @@ class InventureMCU:
             if not result['success']:
                 reason=result['reason']
                 if child.get('cold_pad'):
+                    logging.info('Inventure pad T0 stopped: stage=%s reason=%s details=%s',
+                                 factory['phase'],reason,json.dumps(result.get('details',{}),sort_keys=True))
                     reason=factory['phase']+' | '+reason
                 self._nozzle_z_finish('failed',tool=batch['tool'],reason=reason,
                                       details=result.get('details',{}))
@@ -3534,11 +3541,11 @@ class InventureMCU:
         home=action['kind']=='home' or releasing
         probe=action['kind']=='z_contact_move'
         sweep=action['kind']=='move' and action.get('stage')=='pad_sweep'
+        cold=context.get('cold_pad',False)
         e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
         z=pos[2];mask=0
         if probe:
             from .inventure_z_home import Z_BOTTOM, Z_STEPS_PER_MM
-            cold=context.get('cold_pad',False)
             dual='dual_heaters' in f or cold
             clearance=(dual and action.get('stage')=='clearance' and not f['homed']
                        and -10*Z_STEPS_PER_MM<=action['steps']<0
@@ -3581,8 +3588,12 @@ class InventureMCU:
                         or e
                         or not 0.<action['speed']<=PAD_MAX_SWEEP_SPEED):
                     raise ValueError('Unexpected pad contact sweep')
-                self._z_home_inputs({'nozzle_contact':0,'z_bottom':0})
+                expected={'z_bottom':0,'x_endstop':0,'y_endstop':0} if cold else {
+                    'nozzle_contact':0,'z_bottom':0}
+                raw=self._z_home_inputs(expected)
                 if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
+                if cold and raw['nozzle_contact']==1:
+                    return dict(ok=False,reason='pc14_open_before_sweep')
                 mask=stop_value=8|16
         counts=(round((dx+dy)*640),round((dx-dy)*640),action['steps'] if probe else round(dz*802),
                 round(e*960)*(1 if context['tool'] else -1))
@@ -3604,6 +3615,13 @@ class InventureMCU:
         row=self._motion_query(1,counts,rate,2 if fast_xy else 10,
             maximum,mask,stop_value,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
+        if cold and sweep and row['reject']==CONTROL_REJECTS[5]:
+            # The MCU can see an opening after the host's input read. Retry
+            # only a rejected start with fresh open PC14 and clear limits.
+            raw=self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})
+            if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
+            if raw['nozzle_contact']==1:
+                return dict(ok=False,reason='pc14_open_before_sweep')
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
             accounted=0,deadline=self.reactor.monotonic()+maximum/1000.+.5,

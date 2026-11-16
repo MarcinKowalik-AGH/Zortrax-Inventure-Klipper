@@ -3,6 +3,7 @@ import json
 import math
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 from orange_pi.inventure_z_home import Z_STEPS_PER_MM
@@ -231,6 +232,8 @@ class NozzlePadHostTests(unittest.TestCase):
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         device = host.device
         device.mode = 0
+        display_holds = []
+        host.printer.objects['inventure_oled'] = SimpleNamespace(set_thermal_test_hold=display_holds.append)
         command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
         host.cmd_nozzle_pad_calibrate(command)
         self.assertEqual(command.lines, [])
@@ -251,6 +254,33 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertLess(math.dist(point, device.centers[0]), .005)
         self.assertLess(math.dist(device.xy, point), .003)
         self.assertFalse(self.saved.exists())
+        self.assertEqual(display_holds, [True, False])
+
+    def test_cold_center_retries_fresh_pc14_opening_before_y_sweep(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        device = host.device
+        injected = []
+
+        def inputs():
+            sample = device.inputs()
+            factory = host.load_test_context['factory'] if host.load_test_context else {}
+            action = factory.get('action') or {}
+            if (factory.get('phase') == 'Y+' and action.get('stage') == 'pad_sweep'
+                    and factory['move'] is None and not injected):
+                injected.append(sample['raw']['nozzle_contact'])
+                sample['raw']['nozzle_contact'] = 1
+            return sample
+
+        host._fresh_inputs = inputs
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        host.cmd_nozzle_pad_calibrate(command)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        self.assertEqual(injected, [0])
+        self.assertEqual(host.nozzle_pad_run['phase'], 'verified', host.nozzle_pad_run)
+        self.assertEqual(len(command.lines), 1, command.lines)
+        self.assertEqual([m['direction'] for m in device.sweep_moves], [3, 0, 1, 2])
+        self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
 
     def test_cold_center_requires_fresh_cold_nozzles_before_motion(self):
         host = self.host()

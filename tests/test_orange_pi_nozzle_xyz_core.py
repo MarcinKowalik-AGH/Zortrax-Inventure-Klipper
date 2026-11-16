@@ -34,6 +34,8 @@ class SimulatedPad:
         self.centers = ((82.92, 67.91), (72.04, 68.01), (82.935, 67.90))
         self.contacts = [round(z * Z_STEPS_PER_MM) for z in (139.2, 139., 139.21)]
         self.scan = xyz['scan']
+        self.cold = xyz['prep'] == 'COLD'
+        self.sweep_without_opening = set()
         self.contact_plane = None
         self.swept = False
         self.sweep_transient = False
@@ -62,7 +64,7 @@ class SimulatedPad:
         if direction > 0 and self.ceiling is not None and target > self.ceiling:
             raise AssertionError('Tapping exceeded absolute qualified cap')
         contact = self.contacts[len(self.arms) - 1]
-        if self.scan == 'SWEEP' and direction > 0 and target >= contact and not self._inside():
+        if self.scan == 'SWEEP' and not self.cold and direction > 0 and target >= contact and not self._inside():
             raise AssertionError('Sweep attempted high Z outside the pad')
         if (mask & NOZZLE_CONTACT and self._inside() and
                 ((steps > 0 and not value & NOZZLE_CONTACT and self.position < contact <= target)
@@ -98,7 +100,7 @@ class SimulatedPad:
         for value in range(start[axis]+step, target[axis]+step, step):
             position[axis] = value
             self.xy = tuple(v / XY_STEPS_PER_MM for v in position)
-            if self._inputs()['nozzle_contact']:
+            if (self._inputs()['nozzle_contact'] and (axis, step) not in self.sweep_without_opening):
                 self.swept = True
                 return dict(ok=True, reason='stop_input', hit=NOZZLE_CONTACT, position=self.xy)
         return dict(ok=True, reason='completed', hit=0, position=self.xy)
@@ -163,6 +165,31 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertLess(z_moves[0][1], 0)
         self.assertEqual(sum(z_moves[1]), model.arms[0])
         self.assertEqual(model.trace[settles[0]][0], model.trace[settles[1]][0])
+
+    def test_cold_center_checks_missing_y_edge_with_fixed_height_taps(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        model = SimulatedPad(xyz)
+        model.sweep_without_opening.add((1, -1))
+        with self.assertLogs(level='INFO') as logs:
+            result = model.run()
+        self.assertTrue(any('Y- edge_mm=' in row and 'method=tap' in row for row in logs.output))
+        self.assertLess(math.dist(result['measurements']['T0']['center_xy_mm'], model.centers[0]), .02)
+        trace = [a for _, _, a in model.trace]
+        last_sweep = max(i for i, a in enumerate(trace) if a.get('stage') == 'pad_sweep')
+        probes = [(pos, a['steps']) for pos, _, a in model.trace[last_sweep+1:]
+                  if a['kind'] == 'z_contact_move' and a['steps'] > 0]
+        self.assertGreater(len(probes), 2)
+        self.assertEqual(len({pos + steps for pos, steps in probes}), 1)
+        self.assertLessEqual(sum(probes[0]), model.arms[0])
+
+    def test_cold_center_leaves_clearance_when_pc14_stays_closed_at_scan_limit(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        model = SimulatedPad(xyz)
+        model.unbounded_pad = True
+        with self.assertRaisesRegex(FactoryError, 'PC14 nadal zwarty na końcu zakresu'):
+            model.run()
+        self.assertEqual(model._inputs()['nozzle_contact'], 1)
+        self.assertLessEqual(model.position, model.contacts[0] - PAD_MIN_SWEEP_CLEARANCE_STEPS)
 
     def test_full_preparation_and_reseat_on_single_home(self):
         xyz = pad_xyz_parameters(PARAMETERS)
