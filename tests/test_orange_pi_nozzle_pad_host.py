@@ -315,6 +315,62 @@ class NozzlePadHostTests(unittest.TestCase):
                 self.assertFalse(host.device.output(6)['duty'])
                 self.assertFalse(host.device.output(7)['duty'])
 
+    def test_verify_t0_rechecks_adc_age_after_factory_lease_renewal(self):
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                host = self.host()
+                host.nozzle_pad_sweep_abi = 1
+                device = host.device
+                device.hot = (160., 160.)
+                delivered = []
+
+                def renew(args):
+                    row = device.query_factory(args)
+                    factory = host.load_test_context['factory']
+                    if args[0] == 2 and factory['heat_started'] and not delivered:
+                        host.reactor.now += .02
+                        # ADC callbacks can run while a serial query yields.
+                        age = 1.1 if stale else 0.
+                        host.adc_received[1] = host.reactor.monotonic() - age
+                        delivered.append(True)
+                    return row
+
+                host.commands['factory_session'] = Wire(renew)
+                self.cmd(host, 'START', MODE='VERIFY_T0', PREP='EMPTY',
+                         ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30)
+                self.advance(host, lambda: host.nozzle_z_context is None)
+                self.assertTrue(delivered)
+                result = self.cmd(host, 'STATUS')
+                if stale:
+                    self.assertEqual(result['phase'], 'failed', result)
+                    self.assertIn('T1 ADC is stale', result['error'])
+                    self.assertFalse(device.pad_moves)
+                    self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+                else:
+                    self.assertEqual(result['phase'], 'verified', result)
+                    self.assertEqual(len(device.sweep_moves), 8)
+
+    def test_pad_cooldown_reads_t1_after_t0_off_reply(self):
+        host = self.host()
+        output = host._load_test_output
+        delivered = []
+
+        def send_output(context, duty, heater=None):
+            row = output(context, duty, heater)
+            if (duty == 0 and heater and heater['tool'] == 0 and
+                    context['factory'].get('pad_cooling') and not delivered):
+                host.reactor.now += .02
+                host.adc_received[1] = host.reactor.monotonic()
+                delivered.append(True)
+            return row
+
+        host._load_test_output = send_output
+        self.cmd(host, 'START', **dict(self.settings, MODE='VERIFY_T0'))
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        self.assertTrue(delivered)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'verified', result)
+
     def test_default_sweep_finds_edges_from_actual_partial_xy_steps(self):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1

@@ -9,7 +9,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-SWEEP` i wgraj firmware MCU
+`RC8-CONTROL-R7-UIFAST-PAD-SWEEP-ADC` i wgraj firmware MCU
 `RC8-CONTROL-R7-PAD-SWEEP`. Po `FIRMWARE_RESTART` sprawdź, czy
 `INVENTURE_VERSION` zwraca `nozzle_pad_abi: 1` oraz
 `nozzle_pad_sweep_abi: 1`.

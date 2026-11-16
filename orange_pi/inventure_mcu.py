@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP-ADC'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -3714,24 +3714,30 @@ class InventureMCU:
     def _dual_nozzle_heat_start(self,context,now):
         f=context['factory']
         for heater in f['dual_heaters']:
-            temperature,state=self.panel_temperature(heater['tool'],now)
-            if state!='valid' or temperature>=heater['target']+10.:
-                raise ValueError('T%d is outside the dual nozzle heating window'%heater['tool'])
+            tool=heater['tool']
+            temperature,state=self.panel_temperature(tool,now)
+            if state!='valid':raise ValueError('T%d ADC is %s at dual nozzle heat start'%(tool,state))
+            if temperature>=heater['target']+10.:
+                raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
             heater.update(start_temperature=temperature,
                 pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
         context.update(factory_preparing=False,start=now,deadline=min(now+300.,f['total_deadline']))
         f['heat_started']=True
-        self._dual_nozzle_heat_tick(context,now)
+        self._dual_nozzle_heat_tick(context)
 
-    def _dual_nozzle_heat_tick(self,context,now):
+    def _dual_nozzle_heat_tick(self,context):
+        # Synchronous MCU queries can yield to newer ADC reports. Read the
+        # clock after those queries so a fresh report cannot look future-dated.
+        now=self.reactor.monotonic()
         f=context['factory'];heaters=f['dual_heaters']
         poll=now>=f.get('next_dual_heater_io',0.)
         for heater in heaters:
             tool=heater['tool'];target=heater['target']
             temperature,state=self.panel_temperature(tool,now)
             upper=f['pad_temperature_bounds'][1] if f.get('pad_cooling') else target+10.
-            if state!='valid' or temperature>=upper:
-                raise ValueError('T%d is outside the dual nozzle heating window'%tool)
+            if state!='valid':raise ValueError('T%d ADC is %s during dual nozzle heating'%(tool,state))
+            if temperature>=upper:
+                raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
             if f.get('pad_measurement') and not 155.<=temperature<=165.:
                 raise ValueError('T%d left the 160 C pad measurement band'%tool)
             if context['ready_latched'] and not target-10.<=temperature<=target+8.:
@@ -3762,12 +3768,15 @@ class InventureMCU:
             context.update(hold_started=now,deadline=now+context['hold_duration'])
         return True
 
-    def _nozzle_pad_cool_start(self,context,now):
+    def _nozzle_pad_cool_start(self,context):
         f=context['factory']
         f['pad_cooling']=True
         for heater in f['dual_heaters']:
-            temperature,state=self.panel_temperature(heater['tool'],now)
-            if state!='valid':raise ValueError('Invalid temperature at pad cooldown start')
+            # Turning off the preceding heater may dispatch the next ADC report.
+            now=self.reactor.monotonic()
+            tool=heater['tool']
+            temperature,state=self.panel_temperature(tool,now)
+            if state!='valid':raise ValueError('T%d ADC is %s at pad cooldown start'%(tool,state))
             self._load_test_output(context,0,heater)
             heater.update(target=NOZZLE_PAD_TEMPERATURE,limit=180,
                           pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
@@ -3817,7 +3826,7 @@ class InventureMCU:
         if kind in ('dual_heat_wait','xyz_heat_wait'):
             return dict(f['snapshot']) if self._dual_nozzle_heat_ready(context,now) else None
         if kind=='xyz_cool_start':
-            self._nozzle_pad_cool_start(context,now)
+            self._nozzle_pad_cool_start(context)
             return dict(f['snapshot'])
         if kind=='xyz_cool_wait':
             if not self._dual_nozzle_heat_ready(context,now):return None
@@ -3915,7 +3924,7 @@ class InventureMCU:
             self._load_test_check_output(context)
         if not waiting:self._factory_session(context)
         if f['heat_started']:
-            if dual is not None:self._dual_nozzle_heat_tick(context,now)
+            if dual is not None:self._dual_nozzle_heat_tick(context)
             else:
                 duty=self._load_test_pid(context,temperature,now)
                 if duty or context['duty']:self._load_test_output(context,duty)
