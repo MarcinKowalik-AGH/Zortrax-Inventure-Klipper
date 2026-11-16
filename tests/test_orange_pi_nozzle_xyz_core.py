@@ -191,6 +191,23 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertLessEqual(model.position, model.contacts[0] - PAD_MIN_SWEEP_CLEARANCE_STEPS)
 
+    def test_cold_center_can_verify_a_genuine_edge_near_the_start(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50, 'SCAN_RADIUS_MM': 5.5}, center_only=True)
+        model = SimulatedPad(xyz)
+        model.centers = ((80.26, 67.91),)
+        result = model.run()['measurements']['T0']
+        self.assertEqual(result['scan_method'], 'SWEEP+TAP')
+        self.assertLess(math.dist(result['center_xy_mm'], model.centers[0]), .02)
+
+    def test_cold_center_requires_measured_contact_inside_the_chord(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        model = SimulatedPad(xyz)
+        model.centers = ((95., 68.),)
+        with self.assertRaisesRegex(FactoryError, 'PC14 nie potwierdził zwarcia w próbach osi X'):
+            model.run()
+        self.assertEqual(model._inputs()['nozzle_contact'], 1)
+        self.assertFalse(any(a.get('stage') == 'pad_sweep' for _, _, a in model.trace))
+
     def test_full_preparation_and_reseat_on_single_home(self):
         xyz = pad_xyz_parameters(PARAMETERS)
         model = SimulatedPad(xyz)

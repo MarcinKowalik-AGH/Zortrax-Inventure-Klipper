@@ -9,7 +9,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R2`. Tryb `CENTER` korzysta z firmware MCU
+`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R3`. Tryb `CENTER` korzysta z firmware MCU
 `RC8-CONTROL-R7-PAD-CENTER`. `INVENTURE_VERSION` po restarcie pokazuje
 `nozzle_pad_cold_abi: 1` dla automatycznej próby na zimno.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
@@ -39,11 +39,15 @@ Tryb `CENTER` ustala referencję, mechanicznie wybiera T0 i mierzy po kolei
 X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Głowica
 wraca po obniżeniu stołu. Jeśli zwarcie PC14 zaniknie przed rozpoczęciem
 przejazdu, stół cofa się i powtarza próbę z tym samym limitem od PE12.
-Jeśli przejazd nie potwierdzi krawędzi, procedura sprawdza ją pionowymi
-dotknięciami w tym samym zakresie XY, z zachowaniem limitu Z. Każdy
-przejazd między punktami dotknięcia odbywa się z opuszczonym stołem.
-Pomiar Y zaczyna się przy wyznaczonym X. Po czterech pomiarach stół
-opuszcza się, a głowica wraca nad wyznaczony środek.
+Jeśli styk rozewrze się w pierwszych 0,25 mm przejazdu albo nie da się
+potwierdzić krawędzi, procedura mierzy obie strony tej osi pionowymi
+dotknięciami. Przy niestabilnym styku w punkcie startu szuka zwarcia do
+2 mm w obie strony wzdłuż tej osi. Potwierdzenie punktu poza polem wymaga
+dwóch dojazdów do limitu próby bez zwarcia. Zakres XY i maksymalny limit Z
+pochodzą z ustawień tego samego przebiegu. Stół opada przed przejazdem
+między punktami dotknięcia. Pomiar Y zaczyna się przy wyznaczonym X.
+Po wyznaczeniu czterech krawędzi stół opuszcza się, a głowica wraca
+nad środek.
 
 Na czas próby host wstrzymuje odświeżanie OLED. Fluidd wypisuje jeden
 wiersz z pozycją środka i czterema krawędziami w serwisowym układzie XY

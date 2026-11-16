@@ -23,6 +23,8 @@ class PadDevice(DualNozzleDevice):
         self.e_moves = []
         self.pad_moves = []
         self.sweep_moves = []
+        self.first_sweep_open_steps = None
+        self.unreliable_sweep_seed = None
         self.cold_switches = []
         self.xy = (0., 0.)
         self.z = 20 * Z_STEPS_PER_MM
@@ -85,6 +87,9 @@ class PadDevice(DualNozzleDevice):
             if math.dist(point, self.centers[tool]) > 2.5:
                 distance, hit = sent, self.CONTACT
                 break
+        if not self.sweep_moves and self.first_sweep_open_steps is not None:
+            distance = self.first_sweep_open_steps
+            hit = self.CONTACT
         duration = distance / rate + .02
         self.packets.append(('motion', *args))
         self.run += 1
@@ -151,6 +156,8 @@ class PadDevice(DualNozzleDevice):
         if (a or b) and mask == value == self.CONTACT | self.TRAY:
             return self._begin_sweep(args)
         inside_pad = math.dist(origin, self.centers[tool]) <= 2.5
+        if self.sweep_moves and self.unreliable_sweep_seed is not None:
+            inside_pad = inside_pad and math.dist(origin, self.unreliable_sweep_seed) > .001
         if e:
             assert not self.sealed and not self.contact and not any((a, b, z))
             assert self.h.temperatures[tool] >= self.hot[tool] - 2.
@@ -281,6 +288,26 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(len(command.lines), 1, command.lines)
         self.assertEqual([m['direction'] for m in device.sweep_moves], [3, 0, 1, 2])
         self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
+
+    def test_cold_center_recovers_eight_step_open_and_missing_seed_contact(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        device = host.device
+        device.first_sweep_open_steps = 8
+        device.unreliable_sweep_seed = (82.8, 68.)
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        host.cmd_nozzle_pad_calibrate(command)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        run = host.nozzle_pad_run
+        self.assertEqual(run['phase'], 'verified', run)
+        self.assertEqual(len(command.lines), 1, command.lines)
+        self.assertEqual(device.sweep_moves[0]['sent'], 8)
+        self.assertEqual([m['direction'] for m in device.sweep_moves], [3, 1, 2])
+        result = run['measurements']['T0']
+        self.assertEqual(result['scan_method'], 'SWEEP+TAP')
+        self.assertLess(math.dist(result['center_xy_mm'], device.centers[0]), .02)
+        self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
+        self.assertFalse(device.contact)
 
     def test_cold_center_requires_fresh_cold_nozzles_before_motion(self):
         host = self.host()
