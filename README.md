@@ -197,8 +197,10 @@ uruchomić również z menu OLED **Maintenance → Nozzle alignment**.
 
 `ZORTRAX_NOZZLE_PAD_CALIBRATE` zatrzymuje stół przy zwarciu PC14 na
 fabrycznym padzie, a głowicę przy rozwarciu w każdym z kierunków X−, X+,
-Y− i Y+. Środki par krawędzi wyznaczają położenie pola dla T0 i T1. Tryb
-`PREP=EMPTY` stabilizuje obie dysze na 160°C bez ruchu ekstruderów.
+Y− i Y+. Środki par krawędzi wyznaczają położenie pola dla T0 i T1.
+`ACTION=CENTER TOOL=T0` i `ACTION=CENTER TOOL=T1` mierzą osobno obie
+dysze na zimno. Tryb `PREP=EMPTY` stabilizuje obie dysze na 160°C bez
+ruchu ekstruderów.
 [Instalacja, limity Z i zapis wyniku](docs/NOZZLE_PAD_CALIBRATION.md).
 
 Stan procedury ładowania sprawdzisz przez `INVENTURE_PROCEDURE ACTION=STATUS`,

@@ -111,12 +111,12 @@ class PadDevice(DualNozzleDevice):
         assert mode == monitor == 0
         if action == 8:
             assert not self.output(6)['duty'] and not self.output(7)['duty']
-            assert tool == 0
             self.cold = (low, high) == (0, 50)
             if self.cold:
+                assert tool == 0 or self.h.nozzle_pad_cold_abi == 2
                 assert not budget and all(0. <= temp < 50. for temp in self.h.temperatures[:2])
             else:
-                assert low == 155 and high == max(self.hot) + 10
+                assert tool == 0 and low == 155 and high == max(self.hot) + 10
             wire = [4, *args[1:]]
         elif action in (9, 10):
             self._settle()
@@ -124,6 +124,7 @@ class PadDevice(DualNozzleDevice):
             assert seq == self.session['sequence'] + 1
             assert not self.active_motion() and not self.contact
             if action == 9:
+                assert not self.cold
                 assert self.session['tool'] != tool
                 if self.sealed:
                     assert 0 <= self.z <= 10 * Z_STEPS_PER_MM
@@ -264,6 +265,46 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertLess(math.dist(device.xy, point), .003)
         self.assertFalse(self.saved.exists())
         self.assertEqual(display_holds, [True, False])
+
+    def test_cold_t1_center_uses_its_own_selector_ceil_and_result(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi, host.nozzle_pad_cold_abi = 1, 2
+        device = host.device
+        device.mode = 0
+        device.contact_radius_mm = 7.54 / 2.
+        command = Command(ACTION='CENTER', TOOL='T1', T1_Z_MAX=137.20, T0_PAD_X=81.7, T0_PAD_Y=68.2)
+        host.cmd_nozzle_pad_calibrate(command)
+        factory = host.load_test_context['factory']
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        run = host.nozzle_pad_run
+        self.assertEqual(run['phase'], 'verified', run)
+        stroke = factory['motion_legs']['selector_press']
+        self.assertEqual((stroke['start'], stroke['target']), ([15., 154.5], [0., 154.5]))
+        self.assertEqual((device.calls[0][0], device.calls[0][1]), (8, 1))
+        self.assertTrue(all(row[0] != 9 for row in device.calls))
+        self.assertEqual([row['tool'] for row in device.sweep_moves], [1]*4)
+        self.assertAlmostEqual(device.sweep_moves[0]['start'][0], 70.9, places=3)
+        self.assertAlmostEqual(device.sweep_moves[0]['start'][1], 68.2, places=3)
+        self.assertEqual(device.ceiling, int(137.20 * Z_STEPS_PER_MM))
+        self.assertTrue(all(tool == 1 and z <= device.ceiling for tool, _, z, _ in device.pad_moves))
+        self.assertEqual(list(run['measurements']), ['T1'])
+        self.assertLess(math.dist(run['measurements']['T1']['center_xy_mm'], device.centers[1]), .03)
+        self.assertEqual(len(command.lines), 1)
+        self.assertTrue(command.lines[0].startswith('Pad T1 | środek'))
+        self.assertEqual(host.commands['output'].calls, [])
+        self.assertEqual(device.e_moves, [])
+        self.assertFalse(self.saved.exists())
+
+    def test_cold_t1_requires_its_own_ceiling_and_new_mcu_before_motion(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        with self.assertRaisesRegex(RuntimeError, 'requires T1_Z_MAX'):
+            host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', TOOL='T1', T0_Z_MAX=137.30))
+        with self.assertRaisesRegex(RuntimeError, 'CENTER TOOL=T1 wymaga firmware MCU'):
+            host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', TOOL='T1', T1_Z_MAX=137.20))
+        self.assertIsNone(getattr(host, 'nozzle_z_context', None))
+        self.assertFalse(host.device.calls)
+        self.assertFalse(host.device.motion_starts)
 
     def test_cold_center_retries_fresh_pc14_opening_before_y_sweep(self):
         host = self.host()

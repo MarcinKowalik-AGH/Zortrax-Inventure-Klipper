@@ -13,13 +13,14 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R5'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R6'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
 NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
 NOZZLE_PAD_TEMPERATURE = 160.
 NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
+NOZZLE_PAD_COLD_T1_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER-T1'
 NOZZLE_PAD_COLD_MAX = 50
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
@@ -2847,19 +2848,21 @@ class InventureMCU:
 
     def _nozzle_pad_emit(self,gcmd):
         run=getattr(self,'nozzle_pad_run',None)
-        if run is not None and run['mode']=='CENTER_T0':
+        if run is not None and run['params']['prep']=='COLD':
+            tool='T%d'%run['params']['center_tool']
+            label='Pad '+tool
             phase=run['phase']
             if phase=='verified':
-                result=run['measurements']['T0']
+                result=run['measurements'][tool]
                 x,y=result['center_xy_mm']
                 (xm,xp),(ym,yp)=result['edges_mm']
-                gcmd.respond_info('Pad T0 | środek X=%.1f Y=%.1f mm | X−=%.1f X+=%.1f Y−=%.1f Y+=%.1f' %
-                                  (x,y,xm,xp,ym,yp))
+                gcmd.respond_info('%s | środek X=%.1f Y=%.1f mm | X−=%.1f X+=%.1f Y−=%.1f Y+=%.1f' %
+                                  (label,x,y,xm,xp,ym,yp))
             elif phase=='running':
                 context=getattr(self,'load_test_context',None) or {}
-                gcmd.respond_info('Pad T0 | pomiar w toku | '+context.get('factory',{}).get('phase','start'))
+                gcmd.respond_info(label+' | pomiar w toku | '+context.get('factory',{}).get('phase','start'))
             else:
-                gcmd.respond_info('Pad T0 | pomiar przerwany | '+str(run.get('error') or phase))
+                gcmd.respond_info(label+' | pomiar przerwany | '+str(run.get('error') or phase))
             return
         if run is None:
             state=dict(phase='idle',run_id=None)
@@ -2927,10 +2930,15 @@ class InventureMCU:
             params=pad_xyz_parameters(gcmd,center_only=center)
             if params['scan']=='SWEEP' and getattr(self,'nozzle_pad_sweep_abi',0)!=1:
                 raise ValueError('SCAN=SWEEP requires the '+NOZZLE_PAD_SWEEP_RELEASE+' MCU')
-            if center and getattr(self,'nozzle_pad_cold_abi',0)!=1:
-                raise ValueError('ACTION=CENTER wymaga firmware MCU '+NOZZLE_PAD_COLD_RELEASE)
+            tool=params['center_tool'] if center else 0
+            if center:
+                cold_abi=getattr(self,'nozzle_pad_cold_abi',0)
+                if tool==1 and cold_abi!=2:
+                    raise ValueError('CENTER TOOL=T1 wymaga firmware MCU '+NOZZLE_PAD_COLD_T1_RELEASE)
+                if cold_abi not in (1,2):
+                    raise ValueError('ACTION=CENTER wymaga firmware MCU '+NOZZLE_PAD_COLD_RELEASE)
             budget=pad_xyz_e_budget(params)
-            plans=self._nozzle_probe_plans(gcmd,(0,) if center else (0,1),pad=params,
+            plans=self._nozzle_probe_plans(gcmd,(tool,) if center else (0,1),pad=params,
                                          residual=None if center else self._read_nozzle_xy_offsets())
             if center:
                 self._z_home_inputs({})
@@ -2951,7 +2959,7 @@ class InventureMCU:
                  measurement_target_c=None if center else NOZZLE_PAD_TEMPERATURE,
                  hot_targets_c={} if center else {'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
                                 else plan['target'] for tool,(plan,_) in plans.items()})
-        batch=dict(action='START',pad=run,tool=0,parameters=plans,gcmd=gcmd,results={})
+        batch=dict(action='START',pad=run,tool=tool,parameters=plans,gcmd=gcmd,results={})
         self.nozzle_pad_run=run
         self.nozzle_z_context=batch
         try:
@@ -2959,7 +2967,7 @@ class InventureMCU:
                 batch['display_hold_before']=bool(getattr(self,'thermal_display_held',False))
                 self._thermal_display_hold(True)
             batch['child']=self._factory_start(gcmd,operation='NOZZLE_PAD_CALIBRATION',
-                                               nozzle_parameters=plans[0])
+                                               nozzle_parameters=plans[tool])
             batch['timer']=self.reactor.register_timer(lambda t:self._nozzle_z_tick(batch,t),
                                                        self.reactor.monotonic()+.2)
         except Exception as exc:
@@ -3030,8 +3038,9 @@ class InventureMCU:
             if not result['success']:
                 reason=result['reason']
                 if child.get('cold_pad'):
-                    logging.info('Inventure pad T0 stopped: stage=%s reason=%s details=%s',
-                                 factory['phase'],reason,json.dumps(result.get('details',{}),sort_keys=True))
+                    logging.info('Inventure pad T%d stopped: stage=%s reason=%s details=%s',
+                                 batch['tool'],factory['phase'],reason,
+                                 json.dumps(result.get('details',{}),sort_keys=True))
                     reason=factory['phase']+' | '+reason
                 self._nozzle_z_finish('failed',tool=batch['tool'],reason=reason,
                                       details=result.get('details',{}))
@@ -3040,7 +3049,7 @@ class InventureMCU:
                 readings=result['measurements']
                 candidate=result.get('candidate')
                 full=batch['pad']['mode']=='FULL'
-                expected={'T0','T1','T0_RETURN'} if full else {'T0'}
+                expected={'T0','T1','T0_RETURN'} if full else {'T%d'%batch['tool']}
                 samples=factory['pad_temperature_samples']
                 if set(readings)!=expected or len(samples)!=len(expected) or (full and not candidate):
                     raise ValueError('Incomplete pad measurement')

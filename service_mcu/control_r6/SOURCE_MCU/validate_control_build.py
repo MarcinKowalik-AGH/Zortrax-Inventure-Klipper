@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-CENTER'}
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-CENTER-T1'}
     for name, value in new_config.items():
         if str(conf.get(name)) != str(value):
             raise ValueError(f'RC7 firmware version/local OLED dictionary mismatch: {name}')
@@ -294,7 +294,7 @@ def check_dictionary(path: Path) -> dict:
         raise ValueError('R7 missing lateral contact pad sweep ABI')
     if conf.get('INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS') != 150:
         raise ValueError('R7 missing 150 ms contact opening confirmation')
-    if conf.get('INVENTURE_NOZZLE_PAD_COLD_ABI') != 1:
+    if conf.get('INVENTURE_NOZZLE_PAD_COLD_ABI') != 2:
         raise ValueError('R7 missing cold pad center ABI')
     if (nozzle_z_test_command not in d.get('commands', {})
             or nozzle_z_test_response not in d.get('responses', {})):

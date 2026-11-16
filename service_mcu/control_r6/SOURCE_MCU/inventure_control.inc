@@ -11,7 +11,7 @@ DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
-DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",2);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_TOOL_MASK 3u
@@ -1176,7 +1176,7 @@ void command_inventure_factory_session(uint32_t *args) {
                 || (pad?(!cold && minimum!=PAD_TEMP_MIN_C):(minimum<180 || minimum>230))
                 || (cold && budget)
                 || maximum<=minimum+5 || maximum>250
-                || (dual && (tool || mode!=IVT_STOP || monitor)))reject=1;
+                || (dual && ((!cold && tool) || mode!=IVT_STOP || monitor)))reject=1;
         if(!reject && (fs.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
                 || t0_heat_busy() || fan_manual_active() || transport_live || assist_pending[0] || assist_pending[1]
                 || feeder_running[0] || feeder_running[1] || locks_on[0] || locks_on[1]))reject=2;
@@ -1187,8 +1187,9 @@ void command_inventure_factory_session(uint32_t *args) {
                 || !control_sensors_valid(control_guard_mask|31,now)
                 || (door_policy_enabled()&&door_closed_mask()!=3)))reject=3;
         if(!reject && dual) {
-            uint8_t other_valid;int16_t other_t=control_temp(1,now,&other_valid);
-            if(!other_valid || other_t>=maximum || co[7].reason>=3 || (GPIOC->IDR&BIT(13)))reject=3;
+            unsigned other=tool^1;
+            uint8_t other_valid;int16_t other_t=control_temp(other,now,&other_valid);
+            if(!other_valid || other_t>=maximum || co[6+other].reason>=3 || (GPIOC->IDR&BIT(13)))reject=3;
         }
         if(!reject && cold && !pad_temperature_ok(now,1))reject=3;
         if(!reject) {

@@ -10,9 +10,10 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R5`. Tryb `CENTER` korzysta z firmware MCU
-`RC8-CONTROL-R7-PAD-CENTER`. `INVENTURE_VERSION` po restarcie pokazuje
-`nozzle_pad_cold_abi: 1` dla automatycznej próby na zimno.
+`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R6`. Tryb `CENTER TOOL=T1` korzysta z
+firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1`. `INVENTURE_VERSION` po
+restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
+współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
 `allow_actuators: True`.
 
@@ -26,17 +27,34 @@ i dołącz plik w `printer.cfg`.
 Po przeładowaniu konfiguracji makro jest dostępne w Fluidd. Polecenie
 `INVENTURE_NOZZLE_PAD_CALIBRATE` przyjmuje te same argumenty.
 
-## Środek pada na zimnej T0
+## Środek pada na zimnej dyszy
 
 Przy czystych dyszach poniżej 50°C i osadzonej tacce wywołaj jedno polecenie.
-`T0_Z_MAX` to zmierzony maksymalny dojazd stołu od PE12. W próbie na
-opisywanym egzemplarzu przyjęto 139,50 mm.
+`T0_Z_MAX` i `T1_Z_MAX` określają maksymalny dojazd stołu od PE12,
+zweryfikowany osobno dla wybranej dyszy. Próba T0 na opisywanym
+egzemplarzu użyła 139,50 mm i wyznaczyła środek X81,7 / Y68,2 mm.
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER T0_Z_MAX=139.50
 ```
 
-Tryb `CENTER` ustala referencję, mechanicznie wybiera T0 i mierzy po kolei
+Do skanu T1 użyj tego samego pola. Poniższe współrzędne T0
+wyznaczają nominalny start skanu T1 przy X70,9 / Y68,2 mm. Wpisz
+zweryfikowaną wartość `T1_Z_MAX` w milimetrach z kropką dziesiętną.
+
+```gcode
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER TOOL=T1 T0_PAD_X=81.70 T0_PAD_Y=68.20 T1_Z_MAX=<limit_T1_mm>
+```
+
+Do sprawdzenia ustawienia T1 z pozycją stołu na PE12 służy
+`ZORTRAX_NOZZLE_Z_TEST ACTION=PREPARE TOOL=T1 T0_PAD_X=81.70 T0_PAD_Y=68.20`.
+Oba pomiary środka podają położenie karetki nad tym samym fizycznym
+padem. Przesunięcie karetki po zmianie dyszy z T0 na T1 jest różnicą
+`środek_T1 − środek_T0`. Względem nominalnego przesunięcia X−10,8 mm
+korekta ruchu wynosi `X_T1 − 70,9` i `Y_T1 − 68,2` dla tego pomiaru
+T0. `CENTER` kończy się odczytem diagnostycznym.
+
+Tryb `CENTER` ustala referencję, mechanicznie wybiera wskazaną dyszę i mierzy po kolei
 X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Dla pada
 Ø7 mm akceptuje zmierzoną szerokość styku do 8,5 mm. Czoło dyszy może
 poszerzyć obrys elektryczny. W próbie X zmierzono 7,54 mm. Głowica wraca
