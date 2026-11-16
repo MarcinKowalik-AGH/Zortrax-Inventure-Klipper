@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP-ADC'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP-T0'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2844,6 +2844,7 @@ class InventureMCU:
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
                    'retract_e_steps','saved_file')}
             state.update(prep=run['params']['prep'],scan=run['params']['scan'])
+            if run['mode']=='VERIFY_T0':state['t0_confirmed']=run.get('t0_confirmed',False)
             batch=getattr(self,'nozzle_z_context',None)
             if batch is not None and batch.get('pad') is run:
                 f=(batch.get('child') or {}).get('factory') or {}
@@ -2859,6 +2860,14 @@ class InventureMCU:
         run=getattr(self,'nozzle_pad_run',None)
         batch=getattr(self,'nozzle_z_context',None)
         if action=='STATUS':
+            self._nozzle_pad_emit(gcmd)
+            return
+        if action=='CONFIRM_T0':
+            if (run is None or batch is None or batch.get('pad') is not run
+                    or self.load_test_context is not batch.get('child')
+                    or run['phase']!='awaiting_t0_confirmation'):
+                raise gcmd.error('CONFIRM_T0 requires VERIFY_T0 waiting for physical tool confirmation')
+            run.update(phase='running',t0_confirmed=True)
             self._nozzle_pad_emit(gcmd)
             return
         if action=='STOP':
@@ -2882,7 +2891,7 @@ class InventureMCU:
             self._nozzle_pad_emit(gcmd)
             return
         if action!='START':
-            raise gcmd.error('Use ACTION=START, STATUS, STOP or SAVE')
+            raise gcmd.error('Use ACTION=START, STATUS, CONFIRM_T0, STOP or SAVE')
         if gcmd.get('ACK','')!='PAD_GEOMETRY_MEASURED':
             raise gcmd.error('START requires ACK=PAD_GEOMETRY_MEASURED and qualified Z ceilings above PE12')
         if getattr(self,'nozzle_pad_abi',0)!=1 or 'factory_session' not in self.commands:
@@ -3820,6 +3829,20 @@ class InventureMCU:
                 self._thermal_display_hold(batch.pop('display_hold_before'))
             return row
         if kind=='z_inputs':return self._z_home_inputs(action['expected'])
+        if kind=='xyz_confirm_t0':
+            batch=self.nozzle_z_context;run=batch['pad']
+            if (run['mode']!='VERIFY_T0' or context['tool']!=0
+                    or not f['selection_commanded'] or not f['reference_valid']):
+                raise ValueError('T0 confirmation requires a completed T0 selector press and valid reference')
+            confirmed=run.get('t0_confirmed',False)
+            if not confirmed and run['phase']=='awaiting_t0_confirmation':return None
+            self._z_home_inputs({'z_bottom':1,'nozzle_contact':1})
+            if self.load_test_context is not context:return None
+            if confirmed:return dict(f['snapshot'])
+            # This MCU counts selector steps and has no nozzle latch input.
+            run['phase']='awaiting_t0_confirmation'
+            self._nozzle_pad_emit(batch['gcmd'])
+            return None
         if kind in ('dual_heat_start','xyz_heat_start'):
             self._dual_nozzle_heat_start(context,now)
             return dict(f['snapshot'])

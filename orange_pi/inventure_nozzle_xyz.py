@@ -329,6 +329,10 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self.position_bin()
         yield from self.clean()
 
+    def _verify_t0_at_pad(self):
+        yield from self._position_contact_pad()
+        yield dict(kind='xyz_confirm_t0')
+
     def run_nozzle_xyz(self, t1_p, t1_settings, xyz):
         def pad_plan(p, settings):
             settings = dict(settings)
@@ -340,7 +344,8 @@ class NozzleXYZProgram(ZHomeProgram):
         if tuple(plan.p['tool'] for plan in plans) != (0, 1):
             raise FactoryError('Pad calibration requires ordered T0 and T1 plans')
         empty = xyz['prep'] == 'EMPTY'
-        scan_order = (0,) if xyz['mode'] == 'VERIFY_T0' else (0, 1, 0)
+        verify_t0 = xyz['mode'] == 'VERIFY_T0'
+        scan_order = (0,) if verify_t0 else (0, 1, 0)
         boxes, ceilings = {}, {}
         clearance_steps = round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
         for tool in set(scan_order):
@@ -362,8 +367,9 @@ class NozzleXYZProgram(ZHomeProgram):
         if not isinstance(bottom, dict) or bottom.get('ok') is not True:
             raise FactoryError('homing_z_failed')
         self.z_steps = 0
-        if not empty:
-            yield from self._pick(0, plans)
+        yield from self._pick(0, plans)
+        if empty and verify_t0:
+            yield from self._verify_t0_at_pad()
         yield from self._phase('XYZ_HEAT')
         yield dict(kind='xyz_heat_start')
         if not empty:
@@ -375,16 +381,19 @@ class NozzleXYZProgram(ZHomeProgram):
             yield from self._phase('XYZ_COOL_160')
             yield dict(kind='xyz_cool_start')
         yield dict(kind='xyz_cool_wait')
-        if not empty and len(scan_order) == 1:
+        if not empty and verify_t0:
             yield from self._wipe_at_160()
 
         measurements = {}
         for index, tool in enumerate(scan_order):
             name = ('T0', 'T1', 'T0_RETURN')[index]
-            yield from self._pick(tool, plans)
+            if index or not empty:
+                yield from self._pick(tool, plans)
             yield dict(kind='xyz_cool_wait')
             if index < 2:
                 yield from self._wipe_at_160()
+            if verify_t0 and not empty:
+                yield from self._verify_t0_at_pad()
             ceiling = ceilings[tool]
             yield dict(kind='xyz_arm', tool=tool, ceiling_steps=ceiling)
             yield from self._phase('XYZ_SCAN_' + name)

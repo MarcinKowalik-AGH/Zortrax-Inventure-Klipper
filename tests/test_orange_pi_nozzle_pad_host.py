@@ -213,6 +213,42 @@ class NozzlePadHostTests(unittest.TestCase):
             self.assertLess(host.reactor.now, limit, self.cmd(host, 'STATUS'))
             host.reactor.pause(host.reactor.now + .5)
 
+    def await_t0_confirmation(self, host):
+        self.advance(host, lambda: host.nozzle_z_context is None or
+                     host.nozzle_pad_run['phase'] == 'awaiting_t0_confirmation')
+        status = self.cmd(host, 'STATUS')
+        self.assertEqual(status['phase'], 'awaiting_t0_confirmation', status)
+        return status
+
+    def test_empty_verify_positions_t0_and_waits_at_pe12_before_heat(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.hot = (160., 160.)
+        self.cmd(host, 'START', MODE='VERIFY_T0', PREP='EMPTY',
+                 ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30)
+        with self.assertRaisesRegex(RuntimeError, 'waiting for physical tool confirmation'):
+            self.cmd(host, 'CONFIRM_T0')
+        status = self.await_t0_confirmation(host)
+        self.assertFalse(status['t0_confirmed'])
+        factory = host.load_test_context['factory']
+        self.assertEqual(factory['motion_legs']['selector_press']['reason'], 'completed')
+        self.assertEqual(factory['position'], [82.8, 68., 0.])
+        self.assertEqual(device.z, 0)
+        host.reactor.pause(host.reactor.now + 2.)
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+        self.assertFalse(factory['heat_started'])
+        self.assertFalse(device.pad_moves)
+        self.assertTrue(self.cmd(host, 'CONFIRM_T0')['t0_confirmed'])
+        with self.assertRaisesRegex(RuntimeError, 'waiting for physical tool confirmation'):
+            self.cmd(host, 'CONFIRM_T0')
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'verified', result)
+        self.assertEqual([m['state'] for m in factory['module_history'] if m['name'] == 'select_tool'],
+                         ['start', 'done'])
+        self.assertEqual(len(device.sweep_moves), 8)
+
     def test_prepares_both_nozzles_and_measures_t0_t1_t0_under_one_owner(self):
         host = self.host()
         started = self.cmd(host, 'START', **self.settings)
@@ -338,6 +374,8 @@ class NozzlePadHostTests(unittest.TestCase):
                 host.commands['factory_session'] = Wire(renew)
                 self.cmd(host, 'START', MODE='VERIFY_T0', PREP='EMPTY',
                          ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30)
+                self.await_t0_confirmation(host)
+                self.cmd(host, 'CONFIRM_T0')
                 self.advance(host, lambda: host.nozzle_z_context is None)
                 self.assertTrue(delivered)
                 result = self.cmd(host, 'STATUS')
@@ -366,6 +404,8 @@ class NozzlePadHostTests(unittest.TestCase):
 
         host._load_test_output = send_output
         self.cmd(host, 'START', **dict(self.settings, MODE='VERIFY_T0'))
+        self.await_t0_confirmation(host)
+        self.cmd(host, 'CONFIRM_T0')
         self.advance(host, lambda: host.nozzle_z_context is None)
         self.assertTrue(delivered)
         result = self.cmd(host, 'STATUS')
@@ -424,6 +464,8 @@ class NozzlePadHostTests(unittest.TestCase):
         settings = dict(self.settings, MODE='VERIFY_T0')
         del settings['T1_Z_MAX']
         self.cmd(host, 'START', **settings)
+        self.await_t0_confirmation(host)
+        self.cmd(host, 'CONFIRM_T0')
         self.advance(host, lambda: host.nozzle_z_context is None)
         result = self.cmd(host, 'STATUS')
         self.assertEqual(result['phase'], 'verified', result)

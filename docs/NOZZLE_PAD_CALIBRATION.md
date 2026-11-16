@@ -9,7 +9,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-SWEEP-ADC` i wgraj firmware MCU
+`RC8-CONTROL-R7-UIFAST-PAD-SWEEP-T0` i wgraj firmware MCU
 `RC8-CONTROL-R7-PAD-SWEEP`. Po `FIRMWARE_RESTART` sprawdź, czy
 `INVENTURE_VERSION` zwraca `nozzle_pad_abi: 1` oraz
 `nozzle_pad_sweep_abi: 1`.
@@ -54,9 +54,11 @@ Z bez zwarcia PC14. Obie dysze korzystają z tego samego nieruchomego pola.
 
 ## Przebieg
 
-1. Klipper bazuje osie XY i PE12 raz na początku sesji. Przy `PREP=EMPTY`
-   obie dysze grzeją się bezpośrednio do 160°C. Każda mierzona dysza jest
-   przecierana przed pierwszym pomiarem. Budżet kroków E wynosi zero.
+1. Klipper ustala referencję XY i PE12 na początku sesji, po czym wykonuje
+   mechaniczny docisk selektora T0. Przy `VERIFY_T0 PREP=EMPTY` głowica
+   zatrzymuje się na zimno nad padem ze stołem na PE12. Po potwierdzeniu
+   T0 obie dysze grzeją się do 160°C, a mierzona dysza przejeżdża po
+   szczotce. Budżet kroków E wynosi zero.
 2. Przed każdym przejazdem pomiarowym stół podnosi się przy ustalonym XY
    wewnątrz pada. STM32 zatrzymuje Z przy pierwszym zwarciu PC14.
 3. Przy tym samym Z głowica wykonuje powolny przejazd wzdłuż jednej osi.
@@ -103,13 +105,24 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STATUS
 ```
 
 Pierwszą próbę na fabrycznym padzie z pustymi dyszami wykonaj z
-`MODE=VERIFY_T0 PREP=EMPTY`. Makro rozgrzeje obie dysze i zmierzy granice
-pola dla T0. Polecenie zawiera szablon `<Z_mm_T0>`. Zastąp go ustalonym
-limitem dojazdu T0 od PE12 w milimetrach.
+`MODE=VERIFY_T0 PREP=EMPTY`. Zastąp `<Z_mm_T0>` ustalonym limitem dojazdu
+T0 od PE12 w milimetrach.
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=VERIFY_T0 SCAN=SWEEP PREP=EMPTY ACK=PAD_GEOMETRY_MEASURED T0_Z_MAX=<Z_mm_T0>
 ```
+
+Po `phase: awaiting_t0_confirmation` sprawdź wzrokowo, czy T0 jest
+opuszczona nad właściwym padem, a T1 podniesiona. MCU potwierdza kroki
+docisku, a położenie mechanizmu potwierdza operator. Jeśli położenie
+jest prawidłowe, wznów tę samą sesję. Dla `VERIFY_T0 PREP=RETRACT` ten
+postój następuje po przygotowaniu obu dysz i ponownym wybraniu T0.
+
+```gcode
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CONFIRM_T0
+```
+
+Jeśli T1 pozostaje opuszczona, zakończ próbę poleceniem `ACTION=STOP`.
 
 Po sprawdzeniu krawędzi T0 i położenia T1 nad tym samym polem przejdź do
 pełnej kalibracji. Podaj sprawdzone limity obu dysz.
