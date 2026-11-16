@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-CENTER-R4",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-CENTER-R5",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "52ae9e19c94502a54cddab20f7c39004290f0821a19ac57a2e25bccbcef7d970",
+  "module_sha256": "5d9b460b8f9d860463c2dbfa5c095ed24570928e873b338b1cd7f142cf29e29d",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -67,9 +67,10 @@
     "ba329de54ac0edc1c7edf779e7e3de3e9f9ce98c33674cd548370a5ec83831a5",
     "d188b682e0942fb0214ea1eea2b91cd3f360042c1e6bb488d804618342382f81",
     "6c1d31a73141d9ee75f1a964225272238a90022cda72051258cb269295b198d8",
-    "c7fee4fe8073326edd4e2af348a6e496eb5befe3f126a17c10a05611cedaed61"
+    "c7fee4fe8073326edd4e2af348a6e496eb5befe3f126a17c10a05611cedaed61",
+    "52ae9e19c94502a54cddab20f7c39004290f0821a19ac57a2e25bccbcef7d970"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-CENTER-R4",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-CENTER-R5",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -397,7 +398,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "813bd3baf56facc0f0579d19b62995a1abec03c1f1ba03a6866414934cc42bec",
+      "sha256": "4f903ee97655f048c14c1c015374d991f64ec20760a8bfff84d64e73a68a69d8",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -405,7 +406,8 @@
         "c6ef9140500b1907f49e0431e91dc0201491d3b6b052401dee04207264713703",
         "bd1f28099ec25f1472982f38380da06c4e76f02c8e395fab5c37d82d415173a9",
         "02a2bc91c2a43f692cf5243e6d26431081c9e6ab53dc58cbd868f0e880f50314",
-        "b4a30f13b316e73d3fcd63d2daba52011e8078468f5f6c27e73d88257144cb6c"
+        "b4a30f13b316e73d3fcd63d2daba52011e8078468f5f6c27e73d88257144cb6c",
+        "813bd3baf56facc0f0579d19b62995a1abec03c1f1ba03a6866414934cc42bec"
       ]
     }
   },
@@ -613,6 +615,7 @@
     "cold_center_abi": 1,
     "cold_center_max_nozzle_c": 50,
     "cold_center_search_mm": 5,
-    "cold_center_console_reports": "one_terminal_summary"
+    "cold_center_console_reports": "one_terminal_summary",
+    "factory_pad_diameter_mm": 7
   }
 }

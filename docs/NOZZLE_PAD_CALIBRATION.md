@@ -2,14 +2,15 @@
 
 `ZORTRAX_NOZZLE_PAD_CALIBRATE` wyznacza względne położenie T0 i T1
 w osiach XYZ na jednym metalowym polu tacki. Zacznij od środkowego
-okrągłego pada o średnicy około 5 mm spośród pięciu fabrycznych pól
-poziomowania. Pomiar T0 → T1 → T0 sprawdza też powtarzalność osadzenia dyszy
+okrągłego pada spośród pięciu fabrycznych pól poziomowania. Na tacce
+testowanej w projekcie średnica zmierzona suwmiarką wynosi 7 mm.
+Pomiar T0 → T1 → T0 sprawdza też powtarzalność osadzenia dyszy
 po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R4`. Tryb `CENTER` korzysta z firmware MCU
+`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R5`. Tryb `CENTER` korzysta z firmware MCU
 `RC8-CONTROL-R7-PAD-CENTER`. `INVENTURE_VERSION` po restarcie pokazuje
 `nozzle_pad_cold_abi: 1` dla automatycznej próby na zimno.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
@@ -36,8 +37,10 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER T0_Z_MAX=139.50
 ```
 
 Tryb `CENTER` ustala referencję, mechanicznie wybiera T0 i mierzy po kolei
-X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Głowica
-wraca po obniżeniu stołu. Jeśli zwarcie PC14 zaniknie przed rozpoczęciem
+X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Dla pada
+Ø7 mm akceptuje zmierzoną szerokość styku do 8,5 mm. Czoło dyszy może
+poszerzyć obrys elektryczny. W próbie X zmierzono 7,54 mm. Głowica wraca
+po obniżeniu stołu. Jeśli zwarcie PC14 zaniknie przed rozpoczęciem
 przejazdu, stół cofa się i powtarza próbę z tym samym limitem od PE12.
 Jeśli styk rozewrze się w pierwszych 0,25 mm przejazdu albo nie da się
 potwierdzić krawędzi, procedura mierzy obie strony tej osi pionowymi
@@ -198,7 +201,8 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `MAX_POWER` | 40% domyślnie, zakres 1–40% | Limit mocy każdej z dwóch grzałek |
 | `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm dla `PREP=RETRACT` | Nominalny ruch ekstrudera w kierunku cofania |
 | `T0_PAD_X/Y`, `T1_PAD_X/Y` | X i Y podawane parami | Przybliżone środki pola w układzie serwisowym. Jawne nazwy to np. `T0_PAD_X` i `T0_PAD_Y` |
-| `SCAN_RADIUS_MM` | 3,5 mm domyślnie, zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka. Pojedynczy przejazd `SWEEP` ma limit 6 mm |
+| `PAD_DIAMETER_MM` | 7 mm dla fabrycznego pada, 5 mm dla osobnego pola w `TAP`. Zakres 2–10 mm | Zmierzona średnica pola używana do kontroli szerokości styku |
+| `SCAN_RADIUS_MM` | 5 mm dla pada Ø7 mm, 3,5 mm dla Ø5 mm. Zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka. Tryb `CENTER` domyślnie używa 5 mm. Pojedynczy przejazd `SWEEP` ma limit 6 mm |
 | `XY_SWEEP_SPEED` | 0,25 mm/s domyślnie, zakres 0,05–0,5 mm/s | Prędkość przejazdu po styku w `SCAN=SWEEP` |
 | `EDGE_TOLERANCE_MM` | 0,02 mm domyślnie, zakres 0,005–0,1 mm | Docelowa szerokość przedziału między stykiem a jego brakiem w `SCAN=TAP` |
 | `Z_CLEARANCE_MM` | 1,5 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |

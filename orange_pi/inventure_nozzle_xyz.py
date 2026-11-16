@@ -8,7 +8,9 @@ from .inventure_factory_core import E_STEPS_PER_MM, XY_STEPS_PER_MM, FactoryErro
 from .inventure_z_home import NOZZLE_CONTACT, Z_BOTTOM, Z_OPEN_CONFIRM_S, Z_STEPS_PER_MM, ZHomeProgram
 
 
-PAD_DIAMETER_MM = 5.
+PAD_DIAMETER_MM = 7.
+PAD_TAP_DIAMETER_MM = 5.
+PAD_WIDTH_TOLERANCE_MM = 1.5
 PAD_TEMPERATURE_C = 160.
 PAD_TRAVEL_SPEED = 8.
 PAD_MAX_SWEEP_MM = 6.
@@ -43,6 +45,8 @@ def pad_xyz_parameters(gcmd, center_only=False):
     scan = 'SWEEP' if center_only else str(gcmd.get('SCAN', 'SWEEP')).strip().upper()
     if scan not in ('SWEEP', 'TAP'):
         raise FactoryError('Pad calibration SCAN must be SWEEP or TAP')
+    diameter = number('PAD_DIAMETER_MM', PAD_TAP_DIAMETER_MM if scan == 'TAP' else PAD_DIAMETER_MM, 2., 10.)
+    scan_radius = 5. if center_only or diameter > PAD_TAP_DIAMETER_MM else 3.5
     prep = 'COLD' if center_only else str(gcmd.get('PREP', 'RETRACT')).strip().upper()
     if not center_only and prep not in ('RETRACT', 'EMPTY'):
         raise FactoryError('Pad calibration PREP must be RETRACT or EMPTY')
@@ -69,7 +73,8 @@ def pad_xyz_parameters(gcmd, center_only=False):
         z_max_mm=ceilings,
         retract_mm=retract_mm,
         retract_speed=number('RETRACT_SPEED', 1.6, .5, 6.),
-        scan_radius_mm=number('SCAN_RADIUS_MM', 5. if center_only else 3.5, 3., 6.),
+        pad_diameter_mm=diameter,
+        scan_radius_mm=number('SCAN_RADIUS_MM', scan_radius, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
         edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .1 if center_only else .02, .005, .1),
         z_clearance_mm=clearance,
@@ -365,10 +370,11 @@ class NozzleXYZProgram(ZHomeProgram):
         origin = list(seed)
         edges = []
         used_taps = False
+        diameter = xyz['pad_diameter_mm']
+        max_width = diameter + PAD_WIDTH_TOLERANCE_MM
         for axis, bounds in enumerate(limits):
             name = ('X', 'Y')[axis]
-            min_width = .5 if axis == 0 else PAD_DIAMETER_MM - 1.5
-            max_width = PAD_DIAMETER_MM + 1.5
+            min_width = .5 if axis == 0 else diameter - PAD_WIDTH_TOLERANCE_MM
             pair = [None, None]
             contacts = []
             for side in (1, 0):
@@ -390,7 +396,8 @@ class NozzleXYZProgram(ZHomeProgram):
             low, high = pair
             width = (high - low) / XY_STEPS_PER_MM
             if not min_width <= width <= max_width:
-                raise FactoryError('Nieprawidłowa szerokość pola w osi %s (%.2f mm)' % (name, width))
+                raise FactoryError('Szerokość styku %s %.2f mm poza zakresem %.1f–%.1f mm' %
+                                   (name, width, min_width, max_width))
             for side, edge in zip(('-', '+'), pair):
                 logging.info('Inventure pad T0 %s%s edge_mm=%.4f method=%s',
                              name, side, edge / XY_STEPS_PER_MM, method)
@@ -444,11 +451,12 @@ class NozzleXYZProgram(ZHomeProgram):
             repeat = None
 
         widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
+        diameter = xyz['pad_diameter_mm']
         # The nozzle face slightly enlarges the effective conductive outline.
-        # Require a plausible shape without fitting the radius to exactly 5 mm.
-        if (min(widths) < PAD_DIAMETER_MM - 1.5 or max(widths) > PAD_DIAMETER_MM + 1.5
+        # Require a plausible shape without forcing the outline to the nominal diameter.
+        if (max(abs(w - diameter) for w in widths) > PAD_WIDTH_TOLERANCE_MM
                 or abs(widths[0] - widths[1]) > .6):
-            raise FactoryError('Pad contact outline is not consistent with a round 5 mm pad',
+            raise FactoryError('Pad contact outline is not consistent with a round %g mm pad' % diameter,
                                electrical_diameter_mm=widths)
         releases = []
         for _ in range(2):

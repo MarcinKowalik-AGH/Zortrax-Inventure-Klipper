@@ -13,7 +13,9 @@ from orange_pi.inventure_z_home import (
 )
 
 
-PARAMETERS = dict(T0_Z_MAX=139.35, T1_Z_MAX=139.15, T0_RETRACT_MM=25, T1_RETRACT_MM=100)
+PARAMETERS = dict(T0_Z_MAX=139.35, T1_Z_MAX=139.15, T0_RETRACT_MM=25, T1_RETRACT_MM=100,
+                  PAD_DIAMETER_MM=5.)
+COLD_SMALL_PAD = dict(T0_Z_MAX=139.50, PAD_DIAMETER_MM=5.)
 
 
 class SimulatedPad:
@@ -32,6 +34,7 @@ class SimulatedPad:
         self.trace = []
         self.arms = []
         self.centers = ((82.92, 67.91), (72.04, 68.01), (82.935, 67.90))
+        self.contact_radius_mm = 2.55
         self.contacts = [round(z * Z_STEPS_PER_MM) for z in (139.2, 139., 139.21)]
         self.scan = xyz['scan']
         self.cold = xyz['prep'] == 'COLD'
@@ -47,7 +50,7 @@ class SimulatedPad:
     def _inside(self):
         return bool(self.arms and (self.unbounded_pad
                     or (self.cold_intermittent_contact is not None and self.cold_intermittent_contact(self.xy))
-                    or math.dist(self.xy, self.centers[len(self.arms) - 1]) <= 2.55))
+                    or math.dist(self.xy, self.centers[len(self.arms) - 1]) <= self.contact_radius_mm))
 
     def _inputs(self):
         return dict(z_bottom=int(self.position == 0),
@@ -157,7 +160,7 @@ class SimulatedPad:
 
 class NozzleXYZCoreTests(unittest.TestCase):
     def test_cold_center_backs_off_and_reuses_the_same_ceiling_after_contact_chatter(self):
-        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        xyz = pad_xyz_parameters(COLD_SMALL_PAD, center_only=True)
         model = SimulatedPad(xyz)
         model.cold_settle_misses = 1
         result = model.run()
@@ -172,7 +175,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(model.trace[settles[0]][0], model.trace[settles[1]][0])
 
     def test_cold_center_checks_missing_y_edge_with_fixed_height_taps(self):
-        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        xyz = pad_xyz_parameters(COLD_SMALL_PAD, center_only=True)
         model = SimulatedPad(xyz)
         model.sweep_without_opening.add((1, -1))
         with self.assertLogs(level='INFO') as logs:
@@ -197,7 +200,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertLessEqual(model.position, model.contacts[0] - PAD_MIN_SWEEP_CLEARANCE_STEPS)
 
     def test_cold_center_can_verify_a_genuine_edge_near_the_start(self):
-        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50, 'SCAN_RADIUS_MM': 5.5}, center_only=True)
+        xyz = pad_xyz_parameters(dict(COLD_SMALL_PAD, SCAN_RADIUS_MM=5.5), center_only=True)
         model = SimulatedPad(xyz)
         model.centers = ((80.26, 67.91),)
         result = model.run()['measurements']['T0']
@@ -205,7 +208,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertLess(math.dist(result['center_xy_mm'], model.centers[0]), .02)
 
     def test_cold_center_confirms_open_next_to_an_unstable_scan_limit(self):
-        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        xyz = pad_xyz_parameters(COLD_SMALL_PAD, center_only=True)
         self.assertEqual(xyz['edge_tolerance_mm'], .1)
         model = SimulatedPad(xyz)
         model.sweep_without_opening.add((0, -1))
@@ -217,7 +220,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
                             for _, _, a in model.trace))
 
     def test_cold_center_rejects_an_unresolved_wide_edge(self):
-        model = SimulatedPad(pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True))
+        model = SimulatedPad(pad_xyz_parameters(COLD_SMALL_PAD, center_only=True))
         model.sweep_without_opening.add((0, -1))
         model.cold_intermittent_contact = lambda xy: 80. <= xy[0] <= 81.
         with self.assertRaisesRegex(FactoryError, 'Przedział krawędzi PC14') as exc:
@@ -235,6 +238,27 @@ class NozzleXYZCoreTests(unittest.TestCase):
             model.run()
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertFalse(any(a.get('stage') == 'pad_sweep' for _, _, a in model.trace))
+
+    def test_cold_center_accepts_the_measured_contact_width_of_the_stock_pad(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        self.assertEqual(xyz['pad_diameter_mm'], 7.)
+        self.assertEqual(xyz['scan_radius_mm'], 5.)
+        model = SimulatedPad(xyz)
+        model.contact_radius_mm = 7.54 / 2.
+        model.sweep_without_opening.add((0, -1))
+        result = model.run()['measurements']['T0']
+        self.assertEqual(result['scan_method'], 'SWEEP+TAP')
+        for measured_width in result['electrical_diameter_mm']:
+            self.assertAlmostEqual(measured_width, 7.54, delta=.1)
+        self.assertLess(math.dist(result['center_xy_mm'], model.centers[0]), .05)
+        self.assertEqual(model.ceiling, math.floor(139.50 * Z_STEPS_PER_MM))
+
+    def test_cold_center_still_rejects_an_oversize_contact_outline(self):
+        model = SimulatedPad(pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True))
+        model.contact_radius_mm = 4.5
+        with self.assertRaisesRegex(FactoryError, 'Szerokość styku X .* poza zakresem .*8.5 mm'):
+            model.run()
+        self.assertEqual(model._inputs()['nozzle_contact'], 1)
 
     def test_full_preparation_and_reseat_on_single_home(self):
         xyz = pad_xyz_parameters(PARAMETERS)
@@ -291,6 +315,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
                 self.assertEqual(xyz['retract_mm'], (0., 0.))
                 self.assertEqual(pad_xyz_e_budget(xyz), 0)
                 model = SimulatedPad(xyz)
+                model.contact_radius_mm = 7.54 / 2.
                 result = model.run()
                 self.assertEqual(list(result['measurements']), scans)
                 self.assertEqual(result['retract_e_steps'], {'T0': 0, 'T1': 0})

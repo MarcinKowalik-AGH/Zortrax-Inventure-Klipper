@@ -23,6 +23,7 @@ class PadDevice(DualNozzleDevice):
         self.e_moves = []
         self.pad_moves = []
         self.sweep_moves = []
+        self.contact_radius_mm = 2.5
         self.first_sweep_open_steps = None
         self.unreliable_sweep_seed = None
         self.cold_switches = []
@@ -84,7 +85,7 @@ class PadDevice(DualNozzleDevice):
         distance, hit = a, 0
         for sent in range(1, a + 1):
             point = (self.xy[0] + sent * step_x, self.xy[1] + sent * step_y)
-            if math.dist(point, self.centers[tool]) > 2.5:
+            if math.dist(point, self.centers[tool]) > self.contact_radius_mm:
                 distance, hit = sent, self.CONTACT
                 break
         if not self.sweep_moves and self.first_sweep_open_steps is not None:
@@ -155,7 +156,7 @@ class PadDevice(DualNozzleDevice):
         tool = self.session['tool']
         if (a or b) and mask == value == self.CONTACT | self.TRAY:
             return self._begin_sweep(args)
-        inside_pad = math.dist(origin, self.centers[tool]) <= 2.5
+        inside_pad = math.dist(origin, self.centers[tool]) <= self.contact_radius_mm
         if self.sweep_moves and self.unreliable_sweep_seed is not None:
             inside_pad = inside_pad and math.dist(origin, self.unreliable_sweep_seed) > .001
         if e:
@@ -238,6 +239,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         device = host.device
+        device.contact_radius_mm = 7.54 / 2.
         device.mode = 0
         display_holds = []
         host.printer.objects['inventure_oled'] = SimpleNamespace(set_thermal_test_hold=display_holds.append)
@@ -267,6 +269,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         device = host.device
+        device.contact_radius_mm = 7.54 / 2.
         injected = []
 
         def inputs():
@@ -295,7 +298,7 @@ class NozzlePadHostTests(unittest.TestCase):
         device = host.device
         device.first_sweep_open_steps = 8
         device.unreliable_sweep_seed = (82.8, 68.)
-        command = Command(ACTION='CENTER', T0_Z_MAX=137.30, EDGE_TOLERANCE_MM=.02)
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30, EDGE_TOLERANCE_MM=.02, PAD_DIAMETER_MM=5.)
         host.cmd_nozzle_pad_calibrate(command)
         self.advance(host, lambda: host.nozzle_z_context is None)
         run = host.nozzle_pad_run
@@ -329,7 +332,7 @@ class NozzlePadHostTests(unittest.TestCase):
             return sample
 
         host._fresh_inputs = inputs
-        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30, PAD_DIAMETER_MM=5.)
         host.cmd_nozzle_pad_calibrate(command)
         self.advance(host, lambda: host.nozzle_z_context is None)
         run = host.nozzle_pad_run
@@ -355,6 +358,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1
         device = host.device
+        device.contact_radius_mm = 7.54 / 2.
         device.hot = (160., 160.)
         self.cmd(host, 'START', MODE='VERIFY_T0', PREP='EMPTY',
                  ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30)
@@ -488,6 +492,7 @@ class NozzlePadHostTests(unittest.TestCase):
                 host = self.host()
                 host.nozzle_pad_sweep_abi = 1
                 device = host.device
+                device.contact_radius_mm = 7.54 / 2.
                 device.hot = (160., 160.)
                 delivered = []
 
@@ -546,6 +551,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1
         device = host.device
+        device.contact_radius_mm = 7.54 / 2.
         device.hot = (160., 160.)
         self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                  T0_Z_MAX=137.30, T1_Z_MAX=137.20)
