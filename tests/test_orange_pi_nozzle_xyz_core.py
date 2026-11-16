@@ -22,8 +22,9 @@ class SimulatedPad:
         z_settings = [z_home_parameters(dict(Z_APPROACH_MM=137, Z_PROBE_MM=9, Z_PROBE_X=x),
                                         plan, nozzle_test=True)
                       for x, plan in zip((82.8, 72.0), plans)]
-        self.program = NozzleXYZProgram(plans[0], z_settings[0]).run_nozzle_xyz(
-            plans[1], z_settings[1], xyz)
+        program = NozzleXYZProgram(plans[0], z_settings[0])
+        self.program = (program.run_pad_center(xyz) if xyz['prep'] == 'COLD' else
+                        program.run_nozzle_xyz(plans[1], z_settings[1], xyz))
         self.position = 50 * Z_STEPS_PER_MM
         self.xy = (0., 0.)
         self.tool = 0
@@ -38,6 +39,7 @@ class SimulatedPad:
         self.sweep_transient = False
         self.unbounded_pad = False
         self.transient = False
+        self.cold_settle_misses = 0
 
     def _inside(self):
         return bool(self.arms and (self.unbounded_pad
@@ -122,8 +124,11 @@ class SimulatedPad:
                 self.ceiling = action['ceiling_steps']
                 self.contact_plane = None
                 self.arms.append(self.ceiling)
-            elif kind in ('z_inputs', 'z_verify_open'):
+            elif kind in ('z_inputs', 'z_verify_open', 'z_verify_closed'):
                 reply = self._inputs()
+                if kind == 'z_verify_closed' and self.cold_settle_misses:
+                    reply['nozzle_contact'] = 1
+                    self.cold_settle_misses -= 1
                 if kind == 'z_verify_open' and self.swept:
                     self.swept = False
                     if self.sweep_transient:
@@ -144,6 +149,21 @@ class SimulatedPad:
 
 
 class NozzleXYZCoreTests(unittest.TestCase):
+    def test_cold_center_backs_off_and_reuses_the_same_ceiling_after_contact_chatter(self):
+        xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
+        model = SimulatedPad(xyz)
+        model.cold_settle_misses = 1
+        result = model.run()
+        self.assertEqual(result['terminal'], 'COLD_PAD_CENTER')
+        self.assertEqual(model.arms, [math.floor(139.50 * Z_STEPS_PER_MM)])
+        settles = [i for i, (_, _, a) in enumerate(model.trace) if a['kind'] == 'z_verify_closed']
+        self.assertEqual(len(settles), 5)
+        z_moves = [(pos, a['steps']) for pos, _, a in model.trace[settles[0]+1:settles[1]]
+                   if a['kind'] == 'z_contact_move']
+        self.assertLess(z_moves[0][1], 0)
+        self.assertEqual(sum(z_moves[1]), model.arms[0])
+        self.assertEqual(model.trace[settles[0]][0], model.trace[settles[1]][0])
+
     def test_full_preparation_and_reseat_on_single_home(self):
         xyz = pad_xyz_parameters(PARAMETERS)
         model = SimulatedPad(xyz)

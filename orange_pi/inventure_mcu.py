@@ -13,12 +13,14 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP-T0'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
 NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
 NOZZLE_PAD_TEMPERATURE = 160.
+NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
+NOZZLE_PAD_COLD_MAX = 50
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -489,6 +491,7 @@ class InventureMCU:
         self.nozzle_xy_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_XY_ABI',0))
         self.nozzle_pad_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_ABI',0))
         self.nozzle_pad_sweep_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_ABI',0))
+        self.nozzle_pad_cold_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_COLD_ABI',0))
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
@@ -1666,6 +1669,7 @@ class InventureMCU:
             'nozzle_xy_abi':getattr(self,'nozzle_xy_abi',0),
             'nozzle_pad_abi':getattr(self,'nozzle_pad_abi',0),
             'nozzle_pad_sweep_abi':getattr(self,'nozzle_pad_sweep_abi',0),
+            'nozzle_pad_cold_abi':getattr(self,'nozzle_pad_cold_abi',0),
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
@@ -2200,7 +2204,8 @@ class InventureMCU:
 
     def _control_poll(self,eventtime):
         if not self.connected:return self.reactor.NEVER
-        if self._active_nozzle_z_sample(getattr(self,'load_test_context',None)) is not None:
+        context=getattr(self,'load_test_context',None)
+        if (context or {}).get('cold_pad') or self._active_nozzle_z_sample(context) is not None:
             # The owned probe tick already checks control and the heater.
             return eventtime+.5
         try:
@@ -2440,6 +2445,7 @@ class InventureMCU:
         return round(raw*256./255.)
 
     def _load_test_emit(self,context,phase=None,reason=None):
+        if context.get('cold_pad'):return
         result=self._load_test_report(context,phase,reason)
         self.gcode.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True))
         return result
@@ -2476,6 +2482,8 @@ class InventureMCU:
             values.append(value)
         temperature=values[context['tool']]
         factory=context.get('factory') or {}
+        if context.get('cold_pad') and not all(0.<=value<NOZZLE_PAD_COLD_MAX for value in values[:2]):
+            raise ValueError('Obie dysze musza byc ponizej 50 C podczas pomiaru pada')
         selected_max=(factory['pad_temperature_bounds'][1] if factory.get('pad_cooling')
                       else min(context['limit'],context['target']+10.))
         if temperature>=selected_max:
@@ -2837,6 +2845,20 @@ class InventureMCU:
 
     def _nozzle_pad_emit(self,gcmd):
         run=getattr(self,'nozzle_pad_run',None)
+        if run is not None and run['mode']=='CENTER_T0':
+            phase=run['phase']
+            if phase=='verified':
+                result=run['measurements']['T0']
+                x,y=result['center_xy_mm']
+                (xm,xp),(ym,yp)=result['edges_mm']
+                gcmd.respond_info('Pad T0 | środek X=%.3f Y=%.3f mm | X−=%.3f X+=%.3f Y−=%.3f Y+=%.3f' %
+                                  (x,y,xm,xp,ym,yp))
+            elif phase=='running':
+                context=getattr(self,'load_test_context',None) or {}
+                gcmd.respond_info('Pad T0 | pomiar w toku | '+context.get('factory',{}).get('phase','start'))
+            else:
+                gcmd.respond_info('Pad T0 | pomiar przerwany | '+str(run.get('error') or phase))
+            return
         if run is None:
             state=dict(phase='idle',run_id=None)
         else:
@@ -2890,26 +2912,42 @@ class InventureMCU:
             run.update(phase='saved',saved_file=str(path))
             self._nozzle_pad_emit(gcmd)
             return
-        if action!='START':
-            raise gcmd.error('Use ACTION=START, STATUS, CONFIRM_T0, STOP or SAVE')
-        if gcmd.get('ACK','')!='PAD_GEOMETRY_MEASURED':
+        center=action=='CENTER'
+        if action not in ('START','CENTER'):
+            raise gcmd.error('Use ACTION=CENTER, START, STATUS, CONFIRM_T0, STOP or SAVE')
+        if not center and gcmd.get('ACK','')!='PAD_GEOMETRY_MEASURED':
             raise gcmd.error('START requires ACK=PAD_GEOMETRY_MEASURED and qualified Z ceilings above PE12')
         if getattr(self,'nozzle_pad_abi',0)!=1 or 'factory_session' not in self.commands:
             raise gcmd.error('Pad calibration requires the '+NOZZLE_PAD_RELEASE+' MCU')
         if not self.allow_actuators:raise gcmd.error('Pad calibration requires allow_actuators')
         if batch is not None:raise gcmd.error('A nozzle calibration is already active')
         try:
-            params=pad_xyz_parameters(gcmd)
+            params=pad_xyz_parameters(gcmd,center_only=center)
             if params['scan']=='SWEEP' and getattr(self,'nozzle_pad_sweep_abi',0)!=1:
                 raise ValueError('SCAN=SWEEP requires the '+NOZZLE_PAD_SWEEP_RELEASE+' MCU')
+            if center and getattr(self,'nozzle_pad_cold_abi',0)!=1:
+                raise ValueError('ACTION=CENTER wymaga firmware MCU '+NOZZLE_PAD_COLD_RELEASE)
             budget=pad_xyz_e_budget(params)
-            plans=self._nozzle_probe_plans(gcmd,(0,1),pad=params,residual=self._read_nozzle_xy_offsets())
-            self._feeder_service_preflight()
+            plans=self._nozzle_probe_plans(gcmd,(0,) if center else (0,1),pad=params,
+                                         residual=None if center else self._read_nozzle_xy_offsets())
+            if center:
+                self._z_home_inputs({})
+                now=self.reactor.monotonic()
+                temperatures=(self.panel_temperature(i,now) for i in (0,1))
+                if any(state!='valid' or not 0.<=temp<NOZZLE_PAD_COLD_MAX for temp,state in temperatures):
+                    raise ValueError('Pomiar na zimno wymaga obu dysz ponizej 50 C')
+                control=self._control_query()
+                self._feeder_service_preflight(control_state=control,allow_off=True)
+                if control['mode']=='OFF':
+                    control=self._control_query(1,CONTROL_MODES.index('SERVICE'))
+                    if control['reject'] or control['mode']!='SERVICE':
+                        raise ValueError('MCU nie wlaczyl trybu SERVICE')
+            else:self._feeder_service_preflight()
         except (KeyError,OSError,TypeError,ValueError) as exc:
             raise gcmd.error(str(exc))
         run=dict(phase='running',run_id=uuid.uuid4().hex,mode=params['mode'],params=params,budget=budget,
-                 measurement_target_c=NOZZLE_PAD_TEMPERATURE,
-                 hot_targets_c={'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
+                 measurement_target_c=None if center else NOZZLE_PAD_TEMPERATURE,
+                 hot_targets_c={} if center else {'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
                                 else plan['target'] for tool,(plan,_) in plans.items()})
         batch=dict(action='START',pad=run,tool=0,parameters=plans,gcmd=gcmd,results={})
         self.nozzle_pad_run=run
@@ -2922,8 +2960,9 @@ class InventureMCU:
         except Exception as exc:
             self._nozzle_z_finish('failed',reason=str(exc))
             self._control_abort()
+            if center:return
             raise
-        self._nozzle_pad_emit(gcmd)
+        if not center:self._nozzle_pad_emit(gcmd)
 
     def _nozzle_z_finish(self, phase, **result):
         batch=getattr(self,'nozzle_z_context',None)
@@ -2984,7 +3023,10 @@ class InventureMCU:
             if result is None:
                 raise ValueError('Nozzle test was interrupted; no offset measured')
             if not result['success']:
-                self._nozzle_z_finish('failed',tool=batch['tool'],reason=result['reason'],
+                reason=result['reason']
+                if child.get('cold_pad'):
+                    reason=factory['phase']+' | '+reason
+                self._nozzle_z_finish('failed',tool=batch['tool'],reason=reason,
                                       details=result.get('details',{}))
                 return self.reactor.NEVER
             if batch.get('pad') is not None:
@@ -3018,7 +3060,7 @@ class InventureMCU:
         from .inventure_factory_core import OEM_T0_TO_T1_X_MM, parameters
         from .inventure_z_home import z_home_parameters
         targets=getattr(self,'nozzle_xy_targets',NOZZLE_XY_TARGETS)
-        pad_empty=pad is not None and pad['prep']=='EMPTY'
+        pad_empty=pad is not None and pad['prep'] in ('EMPTY','COLD')
 
         class NozzleParameters:
             def __init__(self,tool,pad):
@@ -3169,6 +3211,8 @@ class InventureMCU:
         nozzle_test=nozzle_parameters is not None
         alignment=operation=='NOZZLE_XY_PRINT'
         pad=operation=='NOZZLE_PAD_CALIBRATION'
+        pad_run=self.nozzle_z_context['pad'] if pad else None
+        cold_pad=pad and pad_run['params']['prep']=='COLD'
         dual=alignment or pad or operation=='NOZZLE_Z_MEASURE'
         z_home=operation in Z_HOME_PROCEDURES or nozzle_test
         z_settings=None
@@ -3222,9 +3266,9 @@ class InventureMCU:
                         *batch['parameters'][1],batch['alignment']['params'])
                 elif pad:
                     from .inventure_nozzle_xyz import NozzleXYZProgram
-                    batch=self.nozzle_z_context
-                    program=NozzleXYZProgram(p,z_settings).run_nozzle_xyz(
-                        *batch['parameters'][1],batch['pad']['params'])
+                    pad_program=NozzleXYZProgram(p,z_settings)
+                    program=pad_program.run_pad_center(pad_run['params']) if cold_pad else (
+                        pad_program.run_nozzle_xyz(*self.nozzle_z_context['parameters'][1],pad_run['params']))
                 elif dual:program=ZHomeProgram(p,z_settings).run_nozzle_dual(
                     *self.nozzle_z_context['parameters'][1])
                 elif nozzle_test:program=ZHomeProgram(p,z_settings).run_nozzle(prepare=True)
@@ -3240,10 +3284,9 @@ class InventureMCU:
             def get_int(self,*args,**kw):return gcmd.get_int(*args,**kw)
             def error(self,message):return gcmd.error(message)
             def respond_info(self,message):return gcmd.respond_info(message)
-        pad_run=self.nozzle_z_context['pad'] if pad else None
-        if pad_run is not None and pad_run['params']['prep']=='EMPTY':
+        if pad and pad_run['params']['prep'] in ('EMPTY','COLD'):
             p=dict(p,target=NOZZLE_PAD_TEMPERATURE)
-            self.cmd_load_test(HeatCommand(),nozzle_test=True,pad_empty=True)
+            self.cmd_load_test(HeatCommand(),nozzle_test=True,pad_empty=True,cold_pad=cold_pad)
         elif nozzle_test:self.cmd_load_test(HeatCommand(),nozzle_test=True)
         else:self.cmd_load_test(HeatCommand())
         context=self.load_test_context;now=self.reactor.monotonic()
@@ -3256,7 +3299,7 @@ class InventureMCU:
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
         if z_home:context['factory']['z_home_settings']=z_settings
-        if dual:
+        if dual and not cold_pad:
             heaters=[]
             for index,(plan,_) in sorted(self.nozzle_z_context['parameters'].items()):
                 target=plan['target'] if pad_run is None else pad_run['hot_targets_c']['T%d'%index]
@@ -3270,7 +3313,8 @@ class InventureMCU:
                 round(max(h['target'] for h in heaters)+10.))
         if pad:
             context['factory']['pad_budget']=self.nozzle_z_context['pad']['budget']
-            context['factory']['pad_temperature_bounds']=(155,round(max(h['target'] for h in heaters)+10.))
+            context['factory']['pad_temperature_bounds']=(0,NOZZLE_PAD_COLD_MAX) if cold_pad else (
+                155,round(max(h['target'] for h in heaters)+10.))
             context['factory']['pad_temperature_samples']=[]
         self._load_test_emit(context)
         if nozzle_test:return context
@@ -3472,6 +3516,8 @@ class InventureMCU:
         if (row['token']!=f['token'] or not row['active'] or row['reject'] or row['reason']
                 or row['tool']!=tool or row['mode']!=f['mode']
                 or row['fault'] or row['sequence']!=seq or not row['remaining_ms']):
+            if context.get('cold_pad'):
+                raise ValueError('MCU przerwał sesję pada | reject=%d reason=%d' % (row['reject'],row['reason']))
             raise ValueError('MCU factory guard/ownership rejected: '+json.dumps(row,sort_keys=True))
         if row['mode']==2 and not row['running']:
             raise ValueError('MCU did not start forward cassette feed: '+json.dumps(row,sort_keys=True))
@@ -3492,12 +3538,14 @@ class InventureMCU:
         z=pos[2];mask=0
         if probe:
             from .inventure_z_home import Z_BOTTOM, Z_STEPS_PER_MM
-            dual='dual_heaters' in f
+            cold=context.get('cold_pad',False)
+            dual='dual_heaters' in f or cold
             clearance=(dual and action.get('stage')=='clearance' and not f['homed']
                        and -10*Z_STEPS_PER_MM<=action['steps']<0
                        and action['stop_mask']==action['stop_value']==Z_BOTTOM)
             coarse=dual and action.get('stage')=='coarse' and f['heat_started']
-            qualified=f['reference_valid'] and f['selection_commanded'] and (context['ready_latched'] or coarse)
+            qualified=(f['reference_valid'] and f['selection_commanded'] and
+                       (context['ready_latched'] or coarse or cold and f.get('pad_measurement')))
             if not (qualified or clearance):
                 raise ValueError('Z probe requires the heated, selected nozzle and a valid lower reference')
             self._z_home_inputs(action['initial_raw'])
@@ -3857,13 +3905,18 @@ class InventureMCU:
             context['deadline']=f['total_deadline']
             return dict(f['snapshot'])
         if kind=='xyz_arm':
-            if not f.get('pad_measurement') or not f['selection_commanded'] or action['tool']!=context['tool']:
+            cold=context.get('cold_pad',False)
+            if ((not cold and not f.get('pad_measurement')) or not f['selection_commanded']
+                    or action['tool']!=context['tool']):
                 raise ValueError('Pad ceiling requires a selected nozzle at measurement temperature')
             row=self._factory_session(context,ceiling_steps=action['ceiling_steps'])
             sample_time=self.reactor.monotonic()
             temperatures=[self.panel_temperature(tool,sample_time) for tool in (0,1)]
-            if any(state!='valid' or not 155.<=temperature<=165. for temperature,state in temperatures):
-                raise ValueError('Pad scan requires fresh temperatures in the 160 C measurement band')
+            if any(state!='valid' or not (0.<=temperature<NOZZLE_PAD_COLD_MAX if cold else 155.<=temperature<=165.)
+                   for temperature,state in temperatures):
+                raise ValueError('Nieprawidlowa temperatura dysz do pomiaru pada na zimno'
+                                 if cold else 'Pad scan requires fresh temperatures in the 160 C measurement band')
+            f['pad_measurement']=True
             f['pad_temperature_samples'].append({'tool':'T%d'%context['tool'],
                 'T0':temperatures[0][0],'T1':temperatures[1][0]})
             return row
@@ -3882,7 +3935,7 @@ class InventureMCU:
         if kind=='nozzle_z_record':
             self._nozzle_z_record(f,action['tool'],action['readings'],action['pad_raw_xy'])
             return dict(f['snapshot'])
-        if kind=='z_verify_open':
+        if kind in ('z_verify_open','z_verify_closed'):
             if now<action.setdefault('until',now+action['delay_s']):return None
             return self._z_home_inputs({'z_bottom':0})
         if kind=='heat':
@@ -3939,14 +3992,16 @@ class InventureMCU:
             if not context['target']-10.<=temperature<=context['target']+8.:
                 raise ValueError('Nozzle left the Z reference temperature band')
         dual=f.get('dual_heaters')
-        if dual is not None:
-            for heater in dual:
-                if heater['output_token'] is None:self._load_test_output(context,0,heater)
-        else:
-            if context['output_token'] is None:self._load_test_output(context,0)
-            self._load_test_check_output(context)
+        cold=context.get('cold_pad',False)
+        if not cold:
+            if dual is not None:
+                for heater in dual:
+                    if heater['output_token'] is None:self._load_test_output(context,0,heater)
+            else:
+                if context['output_token'] is None:self._load_test_output(context,0)
+                self._load_test_check_output(context)
         if not waiting:self._factory_session(context)
-        if f['heat_started']:
+        if not cold and f['heat_started']:
             if dual is not None:self._dual_nozzle_heat_tick(context)
             else:
                 duty=self._load_test_pid(context,temperature,now)
@@ -3965,7 +4020,7 @@ class InventureMCU:
         if now>=context['next_report']:
             context['next_report']=now+5.;self._load_test_emit(context)
 
-    def cmd_load_test(self,gcmd,nozzle_test=False,pad_empty=False):
+    def cmd_load_test(self,gcmd,nozzle_test=False,pad_empty=False,cold_pad=False):
         action=str(gcmd.get('ACTION','STATUS')).upper()
         if action in ('AUTO','PARAMS'):
             return self._factory_start(gcmd,read_only=action=='PARAMS')
@@ -4045,7 +4100,7 @@ class InventureMCU:
                 flow_confirmed=False,baseline=baseline,comparison=None,motion=None,
                 jog=None,last_jog=None,next_report=now+5.,busy=False,flow_mark=None,
                 measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False),
-                cassette_load=plan,stream=None,last_stream=None)
+                cassette_load=plan,stream=None,last_stream=None,cold_pad=cold_pad)
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return
@@ -4139,7 +4194,7 @@ class InventureMCU:
         self.commands['feeder'].send([i,direction,duration])
 
     def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False,
-                                  control_state=None):
+                                  control_state=None,allow_off=False):
         if not self.connected:raise ValueError('MCU is disconnected')
         sd=self.printer.lookup_object('virtual_sdcard',None)
         stats=self.printer.lookup_object('print_stats',None)
@@ -4151,7 +4206,8 @@ class InventureMCU:
         if getattr(self,'feeder_run_context',None) is not None and not allow_run:
             raise ValueError('Feeder run is active; use INVENTURE_STOP first')
         state=self._control_query() if control_state is None else control_state
-        if state['mode']!='SERVICE' or state['latched'] or state['fault'] or state['reject']:
+        if (state['mode'] not in (('OFF','SERVICE') if allow_off else ('SERVICE',))
+                or state['latched'] or state['fault'] or state['reject']):
             raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
         if state['active'] and not allow_active:
             raise ValueError('Stop the active service output or motion before testing a feeder')

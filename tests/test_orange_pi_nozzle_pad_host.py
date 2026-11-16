@@ -91,7 +91,7 @@ class PadDevice(DualNozzleDevice):
             xy_start=self.xy, xy_delta=(a * step_x, b * step_y),
             sweep_steps=distance, until=self.now() + duration, started=self.now(),
             duration=duration, stopped=False, home=False, hit=hit)
-        self.sweep_moves.append(dict(tool=tool, start=self.xy, sent=distance, planned=a,
+        self.sweep_moves.append(dict(tool=tool, start=self.xy, sent=distance, planned=a, direction=directions,
                                      hit=hit, z=self.z))
         self.motion_starts.append(dict(t=self.now(), arguments=tuple(args),
             duty=(self.output(6)['duty'], self.output(7)['duty']),
@@ -104,7 +104,12 @@ class PadDevice(DualNozzleDevice):
         assert mode == monitor == 0
         if action == 8:
             assert not self.output(6)['duty'] and not self.output(7)['duty']
-            assert tool == 0 and low == 155 and high == max(self.hot) + 10
+            assert tool == 0
+            self.cold = (low, high) == (0, 50)
+            if self.cold:
+                assert not budget and all(0. <= temp < 50. for temp in self.h.temperatures[:2])
+            else:
+                assert low == 155 and high == max(self.hot) + 10
             wire = [4, *args[1:]]
         elif action in (9, 10):
             self._settle()
@@ -124,7 +129,8 @@ class PadDevice(DualNozzleDevice):
                     self.cold_switches.append(tool)
             else:
                 assert self.session['tool'] == tool
-                assert all(158. <= temp <= 162. for temp in self.h.temperatures[:2])
+                lower, upper = (0., 49.99) if self.cold else (158., 162.)
+                assert all(lower <= temp <= upper for temp in self.h.temperatures[:2])
                 self.sealed = True
                 self.ceiling = budget
             wire = [2, *args[1:]]
@@ -219,6 +225,41 @@ class NozzlePadHostTests(unittest.TestCase):
         status = self.cmd(host, 'STATUS')
         self.assertEqual(status['phase'], 'awaiting_t0_confirmation', status)
         return status
+
+    def test_cold_center_seeks_four_edges_and_emits_one_line(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        device = host.device
+        device.mode = 0
+        command = Command(ACTION='CENTER', T0_Z_MAX=137.30)
+        host.cmd_nozzle_pad_calibrate(command)
+        self.assertEqual(command.lines, [])
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        run = host.nozzle_pad_run
+        self.assertEqual(run['phase'], 'verified', run)
+        self.assertEqual(len(command.lines), 1, command.lines)
+        self.assertIn('środek X=', command.lines[0])
+        self.assertIn('X−=', command.lines[0])
+        self.assertIn('Y+=', command.lines[0])
+        self.assertEqual(host.commands['output'].calls, [])
+        self.assertEqual([s['direction'] for s in device.sweep_moves], [3, 0, 1, 2])
+        self.assertEqual(device.e_moves, [])
+        self.assertEqual(device.wipe_moves, [])
+        self.assertEqual(device.ceiling, int(137.30 * Z_STEPS_PER_MM))
+        self.assertFalse(device.contact)
+        point = run['measurements']['T0']['center_xy_mm']
+        self.assertLess(math.dist(point, device.centers[0]), .005)
+        self.assertLess(math.dist(device.xy, point), .003)
+        self.assertFalse(self.saved.exists())
+
+    def test_cold_center_requires_fresh_cold_nozzles_before_motion(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
+        host.temperatures[1] = 50.
+        with self.assertRaisesRegex(RuntimeError, '50 C'):
+            host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', T0_Z_MAX=137.30))
+        self.assertIsNone(host.load_test_context)
+        self.assertFalse(host.device.motion_starts)
 
     def test_empty_verify_positions_t0_and_waits_at_pe12_before_heat(self):
         host = self.host()

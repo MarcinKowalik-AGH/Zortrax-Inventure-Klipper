@@ -9,10 +9,9 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-SWEEP-T0` i wgraj firmware MCU
-`RC8-CONTROL-R7-PAD-SWEEP-PC14`. Po `FIRMWARE_RESTART` sprawdź, czy
-`INVENTURE_VERSION` zwraca `nozzle_pad_abi: 1` oraz
-`nozzle_pad_sweep_abi: 1`.
+`RC8-CONTROL-R7-UIFAST-PAD-CENTER` i wgraj firmware MCU
+`RC8-CONTROL-R7-PAD-CENTER`. `INVENTURE_VERSION` po restarcie pokazuje
+`nozzle_pad_cold_abi: 1` dla automatycznej próby na zimno.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
 `allow_actuators: True`.
 
@@ -25,6 +24,28 @@ i dołącz plik w `printer.cfg`.
 
 Po przeładowaniu konfiguracji makro jest dostępne w Fluidd. Polecenie
 `INVENTURE_NOZZLE_PAD_CALIBRATE` przyjmuje te same argumenty.
+
+## Środek pada na zimnej T0
+
+Przy czystych dyszach poniżej 50°C i osadzonej tacce wywołaj jedno polecenie.
+`T0_Z_MAX` to zmierzony maksymalny dojazd stołu od PE12. W próbie na
+opisywanym egzemplarzu przyjęto 139,50 mm.
+
+```gcode
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER T0_Z_MAX=139.50
+```
+
+Tryb `CENTER` ustala referencję, mechanicznie wybiera T0 i mierzy po kolei
+X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Głowica
+wraca po obniżeniu stołu. Jeśli zwarcie Z zaniknie na postoju, stół
+cofa się przed jednym ponowieniem z tym samym limitem od PE12. Pomiar Y
+zaczyna się przy wyznaczonym X. Po czterech pomiarach stół opuszcza się,
+a głowica wraca nad wyznaczony środek.
+
+Fluidd wypisuje jeden wiersz z pozycją środka i czterema pozycjami
+rozwarcia w serwisowym układzie XY. `ACTION=STATUS` odczytuje bieżący
+etap albo końcowy wynik. `INVENTURE_STOP` przerywa próbę. Wynik
+`CENTER` służy do pomiaru środka pada dla T0.
 
 ## Przygotowanie fabrycznej tacki
 

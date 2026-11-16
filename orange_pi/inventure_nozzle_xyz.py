@@ -17,7 +17,7 @@ PAD_MAX_Z_SPEED = 3.9
 PAD_PREP_Z_STEPS = 20 * Z_STEPS_PER_MM
 
 
-def pad_xyz_parameters(gcmd):
+def pad_xyz_parameters(gcmd, center_only=False):
     """Validate the Z ceilings and the preparation for both tools."""
     def number(name, default, low, high, optional=False):
         value = gcmd.get(name, default)
@@ -33,25 +33,25 @@ def pad_xyz_parameters(gcmd):
             raise FactoryError('%s must be %g..%g' % (name, low, high))
         return result
 
-    mode = str(gcmd.get('MODE', 'FULL')).strip().upper()
-    if mode not in ('FULL', 'VERIFY_T0'):
+    mode = 'CENTER_T0' if center_only else str(gcmd.get('MODE', 'FULL')).strip().upper()
+    if not center_only and mode not in ('FULL', 'VERIFY_T0'):
         raise FactoryError('Pad calibration MODE must be FULL or VERIFY_T0')
-    scan = str(gcmd.get('SCAN', 'SWEEP')).strip().upper()
+    scan = 'SWEEP' if center_only else str(gcmd.get('SCAN', 'SWEEP')).strip().upper()
     if scan not in ('SWEEP', 'TAP'):
         raise FactoryError('Pad calibration SCAN must be SWEEP or TAP')
-    prep = str(gcmd.get('PREP', 'RETRACT')).strip().upper()
-    if prep not in ('RETRACT', 'EMPTY'):
+    prep = 'COLD' if center_only else str(gcmd.get('PREP', 'RETRACT')).strip().upper()
+    if not center_only and prep not in ('RETRACT', 'EMPTY'):
         raise FactoryError('Pad calibration PREP must be RETRACT or EMPTY')
-    if prep == 'EMPTY':
+    if prep != 'RETRACT':
         for name in ('T0_TARGET', 'T1_TARGET', 'T0_RETRACT_MM', 'T1_RETRACT_MM'):
             if gcmd.get(name, None) is not None:
-                raise FactoryError('PREP=EMPTY uses 160 C and zero retraction; omit ' + name)
+                raise FactoryError('PREP=%s uses zero retraction, omit %s' % (prep, name))
         retract_mm = (0., 0.)
     else:
         retract_mm = (number('T0_RETRACT_MM', None, .1, 100.),
                       number('T1_RETRACT_MM', None, .1, 100.))
     ceilings = tuple(number('T%d_Z_MAX' % tool, None, 20., 150.,
-                            optional=tool == 1 and mode == 'VERIFY_T0')
+                            optional=tool == 1 and mode != 'FULL')
                      for tool in (0, 1))
     clearance = number('Z_CLEARANCE_MM', 1.5, .5, 4.)
     for tool, ceiling in enumerate(ceilings):
@@ -65,7 +65,7 @@ def pad_xyz_parameters(gcmd):
         z_max_mm=ceilings,
         retract_mm=retract_mm,
         retract_speed=number('RETRACT_SPEED', 1.6, .5, 6.),
-        scan_radius_mm=number('SCAN_RADIUS_MM', 3.5, 3., 6.),
+        scan_radius_mm=number('SCAN_RADIUS_MM', 5. if center_only else 3.5, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
         edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .02, .005, .1),
         z_clearance_mm=clearance,
@@ -147,14 +147,17 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('Guarded pad XY move did not complete')
         self.xy = (x, y)
 
-    def _touch(self, point, safe_z, ceiling, tap_speed):
+    def _touch(self, point, safe_z, ceiling, tap_speed, settle=False):
         if self.z_steps != safe_z:
             raise FactoryError('Pad tap requires the verified XY clearance plane')
         yield from self._pad_xy_move(point)
         sent, hit, raw = yield from self._z_move(
             ceiling - safe_z, tap_speed, NOZZLE_CONTACT, 0, 1, 0,
             allow_contact_transient=True)
-        closed = hit == NOZZLE_CONTACT and raw['nozzle_contact'] == 0 and sent > 0
+        closed = hit == NOZZLE_CONTACT and sent > 0
+        if closed and settle:
+            raw = yield dict(kind='z_verify_closed', delay_s=.15)
+        closed = closed and raw['nozzle_contact'] == 0
         missed = not hit and raw['nozzle_contact'] == 1 and self.z_steps == ceiling
         return closed, missed
 
@@ -207,12 +210,22 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('Pad sweep start has no room toward its scan boundary')
         target = list(origin)
         target[axis] += direction * span
-        closed, _ = yield from self._touch(origin, safe_z, ceiling, xyz['z_tap_speed'])
-        if not closed:
+        cold = xyz['prep'] == 'COLD'
+        leg = ('X', 'Y')[axis] + ('+' if direction == 1 else '-')
+        if cold:
+            yield from self._phase(leg)
+        for _ in range(2 if cold else 1):
+            closed, missed = yield from self._touch(origin, safe_z, ceiling,
+                                                   xyz['z_tap_speed'], settle=cold)
+            if closed:
+                break
             if self.z_steps > safe_z:
                 yield from self._open_z_at(safe_z, allow_closed=True)
+            if missed:
+                break
+        if not closed:
             raise FactoryError('No stable PC14 contact at the pad sweep start',
-                               start_mm=_xy_mm(origin))
+                               direction=leg, start_mm=_xy_mm(origin))
 
         retreat_z = min(safe_z, self.z_steps - PAD_MIN_SWEEP_CLEARANCE_STEPS)
         if retreat_z < PAD_PREP_Z_STEPS:
@@ -240,21 +253,27 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._open_z_at(retreat_z, allow_closed=True)
         if edge is None:
             raise FactoryError('Pad sweep did not find a stable PC14 opening within its span',
-                               axis=('X', 'Y')[axis], target_mm=_xy_mm(target))
+                               axis=leg[0], direction=leg, target_mm=_xy_mm(target))
         return edge, retreat_z
 
     def _scan_sweeps(self, seed, limits, safe_z, ceiling, xyz):
         origin = list(seed)
+        cold = xyz['prep'] == 'COLD'
         centers = []
-        for _ in range(2):
+        for _ in range(1 if cold else 2):
             edges = []
-            for axis, (lower, upper) in enumerate(limits):
-                low, safe_z = yield from self._sweep_edge(origin, axis, lower, safe_z, ceiling, xyz)
-                high, safe_z = yield from self._sweep_edge(origin, axis, upper, safe_z, ceiling, xyz)
+            for axis, bounds in enumerate(limits):
+                pair = [None, None]
+                for side in ((1, 0) if cold else (0, 1)):
+                    pair[side], safe_z = yield from self._sweep_edge(
+                        origin, axis, bounds[side], safe_z, ceiling, xyz)
+                low, high = pair
                 edges.append((low, high))
                 origin[axis] = round((low + high) / 2.)
             centers.append(tuple(origin))
 
+        if cold:
+            return edges, tuple(origin), safe_z, None
         repeat = max(abs(a - b) for a, b in zip(*centers)) / XY_STEPS_PER_MM
         if repeat > xyz['xy_repeat_mm']:
             raise FactoryError('Pad sweep center did not repeat', xy_center_repeat_mm=repeat)
@@ -333,30 +352,23 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._position_contact_pad()
         yield dict(kind='xyz_confirm_t0')
 
-    def run_nozzle_xyz(self, t1_p, t1_settings, xyz):
-        def pad_plan(p, settings):
-            settings = dict(settings)
-            for name in ('z_bottom_speed', 'z_approach_speed', 'z_backoff_speed'):
-                settings[name] = min(settings[name], PAD_MAX_Z_SPEED)
-            return ZHomeProgram(dict(p, z_speed=settings['z_bottom_speed']), settings)
+    @staticmethod
+    def _pad_plan(p, settings):
+        settings = dict(settings)
+        for name in ('z_bottom_speed', 'z_approach_speed', 'z_backoff_speed'):
+            settings[name] = min(settings[name], PAD_MAX_Z_SPEED)
+        return ZHomeProgram(dict(p, z_speed=settings['z_bottom_speed']), settings)
 
-        plans = (pad_plan(self.p, self.settings), pad_plan(t1_p, t1_settings))
-        if tuple(plan.p['tool'] for plan in plans) != (0, 1):
-            raise FactoryError('Pad calibration requires ordered T0 and T1 plans')
-        empty = xyz['prep'] == 'EMPTY'
-        verify_t0 = xyz['mode'] == 'VERIFY_T0'
-        scan_order = (0,) if verify_t0 else (0, 1, 0)
-        boxes, ceilings = {}, {}
-        clearance_steps = round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
-        for tool in set(scan_order):
-            plan = plans[tool]
-            ceiling = xyz['z_max_mm'][tool]
-            if (ceiling is None or ceiling > plan.settings['z_bottom_max_mm']
-                    or math.floor(ceiling * Z_STEPS_PER_MM) - clearance_steps < PAD_PREP_Z_STEPS):
-                raise FactoryError('T%d pad Z ceiling is outside the qualified travel range' % tool)
-            # Floor so quantisation cannot exceed the supplied hard ceiling.
-            ceilings[tool] = math.floor(ceiling * Z_STEPS_PER_MM)
-            boxes[tool] = self._scan_box(plan, xyz)
+    def _pad_ceiling(self, plan, xyz):
+        tool = plan.p['tool']
+        ceiling = xyz['z_max_mm'][tool]
+        steps = 0 if ceiling is None else math.floor(ceiling * Z_STEPS_PER_MM)
+        if (ceiling is None or ceiling > plan.settings['z_bottom_max_mm']
+                or steps - round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM) < PAD_PREP_Z_STEPS):
+            raise FactoryError('T%d pad Z ceiling is outside the qualified travel range' % tool)
+        return steps
+
+    def _home_pad(self, plans):
         self.p, self.settings, self.stock_sequence = plans[0].p, plans[0].settings, plans[0].stock_sequence
         yield from self._phase('XYZ_INITIAL_CLEARANCE')
         yield from self._module('z_initial_clearance', self._nozzle_pre_xy_clearance())
@@ -368,6 +380,43 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('homing_z_failed')
         self.z_steps = 0
         yield from self._pick(0, plans)
+
+    def run_pad_center(self, xyz):
+        plan = self._pad_plan(self.p, self.settings)
+        if plan.p['tool'] != 0:
+            raise FactoryError('Cold pad center uses T0')
+        ceiling = self._pad_ceiling(plan, xyz)
+        seed, limits = self._scan_box(plan, xyz)
+        yield from self._home_pad((plan,))
+        yield dict(kind='xyz_arm', tool=0, ceiling_steps=ceiling)
+        yield from self._pad_xy_move(seed)
+        safe_z = ceiling - round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
+        yield from self._open_z_at(safe_z)
+        edges, origin, safe_z, _ = yield from self._scan_sweeps(seed, limits, safe_z, ceiling, xyz)
+        yield from self._phase('PARK')
+        yield from self._open_z_at(min(safe_z, ceiling - 5 * Z_STEPS_PER_MM))
+        yield from self._pad_xy_move(origin)
+        # Report the measured midpoint, preserving half-step resolution.
+        center = _xy_mm(tuple((low + high) / 2. for low, high in edges))
+        widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
+        measurement = dict(center_xy_mm=center, edges_mm=[_xy_mm(pair) for pair in edges],
+                           electrical_diameter_mm=widths, scan_method='SWEEP')
+        yield dict(kind='done', success=True, terminal='COLD_PAD_CENTER',
+                   measurements={'T0': measurement}, retract_e_steps={'T0': 0})
+
+    def run_nozzle_xyz(self, t1_p, t1_settings, xyz):
+        plans = (self._pad_plan(self.p, self.settings), self._pad_plan(t1_p, t1_settings))
+        if tuple(plan.p['tool'] for plan in plans) != (0, 1):
+            raise FactoryError('Pad calibration requires ordered T0 and T1 plans')
+        empty = xyz['prep'] == 'EMPTY'
+        verify_t0 = xyz['mode'] == 'VERIFY_T0'
+        scan_order = (0,) if verify_t0 else (0, 1, 0)
+        boxes, ceilings = {}, {}
+        for tool in set(scan_order):
+            plan = plans[tool]
+            ceilings[tool] = self._pad_ceiling(plan, xyz)
+            boxes[tool] = self._scan_box(plan, xyz)
+        yield from self._home_pad(plans)
         if empty and verify_t0:
             yield from self._verify_t0_at_pad()
         yield from self._phase('XYZ_HEAT')

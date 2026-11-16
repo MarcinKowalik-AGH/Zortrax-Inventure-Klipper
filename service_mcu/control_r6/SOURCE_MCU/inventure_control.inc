@@ -11,6 +11,7 @@ DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",1);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_TOOL_MASK 3u
@@ -33,6 +34,7 @@ DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
 #define PAD_SWEEP_OPEN_MS 150u
 #define PAD_TEMP_MIN_C 155
 #define PAD_TEMP_MAX_C 165
+#define PAD_COLD_MAX_C 50
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS",PAD_SWEEP_OPEN_MS);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
@@ -90,7 +92,7 @@ static struct {
     int32_t pad_z;
     int16_t min_c,max_c;
     uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z,nozzle_xy;
-    uint8_t nozzle_pad,pad_homed,pad_sealed,pad_command,pad_preclear,pad_contact_ready;
+    uint8_t nozzle_pad,pad_cold,pad_homed,pad_sealed,pad_command,pad_preclear,pad_contact_ready;
 } fs;
 static void fs_guard(uint32_t now);
 static uint8_t fs_xy_print_position_ready(void);
@@ -141,16 +143,19 @@ static uint8_t fs_nozzle_temperature_ok(unsigned tool,uint32_t now,uint8_t requi
     return valid && (!require_hot || t>=fs.min_c) && t<fs.max_c && co[6+tool].reason<3;
 }
 static uint8_t fs_owns_output(unsigned i) {
-    return fs.active && (i==6+fs.tool || (fs.dual_nozzle_z && (i==6 || i==7)));
+    return fs.active && !fs.pad_cold && (i==6+fs.tool || (fs.dual_nozzle_z && (i==6 || i==7)));
 }
-static uint8_t fs_pad_temperature_ok(uint32_t now) {
+static uint8_t pad_temperature_ok(uint32_t now,uint8_t cold) {
     for(unsigned tool=0;tool<2;tool++) {
         uint8_t valid;
         int16_t t=control_temp(tool,now,&valid);
-        if(!valid || t<PAD_TEMP_MIN_C || t>PAD_TEMP_MAX_C || co[6+tool].reason>=3)return 0;
+        if(!valid || co[6+tool].reason>=3)return 0;
+        if(cold ? (t<0 || t>=PAD_COLD_MAX_C || co[6+tool].duty || control_heater_duty[tool])
+                : (t<PAD_TEMP_MIN_C || t>PAD_TEMP_MAX_C))return 0;
     }
     return 1;
 }
+static uint8_t fs_pad_temperature_ok(uint32_t now) {return pad_temperature_ok(now,fs.pad_cold);}
 static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     for(unsigned i=0;i<8;i++)if(mask&BIT(i)) {
         uint8_t valid;int16_t t=control_temp(i,now,&valid);
@@ -421,8 +426,11 @@ static uint_fast8_t cm_event(struct timer *timer) {
     } else if(!why && cm.pad_open_pending && !hit) {
         cm.pad_open_pending=0;
         if(cm.done==cm.master){cm_end(CR_COMPLETE);return SF_DONE;}
-        // Restart at the original rate without catching up missed steps.
-        timer->waketime=now+cm.period-cm.pulse;cm.timer_added=1;return SF_RESCHEDULE;
+        // A long stationary pause already met the step spacing. Use the
+        // fresh closed sample during cold scans before contact chatters again.
+        if(!fs.pad_cold || (uint32_t)(now-cm.pad_open_since)<cm.period) {
+            timer->waketime=now+cm.period-cm.pulse;cm.timer_added=1;return SF_RESCHEDULE;
+        }
     }
     if(!why && hit){cm.hit=hit;why=CR_INPUT;}
     if(why){cm_end(why);return SF_DONE;}
@@ -731,7 +739,7 @@ static uint8_t cm_nozzle_pad_limits(const uint32_t *args,uint32_t *mask,uint32_t
             || (uint32_t)fs.pad_z+PAD_XY_CLEARANCE_STEPS>fs.pad_xy_ceiling
             || (fs.pad_sweep_z && (uint32_t)fs.pad_z+PAD_XY_CLEARANCE_STEPS>fs.pad_sweep_z)))return 5;
     if(e) {
-        if(fs.pad_sealed || !fs.pad_homed || (uint32_t)fs.pad_z>PAD_PREP_Z_STEPS
+        if(fs.pad_cold || fs.pad_sealed || !fs.pad_homed || (uint32_t)fs.pad_z>PAD_PREP_Z_STEPS
                 || !!(args[1]&BIT(3))==fs.tool || args[6]>CM_AXIS_E_MAX_HZ
                 || e>fs.xy_e_remaining || e>PAD_MAX_RETRACT_STEPS-fs.pad_tool_e[fs.tool])
             return 1;
@@ -1083,7 +1091,9 @@ static void factory_external_stop(unsigned i) {
 }
 static void fs_guard(uint32_t now) {
     if(!fs.active)return;
-    if(fs.pad_contact_ready && (GPIOC->IDR&BIT(14)))fs.pad_contact_ready=0;
+    // Cold pad approaches hold the motor at the first closure. The host
+    // rechecks the stationary signal, and the sweep requires PC14 low live.
+    if(fs.pad_contact_ready && !fs.pad_cold && (GPIOC->IDR&BIT(14)))fs.pad_contact_ready=0;
     uint8_t pad_probe=fs.nozzle_pad && cm.active
         && (cm.pad_sweep || (fs.pad_sealed && cm.planned[2] && (cm.direction&BIT(2))));
     uint8_t why=0;
@@ -1092,7 +1102,7 @@ static void fs_guard(uint32_t now) {
     else if(!fs_nozzle_temperature_ok(fs.tool,now,fs.mode!=IVT_STOP || (cm.active && cm.planned[3]))
             || (fs.dual_nozzle_z && !fs_nozzle_temperature_ok(1-fs.tool,now,0))
             || (fs.nozzle_pad && cm.active && cm.planned[3] && !cm_axis_e_ready(fs.tool,now))
-            || (pad_probe && !fs_pad_temperature_ok(now))
+            || ((pad_probe || fs.pad_cold) && !fs_pad_temperature_ok(now))
             || !control_sensors_valid(control_guard_mask|31,now))why=4;
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
             || transport_selected!=fs.tool || transport[fs.tool].fault
@@ -1146,6 +1156,7 @@ void command_inventure_factory_session(uint32_t *args) {
     irqstatus_t irq=irq_save();uint32_t now=timer_read_time();uint8_t reject=0;
     fs_age_update(now);zh_guard(now);fs_guard(now);
     uint8_t xy=action==6,pad=action==8;
+    uint8_t cold=pad && minimum==0 && maximum==PAD_COLD_MAX_C;
     uint8_t start=action==1 || action==4 || xy || pad;
     uint8_t dual=action==4 || xy || pad;
     if(action>10)reject=1;
@@ -1162,7 +1173,8 @@ void command_inventure_factory_session(uint32_t *args) {
         if(tool>1 || mode>IVT_GATED || monitor>1 || !duration || duration>1500
                 || (pad?budget>2u*PAD_MAX_RETRACT_STEPS:(!budget || budget>960000))
                 || lease<250 || lease>1500 || !token || sequence
-                || (pad?minimum!=PAD_TEMP_MIN_C:(minimum<180 || minimum>230))
+                || (pad?(!cold && minimum!=PAD_TEMP_MIN_C):(minimum<180 || minimum>230))
+                || (cold && budget)
                 || maximum<=minimum+5 || maximum>250
                 || (dual && (tool || mode!=IVT_STOP || monitor)))reject=1;
         if(!reject && (fs.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
@@ -1178,6 +1190,7 @@ void command_inventure_factory_session(uint32_t *args) {
             uint8_t other_valid;int16_t other_t=control_temp(1,now,&other_valid);
             if(!other_valid || other_t>=maximum || co[7].reason>=3 || (GPIOC->IDR&BIT(13)))reject=3;
         }
+        if(!reject && cold && !pad_temperature_ok(now,1))reject=3;
         if(!reject) {
             for(unsigned i=0;i<2;i++)transport_stop_channel(i);
             gpio_pwm_write(feeder_clock,0);
@@ -1186,7 +1199,7 @@ void command_inventure_factory_session(uint32_t *args) {
             fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
             fs.start_mode=mode;fs.start_monitor=monitor;fs.dual_nozzle_z=dual;
             fs.nozzle_xy=xy;fs.xy_e_remaining=budget;fs.xy_switch_sequence=0;
-            fs.nozzle_pad=pad;fs.pad_z=0;fs.pad_homed=0;fs.pad_preclear=0;fs.pad_sealed=0;
+            fs.nozzle_pad=pad;fs.pad_cold=cold;fs.pad_z=0;fs.pad_homed=0;fs.pad_preclear=0;fs.pad_sealed=0;
             fs.pad_ceiling=fs.pad_xy_ceiling=0;fs.pad_command=0;fs.pad_command_seq=0;
             fs.pad_sweep_z=0;fs.pad_contact_ready=0;
             fs.pad_tool_e[0]=fs.pad_tool_e[1]=0;
@@ -1234,7 +1247,7 @@ void command_inventure_factory_session(uint32_t *args) {
                 && (action==9 || budget==fs.pad_ceiling)) {
             // Response replay does not switch, rearm, or renew a lease.
         } else if(sequence!=fs.sequence+1)reject=4;
-        else if(action==9 && (tool==fs.tool || !fs_pad_change_clear()))reject=3;
+        else if(action==9 && (fs.pad_cold || tool==fs.tool || !fs_pad_change_clear()))reject=3;
         else if(action==10 && (tool!=fs.tool || !fs.pad_homed || fs.pad_z<0
                 || (uint32_t)fs.pad_z>budget-PAD_XY_CLEARANCE_STEPS || fs.xy_e_remaining
                 || fs.pad_ceiling || cm.active || zh_active() || !zh_contact_open()

@@ -539,7 +539,9 @@ static void axis_thermal_guard(void) {
 }
 
 static void pad_command(unsigned action,unsigned tool,unsigned budget,unsigned sequence) {
-    uint32_t a[]={action,tool,IVT_STOP,0,1000,budget,1500,PAD_TEMP_MIN_C,250,801,sequence};
+    unsigned cold=fs.active && fs.pad_cold;
+    uint32_t a[]={action,tool,IVT_STOP,0,1000,budget,1500,cold?0:PAD_TEMP_MIN_C,
+        cold?PAD_COLD_MAX_C:250,801,sequence};
     command_inventure_factory_session(a);
 }
 static void pad_adc(unsigned raw) {
@@ -804,11 +806,56 @@ static void pad_sweep_open_confirmation(void) {
     puts("PASS PC14 sweep debounce: holds exact XY, resumes after transient opening and preserves immediate endstop guards");
 }
 
+static void pad_cold_center(void) {
+    factory_reset(0,0);
+    uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,0,PAD_COLD_MAX_C,801,0};
+    pad_adc(994);command_inventure_factory_session(start);
+    assert(!fs.active && factory_reply[3]==3);
+    pad_adc(155);start[5]=1;command_inventure_factory_session(start);
+    assert(!fs.active && factory_reply[3]==1);
+    start[5]=0;command_inventure_factory_session(start);
+    assert(fs.active && fs.pad_cold && !factory_reply[3]);
+    output(1,6,64,1500,200,941);
+    output(1,7,64,1500,200,942);
+    assert(fs.active && !co[6].duty && !co[7].duty);
+    unsigned seq=0;
+    GPIOE->IDR|=BIT(12);
+    motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,943);
+    assert(!cm.active && fs.pad_homed && !fs.pad_z);
+    pad_command(9,1,0,seq+1);assert(factory_reply[3]==3 && fs.tool==0);
+    GPIOE->IDR&=~BIT(12);
+    pad_command(10,0,18000,++seq);
+    assert(!factory_reply[3] && fs.pad_ceiling==18000);
+    motion(1,4,0,0,18001,0,802,10,25000,BIT(3),0,0,944);
+    assert(!cm.active && !fs.pad_z);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,945);
+    pad_run(1800,155,&seq);
+    assert(fs.pad_z==1800 && fs.pad_contact_ready && GPIOE->BSRR==BIT(10));
+
+    uint32_t sweep=BIT(3)|BIT(4);
+    GPIOC->IDR|=BIT(14);control_guard(mock_now);
+    motion(1,3,200,200,0,0,320,10,1500,sweep,sweep,0,946);
+    assert(!cm.active && fs.pad_contact_ready); // Live closure is still required.
+    GPIOC->IDR&=~BIT(14);
+    motion(1,3,200,200,0,0,320,10,1500,sweep,sweep,0,947);
+    while(cm.sent[0]<11)pad_timer_step(155);
+    GPIOC->IDR|=BIT(14);
+    for(unsigned i=0;i<30;i++)pad_timer_step(155);
+    assert(cm.active && cm.pad_open_pending && cm.sent[0]==11 && fs.pad_z==1800);
+    GPIOC->IDR&=~BIT(14);pad_timer_step(155);
+    assert(cm.active && !cm.pad_open_pending && cm.sent[0]==12);
+    pad_run(123,155,&seq);
+    assert(fs.active && cm.reason==CR_INPUT && cm.hit==BIT(3) && cm.sent[0]==123 && fs.pad_z==1800);
+    pad_adc(400);control_guard(mock_now);
+    assert(!fs.active && fs.reason==4 && control_mode==CT_OFF && GPIOE->BSRR==(BIT(10)<<16));
+    puts("PASS cold pad center: no heaters or T1, absolute PE12 cap, held Z, qualified XY, and cold temperature guard");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();pad_xyz_owner();pad_sweep_owner();
-    pad_sweep_open_confirmation();
+    pad_sweep_open_confirmation();pad_cold_center();
     puts("PASS R7 FACTORY session register suite");return 0;
 }
