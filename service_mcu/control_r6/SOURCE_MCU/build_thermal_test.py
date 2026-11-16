@@ -9,7 +9,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
+MCU_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -102,6 +102,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NOZZLE_Z_DUAL_ABI'] == 1
     assert c['INVENTURE_NOZZLE_XY_ABI'] == 1
     assert c['INVENTURE_NOZZLE_PAD_ABI'] == 1
+    assert c['INVENTURE_NOZZLE_PAD_SWEEP_ABI'] == 1
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1
     assert c['INVENTURE_FACTORY_MOTION_MAX_HZ'] == 125000
@@ -162,6 +163,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],
                   nozzle_pad_abi=c['INVENTURE_NOZZLE_PAD_ABI'],
+                  nozzle_pad_sweep_abi=c['INVENTURE_NOZZLE_PAD_SWEEP_ABI'],
                   factory_motion_abi=1,factory_motion_max_hz=c['INVENTURE_FACTORY_MOTION_MAX_HZ'],
                   factory_motion_tools=c['INVENTURE_FACTORY_MOTION_TOOLS'],
                   axis_motion_abi=c['INVENTURE_AXIS_MOTION_ABI'],

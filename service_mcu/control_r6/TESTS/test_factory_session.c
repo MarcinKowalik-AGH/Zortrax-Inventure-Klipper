@@ -551,13 +551,14 @@ static void pad_run(unsigned stop_at,unsigned raw,unsigned *sequence) {
     while(cm.active) {
         sched_del_timer(&cm_timer);
         mock_now=cm_timer.waketime;command_inventure_heartbeat(NULL);pad_adc(raw);
-        if(stop_at && cm.sent[2]==stop_at)GPIOC->IDR&=~BIT(14);
+        if(stop_at && cm.pad_sweep && cm.sent[0]==stop_at)GPIOC->IDR|=BIT(14);
+        else if(stop_at && cm.sent[2]==stop_at)GPIOC->IDR&=~BIT(14);
         unsigned r=cm_event(&cm_timer);
         if(r==SF_RESCHEDULE)sched_add_timer(&cm_timer);
         else assert(!cm.active && !cm.timer_added);
         control_guard(mock_now);
         if((uint32_t)(mock_now-last)>=MS(500)) {
-            pad_command(2,fs.tool,200,++*sequence);
+            pad_command(2,fs.tool,fs.budget_steps,++*sequence);
             assert(fs.active && !factory_reply[3]);last=mock_now;
         }
     }
@@ -650,10 +651,113 @@ static void pad_xyz_owner(void) {
     puts("PASS dedicated pad XYZ owner: bounded hot reverse, measured PE12, per-tool Z ceiling, contact/MISS, clearance, T0-T1-T0 and shutdown");
 }
 
+static void pad_sweep_setup(unsigned *seq) {
+    factory_reset(0,0);*seq=0;
+    pad_command(8,0,0,*seq);
+    assert(fs.active && !factory_reply[3] && !fs.xy_e_remaining);
+    GPIOE->IDR|=BIT(12);
+    motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,900);
+    assert(!cm.active && fs.pad_homed && !fs.pad_z);
+    GPIOE->IDR&=~BIT(12);pad_adc(994);
+    pad_command(10,0,18000,++*seq);
+    assert(fs.pad_ceiling==18000 && !factory_reply[3]);
+}
+
+static void pad_sweep_owner(void) {
+    unsigned seq;
+    uint32_t sweep=BIT(3)|BIT(4);
+    pad_sweep_setup(&seq);
+    motion(1,3,100,100,0,0,320,10,1000,sweep,sweep,0,901);
+    assert(!cm.active && !fs.pad_contact_ready); // A manually closed input cannot qualify.
+    GPIOC->IDR&=~BIT(14);
+    motion(1,3,100,100,0,0,320,10,1000,sweep,sweep,0,902);
+    assert(!cm.active && !fs.pad_contact_ready);
+    GPIOC->IDR|=BIT(14);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,903);
+    pad_run(1800,994,&seq);
+    assert(cm.hit==BIT(3) && fs.pad_z==1800 && fs.pad_contact_ready);
+
+    uint32_t run=cm.run;
+    motion(1,3,101,100,0,0,320,10,1000,sweep,sweep,0,904);
+    motion(1,3,3841,3841,0,0,320,10,15000,sweep,sweep,0,905);
+    motion(1,3,100,100,0,0,321,10,1000,sweep,sweep,0,906);
+    motion(1,3,100,100,0,0,320,10,1000,sweep,sweep,1,907);
+    motion(1,3,100,100,1,0,320,10,1000,sweep,sweep,0,908);
+    motion(1,3,100,100,0,1,320,10,1000,sweep,sweep,0,909);
+    motion(1,3,100,100,0,0,320,10,1000,BIT(3),BIT(3),0,910);
+    motion(1,3,100,100,0,0,320,10,1000,0,0,0,911);
+    assert(!cm.active && cm.run==run && fs.pad_contact_ready);
+
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,912);
+    assert(cm.active && cm.pad_sweep && !fs.pad_contact_ready && fs.pad_sweep_z==1800);
+    pad_run(123,994,&seq);
+    assert(!cm.active && fs.active && cm.hit==BIT(3) && cm.reason==CR_INPUT);
+    assert(cm.sent[0]==123 && cm.sent[1]==123 && cm.sent[2]==0 && fs.pad_z==1800);
+    run=cm.run;
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,912);
+    assert(!cm.active && cm.run==run && cm.sent[0]==123); // Exact replay reports once.
+    motion(1,3,20,20,0,0,320,10,1000,0,0,0,913);
+    assert(!cm.active); // The pad is open, but Z must first drop below the measured stroke.
+    motion(1,0,0,0,PAD_XY_CLEARANCE_STEPS,0,802,10,1000,0,0,0,914);
+    pad_run(0,994,&seq);
+    assert(fs.pad_z==1800-PAD_XY_CLEARANCE_STEPS);
+    motion(1,0,123,123,0,0,1600,10,1000,0,0,0,915);
+    assert(cm.active && !cm.pad_sweep);
+    pad_run(0,994,&seq);
+
+    motion(1,4,0,0,800,0,802,10,2000,BIT(3),0,0,916);
+    pad_run(PAD_XY_CLEARANCE_STEPS,994,&seq);
+    assert(fs.pad_contact_ready && fs.pad_z==1800);
+    GPIOC->IDR|=BIT(14);control_guard(mock_now);
+    GPIOC->IDR&=~BIT(14);
+    motion(1,1,40,40,0,0,320,10,1000,sweep,sweep,0,917);
+    assert(!cm.active && !fs.pad_contact_ready); // Opening invalidates even if the pin closes again.
+    GPIOC->IDR|=BIT(14);
+    motion(1,0,0,0,PAD_XY_CLEARANCE_STEPS,0,802,10,1000,0,0,0,918);
+    pad_run(0,994,&seq);
+    motion(1,4,0,0,800,0,802,10,2000,BIT(3),0,0,919);
+    pad_run(PAD_XY_CLEARANCE_STEPS,994,&seq);
+    assert(fs.pad_contact_ready && fs.pad_z==1800);
+    motion(1,1,40,40,0,0,320,10,1000,sweep,sweep,0,920);
+    assert(cm.active && cm.pad_sweep);
+    pad_run(0,994,&seq);
+    assert(!cm.active && fs.active && cm.reason==CR_COMPLETE && cm.sent[0]==40 && !cm.hit);
+    motion(1,1,40,40,0,0,320,10,1000,sweep,sweep,0,921);
+    assert(!cm.active); // A bounded miss also consumes this contact's one stroke.
+    GPIOC->IDR|=BIT(14);
+    motion(1,0,0,0,PAD_XY_CLEARANCE_STEPS,0,802,10,1000,0,0,0,922);
+    pad_run(0,994,&seq);
+    motion(1,4,0,0,800,0,802,10,2000,BIT(3),0,0,923);
+    pad_run(PAD_XY_CLEARANCE_STEPS,994,&seq);
+    motion(1,2,40,40,0,0,320,10,1000,sweep,sweep,0,924);
+    assert(cm.active && cm.pad_sweep);
+    pad_adc(900);control_guard(mock_now);
+    assert(!fs.active && fs.reason==4 && !cm.active && !cm.sent[0] && control_mode==CT_OFF);
+
+    pad_sweep_setup(&seq);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,925);
+    pad_run(1800,994,&seq);
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,926);
+    assert(cm.active && cm.pad_sweep);
+    GPIOC->IDR|=BIT(14);
+    pad_run(0,994,&seq);
+    assert(!fs.active && fs.reason==5 && !cm.active && !cm.sent[0] && control_mode==CT_OFF);
+
+    pad_sweep_setup(&seq);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,927);
+    pad_run(1800,994,&seq);
+    motion(1,3,200,200,0,0,320,10,1000,sweep,sweep,0,928);
+    assert(cm.active && cm.pad_sweep);
+    GPIOB->IDR|=BIT(11);
+    pad_run(0,994,&seq);
+    assert(!fs.active && fs.reason==5 && !cm.active && cm.hit==BIT(0) && control_mode==CT_OFF);
+    puts("PASS pad contact sweep: local Z latch, one orthogonal stroke, exact XY at PC14 release, bounded MISS, measured clearance, replay, and zero-step/thermal/endstop guards");
+}
+
 int main(void) {
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();
-    axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();pad_xyz_owner();
+    axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();pad_xyz_owner();pad_sweep_owner();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

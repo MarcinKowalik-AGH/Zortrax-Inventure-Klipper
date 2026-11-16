@@ -21,6 +21,7 @@ class PadDevice(DualNozzleDevice):
         self.calls = []
         self.e_moves = []
         self.pad_moves = []
+        self.sweep_moves = []
         self.cold_switches = []
         self.xy = (0., 0.)
         self.z = 20 * Z_STEPS_PER_MM
@@ -53,6 +54,49 @@ class PadDevice(DualNozzleDevice):
         if row is not None and 'xy_start' in row:
             fraction = self.fraction()
             self.xy = tuple(p + d * fraction for p, d in zip(row['xy_start'], row['xy_delta']))
+            if 'sweep_steps' in row and self.now() >= row['until'] and not row['stopped']:
+                self.contact = not bool(row['hit'] & self.CONTACT)
+
+    def fraction(self):
+        fraction = super().fraction()
+        row = self.motion
+        if row is not None and 'sweep_steps' in row and not row['stopped']:
+            return fraction * row['sweep_steps'] / row['counts'][0]
+        return fraction
+
+    def driver(self, args):
+        result = super().driver(args)
+        if 'sweep_steps' in self.motion and self.now() >= self.motion['until'] and not self.motion['stopped']:
+            result['sent'] = self.motion['sweep_steps'] if args[0] in (0, 1) else 0
+        return result
+
+    def _begin_sweep(self, args):
+        _, directions, a, b, z, e, rate, _, _, _, _, _, token = args
+        tool = self.session['tool']
+        assert self.sealed and self.contact and self.tray and a == b > 0 and not (z or e)
+        sign_a = 1 if directions & 1 else -1
+        sign_b = 1 if directions & 2 else -1
+        step_x = (sign_a + sign_b) / 1280.
+        step_y = (sign_a - sign_b) / 1280.
+        distance, hit = a, 0
+        for sent in range(1, a + 1):
+            point = (self.xy[0] + sent * step_x, self.xy[1] + sent * step_y)
+            if math.dist(point, self.centers[tool]) > 2.5:
+                distance, hit = sent, self.CONTACT
+                break
+        duration = distance / rate + .02
+        self.packets.append(('motion', *args))
+        self.run += 1
+        self.motion = dict(token=token, counts=(a, b, 0, 0), directions=directions,
+            xy_start=self.xy, xy_delta=(a * step_x, b * step_y),
+            sweep_steps=distance, until=self.now() + duration, started=self.now(),
+            duration=duration, stopped=False, home=False, hit=hit)
+        self.sweep_moves.append(dict(tool=tool, start=self.xy, sent=distance, planned=a,
+                                     hit=hit, z=self.z))
+        self.motion_starts.append(dict(t=self.now(), arguments=tuple(args),
+            duty=(self.output(6)['duty'], self.output(7)['duty']),
+            temperatures=tuple(self.h.temperatures[:2])))
+        return super().move([0, *args[1:]])
 
     def query_factory(self, args):
         self.calls.append(tuple(args))
@@ -97,6 +141,8 @@ class PadDevice(DualNozzleDevice):
         _, directions, a, b, z, e, _, _, _, mask, value, _, _ = args
         origin = self.xy
         tool = self.session['tool']
+        if (a or b) and mask == value == self.CONTACT | self.TRAY:
+            return self._begin_sweep(args)
         inside_pad = math.dist(origin, self.centers[tool]) <= 2.5
         if e:
             assert not self.sealed and not self.contact and not any((a, b, z))
@@ -134,7 +180,7 @@ class PadDevice(DualNozzleDevice):
 
 
 class NozzlePadHostTests(unittest.TestCase):
-    settings = dict(ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30, T1_Z_MAX=137.20,
+    settings = dict(SCAN='TAP', ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30, T1_Z_MAX=137.20,
                     T0_TARGET=240, T1_TARGET=235, T0_RETRACT_MM=20, T1_RETRACT_MM=15)
 
     def setUp(self):
@@ -237,7 +283,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         device = host.device
         device.hot = (160., 160.)
-        started = self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+        started = self.cmd(host, 'START', SCAN='TAP', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                            T0_Z_MAX=137.30, T1_Z_MAX=137.20)
         self.assertEqual(started['hot_targets_c'], {'T0': 160., 'T1': 160.})
         self.assertEqual([heater['target'] for heater in host.load_test_context['factory']['dual_heaters']],
@@ -256,7 +302,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
 
     def test_empty_nozzles_reject_filament_preparation_arguments_before_actuation(self):
-        settings = dict(PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+        settings = dict(SCAN='TAP', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                         T0_Z_MAX=137.30, T1_Z_MAX=137.20)
         for argument, value in (('T0_TARGET', 200), ('T1_TARGET', 160),
                                 ('T0_RETRACT_MM', 0), ('T1_RETRACT_MM', 5)):
@@ -268,6 +314,54 @@ class NozzlePadHostTests(unittest.TestCase):
                 self.assertEqual(host.device.motion_starts, [])
                 self.assertFalse(host.device.output(6)['duty'])
                 self.assertFalse(host.device.output(7)['duty'])
+
+    def test_default_sweep_finds_edges_from_actual_partial_xy_steps(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.hot = (160., 160.)
+        self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual(device.e_moves, [])
+        self.assertTrue(device.pad_moves)
+        self.assertTrue(all(inside for _, _, _, inside in device.pad_moves))
+        self.assertEqual([move['tool'] for move in device.sweep_moves], [0]*8 + [1]*8 + [0]*8)
+        self.assertTrue(all(move['hit'] == device.CONTACT and 0 < move['sent'] < move['planned']
+                            and move['z'] == device.touch_heights[move['tool']]
+                            for move in device.sweep_moves))
+        for name, tool in (('T0', 0), ('T1', 1), ('T0_RETURN', 0)):
+            center = result['measurements'][name]['center_xy_mm']
+            self.assertLess(math.dist(center, device.centers[tool]), .005)
+        self.assertAlmostEqual(result['candidate']['t1_offset_mm']['X'], 10.79, delta=.005)
+        self.assertAlmostEqual(result['candidate']['t1_offset_mm']['Y'], .15, delta=.005)
+        self.assertAlmostEqual(result['candidate']['t1_lower_by_mm'], .12, delta=.005)
+
+    def test_sweep_requires_its_abi_before_actuation(self):
+        host = self.host()
+        with self.assertRaisesRegex(RuntimeError, 'SCAN=SWEEP requires'):
+            self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                     T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.assertEqual(host.device.calls, [])
+        self.assertEqual(host.device.motion_starts, [])
+        self.assertFalse(host.device.output(6)['duty'])
+        self.assertFalse(host.device.output(7)['duty'])
+
+    def test_sweep_rejects_tray_stop_or_mismatched_counters_without_advancing_xy(self):
+        host = self.host()
+        move = {'counts': (1920, -1920, 0, 0)}
+        for hit, sent_b in ((16, 960), (8, 959)):
+            with self.subTest(hit=hit, sent_b=sent_b):
+                factory = {'position': [82.8, 68., 0.], 'move': move}
+                drivers = {'A': {'sent': 960, 'direction': 1},
+                           'B': {'sent': sent_b, 'direction': 0},
+                           'Z': {'sent': 0}, 'E': {'sent': 0}}
+                row = dict(reason='stop_input', phase='done', hit=hit, drivers=drivers)
+                with self.assertRaisesRegex(ValueError, 'Unexpected pad sweep terminal state'):
+                    host._factory_pad_sweep_result(factory, move, row)
+                self.assertEqual(factory['position'], [82.8, 68., 0.])
 
     def test_verify_t0_only_arms_the_surveyed_tool_and_cannot_save(self):
         host = self.host()

@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
-  "host_module_sha256": "91bfe909c989034ac7570f18340777c6428afd929e44851b1766ca0f0b4795d5",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-SWEEP",
+  "host_module_sha256": "ba81db6e169799ab98545df5dcf5f6f9bb74798245219667b38a4fe05e4b0651",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 482,
-  "previous_host_commit": "ae39f4690dca28ecf78c3ed77f1cf69437e5c49b",
+  "verified_public_host_tests": 487,
+  "previous_host_commit": "78f48761005f90c194acb00dd907909e8fd41f23",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-SWEEP",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -706,7 +706,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-NOZZLE-PAD",
+    "mcu_release": "RC8-CONTROL-R7-PAD-SWEEP",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -719,13 +719,21 @@
     "storage": "inventure_nozzle_pad.json",
     "documentation": "docs/NOZZLE_PAD_CALIBRATION.md",
     "tested_on_printer": false,
-    "ivb_sha256": "1e928c335957330ce6ba3c401ed74f84d931e5a5c98249ed6f3421f33d6d20e8",
-    "zip_sha256": "31e6281521be4353ff2ffd1e847c8ae7746fb8830ea93b278f66a7cb65995e41",
+    "ivb_sha256": "250f901617673afeb6264829a8a18defe3746bf75539d372e391e12aa259fa4a",
+    "zip_sha256": "6a18636861d7d6b8978217d00dcd28e4f7d86a0a814b97df9fbac7b17b747c14",
     "bootloader": "InventureBoot 1.7",
     "distribution": "ZIP attached in the ChatGPT conversation",
     "preparation": [
       "RETRACT",
       "EMPTY"
-    ]
+    ],
+    "sweep_abi": 1,
+    "scan_methods": [
+      "SWEEP",
+      "TAP"
+    ],
+    "max_sweep_mm": 6,
+    "sweep_speed_mm_s": 0.25,
+    "tap_compatible_mcu_release": "RC8-CONTROL-R7-NOZZLE-PAD"
   }
 }

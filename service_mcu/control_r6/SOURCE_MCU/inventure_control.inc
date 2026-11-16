@@ -10,6 +10,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
 #define CM_FACTORY_TOOL_MASK 3u
@@ -26,6 +27,9 @@ DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 #define PAD_PREP_Z_STEPS (2u*PAD_CHANGE_STEPS)
 #define PAD_MAX_SEEK_STEPS 200500u
 #define PAD_MAX_RETRACT_STEPS 96000u
+#define PAD_CONTACT_MAX_HZ 802u
+#define PAD_SWEEP_MAX_STEPS 3840u
+#define PAD_SWEEP_MAX_HZ 320u
 #define PAD_TEMP_MIN_C 155
 #define PAD_TEMP_MAX_C 165
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
@@ -48,7 +52,7 @@ static struct {
     uint32_t fast_accel_half,fast_cruise_ramp,fast_cruise_period;
     uint32_t fast_peak_ticks,fast_peak_late,fast_last_launch;
     uint16_t stop_mask,stop_value,hit;
-    uint8_t phase,reason,active,high,direction,timer_added,fast_mask,fast_direct,fast_tool;
+    uint8_t phase,reason,active,high,direction,timer_added,fast_mask,fast_direct,fast_tool,pad_sweep;
 } cm;
 static struct timer cm_timer;
 static uint32_t native_z_guard_owner;
@@ -78,11 +82,11 @@ static void sl_guard(uint32_t now);
 static struct {
     uint32_t token,sequence,deadline,lease_ms,duration_ms,budget_steps;
     uint32_t xy_e_remaining,xy_switch_sequence;
-    uint32_t pad_ceiling,pad_xy_ceiling,pad_tool_e[2],pad_command_seq;
+    uint32_t pad_ceiling,pad_xy_ceiling,pad_tool_e[2],pad_command_seq,pad_sweep_z;
     int32_t pad_z;
     int16_t min_c,max_c;
     uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z,nozzle_xy;
-    uint8_t nozzle_pad,pad_homed,pad_sealed,pad_command,pad_preclear;
+    uint8_t nozzle_pad,pad_homed,pad_sealed,pad_command,pad_preclear,pad_contact_ready;
 } fs;
 static void fs_guard(uint32_t now);
 static uint8_t fs_xy_print_position_ready(void);
@@ -248,6 +252,10 @@ static void cm_end(uint8_t reason) {
     if(fs.active && fs.nozzle_pad && !fs.pad_homed && reason==CR_COMPLETE
             && cm.planned[2]==PAD_CHANGE_STEPS && !(cm.direction&BIT(2)))
         fs.pad_preclear=1;
+    if(fs.active && fs.nozzle_pad && fs.pad_homed && fs.pad_ceiling
+            && reason==CR_INPUT && cm.hit==BIT(3) && cm.sent[2]
+            && (cm.direction&BIT(2)) && cm.rate<=PAD_CONTACT_MAX_HZ && !cm.hold_ms)
+        fs.pad_contact_ready=1;
     // Preserve established carriage position between factory segments.
     // A failed/safety/global STOP path always releases the driver.
     if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT)))motor_test_write(GPIOE,BIT(10),0);
@@ -391,6 +399,10 @@ static uint_fast8_t cm_event(struct timer *timer) {
     uint8_t why=!control_ready(now)?CR_HEARTBEAT:
         door_policy_enabled()&&door_closed_mask()!=3?CR_DOOR:
         cm.elapsed>=cm.max_ms?CR_TIME:0;
+    if(!why && cm.pad_sweep) {
+        if(!fs.active || iv9_due(now,fs.deadline))why=CR_HEARTBEAT;
+        else if(!fs_pad_temperature_ok(now))why=CR_THERMAL;
+    }
     uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
     if(!why && hit){cm.hit=hit;why=CR_INPUT;}
     if(why){cm_end(why);return SF_DONE;}
@@ -674,12 +686,27 @@ static uint8_t cm_nozzle_pad_limits(const uint32_t *args,uint32_t *mask,uint32_t
     uint8_t xy=!!(args[2] || args[3]),up=!!(args[1]&BIT(2));
     if(iv9_due(now,fs.deadline) || (GPIOC->IDR&BIT(13)))return 5;
     if((z && (xy || e)) || (xy && e))return 1;
+    if(xy && (*mask&*value&BIT(3))) {
+        // Only a supervised, orthogonal sweep can travel with PC14 closed.
+        // Keep Z frozen at the locally latched contact until PC14 opens.
+        if(*mask!=(BIT(3)|BIT(4)) || *value!=*mask || args[1]>3 || args[2]!=args[3]
+                || args[2]>PAD_SWEEP_MAX_STEPS || args[6]>PAD_SWEEP_MAX_HZ || args[11])
+            return 1;
+        if(!fs.pad_contact_ready || !fs.pad_ceiling || fs.pad_z<=(int32_t)PAD_XY_CLEARANCE_STEPS
+                || cm_input_hit(BIT(0)|BIT(1)|BIT(2)|BIT(3),
+                                BIT(0)|BIT(1)|BIT(2)|BIT(3))
+                || !fs_pad_temperature_ok(now))return 5;
+        *mask|=BIT(0)|BIT(1)|BIT(2);
+        *value=*mask;
+        return 0;
+    }
     if(xy || e) {
         if(!(GPIOC->IDR&BIT(14)))return 5;
         guards|=BIT(3);
     }
     if(xy && fs.pad_sealed && (fs.pad_z<0
-            || (uint32_t)fs.pad_z+PAD_XY_CLEARANCE_STEPS>fs.pad_xy_ceiling))return 5;
+            || (uint32_t)fs.pad_z+PAD_XY_CLEARANCE_STEPS>fs.pad_xy_ceiling
+            || (fs.pad_sweep_z && (uint32_t)fs.pad_z+PAD_XY_CLEARANCE_STEPS>fs.pad_sweep_z)))return 5;
     if(e) {
         if(fs.pad_sealed || !fs.pad_homed || (uint32_t)fs.pad_z>PAD_PREP_Z_STEPS
                 || !!(args[1]&BIT(3))==fs.tool || args[6]>CM_AXIS_E_MAX_HZ
@@ -777,6 +804,12 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
             | (args[4]?BIT(2):0) | (args[5]?BIT(3):0);
         if(!reject && fast && !cm_fast_available(fast_mask))reject=2;
         if(!reject) {
+            cm.pad_sweep=pad && !!(args[2] || args[3]) && !!(stop_mask&stop_value&BIT(3));
+            if(pad) {
+                fs.pad_contact_ready=0;
+                if(cm.pad_sweep && (!fs.pad_sweep_z || (uint32_t)fs.pad_z<fs.pad_sweep_z))
+                    fs.pad_sweep_z=fs.pad_z;
+            }
             cm.run++;cm.token=token;cm.master=master;cm.done=0;cm.direction=args[1];
             for(unsigned i=0;i<4;i++){cm.planned[i]=args[i+2];cm.sent[i]=cm.error[i]=0;}
             cm.rate=args[6];cm.pulse=timer_from_us(args[7]);cm.max_ms=args[8];
@@ -1026,14 +1059,16 @@ static void factory_external_stop(unsigned i) {
 }
 static void fs_guard(uint32_t now) {
     if(!fs.active)return;
+    if(fs.pad_contact_ready && (GPIOC->IDR&BIT(14)))fs.pad_contact_ready=0;
+    uint8_t pad_probe=fs.nozzle_pad && cm.active
+        && (cm.pad_sweep || (fs.pad_sealed && cm.planned[2] && (cm.direction&BIT(2))));
     uint8_t why=0;
     if(!control_ready(now))why=6;
     else if(iv9_due(now,fs.deadline))why=3;
     else if(!fs_nozzle_temperature_ok(fs.tool,now,fs.mode!=IVT_STOP || (cm.active && cm.planned[3]))
             || (fs.dual_nozzle_z && !fs_nozzle_temperature_ok(1-fs.tool,now,0))
-            || (fs.nozzle_pad && cm.active && ((cm.planned[3] && !cm_axis_e_ready(fs.tool,now))
-                || (fs.pad_sealed && cm.planned[2] && (cm.direction&BIT(2))
-                    && !fs_pad_temperature_ok(now))))
+            || (fs.nozzle_pad && cm.active && cm.planned[3] && !cm_axis_e_ready(fs.tool,now))
+            || (pad_probe && !fs_pad_temperature_ok(now))
             || !control_sensors_valid(control_guard_mask|31,now))why=4;
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
             || transport_selected!=fs.tool || transport[fs.tool].fault
@@ -1041,7 +1076,8 @@ static void fs_guard(uint32_t now) {
             || (fs.dual_nozzle_z && (GPIOC->IDR&BIT(13)))
             || (fs.nozzle_pad && ((fs.pad_homed && fs.pad_z<0)
                 || (cm.phase==CM_DONE && cm.reason==CR_INPUT
-                    && ((cm.hit&BIT(4)) || ((cm.hit&BIT(3)) && !cm.planned[2])))))
+                    && ((cm.hit&BIT(4)) || (cm.pad_sweep && (cm.hit!=BIT(3) || !cm.sent[0]))
+                        || ((cm.hit&BIT(3)) && !cm.planned[2] && !cm.pad_sweep)))))
             || (fs.nozzle_xy && cm.planned[3] && ((cm.active && !fs_xy_print_position_ready())
                 || (cm.phase==CM_DONE && cm.reason==CR_INPUT))))why=5;
     if(why){control_stop_all();fs.reason=why;}
@@ -1128,6 +1164,7 @@ void command_inventure_factory_session(uint32_t *args) {
             fs.nozzle_xy=xy;fs.xy_e_remaining=budget;fs.xy_switch_sequence=0;
             fs.nozzle_pad=pad;fs.pad_z=0;fs.pad_homed=0;fs.pad_preclear=0;fs.pad_sealed=0;
             fs.pad_ceiling=fs.pad_xy_ceiling=0;fs.pad_command=0;fs.pad_command_seq=0;
+            fs.pad_sweep_z=0;fs.pad_contact_ready=0;
             fs.pad_tool_e[0]=fs.pad_tool_e[1]=0;
             fs_configure_tool(tool);
             cm.phase=CM_IDLE;cm.reason=CR_NONE;
@@ -1179,6 +1216,7 @@ void command_inventure_factory_session(uint32_t *args) {
                 || fs.pad_ceiling || cm.active || zh_active() || !zh_contact_open()
                 || !fs_pad_temperature_ok(now)))reject=3;
         else {
+            fs.pad_contact_ready=0;fs.pad_sweep_z=0;
             if(action==9) {
                 transport_stop_channel(fs.tool);
                 fs_configure_tool(tool);

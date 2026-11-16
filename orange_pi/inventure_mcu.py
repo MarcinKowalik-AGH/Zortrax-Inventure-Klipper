@@ -13,10 +13,11 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-NOZZLE-PAD-EMPTY'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-SWEEP'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
+NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
 NOZZLE_PAD_TEMPERATURE = 160.
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
@@ -487,6 +488,7 @@ class InventureMCU:
         self.nozzle_z_dual_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_Z_DUAL_ABI',0))
         self.nozzle_xy_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_XY_ABI',0))
         self.nozzle_pad_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_ABI',0))
+        self.nozzle_pad_sweep_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_ABI',0))
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
@@ -1663,6 +1665,7 @@ class InventureMCU:
             'nozzle_z_dual_abi':getattr(self,'nozzle_z_dual_abi',0),
             'nozzle_xy_abi':getattr(self,'nozzle_xy_abi',0),
             'nozzle_pad_abi':getattr(self,'nozzle_pad_abi',0),
+            'nozzle_pad_sweep_abi':getattr(self,'nozzle_pad_sweep_abi',0),
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
@@ -2840,7 +2843,7 @@ class InventureMCU:
             state={key:run.get(key) for key in ('phase','run_id','error','mode','measurements',
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
                    'retract_e_steps','saved_file')}
-            state['prep']=run['params']['prep']
+            state.update(prep=run['params']['prep'],scan=run['params']['scan'])
             batch=getattr(self,'nozzle_z_context',None)
             if batch is not None and batch.get('pad') is run:
                 f=(batch.get('child') or {}).get('factory') or {}
@@ -2872,6 +2875,7 @@ class InventureMCU:
             path=config.with_name('inventure_nozzle_pad.json')
             record={key:run[key] for key in ('run_id','measurement_target_c','sample_temperatures_c',
                                            'measurements','candidate','retract_e_steps')}
+            record.update(prep=run['params']['prep'],scan=run['params']['scan'])
             try:self._write_calibration_file(path,dict(record,schema=1))
             except OSError as exc:raise gcmd.error(str(exc))
             run.update(phase='saved',saved_file=str(path))
@@ -2887,6 +2891,8 @@ class InventureMCU:
         if batch is not None:raise gcmd.error('A nozzle calibration is already active')
         try:
             params=pad_xyz_parameters(gcmd)
+            if params['scan']=='SWEEP' and getattr(self,'nozzle_pad_sweep_abi',0)!=1:
+                raise ValueError('SCAN=SWEEP requires the '+NOZZLE_PAD_SWEEP_RELEASE+' MCU')
             budget=pad_xyz_e_budget(params)
             plans=self._nozzle_probe_plans(gcmd,(0,1),pad=params,residual=self._read_nozzle_xy_offsets())
             self._feeder_service_preflight()
@@ -3467,11 +3473,12 @@ class InventureMCU:
         return dict(row)
 
     def _factory_begin_move(self,context,action):
-        from .inventure_factory_core import MAX_MASTER_RATE,FACTORY_MOTION_MAX_RATE
+        from .inventure_factory_core import MAX_MASTER_RATE,FACTORY_MOTION_MAX_RATE,XY_STEPS_PER_MM
         f=context['factory'];p=f.get('motion_parameters',f['parameters']);pos=f['position']
         releasing=action['kind']=='home_release'
         home=action['kind']=='home' or releasing
         probe=action['kind']=='z_contact_move'
+        sweep=action['kind']=='move' and action.get('stage')=='pad_sweep'
         e=action.get('e',0.);x=action.get('x',pos[0]);y=action.get('y',pos[1])
         z=pos[2];mask=0
         if probe:
@@ -3510,12 +3517,26 @@ class InventureMCU:
                     raise ValueError('Unexpected pad traverse')
                 self._z_home_inputs({'nozzle_contact':1})
                 mask,stop_value=8|16,16
+            elif sweep:
+                from .inventure_nozzle_xyz import PAD_MAX_SWEEP_MM,PAD_MAX_SWEEP_SPEED
+                if ('pad_budget' not in f or not f.get('pad_measurement') or not f['reference_valid']
+                        or not f['selection_commanded'] or getattr(self,'nozzle_pad_sweep_abi',0)!=1
+                        or e
+                        or not 0.<action['speed']<=PAD_MAX_SWEEP_SPEED):
+                    raise ValueError('Unexpected pad contact sweep')
+                self._z_home_inputs({'nozzle_contact':0,'z_bottom':0})
+                if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
+                mask=stop_value=8|16
         counts=(round((dx+dy)*640),round((dx-dy)*640),action['steps'] if probe else round(dz*802),
                 round(e*960)*(1 if context['tool'] else -1))
         master=max(map(abs,counts))
+        if sweep and (not 0<master<=round(PAD_MAX_SWEEP_MM*XY_STEPS_PER_MM)
+                      or abs(counts[0])!=abs(counts[1])):
+            raise ValueError('Pad contact sweep is outside the MCU stroke limit')
         if not master:return dict(f['snapshot'],ok=True,sent_steps=0)
         speed=action['speed']
-        requested_rate=max(1,math.ceil(Z_STEPS_PER_MM*speed if probe else master*speed/length))
+        if sweep:requested_rate=math.ceil(XY_STEPS_PER_MM*speed)
+        else:requested_rate=max(1,math.ceil(Z_STEPS_PER_MM*speed if probe else master*speed/length))
         fast_xy=(p['speed_profile']=='OEM' and not home and (counts[0] or counts[1])
                  and requested_rate>MAX_MASTER_RATE)
         if fast_xy and (not f['session'] or requested_rate>FACTORY_MOTION_MAX_RATE):
@@ -3612,6 +3633,11 @@ class InventureMCU:
             result['end_raw']=self._z_home_inputs({})
             if self.load_test_context is not context:raise ValueError('Z reference was stopped')
             return result
+        if a.get('stage')=='pad_sweep':
+            if row['active']:
+                if self.reactor.monotonic()>=m['deadline']:raise ValueError('Pad sweep deadline exceeded')
+                return None
+            return self._factory_pad_sweep_result(f,m,row)
         # Sample after a completed move. An edge at the last E step can
         # arrive after the tick's initial lease renewal.
         snap=self._factory_session(context) if not row['active'] and not m['home'] else f['snapshot']
@@ -3661,6 +3687,29 @@ class InventureMCU:
             raise ValueError('Factory motion stopped: '+row['reason'])
         f['move']=None
         return dict(snap,ok=ok,sent_steps=m['accounted'])
+
+    @staticmethod
+    def _factory_pad_sweep_result(factory,move,row):
+        from .inventure_factory_core import XY_STEPS_PER_MM
+        planned_a,planned_b=move['counts'][:2]
+        a,b=(row['drivers'][name] for name in ('A','B'))
+        sent=a['sent']
+        reason,hit=row['reason'],row['hit']
+        expected_stop=reason=='stop_input' and hit==8
+        exhausted=reason=='completed' and not hit and sent==abs(planned_a)
+        if (row['phase']!='done' or not (expected_stop or exhausted)
+                or not 0<=sent==b['sent']<=abs(planned_a)
+                or abs(planned_a)!=abs(planned_b)
+                or a['direction']!=int(planned_a>0) or b['direction']!=int(planned_b>0)
+                or row['drivers']['Z']['sent'] or row['drivers']['E']['sent']):
+            raise ValueError('Unexpected pad sweep terminal state: %s, hit=%d'%(reason,hit))
+        signed_a=sent if planned_a>0 else -sent
+        signed_b=sent if planned_b>0 else -sent
+        position=factory['position']
+        position[0]+=(signed_a+signed_b)/(2.*XY_STEPS_PER_MM)
+        position[1]+=(signed_a-signed_b)/(2.*XY_STEPS_PER_MM)
+        factory['move']=None
+        return dict(ok=True,reason=reason,hit=hit,sent_steps=sent,position=position[:2])
 
     def _dual_nozzle_heat_start(self,context,now):
         f=context['factory']

@@ -3,9 +3,10 @@
 import math
 import unittest
 
-from orange_pi.inventure_factory_core import FactoryError, parameters
+from orange_pi.inventure_factory_core import FactoryError, XY_STEPS_PER_MM, parameters
 from orange_pi.inventure_nozzle_xyz import (
-    NozzleXYZProgram, PAD_MAX_Z_SPEED, pad_xyz_e_budget, pad_xyz_parameters,
+    NozzleXYZProgram, PAD_MAX_SWEEP_MM, PAD_MAX_SWEEP_SPEED, PAD_MAX_Z_SPEED,
+    PAD_MIN_SWEEP_CLEARANCE_STEPS, pad_xyz_e_budget, pad_xyz_parameters,
 )
 from orange_pi.inventure_z_home import (
     NOZZLE_CONTACT, NOZZLE_Z_CLEARANCE_STEPS, Z_BOTTOM, Z_STEPS_PER_MM, z_home_parameters,
@@ -31,6 +32,10 @@ class SimulatedPad:
         self.arms = []
         self.centers = ((82.92, 67.91), (72.04, 68.01), (82.935, 67.90))
         self.contacts = [round(z * Z_STEPS_PER_MM) for z in (139.2, 139., 139.21)]
+        self.scan = xyz['scan']
+        self.contact_plane = None
+        self.swept = False
+        self.sweep_transient = False
         self.unbounded_pad = False
         self.transient = False
 
@@ -55,10 +60,14 @@ class SimulatedPad:
         if direction > 0 and self.ceiling is not None and target > self.ceiling:
             raise AssertionError('Tapping exceeded absolute qualified cap')
         contact = self.contacts[len(self.arms) - 1]
+        if self.scan == 'SWEEP' and direction > 0 and target >= contact and not self._inside():
+            raise AssertionError('Sweep attempted high Z outside the pad')
         if (mask & NOZZLE_CONTACT and self._inside() and
                 ((steps > 0 and not value & NOZZLE_CONTACT and self.position < contact <= target)
                  or (steps < 0 and value & NOZZLE_CONTACT and target < contact <= self.position))):
             sent, triggered = abs(self.position - (contact if steps > 0 else contact - 1)), NOZZLE_CONTACT
+            if steps > 0:
+                self.contact_plane = contact
         if mask & Z_BOTTOM and value & Z_BOTTOM and target <= 0:
             if self.position <= sent:
                 sent, triggered = self.position, Z_BOTTOM
@@ -69,6 +78,28 @@ class SimulatedPad:
             raw['nozzle_contact'] = 1
         return dict(sent_steps=sent, hit=triggered,
                     reason='stop_input' if triggered else 'completed', end_raw=raw)
+
+    def _sweep(self, action):
+        if (self._inputs()['nozzle_contact'] or self.position != self.contact_plane
+                or action['e'] or action['speed'] > PAD_MAX_SWEEP_SPEED):
+            raise AssertionError('Sweep must start at the first stable contact')
+        start, target = (tuple(round(v * XY_STEPS_PER_MM) for v in point)
+                         for point in (self.xy, (action['x'], action['y'])))
+        axes = [axis for axis in (0, 1) if start[axis] != target[axis]]
+        if len(axes) != 1:
+            raise AssertionError('Sweep must move along one axis')
+        axis = axes[0]
+        step = 1 if target[axis] > start[axis] else -1
+        if abs(target[axis] - start[axis]) > PAD_MAX_SWEEP_MM * XY_STEPS_PER_MM:
+            raise AssertionError('Sweep exceeded the hard span')
+        position = list(start)
+        for value in range(start[axis]+step, target[axis]+step, step):
+            position[axis] = value
+            self.xy = tuple(v / XY_STEPS_PER_MM for v in position)
+            if self._inputs()['nozzle_contact']:
+                self.swept = True
+                return dict(ok=True, reason='stop_input', hit=NOZZLE_CONTACT, position=self.xy)
+        return dict(ok=True, reason='completed', hit=0, position=self.xy)
 
     def run(self):
         reply = None
@@ -89,13 +120,24 @@ class SimulatedPad:
                 if self.tool != action['tool']:
                     raise AssertionError('Wrong tool at arm')
                 self.ceiling = action['ceiling_steps']
+                self.contact_plane = None
                 self.arms.append(self.ceiling)
             elif kind in ('z_inputs', 'z_verify_open'):
                 reply = self._inputs()
+                if kind == 'z_verify_open' and self.swept:
+                    self.swept = False
+                    if self.sweep_transient:
+                        reply['nozzle_contact'] = 0
             elif kind == 'move':
+                if action.get('stage') == 'pad_sweep':
+                    reply = self._sweep(action)
+                    continue
                 if action.get('stage') == 'pad_travel':
                     if self.ceiling - self.position < round(.5 * Z_STEPS_PER_MM) or not self._inputs()['nozzle_contact']:
                         raise AssertionError('Pad lateral move lacks clearance')
+                    if self.scan == 'SWEEP' and self.contact_plane is not None:
+                        if self.contact_plane - self.position < PAD_MIN_SWEEP_CLEARANCE_STEPS:
+                            raise AssertionError('Return to center exceeds measured clearance plane')
                 self.xy = (action['x'], action['y'])
             elif kind == 'z_contact_move':
                 reply = self._motion(action)
@@ -119,6 +161,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         ])
         self.assertEqual(list(result['measurements']), ['T0', 'T1', 'T0_RETURN'])
         for (key, measured), true_center in zip(result['measurements'].items(), model.centers):
+            self.assertEqual(measured['scan_method'], 'SWEEP')
             self.assertLess(math.dist(measured['center_xy_mm'], true_center), .02, key)
             self.assertLess(max(abs(d - 5.1) for d in measured['electrical_diameter_mm']), .04)
         candidate = result['candidate']
@@ -166,8 +209,9 @@ class NozzleXYZCoreTests(unittest.TestCase):
                 self.assertEqual([phase for phase in phases if '_WIPE_' in phase], wipes)
 
     def test_blocked_edge_and_transient_stop_without_extra_lateral_move(self):
-        for field, expected in [('unbounded_pad', 'outside the qualified scan box'),
-                                ('transient', 'Unstable PC14 response')]:
+        for field, expected in [('unbounded_pad', 'did not find a stable PC14 opening'),
+                                ('transient', 'No stable PC14 contact'),
+                                ('sweep_transient', 'did not find a stable PC14 opening')]:
             with self.subTest(field=field):
                 model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
                 setattr(model, field, True)
@@ -177,6 +221,22 @@ class NozzleXYZCoreTests(unittest.TestCase):
                 _, _, last = model.trace[-1]
                 self.assertEqual(last['kind'], 'z_contact_move')
                 self.assertLess(last['steps'], 0)
+
+    def test_sweep_counts_and_retract_uses_measured_plane(self):
+        xyz = pad_xyz_parameters(dict(PARAMETERS, MODE='VERIFY_T0', Z_CLEARANCE_MM=.5))
+        model = SimulatedPad(xyz)
+        result = model.run()
+        sweeps = [pos for pos, _, action in model.trace if action.get('stage') == 'pad_sweep']
+        self.assertEqual(sweeps, [model.contacts[0]] * 8)
+        self.assertEqual(result['measurements']['T0']['scan_method'], 'SWEEP')
+
+    def test_explicit_legacy_tap_keeps_point_to_point_probe(self):
+        xyz = pad_xyz_parameters(dict(PARAMETERS, MODE='VERIFY_T0', SCAN='TAP'))
+        self.assertEqual(xyz['z_tap_speed'], .8)
+        model = SimulatedPad(xyz)
+        result = model.run()
+        self.assertEqual(result['measurements']['T0']['scan_method'], 'TAP')
+        self.assertFalse(any(action.get('stage') == 'pad_sweep' for _, _, action in model.trace))
 
     def test_reseat_drift_rejects_candidate(self):
         model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
