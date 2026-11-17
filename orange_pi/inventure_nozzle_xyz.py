@@ -15,8 +15,8 @@ PAD_TEMPERATURE_C = 160.
 PAD_TRAVEL_SPEED = 8.
 PAD_MAX_SWEEP_MM = 6.
 PAD_MAX_SWEEP_SPEED = .5
-PAD_MIN_COLD_SWEEP_STEPS = round(.25 * XY_STEPS_PER_MM)
-PAD_COLD_MAX_UNCERTAIN_TAPS = 6
+PAD_MIN_SWEEP_STEPS = round(.25 * XY_STEPS_PER_MM)
+PAD_MAX_UNCERTAIN_TAPS = 6
 PAD_MIN_SWEEP_CLEARANCE_STEPS = Z_STEPS_PER_MM // 2
 PAD_EDGE_TAP_HEADROOM_STEPS = round(.05 * Z_STEPS_PER_MM)
 PAD_MAX_Z_SPEED = 3.9
@@ -85,7 +85,7 @@ def pad_xyz_parameters(gcmd, center_only=False):
         pad_diameter_mm=diameter,
         scan_radius_mm=number('SCAN_RADIUS_MM', scan_radius, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
-        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .1 if center_only else .02, .005, .1),
+        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .1 if scan == 'SWEEP' else .02, .005, .1),
         z_clearance_mm=clearance,
         z_tap_speed=number('Z_TAP_SPEED', .25 if scan == 'SWEEP' else .8, .2, 1.),
         xy_repeat_mm=number('XY_REPEAT_MM', .08, .01, .25),
@@ -179,17 +179,18 @@ class NozzleXYZProgram(ZHomeProgram):
         missed = not hit and raw['nozzle_contact'] == 1 and self.z_steps == ceiling
         return closed, missed
 
-    def _cold_tap(self, point, safe_z, ceiling, tap_speed):
+    def _edge_tap(self, point, safe_z, ceiling, tap_speed):
         misses = 0
         for _ in range(2):
             closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed, settle=True)
+            height = self.z_steps
             yield from self._open_z_at(safe_z, allow_closed=True)
             if closed:
-                return True
+                return True, height
             misses += missed
         # Two ascents to the limit with no PC14 latch qualify an open point.
         # A brief closure followed by a miss provides no edge information.
-        return False if misses == 2 else None
+        return (False if misses == 2 else None), None
 
     def _tap(self, point, safe_z, ceiling, tap_speed, release=False):
         closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed)
@@ -215,13 +216,14 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('PC14 release was not repeatable at pad center')
         return opening
 
-    def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed, cold=False):
-        tap = self._cold_tap if cold else self._tap
-
+    def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed, confirm=False):
         def contact(value):
             xy = list(origin)
             xy[axis] = value
-            return (yield from tap(tuple(xy), safe_z, ceiling, tap_speed))
+            if confirm:
+                state, _ = yield from self._edge_tap(xy, safe_z, ceiling, tap_speed)
+                return state
+            return (yield from self._tap(xy, safe_z, ceiling, tap_speed))
 
         inside = origin[axis]
         endpoint = list(origin)
@@ -247,7 +249,7 @@ class NozzleXYZProgram(ZHomeProgram):
                 raise FactoryError('PC14 nie potwierdził rozwarcia przy granicy skanu',
                                    direction=label, point_mm=_xy_mm(endpoint))
         elif state is True:
-            if cold:
+            if confirm:
                 raise FactoryError('PC14 nadal zwarty na końcu zakresu', point_mm=_xy_mm(endpoint))
             raise FactoryError('Pad edge is outside the qualified scan box',
                                axis=name, point_mm=_xy_mm(endpoint))
@@ -257,7 +259,7 @@ class NozzleXYZProgram(ZHomeProgram):
             lower, upper = sorted((inside, outside))
             known_positions = sorted([lower, upper] + [p for p in uncertain if lower < p < upper])
             left, right = max(zip(known_positions, known_positions[1:]), key=lambda pair: pair[1] - pair[0])
-            if right - left <= 1 or len(uncertain) >= PAD_COLD_MAX_UNCERTAIN_TAPS:
+            if right - left <= 1 or len(uncertain) >= PAD_MAX_UNCERTAIN_TAPS:
                 raise FactoryError('Przedział krawędzi PC14 nadal ma %.2f mm' % ((upper - lower) / XY_STEPS_PER_MM),
                                    direction=label, edge_interval_mm=_xy_mm((lower, upper)))
             midpoint = (left + right) // 2
@@ -272,7 +274,7 @@ class NozzleXYZProgram(ZHomeProgram):
                 inside = midpoint
             else:
                 outside = midpoint
-        if cold:
+        if confirm:
             logging.info('Inventure pad T%d %s: confirmed edge bracket %s mm',
                          self.p['tool'], label, _xy_mm(tuple(sorted((inside, outside)))))
         return (inside + outside) / 2.
@@ -284,15 +286,14 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('Pad sweep start has no room toward its scan boundary')
         target = list(origin)
         target[axis] += direction * span
-        cold = xyz['prep'] == 'COLD'
         leg = ('X', 'Y')[axis] + ('+' if direction == 1 else '-')
-        if cold:
+        if xyz['prep'] == 'COLD':
             yield from self._phase(leg)
         row = None
         x, y = _xy_mm(target)
-        for _ in range(2 if cold else 1):
+        for _ in range(2):
             closed, missed = yield from self._touch(origin, safe_z, ceiling,
-                                                   xyz['z_tap_speed'], settle=cold)
+                                                   xyz['z_tap_speed'], settle=True)
             if closed:
                 contact_z = self.z_steps
                 retreat_z = min(safe_z, contact_z - PAD_MIN_SWEEP_CLEARANCE_STEPS)
@@ -303,7 +304,7 @@ class NozzleXYZProgram(ZHomeProgram):
                                     stage='pad_sweep')
                 if not isinstance(result, dict):
                     raise FactoryError('Missing pad sweep result')
-                if not cold or result.get('reason') != 'pc14_open_before_sweep':
+                if result.get('reason') != 'pc14_open_before_sweep':
                     row = result
                     break
                 logging.info('Inventure pad T%d %s: PC14 opened before the first XY step at %s',
@@ -313,12 +314,9 @@ class NozzleXYZProgram(ZHomeProgram):
             if missed:
                 break
         if row is None:
-            if cold:
-                logging.info('Inventure pad T%d %s: no stable sweep start at %s, z_limit_mm=%.3f',
-                             self.p['tool'], leg, _xy_mm(origin), _z_mm(ceiling))
-                return None, safe_z, None
-            raise FactoryError('No stable PC14 contact at the pad sweep start',
-                               direction=leg, start_mm=_xy_mm(origin))
+            logging.info('Inventure pad T%d %s: no stable sweep start at %s, z_limit_mm=%.3f',
+                         self.p['tool'], leg, _xy_mm(origin), _z_mm(ceiling))
+            return None, safe_z, None
 
         position = row.get('position')
         edge = None
@@ -336,20 +334,16 @@ class NozzleXYZProgram(ZHomeProgram):
                     # Fit midway between the last closed and first open step.
                     edge = reached[axis] - direction / 2.
         yield from self._open_z_at(retreat_z, allow_closed=True)
-        if cold:
-            logging.info('Inventure pad T%d %s sweep: reason=%s hit=%s steps=%s xy=%s z_mm=%.3f',
-                         self.p['tool'], leg, row.get('reason'), row.get('hit'), row.get('sent_steps'), position,
-                         _z_mm(contact_z))
-            if edge is not None and abs(edge - origin[axis]) < PAD_MIN_COLD_SWEEP_STEPS:
-                logging.info('Inventure pad T%d %s: near-start opening at %.4f mm needs verification',
-                             self.p['tool'], leg, edge / XY_STEPS_PER_MM)
-                edge = None
-        elif edge is None:
-            raise FactoryError('Pad sweep did not find a stable PC14 opening within its span',
-                               axis=leg[0], direction=leg, target_mm=_xy_mm(target))
+        logging.info('Inventure pad T%d %s sweep: reason=%s hit=%s steps=%s xy=%s z_mm=%.3f',
+                     self.p['tool'], leg, row.get('reason'), row.get('hit'), row.get('sent_steps'), position,
+                     _z_mm(contact_z))
+        if edge is not None and abs(edge - origin[axis]) < PAD_MIN_SWEEP_STEPS:
+            logging.info('Inventure pad T%d %s: near-start opening at %.4f mm needs verification',
+                         self.p['tool'], leg, edge / XY_STEPS_PER_MM)
+            edge = None
         return edge, retreat_z, contact_z
 
-    def _cold_tap_edges(self, origin, axis, bounds, safe_z, ceiling, xyz):
+    def _tap_edges(self, origin, axis, bounds, safe_z, ceiling, xyz):
         name = ('X', 'Y')[axis]
         yield from self._phase(name + '_TOUCH')
         tap_speed = xyz['z_tap_speed']
@@ -359,7 +353,7 @@ class NozzleXYZProgram(ZHomeProgram):
             anchor[axis] = origin[axis] + offset * XY_STEPS_PER_MM
             if not bounds[0] < anchor[axis] < bounds[1]:
                 continue
-            contact = yield from self._cold_tap(anchor, safe_z, ceiling, tap_speed)
+            contact, anchor_z = yield from self._edge_tap(anchor, safe_z, ceiling, tap_speed)
             logging.info('Inventure pad T%d %s tap seed: xy=%s contact=%s z_limit_mm=%.3f',
                          self.p['tool'], name, _xy_mm(anchor), contact, _z_mm(ceiling))
             if contact is True:
@@ -368,14 +362,22 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('PC14 nie potwierdził zwarcia w próbach osi ' + name,
                                start_mm=_xy_mm(origin), z_limit_mm=_z_mm(ceiling))
 
+        if xyz['prep'] != 'COLD':
+            # Bound hot taps at the measured pad plane before sampling the rim.
+            ceiling = min(ceiling, anchor_z + PAD_EDGE_TAP_HEADROOM_STEPS)
+            safe_z = min(safe_z, anchor_z - PAD_MIN_SWEEP_CLEARANCE_STEPS)
+            if safe_z < PAD_PREP_Z_STEPS:
+                raise FactoryError('Pad contact is too low for the required XY clearance plane')
+            yield from self._open_z_at(safe_z)
+
         pair = [None, None]
         for side in (1, 0):
             yield from self._phase(name + ('+' if side else '-') + '_TOUCH')
             pair[side] = yield from self._edge(anchor, axis, bounds[side], safe_z, ceiling,
-                                             units, tap_speed, cold=True)
-        return pair
+                                             units, tap_speed, confirm=True)
+        return pair, safe_z
 
-    def _scan_cold_axes(self, seed, limits, safe_z, ceiling, xyz):
+    def _scan_axes(self, seed, limits, safe_z, ceiling, xyz):
         origin = list(seed)
         edges = []
         used_taps = False
@@ -399,7 +401,7 @@ class NozzleXYZProgram(ZHomeProgram):
                 # Probe both sides of the same chord. No XY movement takes
                 # place at the contact height during these checks.
                 tap_ceiling = min(ceiling, max(contacts) + PAD_EDGE_TAP_HEADROOM_STEPS) if contacts else ceiling
-                pair = yield from self._cold_tap_edges(origin, axis, bounds, safe_z, tap_ceiling, xyz)
+                pair, safe_z = yield from self._tap_edges(origin, axis, bounds, safe_z, tap_ceiling, xyz)
                 method = 'tap'
                 used_taps = True
             low, high = pair
@@ -415,24 +417,13 @@ class NozzleXYZProgram(ZHomeProgram):
         return edges, tuple(origin), safe_z, used_taps
 
     def _scan_sweeps(self, seed, limits, safe_z, ceiling, xyz):
-        origin = list(seed)
-        centers = []
-        for _ in range(2):
-            edges = []
-            for axis, bounds in enumerate(limits):
-                pair = [None, None]
-                for side in (0, 1):
-                    pair[side], safe_z, _ = yield from self._sweep_edge(
-                        origin, axis, bounds[side], safe_z, ceiling, xyz)
-                low, high = pair
-                edges.append((low, high))
-                origin[axis] = round((low + high) / 2.)
-            centers.append(tuple(origin))
-
-        repeat = max(abs(a - b) for a, b in zip(*centers)) / XY_STEPS_PER_MM
+        _, first, safe_z, first_taps = yield from self._scan_axes(seed, limits, safe_z, ceiling, xyz)
+        edges, origin, safe_z, second_taps = yield from self._scan_axes(first, limits, safe_z, ceiling, xyz)
+        repeat = max(abs(a - b) for a, b in zip(first, origin)) / XY_STEPS_PER_MM
         if repeat > xyz['xy_repeat_mm']:
             raise FactoryError('Pad sweep center did not repeat', xy_center_repeat_mm=repeat)
-        return edges, tuple(origin), safe_z, repeat
+        method = 'SWEEP+TAP' if first_taps or second_taps else 'SWEEP'
+        return edges, origin, safe_z, repeat, method
 
     def _scan_taps(self, origin, limits, safe_z, ceiling, xyz):
         tol = max(1, math.floor(xyz['edge_tolerance_mm'] * XY_STEPS_PER_MM))
@@ -454,10 +445,11 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._pad_xy_move(seed)
         yield from self._open_z_at(safe_z)
         if xyz['scan'] == 'SWEEP':
-            edges, origin, safe_z, repeat = yield from self._scan_sweeps(seed, limits, safe_z, ceiling, xyz)
+            edges, origin, safe_z, repeat, method = yield from self._scan_sweeps(seed, limits, safe_z, ceiling, xyz)
         else:
             edges, origin = yield from self._scan_taps(seed, limits, safe_z, ceiling, xyz)
             repeat = None
+            method = 'TAP'
 
         widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
         diameter = xyz['pad_diameter_mm']
@@ -479,7 +471,7 @@ class NozzleXYZProgram(ZHomeProgram):
         return dict(center_xy_mm=_xy_mm(origin),
                     edges_mm=[_xy_mm(pair) for pair in edges],
                     electrical_diameter_mm=widths,
-                    scan_method=xyz['scan'], xy_center_repeat_mm=repeat,
+                    scan_method=method, xy_center_repeat_mm=repeat,
                     z_release_mm_from_pe12=_z_mm(sum(releases) / 2.),
                     z_release_spread_mm=spread)
 
@@ -549,7 +541,7 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._pad_xy_move(seed)
         safe_z = ceiling - round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
         yield from self._open_z_at(safe_z)
-        edges, origin, safe_z, used_taps = yield from self._scan_cold_axes(seed, limits, safe_z, ceiling, xyz)
+        edges, origin, safe_z, used_taps = yield from self._scan_axes(seed, limits, safe_z, ceiling, xyz)
         yield from self._phase('PARK')
         yield from self._open_z_at(min(safe_z, ceiling - 5 * Z_STEPS_PER_MM))
         yield from self._pad_xy_move(origin)

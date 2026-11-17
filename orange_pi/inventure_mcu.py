@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-CENTER-R6'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -3597,11 +3597,9 @@ class InventureMCU:
                         or e
                         or not 0.<action['speed']<=PAD_MAX_SWEEP_SPEED):
                     raise ValueError('Unexpected pad contact sweep')
-                expected={'z_bottom':0,'x_endstop':0,'y_endstop':0} if cold else {
-                    'nozzle_contact':0,'z_bottom':0}
-                raw=self._z_home_inputs(expected)
+                raw=self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})
                 if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
-                if cold and raw['nozzle_contact']==1:
+                if raw['nozzle_contact']==1:
                     return dict(ok=False,reason='pc14_open_before_sweep')
                 mask=stop_value=8|16
         counts=(round((dx+dy)*640),round((dx-dy)*640),action['steps'] if probe else round(dz*802),
@@ -3624,7 +3622,7 @@ class InventureMCU:
         row=self._motion_query(1,counts,rate,2 if fast_xy else 10,
             maximum,mask,stop_value,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
-        if cold and sweep and row['reject']==CONTROL_REJECTS[5]:
+        if sweep and row['reject']==CONTROL_REJECTS[5]:
             # The MCU can see an opening after the host's input read. Retry
             # only a rejected start with fresh open PC14 and clear limits.
             raw=self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})

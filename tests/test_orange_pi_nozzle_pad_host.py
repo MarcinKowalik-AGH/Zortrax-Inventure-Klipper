@@ -223,8 +223,8 @@ class NozzlePadHostTests(unittest.TestCase):
         rows = [line for line in command.lines if line.startswith('V9_NOZZLE_PAD ')]
         return json.loads(rows[-1].split(' ', 1)[1]) if rows else None
 
-    def advance(self, host, predicate):
-        limit = host.reactor.now + 900.
+    def advance(self, host, predicate, timeout=900.):
+        limit = host.reactor.now + timeout
         while not predicate():
             self.assertLess(host.reactor.now, limit, self.cmd(host, 'STATUS'))
             host.reactor.pause(host.reactor.now + .5)
@@ -612,6 +612,32 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertAlmostEqual(result['candidate']['t1_offset_mm']['X'], 10.79, delta=.005)
         self.assertAlmostEqual(result['candidate']['t1_offset_mm']['Y'], .15, delta=.005)
         self.assertAlmostEqual(result['candidate']['t1_lower_by_mm'], .12, delta=.005)
+
+    def test_full_warm_sweep_rechecks_an_early_opening_and_finishes_both_tools(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.contact_radius_mm = 7.6 / 2.
+        device.centers = ((81.70, 68.20), (70.80, 68.70))
+        device.touch_heights = (round(139.25 * Z_STEPS_PER_MM), round(137.65 * Z_STEPS_PER_MM))
+        device.hot = (230., 235.)
+        device.first_sweep_open_steps = 8
+        self.cmd(host, 'START', ACK='PAD_GEOMETRY_MEASURED',
+                 T0_PAD_X=81.70, T0_PAD_Y=68.20, T0_Z_MAX=139.50, T0_TARGET=230, T0_RETRACT_MM=100,
+                 T1_PAD_X=70.80, T1_PAD_Y=68.70, T1_Z_MAX=137.95, T1_TARGET=235, T1_RETRACT_MM=100)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual(result['measurements']['T0']['scan_method'], 'SWEEP+TAP')
+        self.assertEqual([row['tool'] for row in result['sample_temperatures_c']], ['T0', 'T1', 'T0'])
+        self.assertEqual(device.e_moves, [(0, 96000), (1, 96000)])
+        outer_taps = [z for tool, _, z, inside in device.pad_moves if tool == 0 and not inside]
+        self.assertTrue(outer_taps)
+        self.assertLessEqual(max(outer_taps), device.touch_heights[0] + round(.05 * Z_STEPS_PER_MM))
+        self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['X'], -10.9, delta=.015)
+        self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['Y'], .5, delta=.015)
+        self.assertFalse(device.stepper_enabled)
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
 
     def test_sweep_requires_its_abi_before_actuation(self):
         host = self.host()

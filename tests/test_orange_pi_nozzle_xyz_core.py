@@ -5,8 +5,8 @@ import unittest
 
 from orange_pi.inventure_factory_core import FactoryError, XY_STEPS_PER_MM, parameters
 from orange_pi.inventure_nozzle_xyz import (
-    NozzleXYZProgram, PAD_MAX_SWEEP_MM, PAD_MAX_SWEEP_SPEED, PAD_MAX_Z_SPEED,
-    PAD_MIN_SWEEP_CLEARANCE_STEPS, pad_xyz_e_budget, pad_xyz_parameters,
+    NozzleXYZProgram, PAD_EDGE_TAP_HEADROOM_STEPS, PAD_MAX_SWEEP_MM, PAD_MAX_SWEEP_SPEED,
+    PAD_MAX_Z_SPEED, PAD_MIN_SWEEP_CLEARANCE_STEPS, pad_xyz_e_budget, pad_xyz_parameters,
 )
 from orange_pi.inventure_z_home import (
     NOZZLE_CONTACT, NOZZLE_Z_CLEARANCE_STEPS, Z_BOTTOM, Z_STEPS_PER_MM, z_home_parameters,
@@ -37,6 +37,7 @@ class SimulatedPad:
         self.contact_radius_mm = 2.55
         self.contacts = [round(z * Z_STEPS_PER_MM) for z in (139.2, 139., 139.21)]
         self.scan = xyz['scan']
+        self.phase = None
         self.cold = xyz['prep'] == 'COLD'
         self.sweep_without_opening = set()
         self.contact_plane = None
@@ -70,7 +71,9 @@ class SimulatedPad:
             raise AssertionError('Tapping exceeded absolute qualified cap')
         contact = self.contacts[len(self.arms) - 1]
         if self.scan == 'SWEEP' and not self.cold and direction > 0 and target >= contact and not self._inside():
-            raise AssertionError('Sweep attempted high Z outside the pad')
+            if (not self.phase.endswith('_TOUCH') or self.contact_plane is None
+                    or target > self.contact_plane + PAD_EDGE_TAP_HEADROOM_STEPS):
+                raise AssertionError('Hot edge tap exceeded the verified pad plane')
         if (mask & NOZZLE_CONTACT and self._inside() and
                 ((steps > 0 and not value & NOZZLE_CONTACT and self.position < contact <= target)
                  or (steps < 0 and value & NOZZLE_CONTACT and target < contact <= self.position))):
@@ -136,6 +139,8 @@ class SimulatedPad:
                 if kind == 'z_verify_closed' and self.cold_settle_misses:
                     reply['nozzle_contact'] = 1
                     self.cold_settle_misses -= 1
+                if kind == 'z_verify_closed' and self.transient:
+                    reply['nozzle_contact'] = 1
                 if (kind == 'z_verify_closed' and self.cold_intermittent_contact is not None
                         and self.cold_intermittent_contact(self.xy)):
                     reply['nozzle_contact'] = 1
@@ -156,6 +161,8 @@ class SimulatedPad:
                 self.xy = (action['x'], action['y'])
             elif kind == 'z_contact_move':
                 reply = self._motion(action)
+            elif kind == 'phase':
+                self.phase = action['name']
 
 
 class NozzleXYZCoreTests(unittest.TestCase):
@@ -325,10 +332,9 @@ class NozzleXYZCoreTests(unittest.TestCase):
                 self.assertFalse(any('_RETRACT' in phase for phase in phases))
                 self.assertEqual([phase for phase in phases if '_WIPE_' in phase], wipes)
 
-    def test_blocked_edge_and_transient_stop_without_extra_lateral_move(self):
-        for field, expected in [('unbounded_pad', 'did not find a stable PC14 opening'),
-                                ('transient', 'No stable PC14 contact'),
-                                ('sweep_transient', 'did not find a stable PC14 opening')]:
+    def test_unverified_contact_stops_before_the_next_tool(self):
+        for field, expected in [('unbounded_pad', 'PC14 nadal zwarty na końcu zakresu'),
+                                ('transient', 'PC14 nie potwierdził zwarcia')]:
             with self.subTest(field=field):
                 model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
                 setattr(model, field, True)

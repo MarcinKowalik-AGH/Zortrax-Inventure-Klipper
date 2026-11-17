@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-CENTER-R6`. Tryb `CENTER TOOL=T1` korzysta z
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7`. Tryb `CENTER TOOL=T1` korzysta z
 firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
@@ -54,6 +54,11 @@ padem. Przesunięcie karetki po zmianie dyszy z T0 na T1 jest różnicą
 korekta ruchu wynosi `X_T1 − 70,9` i `Y_T1 − 68,2` dla tego pomiaru
 T0. `CENTER` kończy się odczytem diagnostycznym.
 
+W próbie z 17 listopada 2026 T1 zmierzyła środek X70,8 / Y68,7 mm
+z limitem `T1_Z_MAX=137.95`. Dla tej pary zimnych odczytów ruch karetki
+po przełączeniu T0 → T1 wynosi X−10,9 / Y+0,5 mm. Te środki służą
+jako punkty startowe pełnego pomiaru przy 160°C.
+
 Tryb `CENTER` ustala referencję, mechanicznie wybiera wskazaną dyszę i mierzy po kolei
 X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Dla pada
 Ø7 mm akceptuje zmierzoną szerokość styku do 8,5 mm. Czoło dyszy może
@@ -92,10 +97,11 @@ dla T0 i X72,0 / Y68,0 dla T1. Dostępny jest zimny podgląd położenia
 nad polem. [Podgląd i współrzędne](NOZZLE_Z_TEST_R0323.md#pozycje-nad-padem).
 
 Ustal dla każdej mierzonej dyszy górny limit dojazdu w Z od dolnej krańcówki
-PE12. W `SCAN=SWEEP` stół osiąga wysokość styku wyłącznie w punktach
-startowych wewnątrz pola. Dysza przesuwa się nad polem na wysokości
-pierwszego zwarcia. PC14 mierzy ciągłość elektryczną. Nierówność tacki,
-zanieczyszczenie albo przerwa w przewodzeniu mogą zmienić odczyt granicy.
+PE12. W `SCAN=SWEEP` dysza przesuwa się nad polem na wysokości pierwszego
+zwarcia PC14. Przy niepewnej krawędzi pełny pomiar potwierdza ją pionowymi
+dotknięciami tak jak `CENTER`. Przy 160°C dojazdy do krawędzi są ograniczone
+do potwierdzonej wysokości styku plus 0,05 mm i do limitu danej dyszy.
+Stół opada przed każdym przejazdem między punktami.
 `ACK=PAD_GEOMETRY_MEASURED` potwierdza sprawdzenie punktów startowych,
 limitów Z i powierzchni w obszarze skanu. Pierwsza próba na danej geometrii
 powinna objąć tylko T0.
@@ -134,9 +140,11 @@ W `SCAN=TAP` granice są wyznaczane przez pionowe próby zwarcia w szeregu
 pozycji XY. Przed każdym przejazdem XY stół jest obniżany do poziomu
 prześwitu. Bisekcja zawęża przedział między stykiem a jego brakiem.
 
-Przy `PREP=RETRACT` dysze nagrzewają się do temperatury cofania filamentu.
-Po cofnięciu i pierwszym przetarciu obie dysze schładzają się do 160°C.
-Każda dysza ponownie przejeżdża po szczotce przed pomiarem.
+Przy `MODE=FULL PREP=RETRACT` obie dysze nagrzewają się do indywidualnych
+temperatur cofania filamentu. T0 cofa filament nad koszem i przejeżdża po
+szczotce. Po wyborze T1 te same czynności wykonuje T1. Obie dysze schładzają
+się do 160°C. Po stabilizacji następują drugie przetarcie i skan T0, drugie
+przetarcie i skan T1, a potem kontrolny pomiar ponownie osadzonej T0.
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
@@ -193,6 +201,15 @@ załadowania zgodny z zaplanowanym cofnięciem w nowej sesji.
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=FULL SCAN=SWEEP PREP=RETRACT ACK=PAD_GEOMETRY_MEASURED T0_Z_MAX=<Z_mm_T0> T1_Z_MAX=<Z_mm_T1> T0_TARGET=<degC_T0> T1_TARGET=<degC_T1> T0_RETRACT_MM=<mm_T0> T1_RETRACT_MM=<mm_T1>
 ```
 
+Dla zmierzonej tacki i konfiguracji Z-PLA w T0 oraz Z-SUPPORT w T1 przykład
+z cofnięciem obu filamentów o 100 mm wygląda następująco. Limity Z pochodzą
+z prób zimnych obu dysz. Pełny pomiar w tej konfiguracji wymaga odbioru na drukarce.
+
+```gcode
+INVENTURE_CONTROL MODE=SERVICE
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=FULL SCAN=SWEEP PREP=RETRACT ACK=PAD_GEOMETRY_MEASURED T0_PAD_X=81.70 T0_PAD_Y=68.20 T1_PAD_X=70.80 T1_PAD_Y=68.70 T0_Z_MAX=139.50 T1_Z_MAX=137.95 T0_TARGET=230 T1_TARGET=235 T0_RETRACT_MM=100 T1_RETRACT_MM=100 PROCEDURE_TIMEOUT=3600
+```
+
 Dla sprawdzonego wyniesionego pola wybierz `SCAN=TAP` i limity Z
 odpowiednie dla pionowych prób w całym obszarze skanu.
 
@@ -222,7 +239,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `PAD_DIAMETER_MM` | 7 mm dla fabrycznego pada, 5 mm dla osobnego pola w `TAP`. Zakres 2–10 mm | Zmierzona średnica pola używana do kontroli szerokości styku |
 | `SCAN_RADIUS_MM` | 5 mm dla pada Ø7 mm, 3,5 mm dla Ø5 mm. Zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka. Tryb `CENTER` domyślnie używa 5 mm. Pojedynczy przejazd `SWEEP` ma limit 6 mm |
 | `XY_SWEEP_SPEED` | 0,25 mm/s domyślnie, zakres 0,05–0,5 mm/s | Prędkość przejazdu po styku w `SCAN=SWEEP` |
-| `EDGE_TOLERANCE_MM` | 0,02 mm domyślnie, zakres 0,005–0,1 mm | Docelowa szerokość przedziału między stykiem a jego brakiem w `SCAN=TAP` |
+| `EDGE_TOLERANCE_MM` | 0,1 mm w `SWEEP`, 0,02 mm w `TAP`. Zakres 0,005–0,1 mm | Docelowa szerokość przedziału krawędzi przy pionowych dotknięciach |
 | `Z_CLEARANCE_MM` | 1,5 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |
 | `Z_TAP_SPEED` | Domyślnie 0,25 mm/s dla `SWEEP` i 0,8 mm/s dla `TAP`. Zakres 0,2–1 mm/s | Prędkość pionowego podejścia do styku |
 | `RETRACT_SPEED` | 1,6 mm/s domyślnie, zakres 0,5–6 mm/s | Prędkość cofania filamentu podczas przygotowania |
