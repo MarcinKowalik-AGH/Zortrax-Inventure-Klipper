@@ -14,6 +14,8 @@ E_STEPS_PER_MM = 960
 XY_STEPS_PER_MM = 640
 MAX_MASTER_RATE = 20000
 FACTORY_MOTION_MAX_RATE = 125000
+LEGACY_SERVICE_TARGET_MAX_C = 240.
+SERVICE_TARGET_MAX_C = 290.
 OEM_SPEEDS = dict(travel_speed=8000. / 60., purge_speed=3000. / 60.,
                   switch_speed=250. / 60.)
 XY_RELEASE_MM = 5000 / XY_STEPS_PER_MM
@@ -84,13 +86,13 @@ def procedure_modules(operation, tool, speed_profile='SERVICE'):
     return modules
 
 
-def require_heated_target(p, operation):
+def require_heated_target(p, operation, max_target=LEGACY_SERVICE_TARGET_MAX_C):
     if p.get('target_requires_override') and (operation == 'HEAT'
             or 'heat' in PROCEDURES.get(operation, ())):
-        lo, hi = _LIMITS['target']
+        lo, _ = _LIMITS['target']
         raise FactoryError('%s factory target %gC is outside the service range. '
                            'Set a material-appropriate TARGET in %g..%gC.'
-                           % (p['material'], p['oem_material_target_c'], lo, hi))
+                           % (p['material'], p['oem_material_target_c'], lo, max_target))
 
 
 class FactoryError(ValueError):
@@ -152,7 +154,7 @@ _LIMITS = dict(l1_portion=(.1, 100.), l1_budget=(.1, 1000.),
     purge_span=(1., 100.), purge_e_steps=(2, 96000), purge_mm=(.1, 250.),
     clean_after=(0, 1), wipe_y=(-50., 250.), wipe_span=(1., 200.),
     wipe_exit=(0., 100.), park_span=(1., 200.), manual_mm=(.1, 250.), feeder=(0, 1),
-    target=(180., 240.), max_power=(1., 50.), duration=(10., 900.),
+    target=(180., LEGACY_SERVICE_TARGET_MAX_C), max_power=(1., 50.), duration=(10., 900.),
     procedure_timeout=(60., 3600.))
 _CHOICES = {'manual_dir': ('LOAD', 'UNLOAD'), 'material': tuple(_CASSETTE_MATERIALS),
             'xy_input_frame': ('OEM', 'RAW'), 'speed_profile': ('SERVICE', 'OEM')}
@@ -167,7 +169,7 @@ def feeder_budget(p):
     return int(f32(f32(p['feeder_ms'] * f32(11.52)) * f32(p['feeder_k'])))
 
 
-def _validated(values, operation=None):
+def _validated(values, operation=None, max_target=SERVICE_TARGET_MAX_C):
     p = dict(values)
     p['tool'] = _tool(p['tool'])
     for key, choices in _CHOICES.items():
@@ -180,6 +182,8 @@ def _validated(values, operation=None):
     oem = p['speed_profile'] == 'OEM'
     stock_sequence = uses_r0323_sequence(p['tool'], p['speed_profile'])
     for key, (low, high) in _LIMITS.items():
+        if key == 'target':
+            high = max_target
         if oem:
             high = OEM_SPEEDS.get(key, high)
         raw = p[key]
@@ -297,11 +301,11 @@ def profiles(common='{}', t0='{}', t1='{}'):
             layer[normalized] = value
         layers.append(layer)
     for tool in (0, 1):
-        _parameters(tool, dict(layers[0], **layers[tool+1]))
+        _parameters(tool, dict(layers[0], **layers[tool+1]), max_target=SERVICE_TARGET_MAX_C)
     return tuple(layers)
 
 
-def parameters(gcmd, configured=None, operation=None):
+def parameters(gcmd, configured=None, operation=None, *, max_target=LEGACY_SERVICE_TARGET_MAX_C):
     tool = _tool(gcmd.get('TOOL', 'T0'))
     values = {}
     if configured is not None:
@@ -310,10 +314,10 @@ def parameters(gcmd, configured=None, operation=None):
         value = gcmd.get(key.upper(), None)
         if value is not None:
             values[key] = value
-    return _parameters(tool, values, operation)
+    return _parameters(tool, values, operation, max_target=max_target)
 
 
-def _parameters(tool, values, operation=None):
+def _parameters(tool, values, operation=None, *, max_target=LEGACY_SERVICE_TARGET_MAX_C):
     p = defaults(tool)
     oem = str(values.get('speed_profile', p['speed_profile'])).strip().upper() == 'OEM'
     if oem:
@@ -325,7 +329,7 @@ def _parameters(tool, values, operation=None):
     material = str(values.get('material', p['material'])).strip().upper().replace(' ', '-')
     if material in _CASSETTE_MATERIALS:
         stock_target, p['unload_l1'], p['unload_l2'] = _CASSETTE_MATERIALS[material]
-        min_target, max_target = _LIMITS['target']
+        min_target, _ = _LIMITS['target']
         if min_target <= stock_target <= max_target:
             p['target'] = stock_target
         p['target_requires_override'] = ('target' not in values
@@ -343,7 +347,7 @@ def _parameters(tool, values, operation=None):
                 p[key] = float(values[key]) + offset
             except (ValueError, TypeError, OverflowError):
                 raise FactoryError(key.upper() + ' must be finite')
-    return _validated(p, operation)
+    return _validated(p, operation, max_target)
 
 
 def delta32(current, before):

@@ -12,8 +12,9 @@ import struct
 import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
+from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -22,6 +23,7 @@ NOZZLE_PAD_TEMPERATURE = 160.
 NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
 NOZZLE_PAD_COLD_T1_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER-T1'
 NOZZLE_PAD_COLD_MAX = 50
+NOZZLE_HEAT_WINDOW_C = 10.
 AXIS_MOTION_RELEASE = 'RC8-CONTROL-R7-ALL-AXIS-SPEED'
 AXIS_MOTION_COMMAND = ('inventure_axis_motion action=%c directions=%c a=%u b=%u z=%u e=%u '
     'rate=%u pulse_us=%hu max_ms=%u stop_mask=%hu stop_value=%hu hold_ms=%u token=%u tool=%c')
@@ -187,11 +189,11 @@ class R5SharedSensor:
         self.printer=config.get_printer();self.board=board
         self.channel=config.getint('sensor_channel',minval=0,maxval=7)
         self.minimum=self.maximum=None;self.callback=None;self.failed=False
-        board.adc_subscribers[self.channel].append(self._sample)
+        board.shared_adc_sensors[self.channel].append(self)
     def setup_minmax(self,minimum,maximum):self.minimum,self.maximum=minimum,maximum
     def setup_callback(self,callback):self.callback=callback
     def get_report_time_delta(self):return .2
-    def _sample(self,read_time,temperature):
+    def handle_sample(self,read_time,temperature):
         if self.failed:return
         if (not math.isfinite(temperature) or self.minimum is None
                 or not self.minimum<=temperature<=self.maximum):
@@ -261,7 +263,7 @@ class InventureMCU:
         self.uart_status = [{}, {}]
         self.rfid_received = [None,None]
         self.adcs = []
-        self.adc_subscribers = [[] for _ in range(8)]
+        self.shared_adc_sensors = [[] for _ in range(8)]
         self.fans=[{} for _ in range(6)]
         self.fan_received=[None]*6
         self.fan_window_received=[None]*6
@@ -493,6 +495,10 @@ class InventureMCU:
         self.nozzle_pad_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_ABI',0))
         self.nozzle_pad_sweep_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_ABI',0))
         self.nozzle_pad_cold_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_COLD_ABI',0))
+        self.nozzle_service_target_max=float(self.mcu.get_constants().get(
+            'INVENTURE_SERVICE_NOZZLE_TARGET_MAX',LEGACY_SERVICE_TARGET_MAX_C))
+        if not LEGACY_SERVICE_TARGET_MAX_C<=self.nozzle_service_target_max<=SERVICE_TARGET_MAX_C:
+            raise self.printer.config_error('Unexpected MCU service nozzle target limit')
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
         if self.z_edge_abi==1:
@@ -623,9 +629,9 @@ class InventureMCU:
                 pos = bisect.bisect_left(self.thresholds, raw)
                 temperature = self.lut[pos][1] if pos < len(self.lut) else -46
             self.temperatures[index] = temperature if valid else None
-            for cb in self.adc_subscribers[index]:
+            for sensor in self.shared_adc_sensors[index]:
                 if not self.adc_accepting: break
-                cb(read_time + .003, temperature)
+                sensor.handle_sample(read_time + .003, temperature)
     def _ready(self):
         self.connected = True
         if self.p4_abi:
@@ -1671,6 +1677,8 @@ class InventureMCU:
             'nozzle_pad_abi':getattr(self,'nozzle_pad_abi',0),
             'nozzle_pad_sweep_abi':getattr(self,'nozzle_pad_sweep_abi',0),
             'nozzle_pad_cold_abi':getattr(self,'nozzle_pad_cold_abi',0),
+            'nozzle_service_target_max_c':getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C),
+            'native_nozzle_max_temp_c':{'T%d'%tool:self._native_nozzle_max_temp(tool) for tool in range(2)},
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
@@ -2451,6 +2459,22 @@ class InventureMCU:
         self.gcode.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True))
         return result
 
+    def _native_nozzle_max_temp(self,tool):
+        sensors=getattr(self,'shared_adc_sensors',((),()))[tool]
+        return min((sensor.maximum for sensor in sensors if sensor.maximum is not None),default=None)
+
+    def _nozzle_service_cutoff(self,tool,target):
+        board_max=getattr(self,'guard_last',{}).get(self.ADC_PINS[tool],{}).get(
+            'max_c',self.ADC_CEILINGS[tool])
+        native_max=self._native_nozzle_max_temp(tool)
+        maximum=min(board_max,native_max) if native_max is not None else board_max
+        if target+NOZZLE_HEAT_WINDOW_C>maximum:
+            source='Klipper max_temp' if native_max==maximum else 'MCU temperature guard'
+            raise ValueError('T%d target %g C exceeds the allowed service range with %s=%g C '
+                             '(maximum target %g C)'
+                             %(tool,target,source,maximum,maximum-NOZZLE_HEAT_WINDOW_C))
+        return min(round(target+20.),math.floor(maximum))
+
     def _load_test_cancel(self,reason,phase='stopped'):
         # Invalidate before any serial wait. A queued timer cannot renew power
         # or issue another STEP request after the common STOP takes ownership.
@@ -3112,7 +3136,8 @@ class InventureMCU:
             pads[1]=read_pad('T1',(t0_pad[0]+OEM_T0_TO_T1_X_MM-offsets['X'],
                                   t0_pad[1]-offsets['Y']))
         plans={}
-        target_min,target_limit=(190.,240.) if pad is not None else (200.,230. if alignment else 210.)
+        service_max=getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C)
+        target_min,target_limit=(190.,service_max) if pad is not None else (200.,230. if alignment else 210.)
         if pad_empty:target_min=180.
         for index in tools:
             name='T%d'%index
@@ -3121,10 +3146,13 @@ class InventureMCU:
             options=NozzleParameters(name,pads[index])
             if pad is not None and not pad_empty and options.get('TARGET') is None:
                 raise ValueError('Pad calibration requires explicit '+name+'_TARGET for the retract material')
-            p=parameters(options,getattr(self,'procedure_profiles',None))
+            p=parameters(options,getattr(self,'procedure_profiles',None),max_target=target_limit)
             if not target_min<=p['target']<=target_limit or not 1.<=p['max_power']<=40.:
                 raise ValueError('Nozzle calibration TARGET must be %g..%g C and MAX_POWER 1..40 percent'
                                  %(target_min,target_limit))
+            if pad is None or pad['prep']!='COLD':
+                target=NOZZLE_PAD_TEMPERATURE if pad_empty else p['target']
+                p['heater_cutoff']=self._nozzle_service_cutoff(index,target)
             plans[index]=(p,z_home_parameters(options,p,nozzle_test=True))
         return plans
 
@@ -3239,7 +3267,8 @@ class InventureMCU:
             if nozzle_test:
                 p,z_settings=nozzle_parameters
             else:
-                p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation)
+                service_max=getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C)
+                p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation,max_target=service_max)
             z_edges=operation=='HOME_Z' and p['speed_profile']=='OEM'
             if z_home and not nozzle_test:
                 if p['tool']!=0:raise ValueError('Z reference uses the model nozzle TOOL=T0')
@@ -3257,7 +3286,7 @@ class InventureMCU:
                     factory_motion_available=fast_available,
                     z_home_mcu_available=self._z_home_mcu_available(),
                     modules=modules,**settings),sort_keys=True));return
-            if not z_home:require_heated_target(p,operation)
+            if not z_home:require_heated_target(p,operation,service_max)
             if z_edges and not self._z_home_mcu_available():
                 raise ValueError('OEM HOME_Z requires RC8-CONTROL-R7-Z-HOST (MCU Z edge ABI 1)')
             if p['speed_profile']=='OEM' and not fast_available:
@@ -3320,7 +3349,7 @@ class InventureMCU:
             for index,(plan,_) in sorted(self.nozzle_z_context['parameters'].items()):
                 target=plan['target'] if pad_run is None else pad_run['hot_targets_c']['T%d'%index]
                 heaters.append(dict(tool=index,target=target,power=plan['max_power'],
-                                    limit=round(target+20),duty=0,output_token=None))
+                                    limit=plan['heater_cutoff'],duty=0,output_token=None))
             context['factory']['dual_heaters']=heaters
         if alignment:
             context['factory']['xy_budget']=self.nozzle_z_context['alignment']['budget']
@@ -3799,7 +3828,7 @@ class InventureMCU:
             tool=heater['tool']
             temperature,state=self.panel_temperature(tool,now)
             if state!='valid':raise ValueError('T%d ADC is %s at dual nozzle heat start'%(tool,state))
-            if temperature>=heater['target']+10.:
+            if temperature>=heater['target']+NOZZLE_HEAT_WINDOW_C:
                 raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
             heater.update(start_temperature=temperature,
                 pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
@@ -3816,7 +3845,7 @@ class InventureMCU:
         for heater in heaters:
             tool=heater['tool'];target=heater['target']
             temperature,state=self.panel_temperature(tool,now)
-            upper=f['pad_temperature_bounds'][1] if f.get('pad_cooling') else target+10.
+            upper=f['pad_temperature_bounds'][1] if f.get('pad_cooling') else target+NOZZLE_HEAT_WINDOW_C
             if state!='valid':raise ValueError('T%d ADC is %s during dual nozzle heating'%(tool,state))
             if temperature>=upper:
                 raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
@@ -4095,7 +4124,8 @@ class InventureMCU:
                     channel=int(tool[1]),cassette_direction=int(action!='RETRACT'),
                     started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
-            minimum,maximum=(NOZZLE_PAD_TEMPERATURE,NOZZLE_PAD_TEMPERATURE) if pad_empty else (180.,240.)
+            service_max=getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C)
+            minimum,maximum=(NOZZLE_PAD_TEMPERATURE,NOZZLE_PAD_TEMPERATURE) if pad_empty else (180.,service_max)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
                 power=float(gcmd.get('MAX_POWER',40.))
@@ -4111,13 +4141,14 @@ class InventureMCU:
                 if duration<plan['total_steps']/plan['rate']+margin:
                     raise gcmd.error('DURATION is too short for this cassette feed; use DURATION=900')
             try:
+                cutoff=round(target+20.) if cold_pad else self._nozzle_service_cutoff(int(tool[1]),target)
                 self._feeder_service_preflight()
                 baseline=self._cassette_gpio_snapshot()
                 temperature,state=self.panel_temperature(int(tool[1]),self.reactor.monotonic())
                 if state!='valid' or temperature>=target+10:raise ValueError('Nozzle is not ready for controlled heating')
             except Exception as exc:raise gcmd.error(str(exc))
             now=self.reactor.monotonic()
-            context=dict(tool=int(tool[1]),target=target,power=power,limit=round(target+20),
+            context=dict(tool=int(tool[1]),target=target,power=power,limit=cutoff,
                 start=now,deadline=now+300.,hold_duration=duration,hold_started=None,start_temperature=temperature,
                 duty=0,output_token=None,ready_since=None,ready_latched=False,reached_target=False,
                 pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.),

@@ -9,6 +9,7 @@ import tempfile
 import types
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('orange_pi_update',ROOT/'install-orange-pi.py')
@@ -86,6 +87,56 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(len(backups),1);self.assertEqual(backups[0].read_bytes(),self.old)
         self.assertIn(('sudo','systemctl','stop','klipper'),self.calls)
         self.assertTrue(self.active)
+
+    def legacy_nozzle_config(self):
+        data=b''.join(path.read_bytes() for path in sorted((ROOT/'source/parts').glob('part*.bin')))
+        with ZipFile(io.BytesIO(data)) as kit:
+            with ZipFile(io.BytesIO(kit.read('baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip'))) as pinned:
+                (self.script.parent/'configfile.py').write_bytes(
+                    pinned.read('klipper-inventure/klippy/configfile.py'))
+        self.config.write_text('[include heaters.cfg]\n[heater_bed]\nmax_temp: 110\n')
+        heaters=self.config.with_name('heaters.cfg')
+        heaters.write_text(
+            '[extruder]\nheater_pin: inventure_r5:HEATER_T0\nsensor_type: Inventure R5 ADC\n'
+            'sensor_channel: 0\nmax_temp: 220 # legacy Z test\nmin_temp: 0\n\n'
+            '[extruder1]\nheater_pin: inventure_r5:HEATER_T1\nsensor_type: Inventure R5 ADC\n'
+            'sensor_channel: 1\nmax_temp: 220\nmin_temp: 0\n')
+        return heaters
+
+    def test_migrate_legacy_native_nozzle_limits_in_the_active_include(self):
+        heaters=self.legacy_nozzle_config()
+        before=heaters.read_bytes()
+        root_before=self.config.read_bytes()
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(check_only=True,upgrade_nozzle_limits=True)
+        self.assertEqual(heaters.read_bytes(),before)
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(upgrade_nozzle_limits=True)
+            update.update(upgrade_nozzle_limits=True)
+        self.assertEqual(heaters.read_bytes(),before.replace(b'max_temp: 220',b'max_temp: 310'))
+        self.assertEqual(self.config.read_bytes(),root_before)
+        backup,=heaters.parent.glob('heaters.cfg.pre-nozzle-limit-*.bak')
+        self.assertEqual(backup.read_bytes(),before)
+
+    def test_failed_service_start_restores_native_nozzle_limits_and_host(self):
+        heaters=self.legacy_nozzle_config()
+        before=heaters.read_bytes()
+        service=update.service
+        failed=False
+
+        def fail_once(action):
+            nonlocal failed
+            if action=='start' and not failed:
+                failed=True
+                raise subprocess.CalledProcessError(1,['systemctl','start','klipper'])
+            service(action)
+
+        with self.assertRaises(subprocess.CalledProcessError), patch.object(
+                update,'service',side_effect=fail_once), patch('sys.stdout',new=io.StringIO()):
+            update.update(upgrade_nozzle_limits=True)
+        self.assertTrue(self.active)
+        self.assertEqual(heaters.read_bytes(),before)
+        self.assertEqual(self.dest.read_bytes(),self.old)
 
     def test_motor_r1_adapter_and_oled_upgrade_together_in_the_active_stage(self):
         self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_motor_r1.py').read_bytes())

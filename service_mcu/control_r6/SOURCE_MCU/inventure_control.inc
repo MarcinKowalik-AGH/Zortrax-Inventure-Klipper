@@ -23,6 +23,10 @@ DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",2);
 #define CM_AXIS_E_MAX_HZ 9600u
 #define CM_AXIS_E_MIN_C 180
 #define CM_AXIS_E_MAX_C 250
+#define SERVICE_NOZZLE_TARGET_MAX_C 290
+#define SERVICE_NOZZLE_SESSION_MAX_C (SERVICE_NOZZLE_TARGET_MAX_C+10)
+#define SERVICE_NOZZLE_SESSION_MIN_CAP_C (SERVICE_NOZZLE_TARGET_MAX_C-25)
+DECL_CONSTANT("INVENTURE_SERVICE_NOZZLE_TARGET_MAX",SERVICE_NOZZLE_TARGET_MAX_C);
 #define PAD_CHANGE_STEPS 8020u
 #define PAD_XY_CLEARANCE_STEPS 401u
 #define PAD_PREP_Z_STEPS (2u*PAD_CHANGE_STEPS)
@@ -163,13 +167,13 @@ static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     }
     return 1;
 }
-static uint8_t cm_axis_e_ready(unsigned tool,uint32_t now) {
+static uint8_t cm_hot_e_ready(unsigned tool,uint32_t now,int16_t maximum) {
     uint8_t valid;
     int16_t t=control_temp(tool,now,&valid);
     if(co[6+tool].reason>=3 || (co[6+tool].duty
             && (uint32_t)(now-co[6+tool].last_tick)/MS(1)>=co[6+tool].remaining))
         return 0;
-    return valid && t>=CM_AXIS_E_MIN_C && t<CM_AXIS_E_MAX_C
+    return valid && t>=CM_AXIS_E_MIN_C && t<maximum
         && control_sensors_valid(control_guard_mask|31,now);
 }
 static uint8_t control_aux_allowed(void) {
@@ -607,7 +611,8 @@ static void control_guard(uint32_t now) {
         if(!reason && hit && !(cm.pad_sweep && cm.done && hit==BIT(3))) {
             cm.hit=hit;reason=CR_INPUT;
         }
-        if(!reason && cm.fast_direct && cm.planned[3] && !cm_axis_e_ready(cm.fast_tool,now))
+        if(!reason && cm.fast_direct && cm.planned[3]
+                && !cm_hot_e_ready(cm.fast_tool,now,CM_AXIS_E_MAX_C))
             reason=CR_THERMAL;
         if(reason) {
             if(cm.timer_added)sched_del_timer(&cm_timer);
@@ -743,7 +748,7 @@ static uint8_t cm_nozzle_pad_limits(const uint32_t *args,uint32_t *mask,uint32_t
                 || !!(args[1]&BIT(3))==fs.tool || args[6]>CM_AXIS_E_MAX_HZ
                 || e>fs.xy_e_remaining || e>PAD_MAX_RETRACT_STEPS-fs.pad_tool_e[fs.tool])
             return 1;
-        if(!cm_axis_e_ready(fs.tool,now))return 5;
+        if(!cm_hot_e_ready(fs.tool,now,fs.max_c))return 5;
     } else if(z) {
         if(z>PAD_MAX_SEEK_STEPS || args[6]>CM_AXIS_Z_MAX_HZ)return 1;
         if(up) {
@@ -813,7 +818,7 @@ static uint8_t cm_request(uint32_t *args,uint32_t now,uint8_t direct,unsigned to
                                || iv9_due(now,fs.deadline)))))reject=3;
         if(!reject && direct && (fs.active || feeder_running[0] || feeder_running[1]
                 || locks_on[0] || locks_on[1]))reject=2;
-        if(!reject && direct && args[5] && !cm_axis_e_ready(tool,now))reject=5;
+        if(!reject && direct && args[5] && !cm_hot_e_ready(tool,now,CM_AXIS_E_MAX_C))reject=5;
         if(!reject && fs.active && args[5]) {
             if(xy_print) {
                 // The shortest interval between two DDA E or Z pulses is
@@ -1002,7 +1007,8 @@ void command_inventure_load_stream(uint32_t *args) {
                 || tool>1 || channel>1 || e_direction>1 || feeder_direction>1
                 || lease<250 || lease>1500 || !maximum || maximum>600000
                 || maximum<(steps*1000u/rate)+1000u
-                || minimum_c<180 || minimum_c>230 || maximum_c<=minimum_c+5 || maximum_c>250)reject=1;
+                || minimum_c<180 || minimum_c>SERVICE_NOZZLE_SESSION_MIN_CAP_C
+                || maximum_c<=minimum_c+5 || maximum_c>SERVICE_NOZZLE_SESSION_MAX_C)reject=1;
         if(!reject && token==cm.token)reject=4;
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now) || !auxiliary_ready))reject=3;
         if(!reject && (sl.active || fs.active || cm.active || feeder_running[0] || feeder_running[1]
@@ -1101,7 +1107,7 @@ static void fs_guard(uint32_t now) {
     else if(iv9_due(now,fs.deadline))why=3;
     else if(!fs_nozzle_temperature_ok(fs.tool,now,fs.mode!=IVT_STOP || (cm.active && cm.planned[3]))
             || (fs.dual_nozzle_z && !fs_nozzle_temperature_ok(1-fs.tool,now,0))
-            || (fs.nozzle_pad && cm.active && cm.planned[3] && !cm_axis_e_ready(fs.tool,now))
+            || (fs.nozzle_pad && cm.active && cm.planned[3] && !cm_hot_e_ready(fs.tool,now,fs.max_c))
             || ((pad_probe || fs.pad_cold) && !fs_pad_temperature_ok(now))
             || !control_sensors_valid(control_guard_mask|31,now))why=4;
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
@@ -1173,9 +1179,10 @@ void command_inventure_factory_session(uint32_t *args) {
         if(tool>1 || mode>IVT_GATED || monitor>1 || !duration || duration>1500
                 || (pad?budget>2u*PAD_MAX_RETRACT_STEPS:(!budget || budget>960000))
                 || lease<250 || lease>1500 || !token || sequence
-                || (pad?(!cold && minimum!=PAD_TEMP_MIN_C):(minimum<180 || minimum>230))
+                || (pad?(!cold && minimum!=PAD_TEMP_MIN_C)
+                       :(minimum<180 || minimum>(dual?230:SERVICE_NOZZLE_SESSION_MIN_CAP_C)))
                 || (cold && budget)
-                || maximum<=minimum+5 || maximum>250
+                || maximum<=minimum+5 || maximum>(dual && !pad?250:SERVICE_NOZZLE_SESSION_MAX_C)
                 || (dual && ((!cold && tool) || mode!=IVT_STOP || monitor)))reject=1;
         if(!reject && (fs.active || sl.active || cm.active || motor_test.running || xy_seek_busy()
                 || t0_heat_busy() || fan_manual_active() || transport_live || assist_pending[0] || assist_pending[1]

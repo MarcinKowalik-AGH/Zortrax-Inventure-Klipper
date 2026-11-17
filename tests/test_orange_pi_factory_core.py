@@ -225,6 +225,14 @@ class FactoryCoreTests(unittest.TestCase):
             core.require_heated_target(p, 'AUTO')
             self.assertEqual(next(core.FactoryProgram(p).run('AUTO'))['kind'], 'module')
 
+    def test_negotiated_high_target_unloads_without_changing_material_defaults(self):
+        command = Command(TOOL='T1', MATERIAL='Z-NYLON', TARGET=260)
+        plan = core.parameters(command, max_target=290.)
+        self.assertEqual((plan['target'], plan['oem_material_target_c']), (260., 240))
+        self.assertEqual(Executor(plan, operation='UNLOAD').run().done['terminal'], 'UNLOAD')
+        with self.assertRaisesRegex(core.FactoryError, 'TARGET must be 180..240'):
+            core.parameters(command)
+
     def test_t0_legacy_tuned_points_translate_to_raw_release_coordinates(self):
         configured = core.profiles(t0={'APPROACH_X': 135, 'SWITCH_X': 150,
                                        'SERVICE_X': 135})

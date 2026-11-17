@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "c67a6a5244dcabe3884c5b152c866e44108e5bf0cad7e10cfa9e3d91a2db95ef",
+  "module_sha256": "408fbd25b8720ded5e53a16bfad7930a5ec66de8c46f0324e78476cfce50f90a",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -70,9 +70,10 @@
     "c7fee4fe8073326edd4e2af348a6e496eb5befe3f126a17c10a05611cedaed61",
     "52ae9e19c94502a54cddab20f7c39004290f0821a19ac57a2e25bccbcef7d970",
     "5d9b460b8f9d860463c2dbfa5c095ed24570928e873b338b1cd7f142cf29e29d",
-    "12948c53113f60888b4f195d769d29198c6959f1bae3ac964b7c231aecc52872"
+    "12948c53113f60888b4f195d769d29198c6959f1bae3ac964b7c231aecc52872",
+    "c67a6a5244dcabe3884c5b152c866e44108e5bf0cad7e10cfa9e3d91a2db95ef"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -238,7 +239,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
+  "factory_core_sha256": "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -344,7 +345,8 @@
     "eb8a73d8a87045903ffbbace6672ac2a2aaf847c74a17cde0f7651ace3f6d403",
     "ccd0be69ffe27d6928ae9e440d7519bdc5abc828509480bd98839fa92e0123df",
     "a02dc61dbb7d74eee377a8f5543fe9183b6f5e0227528c99d5ce9bf126d33b65",
-    "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329"
+    "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329",
+    "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -625,6 +627,13 @@
       "T0",
       "T1"
     ],
-    "cold_t0_compatible_mcu_release": "RC8-CONTROL-R7-PAD-CENTER"
+    "cold_t0_compatible_mcu_release": "RC8-CONTROL-R7-PAD-CENTER",
+    "thermal_profile": {
+      "native_max_temp_c": 310,
+      "legacy_service_target_max_c": 240,
+      "service_target_max_c": 290,
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R8",
+      "native_update_flag": "--upgrade-nozzle-limits"
+    }
   }
 }

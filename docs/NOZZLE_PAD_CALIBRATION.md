@@ -10,8 +10,8 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R7`. Tryb `CENTER TOOL=T1` korzysta z
-firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1`. `INVENTURE_VERSION` po
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8`. Tryb `CENTER TOOL=T1` działa z
+firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
@@ -26,6 +26,33 @@ i dołącz plik w `printer.cfg`.
 
 Po przeładowaniu konfiguracji makro jest dostępne w Fluidd. Polecenie
 `INVENTURE_NOZZLE_PAD_CALIBRATE` przyjmuje te same argumenty.
+
+## Limity grzania
+
+W konfiguracji do prób homingu Z starszy limit `[extruder] max_temp: 220`
+obejmował także odczyt T0 podczas procedur serwisowych. Dla oryginalnych
+grzałek i czujników Inventure R5 zaktualizuj ten limit do 310°C.
+Instalator znajduje aktywny plik konfiguracji wraz z dołączanymi plikami
+i robi kopię przed zmianą starej nastawy.
+
+```bash
+git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --upgrade-nozzle-limits
+```
+
+Aplikacja MCU `RC8-CONTROL-R7-PAD-THERMAL-R8` rozszerza regulowane cele
+serwisowe do 290°C. Pobierz artefakt `INVENTURE_MCU_PAD_THERMAL_R8_BOOT17`
+z [GitHub Actions](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/actions/workflows/orange-pi-mcu.yml).
+Sprawdź `SHA256SUMS` i wgraj `INVENTUR.IVB` z karty SD przez InventureBoot 1.7.
+`INVENTURE_VERSION` powinno podać `nozzle_service_target_max_c: 290`
+oraz `native_nozzle_max_temp_c.T0: 310`. Przy starszej aplikacji MCU
+zakres celów serwisowych kończy się na 240°C.
+
+Host sprawdza przed ruchem i grzaniem, czy aktywna granica czujnika
+obejmuje temperaturę celu z 10°C zapasu. MCU odcina grzałkę maksymalnie
+20°C powyżej celu, z uwzględnieniem niższego aktywnego limitu.
+Jeśli używany nylon wymaga 260°C do wycofania, podaj 260 dla danej
+dyszy. Pomiar na padzie odbywa się po schłodzeniu do 160°C.
 
 ## Środek pada na zimnej dyszy
 
@@ -232,7 +259,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `SCAN` | `SWEEP` domyślnie, `TAP` dla wyniesionego pola | Przejazdy na wysokości styku albo pionowe próby |
 | `PREP` | `RETRACT` domyślnie, `EMPTY` dla dwóch pustych dysz | Przygotowanie dysz |
 | `T0_Z_MAX`, `T1_Z_MAX` | Wartości zweryfikowane na drukarce | Najwyższa dozwolona pozycja stołu od PE12. T1 jest wymagane w trybie `FULL` |
-| `T0_TARGET`, `T1_TARGET` | Jawne cele 190–240°C dla `PREP=RETRACT` | Temperatury właściwe dla wycofania obu materiałów |
+| `T0_TARGET`, `T1_TARGET` | Jawne cele od 190°C do granicy MCU i konfiguracji | Temperatury właściwe dla wycofania obu materiałów. MCU R8 obsługuje cele do 290°C |
 | `MAX_POWER` | 40% domyślnie, zakres 1–40% | Limit mocy każdej z dwóch grzałek |
 | `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm dla `PREP=RETRACT` | Nominalny ruch ekstrudera w kierunku cofania |
 | `T0_PAD_X/Y`, `T1_PAD_X/Y` | X i Y podawane parami | Przybliżone środki pola w układzie serwisowym. Jawne nazwy to np. `T0_PAD_X` i `T0_PAD_Y` |

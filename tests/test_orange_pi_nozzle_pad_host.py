@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 
 from orange_pi.inventure_z_home import Z_STEPS_PER_MM
-from test_orange_pi_door_policy import Command
+from test_orange_pi_door_policy import Command, adapter
 from test_orange_pi_load_test import Wire
 from test_orange_pi_nozzle_z import DualNozzleDevice
 import test_orange_pi_z_home_host as z_host_support
@@ -616,14 +616,16 @@ class NozzlePadHostTests(unittest.TestCase):
     def test_full_warm_sweep_rechecks_an_early_opening_and_finishes_both_tools(self):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1
+        host.nozzle_service_target_max = 290.
+        self.native_sensor(host, 0, 310.)
         device = host.device
         device.contact_radius_mm = 7.6 / 2.
         device.centers = ((81.70, 68.20), (70.80, 68.70))
         device.touch_heights = (round(139.25 * Z_STEPS_PER_MM), round(137.65 * Z_STEPS_PER_MM))
-        device.hot = (230., 235.)
+        device.hot = (260., 235.)
         device.first_sweep_open_steps = 8
         self.cmd(host, 'START', ACK='PAD_GEOMETRY_MEASURED',
-                 T0_PAD_X=81.70, T0_PAD_Y=68.20, T0_Z_MAX=139.50, T0_TARGET=230, T0_RETRACT_MM=100,
+                 T0_PAD_X=81.70, T0_PAD_Y=68.20, T0_Z_MAX=139.50, T0_TARGET=260, T0_RETRACT_MM=100,
                  T1_PAD_X=70.80, T1_PAD_Y=68.70, T1_Z_MAX=137.95, T1_TARGET=235, T1_RETRACT_MM=100)
         self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
         result = self.cmd(host, 'STATUS')
@@ -638,6 +640,31 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['Y'], .5, delta=.015)
         self.assertFalse(device.stepper_enabled)
         self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+
+    def native_sensor(self, host, tool, maximum):
+        host.shared_adc_sensors = getattr(host, 'shared_adc_sensors', [[], []])
+        config = SimpleNamespace(get_printer=lambda: host.printer,
+                                 getint=lambda *args, **kwargs: tool)
+        sensor = adapter.R5SharedSensor(config, host)
+        sensor.setup_minmax(0., maximum)
+
+    def test_preflight_reports_native_limit_and_old_mcu_before_power_or_motion(self):
+        cases = (
+            (240., 0, 220., {'T0_TARGET': 230}, r'T0 target 230 C.*Klipper max_temp=220 C'),
+            (290., 1, 220., {}, r'T1 target 235 C.*Klipper max_temp=220 C'),
+            (240., 0, 310., {'T0_TARGET': 260}, r'TARGET must be 180..240'),
+        )
+        for firmware_max, tool, native_max, overrides, message in cases:
+            with self.subTest(firmware_max=firmware_max, tool=tool, native_max=native_max):
+                host = self.host()
+                host.nozzle_service_target_max = firmware_max
+                self.native_sensor(host, tool, native_max)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self.cmd(host, 'START', **dict(self.settings, **overrides))
+                self.assertEqual(host.device.calls, [])
+                self.assertEqual(host.device.motion_starts, [])
+                self.assertIsNone(host.load_test_context)
+                self.assertEqual((host.device.output(6)['duty'], host.device.output(7)['duty']), (0, 0))
 
     def test_sweep_requires_its_abi_before_actuation(self):
         host = self.host()
