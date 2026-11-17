@@ -243,6 +243,48 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertFalse(any(a['kind'] == 'done' for _, _, a in model.trace))
 
+    def test_edge_continues_after_uncertain_taps_outside_the_current_bracket(self):
+        kwargs = dict(TOOL='T0', SPEED_PROFILE='OEM')
+        plan = parameters(kwargs)
+        settings = z_home_parameters({}, plan, nozzle_test=True)
+        program = NozzleXYZProgram(plan, settings)
+
+        def steps(mm):
+            return round(mm * XY_STEPS_PER_MM)
+
+        def edge_tap(point, safe_z, ceiling, tap_speed):
+            state = yield point[1]
+            return state, None
+
+        program._edge_tap = edge_tap
+        # Replay the intermittent Y+ positions from the warm T0 run of R11.
+        uncertain_mm = (71.95, 71.325, 71.0125, 72.2625, 72.2234375, 72.3015625)
+        uncertain = tuple(map(steps, uncertain_mm))
+        expected_edge = steps(72.26)
+        search = program._edge((steps(81.6796875), steps(70.7)), 1, steps(73.2),
+                               138 * Z_STEPS_PER_MM, round(139.44 * Z_STEPS_PER_MM),
+                               32, .25, confirm=True)
+        responses = {True: [], False: [], None: []}
+        answer = None
+        with self.assertLogs(level='INFO') as logs:
+            for _ in range(32):
+                try:
+                    pos = search.send(answer)
+                except StopIteration as completed:
+                    edge = completed.value
+                    break
+                answer = None if pos in uncertain else pos <= expected_edge
+                responses[answer].append(pos)
+            else:
+                self.fail('Edge search did not finish')
+
+        self.assertEqual(responses[None], list(uncertain))
+        low = max(responses[True])
+        high = min(responses[False])
+        self.assertLessEqual(high - low, 32)
+        self.assertEqual(edge, (low + high) / 2.)
+        self.assertTrue(any('confirmed edge bracket' in row for row in logs.output))
+
     def test_cold_center_requires_measured_contact_inside_the_chord(self):
         xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
         model = SimulatedPad(xyz)

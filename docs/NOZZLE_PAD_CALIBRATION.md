@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R11`. Tryb `CENTER TOOL=T1` działa z
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R12`. Tryb `CENTER TOOL=T1` działa z
 firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
@@ -98,8 +98,9 @@ dotknięciami. Przy niestabilnym styku w punkcie startu szuka zwarcia do
 2 mm w obie strony wzdłuż tej osi. Potwierdzenie punktu poza polem wymaga
 dwóch dojazdów do limitu próby bez zwarcia. Przy niestabilnym odczycie
 procedura zachowuje oba potwierdzone końce przedziału i sprawdza inne
-pozycje. Domyślnie kończy pomiar dotknięciami, gdy przedział krawędzi
-ma szerokość do 0,05 mm. Zakres XY i limit Z pochodzą z ustawień tego
+pozycje. Po zawężeniu przedziału procedura liczy tylko niejednoznaczne
+próby wewnątrz nowych granic. Domyślnie kończy pomiar dotknięciami, gdy
+przedział krawędzi ma szerokość do 0,05 mm. Zakres XY i limit Z pochodzą z ustawień tego
 samego przebiegu. Stół opada przed przejazdem między punktami dotknięcia.
 Pomiar Y zaczyna się przy wyznaczonym X. Po wyznaczeniu czterech krawędzi
 stół opuszcza się, a głowica wraca nad środek.

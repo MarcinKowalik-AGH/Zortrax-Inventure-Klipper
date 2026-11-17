@@ -257,7 +257,9 @@ class NozzleXYZProgram(ZHomeProgram):
         uncertain = set()
         while abs(inside - outside) > units:
             lower, upper = sorted((inside, outside))
-            known_positions = sorted([lower, upper] + [p for p in uncertain if lower < p < upper])
+            # A confirmed bound can rule out earlier inconclusive positions.
+            uncertain = {p for p in uncertain if lower < p < upper}
+            known_positions = [lower, *sorted(uncertain), upper]
             left, right = max(zip(known_positions, known_positions[1:]), key=lambda pair: pair[1] - pair[0])
             if right - left <= 1 or len(uncertain) >= PAD_MAX_UNCERTAIN_TAPS:
                 raise FactoryError('Przedział krawędzi PC14 nadal ma %.2f mm' % ((upper - lower) / XY_STEPS_PER_MM),
