@@ -15,12 +15,12 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
 NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
-NOZZLE_PAD_100C_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R9'
+NOZZLE_PAD_100C_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R10'
 NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
 NOZZLE_PAD_COLD_T1_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER-T1'
 NOZZLE_PAD_COLD_MAX = 50
@@ -438,6 +438,8 @@ class InventureMCU:
         self.local_oled_abi = (int(self.mcu.get_constants().get(
             'INVENTURE_LOCAL_OLED_ABI',0))==1)
         self.mcu_release=self.mcu.get_constants().get('INVENTURE_MCU_RELEASE','unknown')
+        heartbeat_ms=self.mcu.get_constants().get('INVENTURE_HEARTBEAT_TIMEOUT_MS')
+        self.heartbeat_timeout_s=float(heartbeat_ms)/1000. if heartbeat_ms is not None else None
         if int(self.mcu.get_constants().get('INVENTURE_LOCAL_COOLING_ABI',0))==1:
             self.commands['cooling_query']=self.mcu.lookup_command('inventure_cooling_query')
             fmt='inventure_cooling_state clock=%u mode=%c reason=%c valid=%c mask=%c max_temp=%hi native_owner=%c adc_failures=%u gpio_updates=%u'
@@ -1659,6 +1661,7 @@ class InventureMCU:
                     17:'InventureBoot 1.7'}.get(revision,'unknown')
         gcmd.respond_info('INVENTURE_VERSION '+json.dumps({
             'host_revision':HOST_REVISION, 'host_module':str(Path(__file__).resolve()),
+            'heartbeat_timeout_s':getattr(self,'heartbeat_timeout_s',None),
             'heat_test_abi':getattr(self,'heat_test_abi',0),
             'motor_test_abi':getattr(self,'motor_test_abi',0),
             'door_policy_abi':getattr(self,'door_policy_abi',0),

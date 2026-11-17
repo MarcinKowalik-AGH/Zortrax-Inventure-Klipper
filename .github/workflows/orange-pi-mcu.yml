@@ -9,6 +9,8 @@ on:
       - 'service_mcu/control_r6/TESTS/**'
       - 'ci/**'
       - 'source/**'
+      - 'orange_pi/RELEASE.json'
+      - 'docs/INVENTURE_PAD_XYZ_R14.md'
   workflow_dispatch:
 
 permissions:
@@ -27,6 +29,8 @@ jobs:
           python-version: '3.11'
       - name: Verify the service MCU against register mocks
         run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
+      - name: Verify the complete host and updater
+        run: python -m unittest discover -s tests -p 'test_orange_pi*.py'
       - name: Prepare the pinned source kit
         run: python ci/prepare_kit.py --destination "$RUNNER_TEMP/inventure-kit"
       - name: Install GNU Arm 14.2.Rel1
@@ -39,15 +43,47 @@ jobs:
           tar -xJf "$RUNNER_TEMP/arm-toolchain.tar.xz" -C "$RUNNER_TEMP/arm-toolchain" --strip-components=1
           echo "$RUNNER_TEMP/arm-toolchain/bin" >> "$GITHUB_PATH"
       - name: Build and validate the InventureBoot 1.7 application
-        run: |
-          set -euo pipefail
-          python service_mcu/control_r6/SOURCE_MCU/build_thermal_test.py "$RUNNER_TEMP/inventure-kit" "$RUNNER_TEMP/inventure-mcu"
-          mkdir "$RUNNER_TEMP/inventure-sd"
-          cp "$RUNNER_TEMP/inventure-mcu/"{INVENTUR.IVB,THERMAL_TEST_VERIFY.json,klipper.dict} "$RUNNER_TEMP/inventure-sd/"
-          cd "$RUNNER_TEMP/inventure-sd"
-          sha256sum INVENTUR.IVB THERMAL_TEST_VERIFY.json klipper.dict > SHA256SUMS
+        run: python service_mcu/control_r6/SOURCE_MCU/build_thermal_test.py "$RUNNER_TEMP/inventure-kit" "$RUNNER_TEMP/inventure-mcu"
+      - name: Package the host and MCU release
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_MCU_PAD_100C_BOOT17
-          path: ${{ runner.temp }}/inventure-sd/
+          name: INVENTURE_PAD_XYZ_R14
+          path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/orange-pi-all-axis'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: inventure-pad-xyz-r14-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: INVENTURE_PAD_XYZ_R14
+          path: ${{ runner.temp }}/inventure-release/
+      - name: Publish the tested release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          release_tag="$(python3 -c "import json; print(json.load(open('orange_pi/RELEASE.json'))['nozzle_pad_calibration']['release_tag'])")"
+          asset_dir="$RUNNER_TEMP/inventure-release"
+          (cd "$asset_dir" && sha256sum --check SHA256SUMS)
+          if gh release view "$release_tag" --json targetCommitish --jq .targetCommitish > "$RUNNER_TEMP/inventure-release-target"; then
+            test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
+          else
+            gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
+              --title "Inventure R14 · 100°C pad · 310°C nozzles · 5s heartbeat" \
+              --notes-file docs/INVENTURE_PAD_XYZ_R14.md
+          fi
+          gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/SHA256SUMS" --clobber
+          gh release edit "$release_tag" --draft=false

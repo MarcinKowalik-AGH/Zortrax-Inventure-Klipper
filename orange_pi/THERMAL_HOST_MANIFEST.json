@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf",
+  "module_sha256": "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -76,9 +76,10 @@
     "049057360746dd064578f980956b0587f2c70ab5743b69f21d4dafd4725987e8",
     "9b23da923280273d4d959239d270aa7597efd00b8b19695d2c8dc750cec0ebac",
     "cc5f9f12e386d0a3795008b63d4048b997017a630754a6924f7bb8b9f37a128a",
-    "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f"
+    "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f",
+    "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -601,7 +602,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R9",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R10",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -642,10 +643,11 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R9",
-      "native_update_flag": "--upgrade-nozzle-limits",
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R10",
+      "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
-      "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg"
+      "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
+      "heartbeat_timeout_s": 5
     },
     "measurement_band_c": [
       95,

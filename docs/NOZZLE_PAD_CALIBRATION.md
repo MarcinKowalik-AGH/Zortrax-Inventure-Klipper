@@ -9,17 +9,18 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 
 ## Instalacja
 
-Pełny pomiar przy 100°C wymaga hosta `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13`
-i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R9`. Najpierw zaktualizuj
+Pełny pomiar przy 100°C wymaga hosta `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14`
+i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R10`. Najpierw zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi). Host R12 odrzuca
-nowy limit serwisowy 310°C podczas łączenia z MCU R9. Pobierz artefakt
-`INVENTURE_MCU_PAD_100C_BOOT17` z
-[GitHub Actions](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/actions/workflows/orange-pi-mcu.yml).
+nowy limit serwisowy 310°C podczas łączenia z MCU R10. Pobierz paczkę
+`INVENTURE_MCU_PAD_100C_R10_BOOT17.zip` z
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r14).
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
 Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
-`baud_match: true` i `nozzle_pad_measurement_band_c: [95, 105]`.
+`baud_match: true`, `heartbeat_timeout_s: 5` i
+`nozzle_pad_measurement_band_c: [95, 105]`.
 
 Zimny tryb `CENTER` dla obu dysz obsługuje też wcześniejsze wersje MCU
 z `nozzle_pad_cold_abi: 2`. Zimny pomiar T0 działa również z
@@ -42,29 +43,29 @@ Po przeładowaniu konfiguracji makro jest dostępne w Fluidd. Polecenie
 W konfiguracji do prób homingu Z starszy limit `[extruder] max_temp: 220`
 obejmował także odczyt T0 podczas procedur serwisowych. Dla oryginalnych
 grzałek i czujników Inventure R5 zaktualizuj ten limit do 310°C.
-Instalator znajduje aktywny plik konfiguracji wraz z dołączanymi plikami
-i robi kopię przed zmianą starej nastawy.
+Instalator z opcją `--configure-nozzles` znajduje aktywny plik konfiguracji
+wraz z dołączanymi plikami. Ustawia limity obu natywnych dysz na 310°C,
+dodaje brakującą grzałkę T1 i wiąże chłodzenie F0/F2/F3 z obiema dyszami.
+Każdy zmieniany plik otrzymuje kopię, a błąd restartu przywraca poprzednią
+konfigurację i moduły hosta.
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
-python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --upgrade-nozzle-limits
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --configure-nozzles
 ```
 
-Aplikacja MCU R9 przyjmuje cele serwisowe do 310°C dla T0 i T1.
+Aplikacja MCU R10 przyjmuje cele serwisowe do 310°C dla T0 i T1.
 `INVENTURE_VERSION` podaje `nozzle_service_target_max_c: 310`. Odczyt
 310°C uruchamia odcięcie MCU. Nastawa przy samej granicy może skończyć
 się odcięciem podczas dojścia do celu. Przy niższych celach odcięcie
 sesji jest najwyżej 20°C ponad celem i uwzględnia niższy limit aktywnej
-konfiguracji. Po sekundzie bez heartbeat MCU odcina grzałki i prowadzi
+konfiguracji. Po 5 sekundach bez heartbeat MCU odcina grzałki i prowadzi
 chłodzenie lokalnie.
 
-Jeśli `native_nozzle_max_temp_c.T1` ma wartość `null`, skopiuj
-[INVENTURE_NATIVE_T1_HEATER.cfg](../config/INVENTURE_NATIVE_T1_HEATER.cfg)
-do katalogu konfiguracji i dodaj `[include INVENTURE_NATIVE_T1_HEATER.cfg]`
-w `printer.cfg`. W istniejących sekcjach `[heater_fan ...]` dla wyjść
-`inventure_r5:F0`, `inventure_r5:F2` i `inventure_r5:F3` ustaw
-`heater: extruder, inventure_t1`. Klipper uruchomi wtedy chłodzenie
-także przy grzaniu samej T1. W trybie `INVENTURE_CONTROL MODE=NATIVE` ustawiasz
+Po automatycznej konfiguracji `INVENTURE_VERSION` pokazuje
+`native_nozzle_max_temp_c.T0: 310` i `native_nozzle_max_temp_c.T1: 310`.
+Grzałka dodana przez instalator ma nazwę `inventure_t1`. Klipper uruchamia
+chłodzenie także przy grzaniu samej T1. W trybie `INVENTURE_CONTROL MODE=NATIVE` ustawiasz
 temperatury z Fluidd albo poleceniami `SET_HEATER_TEMPERATURE HEATER=extruder`
 dla T0 i `SET_HEATER_TEMPERATURE HEATER=inventure_t1` dla T1 z parametrem
 `TARGET` do 310°C. `TARGET=0` wyłącza grzanie. Po dodaniu grzałki
@@ -301,7 +302,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `SCAN` | `SWEEP` domyślnie, `TAP` dla wyniesionego pola | Przejazdy na wysokości styku albo pionowe próby |
 | `PREP` | `RETRACT` domyślnie, `EMPTY` dla dwóch pustych dysz | Przygotowanie dysz |
 | `T0_Z_MAX`, `T1_Z_MAX` | Wartości zweryfikowane na drukarce | Najwyższa dozwolona pozycja stołu od PE12. T1 jest wymagane w trybie `FULL` |
-| `T0_TARGET`, `T1_TARGET` | Jawne cele od 190°C do granicy MCU i konfiguracji | Temperatury właściwe dla wycofania obu materiałów. MCU R9 obsługuje cele do 310°C |
+| `T0_TARGET`, `T1_TARGET` | Jawne cele od 190°C do granicy MCU i konfiguracji | Temperatury właściwe dla wycofania obu materiałów. MCU R10 obsługuje cele do 310°C |
 | `MAX_POWER` | 40% domyślnie, zakres 1–40% | Limit mocy każdej z dwóch grzałek |
 | `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm dla `PREP=RETRACT` | Nominalny ruch ekstrudera w kierunku cofania |
 | `T0_PAD_X/Y`, `T1_PAD_X/Y` | X i Y podawane parami | Przybliżone środki pola w układzie serwisowym. Jawne nazwy to np. `T0_PAD_X` i `T0_PAD_Y` |

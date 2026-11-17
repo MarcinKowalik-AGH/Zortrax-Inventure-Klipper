@@ -138,6 +138,54 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(heaters.read_bytes(),before)
         self.assertEqual(self.dest.read_bytes(),self.old)
 
+    def test_complete_native_nozzle_setup_is_read_only_in_check_and_idempotent(self):
+        self.legacy_nozzle_config()
+        self.config.write_text('[include native.cfg]\n')
+        native = self.config.with_name('native.cfg')
+        before = (ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_text().replace(
+            'max_temp: 310', 'max_temp: 220 # original native limit').replace(
+            'heater: extruder\n', 'heater:\n  extruder\n')
+        native.write_text(before)
+        root_before = self.config.read_bytes()
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(check_only=True,configure_nozzles=True)
+        self.assertEqual(self.config.read_bytes(),root_before)
+        self.assertEqual(native.read_text(),before)
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        self.assertIn('[heater_generic inventure_t1]',self.config.read_text())
+        self.assertIn('max_temp: 310 # original native limit',native.read_text())
+        self.assertEqual(native.read_text().count('heater: extruder, inventure_t1'),3)
+        self.assertNotIn('\n  extruder\n',native.read_text())
+        configured = self.config.read_bytes(),native.read_bytes()
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        self.assertEqual((self.config.read_bytes(),native.read_bytes()),configured)
+        self.assertTrue(self.active)
+        self.assertIn('baud: 750000',native.read_text())
+        self.assertEqual(update.nozzle_limit_updates(self.live,self.config,True),{})
+
+    def test_failed_complete_nozzle_setup_restores_t1_include_and_fans(self):
+        self.legacy_nozzle_config()
+        self.config.write_text('[include native.cfg]\n')
+        native = self.config.with_name('native.cfg')
+        native.write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
+        before = self.config.read_bytes(),native.read_bytes()
+        service = update.service
+        failed = False
+        def fail_once(action):
+            nonlocal failed
+            if action == 'start' and not failed:
+                failed = True
+                raise subprocess.CalledProcessError(1,['systemctl','start','klipper'])
+            service(action)
+        with self.assertRaises(subprocess.CalledProcessError), patch.object(
+                update,'service',side_effect=fail_once), patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        self.assertEqual((self.config.read_bytes(),native.read_bytes()),before)
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertTrue(self.active)
+
     def test_motor_r1_adapter_and_oled_upgrade_together_in_the_active_stage(self):
         self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_motor_r1.py').read_bytes())
         oled=self.extras/'inventure_oled.py'

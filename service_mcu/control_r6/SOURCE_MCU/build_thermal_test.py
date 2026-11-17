@@ -9,7 +9,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R9'
+MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R10'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     c = dictionary['config']
     assert dictionary['version'] == build_identity
     assert c['INVENTURE_MCU_RELEASE'] == MCU_RELEASE
+    assert c['INVENTURE_HEARTBEAT_TIMEOUT_MS'] == 5000
     assert c['INVENTURE_MOTOR_TEST_ABI'] == 2
     assert c['INVENTURE_DOOR_POLICY_ABI'] == 1
     assert c['INVENTURE_DOOR_POLICY_DISABLE_BIT'] == 3
@@ -158,6 +159,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert bytes.fromhex(base.sha(app)) == ivb[32:64]
     assert embedded_dictionary_matches(app, dictionary)
     report = dict(mcu_release=c['INVENTURE_MCU_RELEASE'], motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'],
+                  heartbeat_timeout_s=c['INVENTURE_HEARTBEAT_TIMEOUT_MS']/1000.,
                   build_identity=build_identity,
                   motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   z_home_abi=c['INVENTURE_Z_HOME_ABI'],

@@ -161,7 +161,7 @@ static void nozzle_310_cutoff_and_link_loss(void) {
     control_reset(0);
     inventure_adc_observe(ADC1,10,1918); // about 309 C
     inventure_adc_observe(ADC3,6,1918);
-    output(1,6,64,1500,310,1);output(1,7,64,1500,310,2);
+    output(1,6,64,20000,310,1);output(1,7,64,20000,310,2);
     assert(co[6].duty && co[7].duty);
     inventure_adc_observe(ADC3,6,1924); // above 310 C
     guard_check(mock_now);
@@ -170,8 +170,14 @@ static void nozzle_310_cutoff_and_link_loss(void) {
     control_reset(0);
     inventure_adc_observe(ADC1,10,1918);
     inventure_adc_observe(ADC3,6,1918);
-    output(1,6,64,1500,310,1);output(1,7,64,1500,310,2);
+    output(1,6,64,20000,310,1);output(1,7,64,20000,310,2);
     assert(co[6].duty && co[7].duty);
+    assert(HEARTBEAT_TICKS==MS(5000));
+    mock_now=heartbeat_deadline-MS(1);
+    control_adc();
+    inventure_adc_observe(ADC1,10,1918);inventure_adc_observe(ADC3,6,1918);
+    guard_check(mock_now);
+    assert(heartbeat_live && control_mode==CT_SERVICE && co[6].duty && co[7].duty);
     mock_now=heartbeat_deadline;
     control_adc();
     inventure_adc_observe(ADC1,10,1918);
@@ -228,6 +234,10 @@ static void native_ownership(void) {
     struct gpio_pwm t1=gpio_pwm_setup(co_pins[3],co_cycles[3],256);
     inventure_adc_observe(ADC3,6,1918);
     gpio_pwm_write(t1,192);assert(control_heater_duty[1]==64);
+    mock_now=heartbeat_deadline-MS(1);
+    control_adc();inventure_adc_observe(ADC3,6,1918);
+    guard_check(mock_now);
+    assert(inventure_is_armed() && control_heater_duty[1]==64);
     mock_now=heartbeat_deadline;
     control_adc();inventure_adc_observe(ADC3,6,1918);
     expect_failure=1;

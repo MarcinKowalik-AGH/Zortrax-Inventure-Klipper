@@ -41,58 +41,106 @@ def check_print_job():
         raise ValueError('Finish or cancel the current print before updating the host')
 
 
-def nozzle_limit_updates(target, config):
+def nozzle_limit_updates(target, config, configure_nozzles=False):
     reader_spec = importlib.util.spec_from_file_location(
         'inventure_klipper_configfile', target/'klippy/configfile.py')
     module = importlib.util.module_from_spec(reader_spec)
     reader_spec.loader.exec_module(module)
     source_reader = module.ConfigFileReader()
     sources = {}
+    section_sources = {}
 
     class TracingReader(module.ConfigFileReader):
         def append_fileconfig(self, fileconfig, data, filename):
             parsed = source_reader.build_fileconfig(data, filename)
-            for section in ('extruder', 'extruder1'):
-                if parsed.has_option(section, 'max_temp'):
-                    sources[section] = Path(filename).resolve()
+            for section in parsed.sections():
+                section_sources[section] = Path(filename).resolve()
+                for option in parsed.options(section):
+                    sources[section, option] = Path(filename).resolve()
             super().append_fileconfig(fileconfig, data, filename)
 
     reader = TracingReader()
     active = reader.build_fileconfig_with_includes(reader.read_config_file(config), str(config))
-    by_file = defaultdict(set)
-    matched = False
-    for tool, section in enumerate(('extruder', 'extruder1')):
-        if (active.get(section, 'heater_pin', fallback='') != 'inventure_r5:HEATER_T%d'%tool
-                or active.get(section, 'sensor_type', fallback='') != 'Inventure R5 ADC'
-                or active.getint(section, 'sensor_channel', fallback=-1) != tool):
+    by_file = defaultdict(dict)
+    nozzles = {}
+    for section in active.sections():
+        pin = active.get(section, 'heater_pin', fallback='')
+        if pin not in ('inventure_r5:HEATER_T0', 'inventure_r5:HEATER_T1'):
             continue
-        matched = True
-        if active.getfloat(section, 'max_temp') == 220:
-            by_file[sources[section]].add(section)
-    if not matched:
+        tool = int(pin[-1])
+        if (active.get(section, 'sensor_type', fallback='') != 'Inventure R5 ADC'
+                or active.getint(section, 'sensor_channel', fallback=-1) != tool):
+            raise ValueError('Stock Inventure heater requires its matching shared ADC in '+section)
+        nozzles[tool] = section
+        maximum = active.getfloat(section, 'max_temp')
+        if maximum == 220 or configure_nozzles and maximum != 310:
+            by_file[sources[section, 'max_temp']][section, 'max_temp'] = '310'
+    if not nozzles:
         raise ValueError('The active configuration has no stock Inventure R5 nozzle heater')
 
+    additions = ''
+    if configure_nozzles:
+        if 0 not in nozzles:
+            raise ValueError('The native nozzle setup requires the stock T0 heater')
+        if 1 not in nozzles:
+            if active.has_section('heater_generic inventure_t1'):
+                raise ValueError('The name inventure_t1 is already used by another heater')
+            additions = (ROOT/'config/INVENTURE_NATIVE_T1_HEATER.cfg').read_text()+'\n'
+            nozzles[1] = 'heater_generic inventure_t1'
+        heater_names = [nozzles[tool].split()[-1] for tool in (0, 1)]
+        for section in active.sections():
+            if not section.startswith('heater_fan '):
+                continue
+            pin = active.get(section, 'pin', fallback='')
+            if pin not in ('inventure_r5:F0', 'inventure_r5:F2', 'inventure_r5:F3'):
+                continue
+            current = [name.strip() for name in active.get(section, 'heater', fallback='extruder').split(',')]
+            combined = list(dict.fromkeys(current+heater_names))
+            if current != combined:
+                source = sources.get((section, 'heater'), section_sources[section])
+                by_file[source][section, 'heater'] = ', '.join(combined)
+
     updates = {}
-    for source, sections in by_file.items():
+    for source, options in by_file.items():
         original = source.read_bytes()
         lines = original.decode('utf-8').splitlines(keepends=True)
+        rewritten = []
         section = None
         found = set()
-        for index, line in enumerate(lines):
+        continuation_indent = None
+        for line in lines:
+            stripped = line.strip()
+            if continuation_indent is not None and stripped and not stripped.startswith(('#', ';')):
+                if len(line)-len(line.lstrip()) > continuation_indent:
+                    continue
+                continuation_indent = None
             header = configparser.RawConfigParser.SECTCRE.match(line.strip())
             if header is not None:
                 section = header.group('header')
-            if section not in sections:
+                rewritten.append(line)
+                for key, value in options.items():
+                    if key[0] == section and key not in sources:
+                        rewritten.append(key[1]+': '+value+'\n')
+                        found.add(key)
                 continue
-            option = re.match(r'^(\s*max_temp\s*[:=]\s*)220(?:\.0+)?(?=\s|[#;]|$)', line, re.I)
-            if option is not None:
-                if section in found:
-                    raise ValueError('Multiple legacy max_temp definitions in '+str(source))
-                lines[index] = option.group(1)+'310'+line[option.end():]
-                found.add(section)
-        if found != sections:
-            raise ValueError('Cannot locate the active legacy max_temp in '+str(source))
-        updates[source] = (original, ''.join(lines).encode())
+            option = re.match(r'^([ \t]*([^#;:=\s][^:=]*?)[ \t]*[:=][ \t]*)([^\r\n]*)(\r?\n)?$', line)
+            key = (section, option.group(2).strip().lower()) if option else None
+            if key in options:
+                if key in found:
+                    raise ValueError('Multiple active option definitions in '+str(source))
+                comment = re.search(r'[#;].*', option.group(3))
+                line = (option.group(1).rstrip()+' '+options[key]
+                        +(' '+comment.group() if comment else '')+(option.group(4) or ''))
+                continuation_indent = len(line)-len(line.lstrip())
+                found.add(key)
+            rewritten.append(line)
+        if found != set(options):
+            raise ValueError('Cannot locate the active nozzle options in '+str(source))
+        updates[source] = (original, ''.join(rewritten).encode())
+    if additions:
+        original = config.read_bytes()
+        before, after = updates.get(config, (original, original))
+        updates[config] = (before, additions.encode()+after)
     return updates
 
 
@@ -109,13 +157,14 @@ def atomic_config_write(path, data):
             staged.unlink(missing_ok=True)
 
 
-def update(check_only=False, upgrade_nozzle_limits=False):
+def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False):
     # Resolve the running stage before stopping it; ~/klipper can be another
-    # checkout. Config migration is enabled by --upgrade-nozzle-limits.
+    # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
     config=core.running_printer_config()
     plan=core.install(target)
-    config_updates=nozzle_limit_updates(target,config) if upgrade_nozzle_limits else {}
+    config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
+                    if upgrade_nozzle_limits or configure_nozzles else {})
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     check_print_job()
@@ -164,8 +213,10 @@ def main():
     parser.add_argument('--check',action='store_true',help='Read-only validation')
     parser.add_argument('--upgrade-nozzle-limits',action='store_true',
                         help='Migrate the legacy 220 C stock R5 nozzle limit to 310 C')
+    parser.add_argument('--configure-nozzles',action='store_true',
+                        help='Configure both native nozzle heaters to 310 C and include T1 in cooling')
     args=parser.parse_args()
-    try:update(args.check,args.upgrade_nozzle_limits)
+    try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

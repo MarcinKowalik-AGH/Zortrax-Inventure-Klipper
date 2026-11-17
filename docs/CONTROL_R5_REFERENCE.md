@@ -7,7 +7,7 @@ Bez MODE odczytuje stan. `INVENTURE_STOP` zatrzymuje wszystkie wykonawcze
 wyjścia, pozostawiając wymagane chłodzenie. SERVICE umożliwia kolejną próbę;
 STOP po NATIVE wymaga `FIRMWARE_RESTART`, aby usunąć poprzednie kolejki.
 
-Heartbeat działa co 250 ms; MCU wyłącza wyjścia po 1 s bez heartbeat albo
+Heartbeat działa co 250 ms; MCU wyłącza wyjścia po 5 s bez heartbeat albo
 utraty zdrowego stanu przewodu PD11. NATIVE wymaga świeżych i poprawnych ADC
 oraz zgodności z wybraną polityką osłon.
 
