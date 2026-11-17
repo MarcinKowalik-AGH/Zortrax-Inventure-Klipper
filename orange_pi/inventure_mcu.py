@@ -14,7 +14,7 @@ import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R9'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2895,15 +2895,27 @@ class InventureMCU:
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
                    'retract_e_steps','saved_file')}
             state.update(prep=run['params']['prep'],scan=run['params']['scan'])
+            if run.get('door_policy') is not None:state['door_policy']=run['door_policy']
             if run['mode']=='VERIFY_T0':state['t0_confirmed']=run.get('t0_confirmed',False)
             batch=getattr(self,'nozzle_z_context',None)
             if batch is not None and batch.get('pad') is run:
                 f=(batch.get('child') or {}).get('factory') or {}
                 now=self.reactor.monotonic()
                 state.update(stage=f.get('phase'),tool='T%d'%batch['tool'],
+                             position=f.get('position'),
                              temperatures_c={name:self.panel_temperature(tool,now)[0]
                                              for tool,name in enumerate(('T0','T1'))})
         gcmd.respond_info('V9_NOZZLE_PAD '+json.dumps(state,sort_keys=True))
+
+    def _check_pad_door_policy(self):
+        if not getattr(self,'door_policy_global',False):
+            return None
+        state=self._door_policy_query()
+        if state['reject']:
+            raise ValueError(state['reject'])
+        if state['enabled'] and not (state['front_door_closed'] and state['lid_closed']):
+            raise ValueError('Pad calibration requires both doors closed while global Door lock is enabled')
+        return state
 
     def cmd_nozzle_pad_calibrate(self,gcmd):
         from .inventure_nozzle_xyz import pad_xyz_e_budget, pad_xyz_parameters
@@ -2964,6 +2976,7 @@ class InventureMCU:
             budget=pad_xyz_e_budget(params)
             plans=self._nozzle_probe_plans(gcmd,(tool,) if center else (0,1),pad=params,
                                          residual=None if center else self._read_nozzle_xy_offsets())
+            door_policy=self._check_pad_door_policy()
             if center:
                 self._z_home_inputs({})
                 now=self.reactor.monotonic()
@@ -2980,6 +2993,7 @@ class InventureMCU:
         except (KeyError,OSError,TypeError,ValueError) as exc:
             raise gcmd.error(str(exc))
         run=dict(phase='running',run_id=uuid.uuid4().hex,mode=params['mode'],params=params,budget=budget,
+                 door_policy=door_policy,
                  measurement_target_c=None if center else NOZZLE_PAD_TEMPERATURE,
                  hot_targets_c={} if center else {'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
                                 else plan['target'] for tool,(plan,_) in plans.items()})
@@ -3629,7 +3643,7 @@ class InventureMCU:
                 raw=self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})
                 if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
                 if raw['nozzle_contact']==1:
-                    return dict(ok=False,reason='pc14_open_before_sweep')
+                    return dict(ok=False,reason='pad_sweep_contact_unqualified')
                 mask=stop_value=8|16
         counts=(round((dx+dy)*640),round((dx-dy)*640),action['steps'] if probe else round(dz*802),
                 round(e*960)*(1 if context['tool'] else -1))
@@ -3652,12 +3666,15 @@ class InventureMCU:
             maximum,mask,stop_value,owner=context)
         if self.load_test_context is not context:raise ValueError('Factory load was stopped')
         if sweep and row['reject']==CONTROL_REJECTS[5]:
-            # The MCU can see an opening after the host's input read. Retry
-            # only a rejected start with fresh open PC14 and clear limits.
-            raw=self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})
-            if self.load_test_context is not context:raise ValueError('Pad scan was stopped')
-            if raw['nozzle_contact']==1:
-                return dict(ok=False,reason='pc14_open_before_sweep')
+            # An opening can clear the MCU's contact latch even if PC14
+            # closes again before the host's next sample. Verify the other
+            # guards and return control to the bounded Z re-probe.
+            self._check_pad_door_policy()
+            self._z_home_inputs({'z_bottom':0,'x_endstop':0,'y_endstop':0})
+            self._load_test_safety(context)
+            self._factory_session(context)
+            self._pad_temperatures(context)
+            return dict(ok=False,reason='pad_sweep_contact_unqualified')
         if row['reject']:raise ValueError(row['reject'])
         f['move']=dict(action=action,identity=(row['run'],row['token']),counts=counts,
             accounted=0,deadline=self.reactor.monotonic()+maximum/1000.+.5,
@@ -3894,6 +3911,16 @@ class InventureMCU:
         context.update(target=NOZZLE_PAD_TEMPERATURE,limit=180,duty=0,
                        ready_latched=False,ready_since=None)
 
+    def _pad_temperatures(self,context):
+        now=self.reactor.monotonic()
+        cold=context.get('cold_pad',False)
+        samples=[self.panel_temperature(tool,now) for tool in (0,1)]
+        if any(state!='valid' or not (0.<=value<NOZZLE_PAD_COLD_MAX if cold else 155.<=value<=165.)
+               for value,state in samples):
+            raise ValueError('Pomiar zimnego pada wymaga obu dysz ponizej 50 C' if cold
+                             else 'Pad scan requires fresh temperatures in the 160 C measurement band')
+        return tuple(value for value,_ in samples)
+
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
         if kind=='module':
@@ -3964,15 +3991,10 @@ class InventureMCU:
                     or action['tool']!=context['tool']):
                 raise ValueError('Pad ceiling requires a selected nozzle at measurement temperature')
             row=self._factory_session(context,ceiling_steps=action['ceiling_steps'])
-            sample_time=self.reactor.monotonic()
-            temperatures=[self.panel_temperature(tool,sample_time) for tool in (0,1)]
-            if any(state!='valid' or not (0.<=temperature<NOZZLE_PAD_COLD_MAX if cold else 155.<=temperature<=165.)
-                   for temperature,state in temperatures):
-                raise ValueError('Nieprawidlowa temperatura dysz do pomiaru pada na zimno'
-                                 if cold else 'Pad scan requires fresh temperatures in the 160 C measurement band')
+            t0,t1=self._pad_temperatures(context)
             f['pad_measurement']=True
             f['pad_temperature_samples'].append({'tool':'T%d'%context['tool'],
-                'T0':temperatures[0][0],'T1':temperatures[1][0]})
+                'T0':t0,'T1':t1})
             return row
         if kind in ('dual_switch_tool','xyz_switch_tool'):
             tool=action['tool'] if kind=='xyz_switch_tool' else 1

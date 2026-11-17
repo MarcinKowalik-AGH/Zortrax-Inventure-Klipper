@@ -304,10 +304,10 @@ class NozzleXYZProgram(ZHomeProgram):
                                     stage='pad_sweep')
                 if not isinstance(result, dict):
                     raise FactoryError('Missing pad sweep result')
-                if result.get('reason') != 'pc14_open_before_sweep':
+                if result.get('reason') != 'pad_sweep_contact_unqualified':
                     row = result
                     break
-                logging.info('Inventure pad T%d %s: PC14 opened before the first XY step at %s',
+                logging.info('Inventure pad T%d %s: PC14 contact not qualified before the first XY step at %s',
                              self.p['tool'], leg, _xy_mm(origin))
             if self.z_steps > safe_z:
                 yield from self._open_z_at(safe_z, allow_closed=True)
@@ -489,12 +489,18 @@ class NozzleXYZProgram(ZHomeProgram):
         steps = round(xyz['retract_mm'][tool] * E_STEPS_PER_MM)
         yield from self._move(*self.xy, e=-steps / E_STEPS_PER_MM, speed=xyz['retract_speed'])
         yield from self._phase('XYZ_T%d_WIPE_HOT' % tool)
-        yield from self.clean()
+        yield from self._wipe_and_return_to_bin()
 
     def _wipe_at_160(self):
         yield from self._phase('XYZ_T%d_WIPE_160' % self.p['tool'])
         yield from self.position_bin()
+        yield from self._wipe_and_return_to_bin()
+
+    def _wipe_and_return_to_bin(self):
         yield from self.clean()
+        # Leave the brush at its exit X before crossing to the bin center.
+        yield from self._move(self.xy[0], self.p['center_y'])
+        yield from self.position_bin()
 
     def _verify_t0_at_pad(self):
         yield from self._position_contact_pad()
@@ -569,6 +575,7 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._home_pad(plans)
         if empty and verify_t0:
             yield from self._verify_t0_at_pad()
+            yield from self.position_bin()
         yield from self._phase('XYZ_HEAT')
         yield dict(kind='xyz_heat_start')
         if not empty:
@@ -592,7 +599,7 @@ class NozzleXYZProgram(ZHomeProgram):
             if index < 2:
                 yield from self._wipe_at_160()
             if verify_t0 and not empty:
-                yield from self._verify_t0_at_pad()
+                yield dict(kind='xyz_confirm_t0')
             ceiling = ceilings[tool]
             yield dict(kind='xyz_arm', tool=tool, ceiling_steps=ceiling)
             yield from self._phase('XYZ_SCAN_' + name)

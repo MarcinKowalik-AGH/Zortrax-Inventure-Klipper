@@ -25,6 +25,8 @@ class PadDevice(DualNozzleDevice):
         self.sweep_moves = []
         self.contact_radius_mm = 2.5
         self.first_sweep_open_steps = None
+        self.sweep_start_refusals = 0
+        self.refused_sweep_positions = []
         self.unreliable_sweep_seed = None
         self.cold_switches = []
         self.xy = (0., 0.)
@@ -78,6 +80,12 @@ class PadDevice(DualNozzleDevice):
         _, directions, a, b, z, e, rate, _, _, _, _, _, token = args
         tool = self.session['tool']
         assert self.sealed and self.contact and self.tray and a == b > 0 and not (z or e)
+        if self.sweep_start_refusals:
+            self.sweep_start_refusals -= 1
+            self.refused_sweep_positions.append((self.xy, self.z))
+            # PC14 reclosed after the MCU had already cleared its Z contact latch.
+            return dict(run=self.run, token=self.motion['token'], phase=3,
+                        reason=2, reject=5, active=0, events=0, elapsed_ms=0, hit=8)
         sign_a = 1 if directions & 1 else -1
         sign_b = 1 if directions & 2 else -1
         step_x = (sign_a + sign_b) / 1280.
@@ -641,6 +649,42 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertFalse(device.stepper_enabled)
         self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
 
+    def test_global_door_policy_and_a_rejected_sweep_with_pc14_closed_again(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        host.door_policy_global = True
+        device = host.device
+        device.hot = (160., 160.)
+        device.contact_radius_mm = 7.54 / 2.
+        device.sweep_start_refusals = 2
+        enabled = 1
+
+        def door_policy(args):
+            self.assertEqual(args[0], 0)
+            return dict(enabled=enabled, disable_bit=1-enabled, closed_mask=1,
+                        lock_command_mask=0, motor_busy=int(device.active()), reject=0)
+
+        host.commands['door_policy'] = Wire(door_policy)
+        settings = dict(PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                        T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        with self.assertRaisesRegex(RuntimeError, 'global Door lock is enabled'):
+            self.cmd(host, 'START', **settings)
+        self.assertEqual(device.motion_starts, [])
+        self.assertEqual(device.calls, [])
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+
+        enabled = 0
+        started = self.cmd(host, 'START', **settings)
+        self.assertFalse(started['door_policy']['enabled'])
+        self.assertFalse(started['door_policy']['front_door_closed'])
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual(result['measurements']['T0']['scan_method'], 'SWEEP+TAP')
+        self.assertEqual(len(device.refused_sweep_positions), 2)
+        self.assertEqual(device.refused_sweep_positions[0], device.refused_sweep_positions[1])
+        self.assertEqual(device.e_moves, [])
+
     def native_sensor(self, host, tool, maximum):
         host.shared_adc_sensors = getattr(host, 'shared_adc_sensors', [[], []])
         config = SimpleNamespace(get_printer=lambda: host.printer,
@@ -695,7 +739,8 @@ class NozzlePadHostTests(unittest.TestCase):
         settings = dict(self.settings, MODE='VERIFY_T0')
         del settings['T1_Z_MAX']
         self.cmd(host, 'START', **settings)
-        self.await_t0_confirmation(host)
+        status = self.await_t0_confirmation(host)
+        self.assertEqual(status['position'], [82.8, 152.5, 0.])
         self.cmd(host, 'CONFIRM_T0')
         self.advance(host, lambda: host.nozzle_z_context is None)
         result = self.cmd(host, 'STATUS')

@@ -282,6 +282,23 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual([p for p in phases if '_WIPE_' in p], [
             'XYZ_T0_WIPE_HOT', 'XYZ_T1_WIPE_HOT', 'XYZ_T0_WIPE_160', 'XYZ_T1_WIPE_160',
         ])
+        bin_x = (82.8, 72.0)
+        for index, (_, tool, action) in enumerate(model.trace):
+            clean_done = action == dict(kind='module', name='clean', state='done')
+            waiting = action['kind'] in ('xyz_heat_start', 'xyz_heat_wait',
+                                         'xyz_cool_start', 'xyz_cool_wait')
+            if waiting:
+                moves = [a for _, _, a in model.trace[:index] if a['kind'] == 'move']
+                self.assertEqual((moves[-1]['x'], moves[-1]['y']), (bin_x[tool], 152.5))
+            if clean_done:
+                brush = next(a for _, _, a in reversed(model.trace[:index]) if a['kind'] == 'move')
+                following = [a for _, _, a in model.trace[index+1:]
+                             if a['kind'] != 'module']
+                exit_move, park = following[:2]
+                self.assertEqual([a['kind'] for a in (exit_move, park)], ['move', 'move'])
+                self.assertEqual(brush['y'], 154.5)
+                self.assertEqual((exit_move['x'], exit_move['y']), (brush['x'], 152.5))
+                self.assertEqual((park['x'], park['y']), (bin_x[tool], 152.5))
         self.assertEqual(list(result['measurements']), ['T0', 'T1', 'T0_RETURN'])
         for (key, measured), true_center in zip(result['measurements'].items(), model.centers):
             self.assertEqual(measured['scan_method'], 'SWEEP')

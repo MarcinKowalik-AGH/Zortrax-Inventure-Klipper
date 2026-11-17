@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R8`. Tryb `CENTER TOOL=T1` działa z
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R9`. Tryb `CENTER TOOL=T1` działa z
 firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
@@ -169,9 +169,19 @@ prześwitu. Bisekcja zawęża przedział między stykiem a jego brakiem.
 
 Przy `MODE=FULL PREP=RETRACT` obie dysze nagrzewają się do indywidualnych
 temperatur cofania filamentu. T0 cofa filament nad koszem i przejeżdża po
-szczotce. Po wyborze T1 te same czynności wykonuje T1. Obie dysze schładzają
-się do 160°C. Po stabilizacji następują drugie przetarcie i skan T0, drugie
-przetarcie i skan T1, a potem kontrolny pomiar ponownie osadzonej T0.
+szczotce. Po wyborze T1 te same czynności wykonuje T1. Po każdym
+przetarciu karetka zjeżdża z linii szczotki w osi Y i wraca na środek
+kosza dla wybranej dyszy. Przy fabrycznych nastawach serwisowych jest to
+X82,8 Y152,5 dla T0 i X72,0 Y152,5 dla T1. Nad koszem dysze czekają
+na nagrzanie i schłodzenie do 160°C. Po stabilizacji następują drugie
+przetarcie i skan T0, drugie przetarcie i skan T1, a potem kontrolny
+pomiar ponownie osadzonej T0.
+
+Gdy MCU odmawia startu przejazdu `SWEEP`, host sprawdza aktualne
+zabezpieczenia przed powtórnym dojazdem Z. Styk PC14 może ponownie się
+zamknąć po chwilowym rozwarciu, które skasowało potwierdzenie styku w MCU.
+Procedura wycofuje Z i powtarza dojazd. W razie dalszej odmowy przechodzi
+na pionowe próby na tej osi.
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
@@ -187,8 +197,13 @@ załadowania materiału po pomiarze. [Obserwacja z próby T0](CASSETTE_LOAD_2026
 ## Obsługa z konsoli
 
 Przejdź do trybu serwisowego, gdy drukarka jest bezczynna.
+Kalibracja odczytuje wspólną opcję `Door lock`, sterowaną z OLED lub
+poleceniem `INVENTURE_DOOR_POLICY`. Gdy opcja jest włączona, obie
+osłony muszą być zamknięte. Przy wyłączonej blokadzie kalibracja może
+pracować z otwartymi osłonami. [Globalna polityka drzwi](OEM_DOOR_POLICY.md).
 
 ```gcode
+INVENTURE_DOOR_POLICY
 INVENTURE_CONTROL MODE=SERVICE
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STATUS
 ```
@@ -202,10 +217,10 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=VERIFY_T0 SCAN=SWEEP PREP=EMPTY A
 ```
 
 Po `phase: awaiting_t0_confirmation` sprawdź wzrokowo, czy T0 jest
-opuszczona nad właściwym padem, a T1 podniesiona. MCU potwierdza kroki
-docisku, a położenie mechanizmu potwierdza operator. Jeśli położenie
-jest prawidłowe, wznów tę samą sesję. Dla `VERIFY_T0 PREP=RETRACT` ten
-postój następuje po przygotowaniu obu dysz i ponownym wybraniu T0.
+opuszczona, a T1 podniesiona. MCU potwierdza kroki docisku, a położenie
+mechanizmu potwierdza operator. Przy `PREP=EMPTY` sprawdzenie odbywa się
+nad padem przed grzaniem. Przy `PREP=RETRACT` potwierdzenie odbywa się
+nad koszem, po przygotowaniu obu dysz i ponownym wybraniu T0.
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CONFIRM_T0
