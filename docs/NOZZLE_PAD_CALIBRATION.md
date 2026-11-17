@@ -10,12 +10,14 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C wymaga hosta `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13`
-i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R9`. Pobierz artefakt
+i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R9`. Najpierw zaktualizuj
+[moduł hosta](../README.md#aktualizacja-orange-pi). Host R12 odrzuca
+nowy limit serwisowy 310°C podczas łączenia z MCU R9. Pobierz artefakt
 `INVENTURE_MCU_PAD_100C_BOOT17` z
 [GitHub Actions](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/actions/workflows/orange-pi-mcu.yml).
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
-z ustawień bootloadera. Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi).
+z ustawień bootloadera.
 Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
 `baud_match: true` i `nozzle_pad_measurement_band_c: [95, 105]`.
 

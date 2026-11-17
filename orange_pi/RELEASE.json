@@ -720,7 +720,7 @@
     "documentation": "docs/NOZZLE_PAD_CALIBRATION.md",
     "tested_on_printer": false,
     "ivb_sha256": "89e7416f4b44d044eb3cbf6604b838b1f361ff8098a08633a7c97252283ffe9f",
-    "zip_sha256": "06effcc5d409e245df23cb5b78ae5c1bc23fd3a5ca3853139098eac9c1b15f78",
+    "zip_sha256": "137b2af42f2ca8bef510da0e5cfc7e6738edd33555a22e530fa974740a15e4cb",
     "bootloader": "InventureBoot 1.7",
     "distribution": "ChatGPT ZIP and GitHub Actions MCU build",
     "preparation": [
