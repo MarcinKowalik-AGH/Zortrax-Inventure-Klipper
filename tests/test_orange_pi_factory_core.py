@@ -313,7 +313,7 @@ class FactoryCoreTests(unittest.TestCase):
             heat = next(i for i,a in enumerate(ex.actions) if a['kind'] == 'heat')
             self.assertFalse(any(a['kind']=='mode' or a.get('e') for a in ex.actions[:heat]))
             parked = [(a['x'],a['y']) for a in ex.actions[:heat] if a['kind']=='move']
-            self.assertEqual(parked, [(32.8,152.5), (82.8,152.5)] if tool==0 else [])
+            self.assertEqual(parked, [(32.8,152.5), (82.8,152.5)] if tool==0 else [(67.5,150.)])
             switch = ex.in_phase('SWITCH', 'move')
             expected = ([(82.8, 152.5), (139.5, 154.5), (154.5, 154.5), (82.8, 152.5)]
                         if tool == 0 else

@@ -1,11 +1,10 @@
 # Parametryzowane ładowanie kaset T0/T1
 
-Host `RC8-CONTROL-R7-UIFAST-FACTORY-AUDIT` składa AUTO z tych samych modułów
+Host `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15` składa AUTO z tych samych modułów
 co osobne przełączanie dyszy, purge, czyszczenie i podawanie ręczne. Profil
 `SPEED_PROFILE=OEM` odtwarza żądane prędkości przejazdów i oscylacji r0323
-dla T0 i T1. W obu torach używaj MCU T1-TIMING z poprawką czasu obsługi
-kroków na rampie. Profil
-serwisowy działa z MCU `RC8-CONTROL-R7-FACTORY-FEED`.
+dla T0 i T1. MCU `RC8-CONTROL-R7-PAD-THERMAL-R10` zawiera poprawkę czasu
+obsługi kroków na rampie, wspólną politykę drzwi i limit heartbeat 5 s.
 [Wspólne moduły i konfiguracja](MODULAR_PROCEDURES_2026-11-10.md).
 
 `INVENTURE_PROCEDURE ACTION=AUTO ... SPEED_PROFILE=OEM` rozpoczyna od bazowania
@@ -38,16 +37,18 @@ sprawdza tę obsługę przed startem procedur z napędem kasety.
 MCU CASSETTE-POLICY udostępnia szybkie ruchy w sesji FACTORY obu
 narzędzi i domyślnie wyłącza globalną opcję Door lock.
 
-1. Zakończ próbę poleceniem `INVENTURE_STOP`. Po schłodzeniu skopiuj
-   `MCU/INVENTUR.IVB` z paczki `INVENTURE_MCU_CONTROL_R7_CASSETTE_POLICY_BOOT17.zip`
-   na kartę i zainstaluj aplikację przez InventureBoot 1.7.
-2. Zaktualizuj host w terminalu Orange Pi przez SSH.
+1. Zakończ aktywną próbę poleceniem `INVENTURE_STOP` i zaktualizuj hosta
+   w terminalu Orange Pi przez SSH.
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
-python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
+python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --configure-nozzles
 ```
 
+2. Przy starszej aplikacji MCU pobierz `INVENTURE_MCU_PAD_100C_R10_BOOT17.zip`
+   z [wydania R15](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r15).
+   Skopiuj `INVENTUR.IVB` na kartę i wgraj przez InventureBoot 1.7.
+   Już zainstalowane MCU R10 współpracuje z hostem R15.
 3. Wykonaj restart w konsoli Klippera we Fluidd.
 
 ```gcode
@@ -60,13 +61,14 @@ Po ponownym połączeniu odczytaj wersje.
 INVENTURE_VERSION
 ```
 
-Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-CASSETTE-POLICY`
-i MCU `RC8-CONTROL-R7-CASSETTE-POLICY`.
+Oczekiwane wersje to host `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15`
+i MCU `RC8-CONTROL-R7-PAD-THERMAL-R10`.
 W raporcie powinny być też widoczne
 `procedure_api: 1`, `factory_abi: 1`, `factory_feed_clock: 1`,
 `factory_motion_abi: 1`, `factory_motion_max_hz: 125000`, `factory_motion_tools: 3`,
 `door_policy_global: true`, `door_policy_default_enabled: false`,
-`host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`.
+`host_baud: 750000`, `p4_baud: 750000`, `baud_match: true`,
+`heartbeat_timeout_s: 5`, `nozzle_service_target_max_c: 310`.
 Bootloader i zapisany wybór UART pozostają bez zmiany. Instalator hosta
 dodaje również `inventure_factory_core.py`, zachowuje poprzednie pliki
 oraz informację o nieobecności tego modułu na starszej instalacji.
@@ -217,7 +219,7 @@ Wartości długości to mm, prędkości mm/s, czasy z przyrostkiem `_TIMEOUT`,
 | `PURGE_SPEED`, `TRAVEL_SPEED`, `SWITCH_SPEED` | SERVICE T0 30, 30, 250/60. SERVICE T1 20, 20, 4. OEM T0/T1 50, 8000/60, 250/60. | Żądane prędkości oscylacji, przejazdów i powolnego docisku |
 | `HOME_XY_MAX`, `HOME_Z_MAX` | 160, 250 | Budżety dojazdu do krańcówek |
 | `HOME_SPEED`, `Z_SPEED` | T0 i T1 OEM 10, 2. T1 SERVICE 5, 2. | Prędkości najazdu XY i opuszczania stołu. Bazowanie do zwolnienia odjeżdża od każdej krańcówki XY z prędkością 1 mm/s, do 5000 kroków. |
-| `TARGET`, `MAX_POWER` | Według materiału, 40% | Cel PID wybranej dyszy w zakresie 180–240°C i limit mocy |
+| `TARGET`, `MAX_POWER` | Według materiału, 40% | Cel PID wybranej dyszy w zakresie 180–310°C dla MCU R10 i limit mocy |
 | `MATERIAL` | UNKNOWN | Wybiera domyślny cel, budżety U1/U2 i parametry napędu kasety dla obu torów |
 | `DURATION` | 900 | Ograniczenie czasu od pierwszej gotowości termicznej; AUTO kończy grzanie wcześniej po zakończeniu procedury |
 | `PROCEDURE_TIMEOUT` | 1800 | Niezależny limit całej procedury, włącznie z przygotowaniem |

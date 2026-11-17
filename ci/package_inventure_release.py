@@ -4,6 +4,7 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -36,7 +37,7 @@ def package(build, output):
     mcu_zip = output/pad['package_filename']
     names = ('INVENTUR.IVB', 'THERMAL_TEST_VERIFY.json', 'klipper.dict')
     files = {name: (build/name).read_bytes() for name in names}
-    files['README_PL.md'] = (root/'docs/INVENTURE_PAD_XYZ_R14.md').read_bytes()
+    files['README_PL.md'] = (root/'docs/INVENTURE_PAD_XYZ_R15.md').read_bytes()
     files['SHA256SUMS'] = ''.join(
         f'{sha256(data).hexdigest()}  {name}\n' for name, data in files.items()).encode('ascii')
     with ZipFile(mcu_zip, 'w') as archive:
@@ -57,7 +58,10 @@ def package(build, output):
         prefix = 'inventure-orange-pi/'
         assert archive.read(prefix+'orange_pi/RELEASE.json') == (root/'orange_pi/RELEASE.json').read_bytes()
         assert archive.read(prefix+'install-orange-pi.py') == (root/'install-orange-pi.py').read_bytes()
-    assets = (mcu_zip, host_zip)
+    audit_source = root/pad['audit_report']
+    audit_copy = output/audit_source.name
+    shutil.copyfile(audit_source, audit_copy)
+    assets = (mcu_zip, host_zip, audit_copy)
     digests = {asset.name: sha256(asset.read_bytes()).hexdigest() for asset in assets}
     (output/'SHA256SUMS').write_text(''.join(
         f'{digest}  {name}\n' for name, digest in digests.items()))

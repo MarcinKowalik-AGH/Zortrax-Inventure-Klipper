@@ -22,15 +22,15 @@ XY_RELEASE_MM = 5000 / XY_STEPS_PER_MM
 XY_RELEASE_SPEED = 1.
 UINT32 = 0xffffffff
 PROCEDURES = {
-    'AUTO': ('home', 'heat', 'select_tool', 'load_l1_l4'),
+    'AUTO': ('home', 'park', 'heat', 'select_tool', 'load_l1_l4'),
     'HOME': ('home',),
     'PARK': ('home', 'park'),
     'SELECT': ('home', 'select_tool'),
     'SWEEP': ('home', 'park', 'sweep'),
-    'PURGE': ('home', 'heat', 'select_tool', 'position_bin', 'purge', 'optional_clean'),
-    'CLEAN': ('home', 'heat', 'select_tool', 'position_bin', 'clean'),
-    'MANUAL': ('home', 'heat', 'select_tool', 'position_bin', 'manual_feed'),
-    'UNLOAD': ('home', 'heat', 'select_tool', 'position_bin', 'unload'),
+    'PURGE': ('home', 'park', 'heat', 'select_tool', 'position_bin', 'purge', 'optional_clean'),
+    'CLEAN': ('home', 'park', 'heat', 'select_tool', 'position_bin', 'clean'),
+    'MANUAL': ('home', 'park', 'heat', 'select_tool', 'position_bin', 'manual_feed'),
+    'UNLOAD': ('home', 'park', 'heat', 'select_tool', 'position_bin', 'unload'),
 }
 
 # r0323 cassette records at 0x08029B30, keyed by the material table at
@@ -82,7 +82,7 @@ def uses_r0323_sequence(tool, speed_profile='SERVICE'):
 def procedure_modules(operation, tool, speed_profile='SERVICE'):
     modules = PROCEDURES[operation]
     if uses_r0323_sequence(tool, speed_profile) and operation in ('AUTO', 'UNLOAD'):
-        return modules[:1] + ('park',) + tuple(m for m in modules[1:] if m != 'position_bin')
+        return tuple(m for m in modules if m != 'position_bin')
     return modules
 
 
@@ -420,6 +420,11 @@ class FactoryProgram:
         return (yield from self._module('position_bin',
             self._move(self.p['center_x'], self.p['center_y'], leg=leg)))
 
+    def return_to_bin(self):
+        # Leave the brush in Y before moving across its width to the bin center.
+        yield from self._move(self.xy[0], self.p['center_y'])
+        return (yield from self.position_bin())
+
     def park(self):
         return (yield from self._module('park', self._park_steps()))
 
@@ -675,14 +680,18 @@ class FactoryProgram:
         if operation in ('PARK', 'SWEEP') and not self.stock_sequence:
             _validated(p, operation)
         parked_cassette = self.stock_sequence and operation in ('AUTO', 'UNLOAD')
+        heated = 'heat' in PROCEDURES[operation]
         park_before_heat = parked_cassette or operation in ('PARK', 'SWEEP')
         yield from self.home(y_first=park_before_heat or (self.stock_sequence and operation == 'SELECT'))
         if park_before_heat:
             yield from self._phase('PARK')
             yield from self.park()
+        elif heated:
+            yield from self._phase('PARK')
+            yield from self.position_bin()
         terminal = operation
         cleaned = False
-        if operation not in ('HOME', 'PARK', 'SELECT', 'SWEEP'):
+        if heated:
             yield from self.heat()
         if operation not in ('HOME', 'PARK', 'SWEEP'):
             selection = yield from self.select_tool()
@@ -709,5 +718,8 @@ class FactoryProgram:
                 if not result['sensor_empty_proven']:
                     raise FactoryError('unload_sensor_still_present', **result)
             yield from self._mode(0)
+        if heated and self.xy != (p['center_x'], p['center_y']):
+            yield from self._phase('PARK')
+            yield from self.return_to_bin()
         yield from self._phase('DONE')
         yield dict(kind='done', success=True, terminal=terminal, cleaning_done=cleaned)

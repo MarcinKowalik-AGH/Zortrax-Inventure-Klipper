@@ -9,12 +9,12 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 
 ## Instalacja
 
-Pełny pomiar przy 100°C wymaga hosta `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14`
+Pełny pomiar przy 100°C obsługuje host `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15`
 i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R10`. Najpierw zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi). Host R12 odrzuca
 nowy limit serwisowy 310°C podczas łączenia z MCU R10. Pobierz paczkę
 `INVENTURE_MCU_PAD_100C_R10_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r14).
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r15).
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.

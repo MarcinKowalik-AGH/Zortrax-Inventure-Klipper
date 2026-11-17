@@ -1,4 +1,11 @@
-# Zortrax Inventure — CONTROL-R7-T1-TIMING
+# Zortrax Inventure — host R15 / MCU R10
+
+R15 poprawia parkowanie po czyszczeniu i dojazd nad kosz przed grzaniem.
+Kontrola obejmuje 522 testy hosta, osiem zestawów C MCU i zgodność
+protokołu dostarczonego R10. Raport podaje również próby potwierdzone
+na drukarce oraz brakujące wyniki pełnej kalibracji przy 100°C.
+[Wydanie R15](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r15),
+[raport kontroli](docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md).
 
 Jeden interfejs MCU do kolejnych prób wybieranych z Klippera: A/B/Z/E,
 CoreXY X/Y, oba podajniki kaset, cztery grzałki, sześć wentylatorów, zamki,

@@ -1,5 +1,8 @@
 # Audyt ładowania kaset Inventure T0 i T1
 
+Bieżąca kontrola MCU R10 i hosta R14 wraz z poprawką R15 jest w
+[raporcie z 17 listopada](AUDYT_MCU_R10_HOST_R14_2026-11-17.md).
+
 Użytkownik potwierdził wypływ filamentu z obu dysz i wykonanie czyszczenia
 po zmianie MCU T1-TIMING. Odczyt `factory.result.terminal` z konkretnej
 próby rozróżnia L1 i L4. Fizyczny wynik obejmuje po jednej udanej próbie
@@ -40,10 +43,11 @@ Z-SUPPORT 235°C i 50/50 mm, Z-SUPPORT-PLUS 240°C i 30/70 mm. Pomiar ma
 wspólną skalę 5 mV/°C i osobne wejścia PC0 oraz PF8. Host używa PID z
 nastawami z r0323, własnym próbkowaniem i ograniczeniami serwisowymi.
 
-Cel r0323 powyżej 240°C jest widoczny w `oem_material_target_c`.
+W wersji audytowanej 12 listopada cel r0323 powyżej 240°C był widoczny w `oem_material_target_c`.
 Bez jawnego, właściwego dla materiału `TARGET` w dopuszczalnym zakresie
 `PARAMS` pokazuje `target: null` i `target_requires_override: true`,
-a grzany cykl kończy walidację przed ruchem. Zakres pozostaje 180–240°C.
+a grzany cykl kończył walidację przed ruchem. Tamten zakres wynosił 180–240°C.
+MCU R10 i aktualny host negocjują zakres celów serwisowych do 310°C.
 
 ## Poprawki i weryfikacja
 

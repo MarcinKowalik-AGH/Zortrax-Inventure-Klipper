@@ -1,18 +1,19 @@
-# Wspólne procedury T0/T1 — host CONTROL-R7-MODULAR
+# Wspólne procedury T0/T1
 
-Host `RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION` udostępnia moduły w konsoli i
+Host `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15` udostępnia moduły w konsoli i
 [w menu Zortrax](ZORTRAX_MENU_PROCEDURES_2026-11-10.md).
-AUTO, UNLOAD i próby z `FEEDER=1` wymagają
-[instalacji MCU R7-FACTORY-FEED](FACTORY_LOAD_2026-11-10.md).
+MCU `RC8-CONTROL-R7-PAD-THERMAL-R10` obsługuje AUTO, UNLOAD,
+grzanie, ruch i próby z `FEEDER=1`.
+[Instalacja i aktualizacja](INVENTURE_PAD_XYZ_R15.md).
 
 ```bash
 git -C "$HOME/inventure-orange-pi" pull --ff-only && python3 "$HOME/inventure-orange-pi/install-orange-pi.py"
 ```
 
 Po aktualizacji obu części `INVENTURE_VERSION` pokazuje host
-`RC8-CONTROL-R7-UIFAST-FEED-T0-MOTION`, MCU `RC8-CONTROL-R7-FACTORY-FEED`,
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15`, MCU `RC8-CONTROL-R7-PAD-THERMAL-R10`,
 `procedure_api=1`, `factory_abi=1` i `factory_feed_clock=1`.
-Zainstalowane MCU FACTORY-FEED obsługuje tę wersję hosta.
+W raporcie są również `heartbeat_timeout_s: 5` i limit celu 310°C.
 
 ## Podział programu
 
@@ -94,6 +95,11 @@ ustawiają wyniku pełnego ładowania ani potwierdzenia wypływu. UNLOAD
 kończy sukcesem dopiero po świeżym A=0. Nieudane L4 po wykonaniu tego
 samego modułu wycofania nadal pozostaje nieudanym ładowaniem.
 
+Grzane procedury dojeżdżają nad kosz przed pierwszym włączeniem grzałki.
+Po CLEAN/PURGE i długim AUTO głowica opuszcza linię szczotki w Y, po czym
+wraca na środek kosza. Końcowy STATUS podaje tę pozycję przed zwolnieniem
+właściciela. R15 stosuje wspólny powrót również w kalibracji pada.
+
 ## Konfiguracja i kolejność nadpisywania
 
 Kolejność: wartości wbudowane → `procedure_defaults` → `procedure_t0`
@@ -173,6 +179,7 @@ referencję przed dalszą komunikacją. Nie uruchamia nowego ruchu ani
 automatycznego wycofania. Zabezpieczenia temperatury, kabla, danych,
 wentylatora i nadzoru MCU nadal obowiązują dla wszystkich modułów.
 
-Geometria i całe przebiegi nowych poleceń pozostają do pierwszego
-potwierdzenia na drukarce. Testy programu i symulacji protokołu nie
-potwierdzają położenia dysz ani trafienia odpadu do pojemnika.
+Wcześniejsze próby potwierdziły wypływ i czyszczenie obu dysz. Osobne
+potwierdzenia krótkich i długich gałęzi oraz poprawionych trajektorii
+pozostają do zebrania na drukarce.
+[Wyniki kontroli i próby fizyczne](AUDYT_MCU_R10_HOST_R14_2026-11-17.md).

@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3",
+  "module_sha256": "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -77,9 +77,10 @@
     "9b23da923280273d4d959239d270aa7597efd00b8b19695d2c8dc750cec0ebac",
     "cc5f9f12e386d0a3795008b63d4048b997017a630754a6924f7bb8b9f37a128a",
     "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f",
-    "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf"
+    "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf",
+    "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -245,7 +246,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db",
+  "factory_core_sha256": "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -353,7 +354,8 @@
     "a02dc61dbb7d74eee377a8f5543fe9183b6f5e0227528c99d5ce9bf126d33b65",
     "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329",
     "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
-    "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806"
+    "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
+    "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -409,7 +411,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb",
+      "sha256": "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -425,7 +427,8 @@
         "c96b2c8767b167f7731471279dda2f81ee8ea9474f314e80f4e4e054c721946e",
         "77a0bfe7dd047677427f03c5a2f7d359b6b24276812fb4447332d01a27475b04",
         "e09956de13855de66b12160a813a521816dae22f0a538b4b49f1da938ada7572",
-        "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48"
+        "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48",
+        "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb"
       ]
     }
   },
@@ -653,5 +656,15 @@
       95,
       105
     ]
+  },
+  "procedure_audit": {
+    "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
+    "audited_host_commit": "dc2c4046a658280c79fe0f29cb52bc1861125fda",
+    "audited_mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R10",
+    "fixed_host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15",
+    "verified_host_tests": 522,
+    "mcu_register_programs": 8,
+    "full_hardware_acceptance": false,
+    "pad_result_applied_to_native_print_toolchange": false
   }
 }

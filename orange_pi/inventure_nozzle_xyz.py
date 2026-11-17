@@ -506,9 +506,7 @@ class NozzleXYZProgram(ZHomeProgram):
 
     def _wipe_and_return_to_bin(self):
         yield from self.clean()
-        # Leave the brush at its exit X before crossing to the bin center.
-        yield from self._move(self.xy[0], self.p['center_y'])
-        yield from self.position_bin()
+        yield from self.return_to_bin()
 
     def _verify_t0_at_pad(self):
         yield from self._position_contact_pad()

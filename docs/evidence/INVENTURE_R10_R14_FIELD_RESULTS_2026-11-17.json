@@ -1,0 +1,289 @@
+{
+  "audited_host_commit": "dc2c4046a658280c79fe0f29cb52bc1861125fda",
+  "audited_host": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R14",
+  "audited_mcu": "RC8-CONTROL-R7-PAD-THERMAL-R10",
+  "compiled_ivb_sha256": "8b3bdc8cf3b6dafb361675012f802db343fe0b2525b089f4398ebfca4401a691",
+  "current_hardware_run_confirmed": false,
+  "log_sources": [
+    {
+      "archive": "klippy(10).log(1).zip",
+      "log_name": "klippy(10).log",
+      "log_sha256": "1d545664f09091c53fd883460d58dd8898cc596877e7a5cbd8e565129e5acb83",
+      "pad_terminal_events": [
+        {
+          "phase": "failed",
+          "run_id": "dddfd5c840164e7d993859e1746593c7",
+          "mode": "FULL",
+          "error": "mcu_shutdown",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 1148
+        },
+        {
+          "phase": "failed",
+          "run_id": "113300cccd38408480e95e3e31e3f99b",
+          "mode": "FULL",
+          "error": "required_sensor_or_door_interlock",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 3683
+        },
+        {
+          "phase": "failed",
+          "run_id": "11add86117e64614b88254c6030d07be",
+          "mode": "FULL",
+          "error": "Board/cable status is stale",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 7069
+        },
+        {
+          "phase": "failed",
+          "run_id": "47c869636bb444eeb7c062757643d9b9",
+          "mode": "FULL",
+          "error": "Unverified Z motion result",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 12859
+        }
+      ]
+    },
+    {
+      "archive": "klippy(11).log(1).zip",
+      "log_name": "klippy(11).log",
+      "log_sha256": "3bf5693d2913e4b46ce210cecaffe387ce4a8d6304d50c41bb37d9b7e75644be",
+      "pad_terminal_events": [
+        {
+          "phase": "failed",
+          "run_id": "dddfd5c840164e7d993859e1746593c7",
+          "mode": "FULL",
+          "error": "mcu_shutdown",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 1148
+        },
+        {
+          "phase": "failed",
+          "run_id": "113300cccd38408480e95e3e31e3f99b",
+          "mode": "FULL",
+          "error": "required_sensor_or_door_interlock",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 3683
+        },
+        {
+          "phase": "failed",
+          "run_id": "11add86117e64614b88254c6030d07be",
+          "mode": "FULL",
+          "error": "Board/cable status is stale",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 7069
+        },
+        {
+          "phase": "failed",
+          "run_id": "47c869636bb444eeb7c062757643d9b9",
+          "mode": "FULL",
+          "error": "Unverified Z motion result",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 12940
+        },
+        {
+          "phase": "failed",
+          "run_id": "4efcb8a7ea134bd68b8e08fbf4f118fc",
+          "mode": "FULL",
+          "error": "Przedział krawędzi PC14 nadal ma 0.16 mm",
+          "measurement_target_c": 160.0,
+          "stage": "Y+_TOUCH",
+          "tool": "T0",
+          "line": 15422,
+          "details": {
+            "control_before_stop": {
+              "#name": "inventure_control_state",
+              "#receive_time": 239593.702944038,
+              "#sent_time": 239593.70274866335,
+              "active": 1,
+              "armed": 0,
+              "fault": 0,
+              "guard_mask": 127,
+              "latched": 0,
+              "mode": "SERVICE",
+              "reject": null
+            },
+            "direction": "Y+",
+            "edge_interval_mm": [
+              72.184375,
+              72.340625
+            ],
+            "factory_state": {
+              "#name": "inventure_factory_state",
+              "#receive_time": 239593.71447370498,
+              "#sent_time": 239593.714269288,
+              "a": 1,
+              "active": 0,
+              "b": 0,
+              "fault": 0,
+              "mode": 0,
+              "pulse_age_ms": 4294967295,
+              "pulses": 0,
+              "reason": 2,
+              "reject": 0,
+              "remaining_ms": 0,
+              "running": 0,
+              "sequence": 6049,
+              "starts": 0,
+              "token": 2668506625,
+              "tool": 0
+            },
+            "last_cable_pd11_raw": 0,
+            "temperatures_c": {
+              "T0": 161.01098901098902,
+              "T1": 160.84981684981685
+            },
+            "uart": {
+              "dropped": 0,
+              "highwater": 241,
+              "pending": 93,
+              "received_at": 239593.050048746,
+              "rxpending": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "archive": "klippy(7).log(1).zip",
+      "log_name": "klippy(7).log",
+      "log_sha256": "9be01ee036f1e26a0c53122760d43d14363e94062043d96e499238245aa69109",
+      "pad_terminal_events": [
+        {
+          "phase": "failed",
+          "run_id": "dddfd5c840164e7d993859e1746593c7",
+          "mode": "FULL",
+          "error": "mcu_shutdown",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 1148
+        }
+      ]
+    },
+    {
+      "archive": "klippy(8).log(1).zip",
+      "log_name": "klippy(8).log",
+      "log_sha256": "84991a11c99d92d49a35a7e8bb6853b16bea9bb101b37fdee76029ed4019e544",
+      "pad_terminal_events": [
+        {
+          "phase": "failed",
+          "run_id": "dddfd5c840164e7d993859e1746593c7",
+          "mode": "FULL",
+          "error": "mcu_shutdown",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 1148
+        },
+        {
+          "phase": "failed",
+          "run_id": "113300cccd38408480e95e3e31e3f99b",
+          "mode": "FULL",
+          "error": "required_sensor_or_door_interlock",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 3683
+        }
+      ]
+    },
+    {
+      "archive": "klippy(9).log(1).zip",
+      "log_name": "klippy(9).log",
+      "log_sha256": "b3c6ca463038635edd1c01d584b5d39d4631e940da675f092cb3027f89c2628b",
+      "pad_terminal_events": [
+        {
+          "phase": "failed",
+          "run_id": "dddfd5c840164e7d993859e1746593c7",
+          "mode": "FULL",
+          "error": "mcu_shutdown",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 1148
+        },
+        {
+          "phase": "failed",
+          "run_id": "113300cccd38408480e95e3e31e3f99b",
+          "mode": "FULL",
+          "error": "required_sensor_or_door_interlock",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 3683
+        },
+        {
+          "phase": "failed",
+          "run_id": "11add86117e64614b88254c6030d07be",
+          "mode": "FULL",
+          "error": "Board/cable status is stale",
+          "measurement_target_c": 160.0,
+          "stage": null,
+          "tool": null,
+          "line": 7069
+        }
+      ]
+    }
+  ],
+  "operator_confirmed_cold_centers": {
+    "T0": {
+      "center_xy_mm": [
+        81.7,
+        68.2
+      ],
+      "edges_mm": [
+        [
+          77.8,
+          85.5
+        ],
+        [
+          64.4,
+          72.0
+        ]
+      ],
+      "z_max_mm": 139.5,
+      "source": "User console excerpt, completed at 15:11:37 in Kontynuacja testów wentylatorów 1"
+    },
+    "T1": {
+      "center_xy_mm": [
+        70.8,
+        68.7
+      ],
+      "edges_mm": [
+        [
+          67.1,
+          74.5
+        ],
+        [
+          64.8,
+          72.5
+        ]
+      ],
+      "z_max_mm": 137.95,
+      "source": "User console excerpt, completed at 11:08:05 in the current conversation"
+    }
+  },
+  "historical_loading_evidence": [
+    "docs/evidence/CASSETTE1_PHYSICAL_LOAD_2026-11-10.json",
+    "docs/evidence/LOAD230_R3_PHYSICAL_2026-11-10.json",
+    "docs/FACTORY_PROCEDURE_AUDIT_2026-11-12.md",
+    "docs/NATIVE_Z_COREXY.md"
+  ]
+}

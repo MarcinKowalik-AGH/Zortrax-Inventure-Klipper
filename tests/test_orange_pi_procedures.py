@@ -15,6 +15,22 @@ previous = importlib.util.module_from_spec(spec);spec.loader.exec_module(previou
 
 
 class ProcedureCoreTests(unittest.TestCase):
+    def test_heated_procedures_wait_and_finish_over_the_selected_bin(self):
+        for tool in ('T0', 'T1'):
+            for speed in ('SERVICE', 'OEM'):
+                for operation in ('AUTO', 'CLEAN', 'PURGE', 'MANUAL', 'UNLOAD'):
+                    hooks = (short_feedback, long_feedback) if operation == 'AUTO' else (None,)
+                    for feedback in hooks:
+                        with self.subTest(tool=tool, speed=speed, operation=operation, feedback=feedback):
+                            p = core.parameters(PlannerCommand(TOOL=tool, SPEED_PROFILE=speed))
+                            ex = Executor(p, hook=feedback, operation=operation).run()
+                            heat = next(i for i, action in enumerate(ex.actions) if action['kind'] == 'heat')
+                            moves = [action for action in ex.actions[:heat] if action['kind'] == 'move']
+                            center = (p['center_x'], p['center_y'])
+                            self.assertTrue(moves, 'No bin positioning before heating')
+                            self.assertEqual((moves[-1]['x'], moves[-1]['y']), center)
+                            self.assertEqual(ex.program.xy, center)
+
     def test_T1_composition_preserves_published_R7_hardware_trace_and_OEM_decisions(self):
         self.assertEqual(hashlib.sha256(Path(previous.__file__).read_bytes()).hexdigest(),
             '3354997b7071b009202bb680edd0c6d23d5baa97179e9b7651428fb0bdcd4af9')
@@ -28,7 +44,11 @@ class ProcedureCoreTests(unittest.TestCase):
             actions=[]
             for raw in ex.actions:
                 if raw['kind']=='module':continue
+                if ((raw['kind']=='phase' and raw['name']=='PARK')
+                        or (raw.get('phase')=='PARK' and raw['kind']!='phase')):
+                    continue
                 action=dict(raw)
+                action.pop('phase',None)
                 action.pop('cleaning_done',None)
                 action.pop('leg',None)  # selector diagnostics do not change the actuator request
                 action.pop('pulse_base',None)  # the L3 sensor baseline has its own regression
@@ -150,6 +170,31 @@ class ProcedureCoreTests(unittest.TestCase):
 
 class ProcedureHostTests(unittest.TestCase):
     def setUp(self):self.fixture=factory_host.FactoryHostTests()
+
+    def test_real_executor_heats_and_finishes_in_the_selected_bin(self):
+        for tool in ('T0', 'T1'):
+            for speed in ('SERVICE', 'OEM'):
+                for operation in ('AUTO', 'CLEAN', 'PURGE', 'MANUAL', 'UNLOAD'):
+                    scenarios = ('short', 'long') if operation == 'AUTO' else ('short',)
+                    for scenario in scenarios:
+                        with self.subTest(tool=tool, speed=speed, operation=operation, scenario=scenario):
+                            h, _, _ = self.fixture.host(scenario, fast_motion=True, factory_motion_tools=3)
+                            positions = []
+                            original = h._load_test_output
+                            def record(context, duty, heater=None):
+                                if duty and not positions:
+                                    positions.append(tuple(context['factory']['position'][:2]))
+                                return original(context, duty, heater)
+                            h._load_test_output = record
+                            h.cmd_procedure(Command(ACTION=operation, TOOL=tool, SPEED_PROFILE=speed,
+                                                    PURGE_MM=2, MANUAL_MM=2))
+                            last = self.fixture.finish(h)
+                            self.assertEqual(last['phase'], 'done', last)
+                            params = last['factory']['parameters']
+                            center = (params['center_x'], params['center_y'])
+                            self.assertEqual(positions, [center])
+                            self.assertEqual(tuple(last['factory']['position'][:2]), center)
+                            self.assertEqual(h.device.output(6+int(tool[-1]))['duty'], 0)
 
     def test_catalog_and_parameter_queries_are_read_only_on_old_MCU(self):
         h,_,_=self.fixture.host();h.commands.pop('factory_session')
