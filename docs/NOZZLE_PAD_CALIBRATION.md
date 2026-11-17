@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R10`. Tryb `CENTER TOOL=T1` działa z
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R11`. Tryb `CENTER TOOL=T1` działa z
 firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
@@ -183,7 +183,8 @@ zamknąć po chwilowym rozwarciu, które skasowało potwierdzenie styku w MCU.
 Procedura wycofuje Z i powtarza dojazd. W razie dalszej odmowy przechodzi
 na pionowe próby na tej osi. Domyślnie potwierdzony styk i rozwarcie
 dzieli wtedy najwyżej 0,05 mm. Krawędź przyjmuje się w połowie tego
-przedziału.
+przedziału. Para rozwarć z obrysem węższym niż średnica pola minus
+1,5 mm wymaga potwierdzenia obu krawędzi pionowymi próbami.
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
@@ -257,8 +258,11 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=START MODE=FULL SCAN=SWEEP PREP=RETRACT ACK=
 Dla sprawdzonego wyniesionego pola wybierz `SCAN=TAP` i limity Z
 odpowiednie dla pionowych prób w całym obszarze skanu.
 
-Poleceniem `STATUS` sprawdzisz etap i wynik. Próbę zatrzymuje
-`ACTION=STOP` lub `INVENTURE_STOP`.
+Poleceniem `STATUS` sprawdzisz etap i wynik. Po błędzie odczytasz również
+ostatnią dyszę, etap, odczyty temperatur i dostępny powód zatrzymania
+sesji na MCU. Zakończone pomiary dysz pozostają w `measurements`.
+Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
+Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STOP

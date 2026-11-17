@@ -24,7 +24,7 @@ class PadDevice(DualNozzleDevice):
         self.pad_moves = []
         self.sweep_moves = []
         self.contact_radius_mm = 2.5
-        self.first_sweep_open_steps = None
+        self.sweep_open_steps = {}
         self.sweep_start_refusals = 0
         self.refused_sweep_positions = []
         self.unreliable_sweep_seed = None
@@ -96,8 +96,8 @@ class PadDevice(DualNozzleDevice):
             if math.dist(point, self.centers[tool]) > self.contact_radius_mm:
                 distance, hit = sent, self.CONTACT
                 break
-        if not self.sweep_moves and self.first_sweep_open_steps is not None:
-            distance = self.first_sweep_open_steps
+        if len(self.sweep_moves) in self.sweep_open_steps:
+            distance = self.sweep_open_steps[len(self.sweep_moves)]
             hit = self.CONTACT
         duration = distance / rate + .02
         self.packets.append(('motion', *args))
@@ -153,6 +153,11 @@ class PadDevice(DualNozzleDevice):
         else:
             wire = args
         return super().query_factory(wire)
+
+    def terminate(self, reason, heaters=True):
+        if self.session and not self.session['active']:
+            reason = self.session['reason']
+        super().terminate(reason, heaters)
 
     def move(self, args):
         if args[0] != 1:
@@ -345,7 +350,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         device = host.device
-        device.first_sweep_open_steps = 8
+        device.sweep_open_steps[0] = 8
         device.unreliable_sweep_seed = (82.8, 68.)
         command = Command(ACTION='CENTER', T0_Z_MAX=137.30, EDGE_TOLERANCE_MM=.02, PAD_DIAMETER_MM=5.)
         host.cmd_nozzle_pad_calibrate(command)
@@ -365,7 +370,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         device = host.device
-        device.first_sweep_open_steps = 8
+        device.sweep_open_steps[0] = 8
         device.unreliable_sweep_seed = (82.8, 68.)
         interrupted_taps = []
 
@@ -631,7 +636,7 @@ class NozzlePadHostTests(unittest.TestCase):
         device.centers = ((81.70, 68.20), (70.80, 68.70))
         device.touch_heights = (round(139.25 * Z_STEPS_PER_MM), round(137.65 * Z_STEPS_PER_MM))
         device.hot = (260., 235.)
-        device.first_sweep_open_steps = 8
+        device.sweep_open_steps[0] = 8
         self.cmd(host, 'START', ACK='PAD_GEOMETRY_MEASURED',
                  T0_PAD_X=81.70, T0_PAD_Y=68.20, T0_Z_MAX=139.50, T0_TARGET=260, T0_RETRACT_MM=100,
                  T1_PAD_X=70.80, T1_PAD_Y=68.70, T1_Z_MAX=137.95, T1_TARGET=235, T1_RETRACT_MM=100)
@@ -648,6 +653,68 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['Y'], .5, delta=.015)
         self.assertFalse(device.stepper_enabled)
         self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+
+    def test_full_rechecks_both_t1_x_openings_when_the_sweep_is_too_narrow(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.hot = (160., 160.)
+        device.contact_radius_mm = 7.6 / 2.
+        # Eight T0 strokes and four initial T1 strokes precede the repeat X.
+        device.sweep_open_steps.update({12: 513, 13: 193})
+        self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual([move['sent'] for move in device.sweep_moves[12:14]], [513, 193])
+        t1 = result['measurements']['T1']
+        self.assertEqual(t1['scan_method'], 'SWEEP+TAP')
+        self.assertAlmostEqual(t1['electrical_diameter_mm'][0], 7.6, delta=.05)
+        self.assertLess(math.dist(t1['center_xy_mm'], device.centers[1]), .03)
+
+    def test_full_reports_mcu_thermal_stop_and_keeps_completed_t0(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.hot = (160., 160.)
+        device.contact_radius_mm = 7.6 / 2.
+        device.sweep_open_steps[11] = 8  # Force T1 to use vertical Y taps.
+
+        def motion(args):
+            context = host.load_test_context
+            row = device.motion
+            if (args[0] == 0 and context is not None and context['tool'] == 1
+                    and context['factory']['phase'] == 'Y-_TOUCH'
+                    and device.session['active'] and device.active_motion()
+                    and row.get('direction') == 1 and device.fraction() >= .3):
+                host.temperatures[1] = 153.6
+                host.raw_adc[1] = round(153.6 * 4095. / 660.)
+                device.terminate(4)
+            return device.move(args)
+
+        host.commands['motion'] = Wire(motion)
+        start = self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                         T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'failed')
+        self.assertEqual((result['tool'], result['stage']), ('T1', 'Y-_TOUCH'))
+        self.assertEqual(result['error'], 'MCU pad session stopped: temperature_or_sensor_guard')
+        self.assertEqual(result['details']['factory_state']['reason'], 4)
+        self.assertEqual(result['details']['temperatures_c']['T1'], 153.6)
+        self.assertEqual(result['details']['secondary_error'], 'Unverified Z motion result')
+        motion = result['details']['motion']
+        self.assertEqual((motion['reason'], motion['hit']), ('operator_stop', 0))
+        self.assertLess(0, motion['drivers']['Z']['sent'])
+        self.assertLess(motion['drivers']['Z']['sent'], motion['drivers']['Z']['planned'])
+        self.assertEqual(set(result['measurements']), {'T0'})
+        self.assertIsNone(result['candidate'])
+        self.assertEqual([row[0] for row in device.calls[-2:]], [2, 0])
+        self.assertFalse(device.stepper_enabled)
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+        with self.assertRaisesRegex(RuntimeError, 'complete repeatable candidate'):
+            self.cmd(host, 'SAVE', RUN_ID=start['run_id'], ACK='PAD_RESULT_REVIEWED')
 
     def test_global_door_policy_and_a_rejected_sweep_with_pc14_closed_again(self):
         host = self.host()

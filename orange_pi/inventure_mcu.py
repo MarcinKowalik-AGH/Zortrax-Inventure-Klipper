@@ -14,7 +14,7 @@ import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R10'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R11'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -108,6 +108,8 @@ CONTROL_REJECTS = (None,'invalid_request','another_owner_is_busy','mcu_not_ready
 MOTION_PHASES = ('idle','running','holding','done','stopped','failed')
 MOTION_REASONS = ('none','completed','stop_input','operator_stop','heartbeat_or_cable_lost',
     'door_open','maximum_time','mcu_shutdown','timing_fault','thermal_guard')
+PAD_SESSION_STOP_REASONS = {3:'factory_lease_expired',4:'temperature_or_sensor_guard',
+    5:'motion_or_interlock_guard',6:'heartbeat_or_cable_lost',7:'mcu_shutdown'}
 OUTPUT_REASONS = ('idle','applied','operator_off','duration_finished',
     'temperature_or_sensor_guard','heartbeat_or_cable_lost','mcu_shutdown')
 OUTPUT_NAMES = ('F0','F1','F2','F3','F4','F5','T0','T1','PC9','PC8')
@@ -2679,16 +2681,21 @@ class InventureMCU:
         except Exception as exc:
             if self.load_test_context is context:
                 factory=context.get('factory')
+                operation=(factory or {}).get('operation')
+                pad=operation=='NOZZLE_PAD_CALIBRATION'
                 edge=factory is not None and factory.get('z_edge_run') is not None
                 action=(factory.get('action') or {}) if factory is not None else {}
                 nozzle=action.get('kind')=='nozzle_z_refine' and 'token' in action
-                stopped=factory is not None and (factory['move'] is not None or edge or nozzle)
+                stopped=factory is not None and (factory['move'] is not None or edge or nozzle or pad)
                 reason=str(exc);details=dict(getattr(exc,'details',{}))
-                if factory is not None and factory.get('operation') in (
-                        'NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT','NOZZLE_PAD_CALIBRATION'):
+                if operation in ('NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT','NOZZLE_PAD_CALIBRATION'):
                     details['control_before_stop']=dict(getattr(self,'control_last',{}))
                     details['uart']=dict(getattr(self,'uart_buffer_stats',{}))
                     details['last_cable_pd11_raw']=getattr(self,'status',{}).get('cable')
+                if pad:
+                    now=self.reactor.monotonic()
+                    details['temperatures_c']={'T%d'%tool:self.panel_temperature(tool,now)[0]
+                                               for tool in (0,1)}
                 if stopped:
                     # The MCU retains an already terminal motion across STOP.
                     # Keep ownership until readback finishes, with no renewal.
@@ -2698,8 +2705,11 @@ class InventureMCU:
                         reason=self._factory_failed_z_edge(context,reason,details)
                     elif nozzle:
                         reason=self._factory_failed_nozzle_z(context,action,reason,details)
-                    else:
+                    elif factory['move'] is not None:
                         reason=self._factory_failed_motion(context,reason,details)
+                    if self.load_test_context is not context:return self.reactor.NEVER
+                if pad:
+                    reason=self._pad_failure_readback(context,reason,details)
                     if self.load_test_context is not context:return self.reactor.NEVER
                 if factory is not None:
                     factory['result']=dict(success=False,reason=reason,details=details)
@@ -2896,6 +2906,8 @@ class InventureMCU:
                    'retract_e_steps','saved_file')}
             state.update(prep=run['params']['prep'],scan=run['params']['scan'])
             if run.get('door_policy') is not None:state['door_policy']=run['door_policy']
+            if run['phase']=='failed':
+                state.update({key:run[key] for key in ('stage','tool','details') if key in run})
             if run['mode']=='VERIFY_T0':state['t0_confirmed']=run.get('t0_confirmed',False)
             batch=getattr(self,'nozzle_z_context',None)
             if batch is not None and batch.get('pad') is run:
@@ -3026,6 +3038,9 @@ class InventureMCU:
             run.update(phase=phase,error=result.get('reason'))
             for key in ('measurements','candidate','sample_temperatures_c','retract_e_steps'):
                 if key in result:run[key]=result[key]
+            if phase=='failed' and 'child' in batch:
+                run.update(stage=batch['child']['factory']['phase'],tool='T%d'%batch['tool'],
+                           details=result.get('details',{}))
             self._nozzle_pad_emit(batch['gcmd'])
             return
         if batch.get('alignment') is not None:
@@ -3723,7 +3738,11 @@ class InventureMCU:
             if (row.get('run'),row.get('token'))!=move['identity'] or row.get('phase')!='failed':
                 row=self._motion_query()
             if (self.load_test_context is not context or row['reject']
-                    or (row['run'],row['token'])!=move['identity'] or row['phase']!='failed'):
+                    or (row['run'],row['token'])!=move['identity']):
+                return reason
+            if row['phase']!='failed':
+                if row['phase']=='stopped' and context['factory']['operation']=='NOZZLE_PAD_CALIBRATION':
+                    details['motion']=row
                 return reason
             self._factory_account(context,row)
         except Exception:
@@ -3741,6 +3760,30 @@ class InventureMCU:
         primary='Factory motion stopped: '+row['reason']
         if reason!=primary:details['secondary_error']=reason
         return primary
+
+    def _pad_failure_readback(self,context,reason,details):
+        factory=context['factory']
+        motion=context.get('motion')
+        if motion and motion['phase'] in ('stopped','failed'):
+            details.setdefault('motion',motion)
+        if not factory['session']:return reason
+        try:
+            # The MCU retains a terminal factory reason across STOP. Action
+            # zero reads it without renewing the session or enabling outputs.
+            row=self._control_send('factory_session',[0]*11,owner=context)
+            self._control_validate(row,{'token':(0,0xffffffff),'active':(0,1),
+                'reject':(0,5),'reason':(0,7),'remaining_ms':(0,1500)})
+        except Exception as exc:
+            details['factory_readback_error']=str(exc)
+            return reason
+        if (row['token']!=factory['token'] or row['active'] or row['reject']
+                or row['remaining_ms']):
+            return reason
+        details['factory_state']=row
+        cause=PAD_SESSION_STOP_REASONS.get(row['reason'])
+        if cause is None:return reason
+        details.setdefault('secondary_error',reason)
+        return 'MCU pad session stopped: '+cause
 
     def _factory_poll_move(self,context):
         from .inventure_factory_core import UINT32, delta32, uses_r0323_sequence
@@ -3996,6 +4039,10 @@ class InventureMCU:
             f['pad_temperature_samples'].append({'tool':'T%d'%context['tool'],
                 'T0':t0,'T1':t1})
             return row
+        if kind=='xyz_sample':
+            run=self.nozzle_z_context['pad']
+            run.setdefault('measurements',{})[action['name']]=action['measurement']
+            return dict(f['snapshot'])
         if kind in ('dual_switch_tool','xyz_switch_tool'):
             tool=action['tool'] if kind=='xyz_switch_tool' else 1
             row=self._factory_session(context,next_tool=tool)

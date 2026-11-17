@@ -382,10 +382,10 @@ class NozzleXYZProgram(ZHomeProgram):
         edges = []
         used_taps = False
         diameter = xyz['pad_diameter_mm']
+        min_sweep_width = diameter - PAD_WIDTH_TOLERANCE_MM
         max_width = diameter + PAD_WIDTH_TOLERANCE_MM
         for axis, bounds in enumerate(limits):
             name = ('X', 'Y')[axis]
-            min_width = .5 if axis == 0 else diameter - PAD_WIDTH_TOLERANCE_MM
             pair = [None, None]
             contacts = []
             for side in (1, 0):
@@ -397,7 +397,10 @@ class NozzleXYZProgram(ZHomeProgram):
                     break
             method = 'sweep'
             if (None in pair
-                    or not min_width <= (pair[1] - pair[0]) / XY_STEPS_PER_MM <= max_width):
+                    or not min_sweep_width <= (pair[1] - pair[0]) / XY_STEPS_PER_MM <= max_width):
+                if None not in pair:
+                    logging.info('Inventure pad T%d %s: sweep width %.4f mm needs vertical verification',
+                                 self.p['tool'], name, (pair[1] - pair[0]) / XY_STEPS_PER_MM)
                 # Probe both sides of the same chord. No XY movement takes
                 # place at the contact height during these checks.
                 tap_ceiling = min(ceiling, max(contacts) + PAD_EDGE_TAP_HEADROOM_STEPS) if contacts else ceiling
@@ -406,6 +409,8 @@ class NozzleXYZProgram(ZHomeProgram):
                 used_taps = True
             low, high = pair
             width = (high - low) / XY_STEPS_PER_MM
+            # Vertical taps can qualify a short X chord off the pad center.
+            min_width = .5 if axis == 0 else min_sweep_width
             if not min_width <= width <= max_width:
                 raise FactoryError('Szerokość styku %s %.2f mm poza zakresem %.1f–%.1f mm' %
                                    (name, width, min_width, max_width))
@@ -605,6 +610,7 @@ class NozzleXYZProgram(ZHomeProgram):
             yield from self._phase('XYZ_SCAN_' + name)
             measurements[name] = yield from self._module(
                 'pad_scan_' + name.lower(), self._scan(*boxes[tool], ceiling, xyz))
+            yield dict(kind='xyz_sample', name=name, measurement=measurements[name])
             yield from self._phase('XYZ_TOOL_CLEARANCE')
             yield from self._open_z_at(PAD_PREP_Z_STEPS)
             yield from self._module('z_nozzle_clearance', self._nozzle_dual_retreat())
