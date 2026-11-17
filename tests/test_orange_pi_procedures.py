@@ -128,7 +128,7 @@ class ProcedureCoreTests(unittest.TestCase):
 
     def test_profile_and_motion_errors_fail_before_first_action(self):
         for value in ('[]','null','{"TOOL":"T1"}','{"E_SPEDE":2}',
-                '{"TARGET":300}','{"FEEDER":2}','{"MANUAL_DIR":"RIGHT"}',
+                '{"TARGET":311}','{"FEEDER":2}','{"MANUAL_DIR":"RIGHT"}',
                 '{"e_speed":1,"E_SPEED":2}'):
             with self.subTest(value=value),self.assertRaises(core.FactoryError):core.profiles(value)
         for values in ({'PURGE_SPAN':1,'PURGE_E_STEPS':96000},

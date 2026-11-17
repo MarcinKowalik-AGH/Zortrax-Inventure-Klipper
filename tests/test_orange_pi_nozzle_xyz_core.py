@@ -328,7 +328,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(pad_xyz_e_budget(xyz), 120000)
         phases = [a['name'] for _, _, a in model.trace if a['kind'] == 'phase']
         self.assertEqual([p for p in phases if '_WIPE_' in p], [
-            'XYZ_T0_WIPE_HOT', 'XYZ_T1_WIPE_HOT', 'XYZ_T0_WIPE_160', 'XYZ_T1_WIPE_160',
+            'XYZ_T0_WIPE_HOT', 'XYZ_T1_WIPE_HOT', 'XYZ_T0_WIPE_100', 'XYZ_T1_WIPE_100',
         ])
         bin_x = (82.8, 72.0)
         for index, (_, tool, action) in enumerate(model.trace):
@@ -357,7 +357,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertAlmostEqual(candidate['t1_carriage_shift_mm']['Y'], .105, delta=.02)
         self.assertAlmostEqual(candidate['t1_lower_by_mm'], .205, delta=.003)
         self.assertAlmostEqual(candidate['t0_reseat_mm']['Z'], .01, delta=.003)
-        self.assertEqual(result['measurement_temperature_c'], 160.)
+        self.assertEqual(result['measurement_temperature_c'], 100.)
         for index, (pos, _, action) in enumerate(model.trace):
             if action['kind'] == 'xyz_switch_tool' and pos:
                 self.assertEqual(pos, NOZZLE_Z_CLEARANCE_STEPS)
@@ -375,8 +375,8 @@ class NozzleXYZCoreTests(unittest.TestCase):
 
     def test_empty_nozzles_use_zero_extrusion_and_only_measurement_wipes(self):
         for mode, scans, wipes in (
-            ('VERIFY_T0', ['T0'], ['XYZ_T0_WIPE_160']),
-            ('FULL', ['T0', 'T1', 'T0_RETURN'], ['XYZ_T0_WIPE_160', 'XYZ_T1_WIPE_160']),
+            ('VERIFY_T0', ['T0'], ['XYZ_T0_WIPE_100']),
+            ('FULL', ['T0', 'T1', 'T0_RETURN'], ['XYZ_T0_WIPE_100', 'XYZ_T1_WIPE_100']),
         ):
             with self.subTest(mode=mode):
                 settings = dict(PREP='EMPTY', MODE=mode, T0_Z_MAX=139.35)

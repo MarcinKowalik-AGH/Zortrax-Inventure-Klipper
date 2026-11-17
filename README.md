@@ -199,7 +199,7 @@ uruchomić również z menu OLED **Maintenance → Nozzle alignment**.
 fabrycznym padzie, a głowicę przy rozwarciu w każdym z kierunków X−, X+,
 Y− i Y+. Środki par krawędzi wyznaczają położenie pola dla T0 i T1.
 `ACTION=CENTER TOOL=T0` i `ACTION=CENTER TOOL=T1` mierzą osobno obie
-dysze na zimno. Tryb `PREP=EMPTY` stabilizuje obie dysze na 160°C bez
+dysze na zimno. Tryb `PREP=EMPTY` stabilizuje obie dysze na 100°C bez
 ruchu ekstruderów.
 [Instalacja, limity Z i zapis wyniku](docs/NOZZLE_PAD_CALIBRATION.md).
 
@@ -505,6 +505,8 @@ uzbrojenia rozpoznanej natywnej grzałki o niezgodnej polaryzacji lub PWM.
 Dotychczasowy `printer.cfg` nie jest automatycznie przekształcany w konfigurację wydruku.
 
 Parametry, piny i konfiguracja: [CONTROL_R5_REFERENCE.md](docs/CONTROL_R5_REFERENCE.md).
+Konfiguracja natywnej grzałki T1 i nastawy do 310°C są opisane w
+[instrukcji kalibracji dysz](docs/NOZZLE_PAD_CALIBRATION.md#limity-grzania).
 Historia R4: [HOST_R4_HISTORY.md](docs/HOST_R4_HISTORY.md).
 
 ## Sprawdzenie

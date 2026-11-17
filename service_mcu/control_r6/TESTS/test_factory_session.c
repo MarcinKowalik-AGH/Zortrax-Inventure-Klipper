@@ -539,8 +539,8 @@ static void axis_thermal_guard(void) {
 }
 
 static void pad_command(unsigned action,unsigned tool,unsigned budget,unsigned sequence) {
-    unsigned cold=fs.active && fs.pad_cold;
-    uint32_t a[]={action,tool,IVT_STOP,0,1000,budget,1500,cold?0:PAD_TEMP_MIN_C,
+    int16_t minimum=fs.active?fs.min_c:PAD_LEGACY_TEMP_MIN_C;
+    uint32_t a[]={action,tool,IVT_STOP,0,1000,budget,1500,minimum,
         fs.active?fs.max_c:250,801,sequence};
     command_inventure_factory_session(a);
 }
@@ -569,9 +569,10 @@ static void pad_run(unsigned stop_at,unsigned raw,unsigned *sequence) {
         }
     }
 }
-static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
+static void pad_xyz_owner(unsigned hot_adc, unsigned max_c,
+                          int16_t measurement_min, unsigned measurement_adc) {
     factory_reset(0,1);unsigned seq=0;
-    uint32_t start[]={8,0,IVT_STOP,0,1000,200,1500,PAD_TEMP_MIN_C,
+    uint32_t start[]={8,0,IVT_STOP,0,1000,200,1500,measurement_min,
         SERVICE_NOZZLE_SESSION_MAX_C+1,801,seq};
     command_inventure_factory_session(start);
     assert(!fs.active && factory_reply[3]==1);
@@ -587,7 +588,7 @@ static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
     motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,804);
     assert(!cm.active && fs.pad_homed && !fs.pad_z && cm.hit==BIT(2));
 
-    pad_adc(994);
+    pad_adc(measurement_adc);
     motion(1,8,0,0,0,100,1600,10,1000,0,0,0,805);
     assert(!cm.active && fs.xy_e_remaining==200);
     pad_adc(hot_adc);
@@ -606,13 +607,13 @@ static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
     pad_command(9,0,200,++seq);assert(!factory_reply[3] && fs.tool==0);
 
     pad_command(10,0,18000,seq+1);assert(factory_reply[3]==3 && !fs.pad_sealed);
-    pad_adc(994);pad_command(10,0,18000,++seq);
+    pad_adc(measurement_adc);pad_command(10,0,18000,++seq);
     assert(!factory_reply[3] && fs.pad_sealed && fs.pad_ceiling==18000);
     pad_command(10,0,19000,seq+1);assert(factory_reply[3]==3 && fs.pad_ceiling==18000);
     pad_adc(hot_adc);
     motion(1,8,0,0,0,100,1600,10,1000,0,0,0,809);
     assert(!cm.active && fs.pad_sealed); // E locked even if reheated.
-    pad_adc(994);GPIOE->IDR&=~BIT(12);GPIOE->ODR|=BIT(10);
+    pad_adc(measurement_adc);GPIOE->IDR&=~BIT(12);GPIOE->ODR|=BIT(10);
     motion(1,4,0,0,18001,0,3200,10,30000,BIT(3),0,0,810);
     motion(1,4,0,0,18000,0,3200,10,30000,0,0,0,811);
     assert(!cm.active && !fs.pad_z); // Absolute cap and explicit PC14 guard.
@@ -621,7 +622,7 @@ static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
     assert(!zh.active); // Old probe cannot bypass position tracking.
     motion(1,4,0,0,18000,0,3200,10,30000,BIT(3),0,0,812);
     assert(cm.active);
-    pad_run(17900,994,&seq);
+    pad_run(17900,measurement_adc,&seq);
     assert(cm.hit==BIT(3) && fs.pad_z==17900 && fs.active);
     GPIOC->IDR|=BIT(14);
     motion(1,3,30,30,0,0,1600,10,1000,0,0,0,813);
@@ -629,12 +630,12 @@ static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
     pad_command(9,1,200,seq+1);
     assert(factory_reply[3]==3 && fs.tool==0);
     motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,814);
-    pad_run(0,994,&seq);
+    pad_run(0,measurement_adc,&seq);
     assert(fs.pad_z==17900-PAD_CHANGE_STEPS);
     pad_command(9,1,200,seq+1);
     assert(factory_reply[3]==3 && fs.tool==0); // Exact descent too far from PE12.
     motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,820);
-    pad_run(0,994,&seq);
+    pad_run(0,measurement_adc,&seq);
     assert(fs.pad_z==17900-2*PAD_CHANGE_STEPS);
     pad_command(9,1,200,++seq);
     assert(!factory_reply[3] && fs.tool==1 && fs.pad_sealed && !fs.pad_ceiling);
@@ -643,12 +644,12 @@ static void pad_xyz_owner(unsigned hot_adc, unsigned max_c) {
     pad_command(10,1,18500,++seq);
     assert(!factory_reply[3] && fs.pad_ceiling==18500);
     motion(1,4,0,0,18500-fs.pad_z,0,3200,10,30000,BIT(3),0,0,816);
-    pad_run(0,994,&seq);
+    pad_run(0,measurement_adc,&seq);
     assert(cm.reason==CR_COMPLETE && !cm.hit && fs.pad_z==18500); // Bounded MISS.
     motion(1,0,0,0,18500-PAD_PREP_Z_STEPS,0,3200,10,30000,0,0,0,821);
-    pad_run(0,994,&seq);assert(fs.pad_z==PAD_PREP_Z_STEPS);
+    pad_run(0,measurement_adc,&seq);assert(fs.pad_z==PAD_PREP_Z_STEPS);
     motion(1,0,0,0,PAD_CHANGE_STEPS,0,3200,10,30000,0,0,0,817);
-    pad_run(0,994,&seq);
+    pad_run(0,measurement_adc,&seq);
     assert(fs.pad_z==PAD_CHANGE_STEPS); // Inclusive 10 mm selector ceiling.
     pad_command(9,0,200,++seq);assert(!factory_reply[3] && fs.tool==0);
     pad_command(10,0,18000,++seq);assert(!factory_reply[3]);
@@ -672,6 +673,36 @@ static void pad_sweep_setup(unsigned *seq) {
     GPIOE->IDR&=~BIT(12);pad_adc(994);
     pad_command(10,0,18000,++*seq);
     assert(fs.pad_ceiling==18000 && !factory_reply[3]);
+}
+
+static void pad_100_temperature_guard(void) {
+    const unsigned outside_adc[]={584,658}; // 94 C and 106 C
+    for(unsigned i=0;i<2;i++) {
+        factory_reset(0,0);
+        pad_adc(621); // 100 C
+        uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,PAD_TEMP_MIN_C,110,801,0};
+        command_inventure_factory_session(start);
+        assert(fs.active && !factory_reply[3]);
+        GPIOE->IDR|=BIT(12);
+        motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,950);
+        assert(fs.pad_homed && !fs.pad_z && !cm.active);
+        GPIOE->IDR&=~BIT(12);
+        inventure_adc_observe(ADC3,6,outside_adc[i]);
+        pad_command(10,0,18000,1);
+        assert(fs.active && factory_reply[3]==3 && !fs.pad_sealed);
+        pad_adc(621);
+        pad_command(10,0,18000,1);
+        assert(!factory_reply[3] && fs.pad_ceiling==18000);
+        output(1,6,64,1500,120,951);output(1,7,64,1500,120,952);
+        motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,953);
+        assert(cm.active && co[6].duty && co[7].duty);
+        pad_timer_step(621);
+        inventure_adc_observe(ADC3,6,outside_adc[i]);
+        control_guard(mock_now);
+        assert(!fs.active && fs.reason==4 && !cm.active && !co[6].duty && !co[7].duty);
+        assert(control_mode==CT_OFF);
+    }
+    puts("PASS 100 C pad: both nozzle temperatures required at arming and during Z travel");
 }
 
 static void pad_sweep_owner(void) {
@@ -869,7 +900,10 @@ int main(void) {
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();
     axis_timer_routes();axis_endstops_and_scope();axis_thermal_guard();
-    pad_xyz_owner(1427,250);pad_xyz_owner(1614,270);pad_sweep_owner();
+    pad_xyz_owner(1427,250,PAD_LEGACY_TEMP_MIN_C,994);
+    pad_xyz_owner(1614,270,PAD_LEGACY_TEMP_MIN_C,994);
+    pad_xyz_owner(1918,310,PAD_TEMP_MIN_C,621);
+    pad_100_temperature_guard();pad_sweep_owner();
     pad_sweep_open_confirmation();pad_cold_center(0);pad_cold_center(1);
     puts("PASS R7 FACTORY session register suite");return 0;
 }

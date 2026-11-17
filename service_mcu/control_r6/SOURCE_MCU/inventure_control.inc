@@ -23,8 +23,8 @@ DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",2);
 #define CM_AXIS_E_MAX_HZ 9600u
 #define CM_AXIS_E_MIN_C 180
 #define CM_AXIS_E_MAX_C 250
-#define SERVICE_NOZZLE_TARGET_MAX_C 290
-#define SERVICE_NOZZLE_SESSION_MAX_C (SERVICE_NOZZLE_TARGET_MAX_C+10)
+#define SERVICE_NOZZLE_TARGET_MAX_C 310
+#define SERVICE_NOZZLE_SESSION_MAX_C SERVICE_NOZZLE_TARGET_MAX_C
 #define SERVICE_NOZZLE_SESSION_MIN_CAP_C (SERVICE_NOZZLE_TARGET_MAX_C-25)
 DECL_CONSTANT("INVENTURE_SERVICE_NOZZLE_TARGET_MAX",SERVICE_NOZZLE_TARGET_MAX_C);
 #define PAD_CHANGE_STEPS 8020u
@@ -36,9 +36,12 @@ DECL_CONSTANT("INVENTURE_SERVICE_NOZZLE_TARGET_MAX",SERVICE_NOZZLE_TARGET_MAX_C)
 #define PAD_SWEEP_MAX_STEPS 3840u
 #define PAD_SWEEP_MAX_HZ 320u
 #define PAD_SWEEP_OPEN_MS 150u
-#define PAD_TEMP_MIN_C 155
-#define PAD_TEMP_MAX_C 165
+#define PAD_TEMP_MIN_C 95
+#define PAD_TEMP_MAX_C 105
+#define PAD_LEGACY_TEMP_MIN_C 155
 #define PAD_COLD_MAX_C 50
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_MEASURE_MIN_C",PAD_TEMP_MIN_C);
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_MEASURE_MAX_C",PAD_TEMP_MAX_C);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS",PAD_SWEEP_OPEN_MS);
 DECL_CONSTANT("INVENTURE_CONTROL_MAX_HZ",CM_SERVICE_MAX_HZ);
 DECL_CONSTANT("INVENTURE_FACTORY_MOTION_ABI",1);
@@ -149,17 +152,17 @@ static uint8_t fs_nozzle_temperature_ok(unsigned tool,uint32_t now,uint8_t requi
 static uint8_t fs_owns_output(unsigned i) {
     return fs.active && !fs.pad_cold && (i==6+fs.tool || (fs.dual_nozzle_z && (i==6 || i==7)));
 }
-static uint8_t pad_temperature_ok(uint32_t now,uint8_t cold) {
+static uint8_t pad_temperature_ok(uint32_t now,uint8_t cold,int16_t minimum) {
     for(unsigned tool=0;tool<2;tool++) {
         uint8_t valid;
         int16_t t=control_temp(tool,now,&valid);
         if(!valid || co[6+tool].reason>=3)return 0;
         if(cold ? (t<0 || t>=PAD_COLD_MAX_C || co[6+tool].duty || control_heater_duty[tool])
-                : (t<PAD_TEMP_MIN_C || t>PAD_TEMP_MAX_C))return 0;
+                : (t<minimum || t>minimum+(PAD_TEMP_MAX_C-PAD_TEMP_MIN_C)))return 0;
     }
     return 1;
 }
-static uint8_t fs_pad_temperature_ok(uint32_t now) {return pad_temperature_ok(now,fs.pad_cold);}
+static uint8_t fs_pad_temperature_ok(uint32_t now) {return pad_temperature_ok(now,fs.pad_cold,fs.min_c);}
 static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     for(unsigned i=0;i<8;i++)if(mask&BIT(i)) {
         uint8_t valid;int16_t t=control_temp(i,now,&valid);
@@ -1179,7 +1182,7 @@ void command_inventure_factory_session(uint32_t *args) {
         if(tool>1 || mode>IVT_GATED || monitor>1 || !duration || duration>1500
                 || (pad?budget>2u*PAD_MAX_RETRACT_STEPS:(!budget || budget>960000))
                 || lease<250 || lease>1500 || !token || sequence
-                || (pad?(!cold && minimum!=PAD_TEMP_MIN_C)
+                || (pad?(!cold && minimum!=PAD_TEMP_MIN_C && minimum!=PAD_LEGACY_TEMP_MIN_C)
                        :(minimum<180 || minimum>(dual?230:SERVICE_NOZZLE_SESSION_MIN_CAP_C)))
                 || (cold && budget)
                 || maximum<=minimum+5 || maximum>(dual && !pad?250:SERVICE_NOZZLE_SESSION_MAX_C)
@@ -1198,7 +1201,7 @@ void command_inventure_factory_session(uint32_t *args) {
             uint8_t other_valid;int16_t other_t=control_temp(other,now,&other_valid);
             if(!other_valid || other_t>=maximum || co[6+other].reason>=3 || (GPIOC->IDR&BIT(13)))reject=3;
         }
-        if(!reject && cold && !pad_temperature_ok(now,1))reject=3;
+        if(!reject && cold && !pad_temperature_ok(now,1,0))reject=3;
         if(!reject) {
             for(unsigned i=0;i<2;i++)transport_stop_channel(i);
             gpio_pwm_write(feeder_clock,0);

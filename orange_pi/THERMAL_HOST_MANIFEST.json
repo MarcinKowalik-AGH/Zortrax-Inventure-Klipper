@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R12",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f",
+  "module_sha256": "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -75,9 +75,10 @@
     "408fbd25b8720ded5e53a16bfad7930a5ec66de8c46f0324e78476cfce50f90a",
     "049057360746dd064578f980956b0587f2c70ab5743b69f21d4dafd4725987e8",
     "9b23da923280273d4d959239d270aa7597efd00b8b19695d2c8dc750cec0ebac",
-    "cc5f9f12e386d0a3795008b63d4048b997017a630754a6924f7bb8b9f37a128a"
+    "cc5f9f12e386d0a3795008b63d4048b997017a630754a6924f7bb8b9f37a128a",
+    "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R12",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -243,7 +244,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
+  "factory_core_sha256": "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -350,7 +351,8 @@
     "ccd0be69ffe27d6928ae9e440d7519bdc5abc828509480bd98839fa92e0123df",
     "a02dc61dbb7d74eee377a8f5543fe9183b6f5e0227528c99d5ce9bf126d33b65",
     "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329",
-    "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a"
+    "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
+    "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -406,7 +408,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48",
+      "sha256": "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -421,7 +423,8 @@
         "c48dcddb7a7b2b0389294377c79ae103302b144ed1eeb23f9cd7b1954df3794b",
         "c96b2c8767b167f7731471279dda2f81ee8ea9474f314e80f4e4e054c721946e",
         "77a0bfe7dd047677427f03c5a2f7d359b6b24276812fb4447332d01a27475b04",
-        "e09956de13855de66b12160a813a521816dae22f0a538b4b49f1da938ada7572"
+        "e09956de13855de66b12160a813a521816dae22f0a538b4b49f1da938ada7572",
+        "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48"
       ]
     }
   },
@@ -598,13 +601,13 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-CENTER-T1",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R9",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
       "FULL"
     ],
-    "measurement_temperature_c": 160,
+    "measurement_temperature_c": 100,
     "per_tool_surveyed_z_ceiling_required": true,
     "max_tool_switch_z_mm_above_pe12": 10,
     "max_retract_mm_per_tool": 100,
@@ -623,7 +626,6 @@
     ],
     "max_sweep_mm": 6,
     "sweep_speed_mm_s": 0.25,
-    "tap_compatible_mcu_release": "RC8-CONTROL-R7-NOZZLE-PAD",
     "verify_t0_confirmation": "CONFIRM_T0",
     "cold_center_action": "CENTER",
     "cold_center_abi": 2,
@@ -639,9 +641,15 @@
     "thermal_profile": {
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
-      "service_target_max_c": 290,
-      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R8",
-      "native_update_flag": "--upgrade-nozzle-limits"
-    }
+      "service_target_max_c": 310,
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R9",
+      "native_update_flag": "--upgrade-nozzle-limits",
+      "mcu_nozzle_cutoff_c": 310,
+      "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg"
+    },
+    "measurement_band_c": [
+      95,
+      105
+    ]
   }
 }

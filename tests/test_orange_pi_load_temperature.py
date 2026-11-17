@@ -88,6 +88,26 @@ class TemperatureTests(unittest.TestCase):
             duties=[p[3] for p in load_support.LoadTests().starts(h)]
             self.assertTrue(any(0<d<102 for d in duties));self.assertTrue(all(d<=102 for d in duties))
 
+    def test_310_c_setpoint_uses_the_existing_cutoff_for_both_nozzles(self):
+        for tool in (0, 1):
+            with self.subTest(tool=tool):
+                h = self.host()
+                h.nozzle_service_target_max = 310.
+                with self.assertRaisesRegex(RuntimeError, 'TARGET must be 180..310'):
+                    h.cmd_load_test(Command(ACTION='HEAT', TOOL='T%d' % tool, TARGET=310.1))
+                h.cmd_load_test(Command(ACTION='HEAT', TOOL='T%d' % tool, TARGET=310.))
+                self.assertEqual(h.load_test_context['target'], 310.)
+                self.assertEqual(h.load_test_context['limit'], 310)
+                h.reactor.pause(h.reactor.now + .25)
+                self.assertGreater(h.device.output(6 + tool)['duty'], 0)
+                self.assertEqual(load_support.LoadTests().starts(h)[0][5], 310)
+                h.temperatures[tool] = 310.
+                h.raw_adc[tool] = round(310. * 4095. / 660.)
+                h.reactor.pause(h.reactor.now + .25)
+                self.assertIsNone(h.load_test_context)
+                self.assertEqual(h.load_test_last['phase'], 'failed')
+                self.assertEqual(h.device.output(6 + tool)['duty'], 0)
+
     def test_PID_reduces_ripple_relative_to_previous_thermostat_in_same_plant(self):
         spans=[]
         for old in (True,False):

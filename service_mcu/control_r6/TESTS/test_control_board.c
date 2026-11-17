@@ -157,6 +157,31 @@ static void pwm_outputs(void) {
         assert(!co[fan].duty && co[fan].reason==3);
     }
 }
+static void nozzle_310_cutoff_and_link_loss(void) {
+    control_reset(0);
+    inventure_adc_observe(ADC1,10,1918); // about 309 C
+    inventure_adc_observe(ADC3,6,1918);
+    output(1,6,64,1500,310,1);output(1,7,64,1500,310,2);
+    assert(co[6].duty && co[7].duty);
+    inventure_adc_observe(ADC3,6,1924); // above 310 C
+    guard_check(mock_now);
+    assert(!co[6].duty && !co[7].duty && co[7].reason==4);
+
+    control_reset(0);
+    inventure_adc_observe(ADC1,10,1918);
+    inventure_adc_observe(ADC3,6,1918);
+    output(1,6,64,1500,310,1);output(1,7,64,1500,310,2);
+    assert(co[6].duty && co[7].duty);
+    mock_now=heartbeat_deadline;
+    control_adc();
+    inventure_adc_observe(ADC1,10,1918);
+    inventure_adc_observe(ADC3,6,1918);
+    guard_check(mock_now);
+    assert(!co[6].duty && !co[7].duty && !control_heater_duty[0] && !control_heater_duty[1]);
+    assert(control_mode==CT_OFF && (cool_mask&1) && (fan_high&1));
+    puts("PASS nozzles near 310 C: temperature cutoff and heartbeat loss turn off both heaters with hotend cooling");
+}
+
 static void temperature_stops(void) {
     for(unsigned i=0;i<7;i++) {
         control_reset(0);output(1,6,64,20000,45,1);assert(co[6].duty);
@@ -199,6 +224,18 @@ static void native_ownership(void) {
         if(!setjmp(failure)){control_guard(mock_now);assert(!"native guard failed to trip");}
         expect_failure=0;assert(!inventure_is_armed() && control_latched && fault);
     }
+    control_reset(0);control_command(1,CT_NATIVE);
+    struct gpio_pwm t1=gpio_pwm_setup(co_pins[3],co_cycles[3],256);
+    inventure_adc_observe(ADC3,6,1918);
+    gpio_pwm_write(t1,192);assert(control_heater_duty[1]==64);
+    mock_now=heartbeat_deadline;
+    control_adc();inventure_adc_observe(ADC3,6,1918);
+    expect_failure=1;
+    if(!setjmp(failure)){guard_check(mock_now);assert(!"native T1 heartbeat watchdog did not trip");}
+    expect_failure=0;
+    assert(fault==1 && control_latched && control_mode==CT_OFF && !control_heater_duty[1]);
+    assert((cool_mask&1) && (fan_high&1));
+
     // An energized native heater requires fresh fan tach edges; an OFF fan
     // cannot defeat the independent ten-second fan watchdog.
     control_reset(0);control_command(1,CT_NATIVE);control_heater_duty[0]=64;
@@ -266,6 +303,7 @@ static void global_door_policy(void) {
 }
 int main(void) {
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
+    nozzle_310_cutoff_and_link_loss();
     native_ownership();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;

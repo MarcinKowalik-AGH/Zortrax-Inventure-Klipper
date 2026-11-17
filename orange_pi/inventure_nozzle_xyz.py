@@ -11,7 +11,8 @@ from .inventure_z_home import NOZZLE_CONTACT, Z_BOTTOM, Z_OPEN_CONFIRM_S, Z_STEP
 PAD_DIAMETER_MM = 7.
 PAD_TAP_DIAMETER_MM = 5.
 PAD_WIDTH_TOLERANCE_MM = 1.5
-PAD_TEMPERATURE_C = 160.
+PAD_TEMPERATURE_C = 100.
+PAD_MEASUREMENT_BAND_C = (PAD_TEMPERATURE_C - 5., PAD_TEMPERATURE_C + 5.)
 PAD_TRAVEL_SPEED = 8.
 PAD_MAX_SWEEP_MM = 6.
 PAD_MAX_SWEEP_SPEED = .5
@@ -498,8 +499,8 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._phase('XYZ_T%d_WIPE_HOT' % tool)
         yield from self._wipe_and_return_to_bin()
 
-    def _wipe_at_160(self):
-        yield from self._phase('XYZ_T%d_WIPE_160' % self.p['tool'])
+    def _wipe_at_measurement_temperature(self):
+        yield from self._phase('XYZ_T%d_WIPE_%d' % (self.p['tool'], PAD_TEMPERATURE_C))
         yield from self.position_bin()
         yield from self._wipe_and_return_to_bin()
 
@@ -591,11 +592,11 @@ class NozzleXYZProgram(ZHomeProgram):
             yield from self._pick(1, plans)
             yield dict(kind='xyz_heat_wait')
             yield from self._prepare_hot(xyz)
-            yield from self._phase('XYZ_COOL_160')
+            yield from self._phase('XYZ_COOL_%d' % PAD_TEMPERATURE_C)
             yield dict(kind='xyz_cool_start')
         yield dict(kind='xyz_cool_wait')
         if not empty and verify_t0:
-            yield from self._wipe_at_160()
+            yield from self._wipe_at_measurement_temperature()
 
         measurements = {}
         for index, tool in enumerate(scan_order):
@@ -604,7 +605,7 @@ class NozzleXYZProgram(ZHomeProgram):
                 yield from self._pick(tool, plans)
             yield dict(kind='xyz_cool_wait')
             if index < 2:
-                yield from self._wipe_at_160()
+                yield from self._wipe_at_measurement_temperature()
             if verify_t0 and not empty:
                 yield dict(kind='xyz_confirm_t0')
             ceiling = ceilings[tool]

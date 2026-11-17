@@ -5,15 +5,23 @@ w osiach XYZ na jednym metalowym polu tacki. Zacznij od środkowego
 okrągłego pada spośród pięciu fabrycznych pól poziomowania. Na tacce
 testowanej w projekcie średnica zmierzona suwmiarką wynosi 7 mm.
 Pomiar T0 → T1 → T0 sprawdza też powtarzalność osadzenia dyszy
-po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
+po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 
 ## Instalacja
 
-Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R12`. Tryb `CENTER TOOL=T1` działa z
-firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
-restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
-współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
+Pełny pomiar przy 100°C wymaga hosta `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13`
+i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R9`. Pobierz artefakt
+`INVENTURE_MCU_PAD_100C_BOOT17` z
+[GitHub Actions](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/actions/workflows/orange-pi-mcu.yml).
+Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
+FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
+z ustawień bootloadera. Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi).
+Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
+`baud_match: true` i `nozzle_pad_measurement_band_c: [95, 105]`.
+
+Zimny tryb `CENTER` dla obu dysz obsługuje też wcześniejsze wersje MCU
+z `nozzle_pad_cold_abi: 2`. Zimny pomiar T0 działa również z
+`RC8-CONTROL-R7-PAD-CENTER`.
 W istniejącej sekcji `[inventure_mcu]` procedura wymaga
 `allow_actuators: True`.
 
@@ -40,19 +48,29 @@ git -C "$HOME/inventure-orange-pi" pull --ff-only origin orange-pi-all-axis &&
 python3 "$HOME/inventure-orange-pi/install-orange-pi.py" --upgrade-nozzle-limits
 ```
 
-Aplikacja MCU `RC8-CONTROL-R7-PAD-THERMAL-R8` rozszerza regulowane cele
-serwisowe do 290°C. Pobierz artefakt `INVENTURE_MCU_PAD_THERMAL_R8_BOOT17`
-z [GitHub Actions](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/actions/workflows/orange-pi-mcu.yml).
-Sprawdź `SHA256SUMS` i wgraj `INVENTUR.IVB` z karty SD przez InventureBoot 1.7.
-`INVENTURE_VERSION` powinno podać `nozzle_service_target_max_c: 290`
-oraz `native_nozzle_max_temp_c.T0: 310`. Przy starszej aplikacji MCU
-zakres celów serwisowych kończy się na 240°C.
+Aplikacja MCU R9 przyjmuje cele serwisowe do 310°C dla T0 i T1.
+`INVENTURE_VERSION` podaje `nozzle_service_target_max_c: 310`. Odczyt
+310°C uruchamia odcięcie MCU. Nastawa przy samej granicy może skończyć
+się odcięciem podczas dojścia do celu. Przy niższych celach odcięcie
+sesji jest najwyżej 20°C ponad celem i uwzględnia niższy limit aktywnej
+konfiguracji. Po sekundzie bez heartbeat MCU odcina grzałki i prowadzi
+chłodzenie lokalnie.
 
-Host sprawdza przed ruchem i grzaniem, czy aktywna granica czujnika
-obejmuje temperaturę celu z 10°C zapasu. MCU odcina grzałkę maksymalnie
-20°C powyżej celu, z uwzględnieniem niższego aktywnego limitu.
-Jeśli używany nylon wymaga 260°C do wycofania, podaj 260 dla danej
-dyszy. Pomiar na padzie odbywa się po schłodzeniu do 160°C.
+Jeśli `native_nozzle_max_temp_c.T1` ma wartość `null`, skopiuj
+[INVENTURE_NATIVE_T1_HEATER.cfg](../config/INVENTURE_NATIVE_T1_HEATER.cfg)
+do katalogu konfiguracji i dodaj `[include INVENTURE_NATIVE_T1_HEATER.cfg]`
+w `printer.cfg`. W istniejących sekcjach `[heater_fan ...]` dla wyjść
+`inventure_r5:F0`, `inventure_r5:F2` i `inventure_r5:F3` ustaw
+`heater: extruder, inventure_t1`. Klipper uruchomi wtedy chłodzenie
+także przy grzaniu samej T1. W trybie `INVENTURE_CONTROL MODE=NATIVE` ustawiasz
+temperatury z Fluidd albo poleceniami `SET_HEATER_TEMPERATURE HEATER=extruder`
+dla T0 i `SET_HEATER_TEMPERATURE HEATER=inventure_t1` dla T1 z parametrem
+`TARGET` do 310°C. `TARGET=0` wyłącza grzanie. Po dodaniu grzałki
+`INVENTURE_VERSION` pokazuje natywny limit 310°C dla obu dysz.
+
+W `PREP=RETRACT` podaj indywidualne cele dla obu materiałów, np. 260°C
+dla materiału wymagającego takiej temperatury do wycofania. Pomiar pada
+odbywa się po schłodzeniu do 100°C, w paśmie 95–105°C dla obu dysz.
 
 ## Środek pada na zimnej dyszy
 
@@ -84,7 +102,7 @@ T0. `CENTER` kończy się odczytem diagnostycznym.
 W próbie z 17 listopada 2026 T1 zmierzyła środek X70,8 / Y68,7 mm
 z limitem `T1_Z_MAX=137.95`. Dla tej pary zimnych odczytów ruch karetki
 po przełączeniu T0 → T1 wynosi X−10,9 / Y+0,5 mm. Te środki służą
-jako punkty startowe pełnego pomiaru przy 160°C.
+jako punkty startowe pełnego pomiaru przy 100°C.
 
 Tryb `CENTER` ustala referencję, mechanicznie wybiera wskazaną dyszę i mierzy po kolei
 X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Dla pada
@@ -127,7 +145,7 @@ nad polem. [Podgląd i współrzędne](NOZZLE_Z_TEST_R0323.md#pozycje-nad-padem)
 Ustal dla każdej mierzonej dyszy górny limit dojazdu w Z od dolnej krańcówki
 PE12. W `SCAN=SWEEP` dysza przesuwa się nad polem na wysokości pierwszego
 zwarcia PC14. Przy niepewnej krawędzi pełny pomiar potwierdza ją pionowymi
-dotknięciami tak jak `CENTER`. Przy 160°C dojazdy do krawędzi są ograniczone
+dotknięciami tak jak `CENTER`. Przy 100°C dojazdy do krawędzi są ograniczone
 do potwierdzonej wysokości styku plus 0,05 mm i do limitu danej dyszy.
 Stół opada przed każdym przejazdem między punktami.
 `ACK=PAD_GEOMETRY_MEASURED` potwierdza sprawdzenie punktów startowych,
@@ -144,7 +162,7 @@ Z bez zwarcia PC14. Obie dysze korzystają z tego samego nieruchomego pola.
 1. Klipper ustala referencję XY i PE12 na początku sesji, po czym wykonuje
    mechaniczny docisk selektora T0. Przy `VERIFY_T0 PREP=EMPTY` głowica
    zatrzymuje się na zimno nad padem ze stołem na PE12. Po potwierdzeniu
-   T0 obie dysze grzeją się do 160°C, a mierzona dysza przejeżdża po
+   T0 obie dysze grzeją się do 100°C, a mierzona dysza przejeżdża po
    szczotce. Budżet kroków E wynosi zero.
 2. Przed każdym przejazdem pomiarowym stół podnosi się przy ustalonym XY
    wewnątrz pada. STM32 zatrzymuje Z przy pierwszym zwarciu PC14.
@@ -174,7 +192,7 @@ szczotce. Po wyborze T1 te same czynności wykonuje T1. Po każdym
 przetarciu karetka zjeżdża z linii szczotki w osi Y i wraca na środek
 kosza dla wybranej dyszy. Przy fabrycznych nastawach serwisowych jest to
 X82,8 Y152,5 dla T0 i X72,0 Y152,5 dla T1. Nad koszem dysze czekają
-na nagrzanie i schłodzenie do 160°C. Po stabilizacji następują drugie
+na nagrzanie i schłodzenie do 100°C. Po stabilizacji następują drugie
 przetarcie i skan T0, drugie przetarcie i skan T1, a potem kontrolny
 pomiar ponownie osadzonej T0.
 
@@ -189,7 +207,7 @@ przedziału. Para rozwarć z obrysem węższym niż średnica pola minus
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
-właściwa. Drugie przetarcie i skan przy 160°C odbywają się przy wyłączonym
+właściwa. Drugie przetarcie i skan przy 100°C odbywają się przy wyłączonym
 podawaniu filamentu.
 
 Wycofanie do 100 mm odbywa się samym napędem ekstrudera E. Sprawdź, czy
@@ -281,7 +299,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `SCAN` | `SWEEP` domyślnie, `TAP` dla wyniesionego pola | Przejazdy na wysokości styku albo pionowe próby |
 | `PREP` | `RETRACT` domyślnie, `EMPTY` dla dwóch pustych dysz | Przygotowanie dysz |
 | `T0_Z_MAX`, `T1_Z_MAX` | Wartości zweryfikowane na drukarce | Najwyższa dozwolona pozycja stołu od PE12. T1 jest wymagane w trybie `FULL` |
-| `T0_TARGET`, `T1_TARGET` | Jawne cele od 190°C do granicy MCU i konfiguracji | Temperatury właściwe dla wycofania obu materiałów. MCU R8 obsługuje cele do 290°C |
+| `T0_TARGET`, `T1_TARGET` | Jawne cele od 190°C do granicy MCU i konfiguracji | Temperatury właściwe dla wycofania obu materiałów. MCU R9 obsługuje cele do 310°C |
 | `MAX_POWER` | 40% domyślnie, zakres 1–40% | Limit mocy każdej z dwóch grzałek |
 | `T0_RETRACT_MM`, `T1_RETRACT_MM` | Jawne długości 0,1–100 mm dla `PREP=RETRACT` | Nominalny ruch ekstrudera w kierunku cofania |
 | `T0_PAD_X/Y`, `T1_PAD_X/Y` | X i Y podawane parami | Przybliżone środki pola w układzie serwisowym. Jawne nazwy to np. `T0_PAD_X` i `T0_PAD_Y` |

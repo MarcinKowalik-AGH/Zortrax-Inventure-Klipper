@@ -124,7 +124,7 @@ class PadDevice(DualNozzleDevice):
                 assert tool == 0 or self.h.nozzle_pad_cold_abi == 2
                 assert not budget and all(0. <= temp < 50. for temp in self.h.temperatures[:2])
             else:
-                assert tool == 0 and low == 155 and high == max(self.hot) + 10
+                assert tool == 0 and low == 95 and high == max(self.hot) + 10
             wire = [4, *args[1:]]
         elif action in (9, 10):
             self._settle()
@@ -141,11 +141,11 @@ class PadDevice(DualNozzleDevice):
                     assert retreat['direction'] == -1 and retreat['sent'] == 10 * Z_STEPS_PER_MM
                 self.session['tool'] = tool
                 self.ceiling = None
-                if max(self.h.temperatures[:2]) <= 162.:
+                if max(self.h.temperatures[:2]) <= 102.:
                     self.cold_switches.append(tool)
             else:
                 assert self.session['tool'] == tool
-                lower, upper = (0., 49.99) if self.cold else (158., 162.)
+                lower, upper = (0., 49.99) if self.cold else (98., 102.)
                 assert all(lower <= temp <= upper for temp in self.h.temperatures[:2])
                 self.sealed = True
                 self.ceiling = budget
@@ -225,6 +225,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.printer.get_start_args = lambda: {'config_file': str(self.config)}
         host.allow_actuators = True
         host.nozzle_pad_abi = 1
+        host.nozzle_pad_measurement_band_c = (95, 105)
         host.commands.update(control=Wire(device.control), output=Wire(device.out),
             motion=Wire(device.move), motion_driver=Wire(device.driver),
             factory_session=Wire(device.query_factory))
@@ -413,7 +414,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.nozzle_pad_sweep_abi = 1
         device = host.device
         device.contact_radius_mm = 7.54 / 2.
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         self.cmd(host, 'START', MODE='VERIFY_T0', PREP='EMPTY',
                  ACK='PAD_GEOMETRY_MEASURED', T0_Z_MAX=137.30)
         with self.assertRaisesRegex(RuntimeError, 'waiting for physical tool confirmation'):
@@ -448,12 +449,12 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(result['phase'], 'candidate', result)
         self.assertEqual(result['run_id'], started['run_id'])
         self.assertEqual(result['hot_targets_c'], {'T0': 240., 'T1': 235.})
-        self.assertEqual(result['measurement_target_c'], 160.)
+        self.assertEqual(result['measurement_target_c'], 100.)
         samples = result['sample_temperatures_c']
         self.assertEqual([sample['tool'] for sample in samples], ['T0', 'T1', 'T0'])
         for sample in samples:
             for tool in ('T0', 'T1'):
-                self.assertAlmostEqual(sample[tool], 160., delta=2.)
+                self.assertAlmostEqual(sample[tool], 100., delta=2.)
         self.assertEqual([row[1] for row in device.calls if row[0] == 9], [1, 0, 1, 0])
         self.assertEqual([row[1] for row in device.calls if row[0] == 10], [0, 1, 0])
         self.assertEqual([row[5] for row in device.calls if row[0] == 10],
@@ -466,7 +467,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual({tool for tool, _ in hot_wipes}, {0, 1})
         self.assertEqual({tool for tool, _ in cold_wipes}, {0, 1})
         self.assertTrue(all(abs(temps[tool] - device.hot[tool]) <= 2. for tool, temps in hot_wipes))
-        self.assertTrue(all(all(158. <= t <= 162. for t in temps) for _, temps in cold_wipes))
+        self.assertTrue(all(all(98. <= t <= 102. for t in temps) for _, temps in cold_wipes))
         homing = [m['arguments'][9] for m in device.motion_starts
                   if m['arguments'][9] == m['arguments'][10] and m['arguments'][9] in (1, 2, 4)]
         self.assertEqual(homing, [2, 1, 4])
@@ -492,6 +493,7 @@ class NozzlePadHostTests(unittest.TestCase):
         record = json.loads(self.saved.read_text())
         self.assertEqual(record['candidate'], candidate)
         self.assertEqual(record['sample_temperatures_c'], samples)
+        self.assertEqual(record['measurement_target_c'], 100.)
 
     def test_requires_surveyed_limits_before_any_motion_or_heating(self):
         host = self.host()
@@ -507,12 +509,12 @@ class NozzlePadHostTests(unittest.TestCase):
     def test_empty_nozzles_heat_directly_to_measurement_temperature_without_e_motion(self):
         host = self.host()
         device = host.device
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         started = self.cmd(host, 'START', SCAN='TAP', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                            T0_Z_MAX=137.30, T1_Z_MAX=137.20)
-        self.assertEqual(started['hot_targets_c'], {'T0': 160., 'T1': 160.})
+        self.assertEqual(started['hot_targets_c'], {'T0': 100., 'T1': 100.})
         self.assertEqual([heater['target'] for heater in host.load_test_context['factory']['dual_heaters']],
-                         [160., 160.])
+                         [100., 100.])
         self.advance(host, lambda: host.nozzle_z_context is None)
         result = self.cmd(host, 'STATUS')
         self.assertEqual((result['phase'], result['run_id']), ('candidate', started['run_id']), result)
@@ -522,14 +524,14 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(device.calls[0][5], 0)
         self.assertEqual(device.e_moves, [])
         self.assertEqual({tool for tool, _ in device.wipe_moves}, {0, 1})
-        self.assertTrue(all(all(158. <= temp <= 162. for temp in temps)
+        self.assertTrue(all(all(98. <= temp <= 102. for temp in temps)
                             for _, temps in device.wipe_moves))
         self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
 
     def test_empty_nozzles_reject_filament_preparation_arguments_before_actuation(self):
         settings = dict(SCAN='TAP', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                         T0_Z_MAX=137.30, T1_Z_MAX=137.20)
-        for argument, value in (('T0_TARGET', 200), ('T1_TARGET', 160),
+        for argument, value in (('T0_TARGET', 200), ('T1_TARGET', 100),
                                 ('T0_RETRACT_MM', 0), ('T1_RETRACT_MM', 5)):
             with self.subTest(argument=argument):
                 host = self.host()
@@ -547,7 +549,7 @@ class NozzlePadHostTests(unittest.TestCase):
                 host.nozzle_pad_sweep_abi = 1
                 device = host.device
                 device.contact_radius_mm = 7.54 / 2.
-                device.hot = (160., 160.)
+                device.hot = (100., 100.)
                 delivered = []
 
                 def renew(args):
@@ -606,7 +608,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.nozzle_pad_sweep_abi = 1
         device = host.device
         device.contact_radius_mm = 7.54 / 2.
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                  T0_Z_MAX=137.30, T1_Z_MAX=137.20)
         self.advance(host, lambda: host.nozzle_z_context is None)
@@ -658,7 +660,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1
         device = host.device
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         device.contact_radius_mm = 7.6 / 2.
         # Eight T0 strokes and four initial T1 strokes precede the repeat X.
         device.sweep_open_steps.update({12: 513, 13: 193})
@@ -677,7 +679,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         host.nozzle_pad_sweep_abi = 1
         device = host.device
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         device.contact_radius_mm = 7.6 / 2.
         device.sweep_open_steps[11] = 8  # Force T1 to use vertical Y taps.
 
@@ -688,8 +690,8 @@ class NozzlePadHostTests(unittest.TestCase):
                     and context['factory']['phase'] == 'Y-_TOUCH'
                     and device.session['active'] and device.active_motion()
                     and row.get('direction') == 1 and device.fraction() >= .3):
-                host.temperatures[1] = 153.6
-                host.raw_adc[1] = round(153.6 * 4095. / 660.)
+                host.temperatures[1] = 93.6
+                host.raw_adc[1] = round(93.6 * 4095. / 660.)
                 device.terminate(4)
             return device.move(args)
 
@@ -702,7 +704,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual((result['tool'], result['stage']), ('T1', 'Y-_TOUCH'))
         self.assertEqual(result['error'], 'MCU pad session stopped: temperature_or_sensor_guard')
         self.assertEqual(result['details']['factory_state']['reason'], 4)
-        self.assertEqual(result['details']['temperatures_c']['T1'], 153.6)
+        self.assertEqual(result['details']['temperatures_c']['T1'], 93.6)
         self.assertEqual(result['details']['secondary_error'], 'Unverified Z motion result')
         motion = result['details']['motion']
         self.assertEqual((motion['reason'], motion['hit']), ('operator_stop', 0))
@@ -721,7 +723,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.nozzle_pad_sweep_abi = 1
         host.door_policy_global = True
         device = host.device
-        device.hot = (160., 160.)
+        device.hot = (100., 100.)
         device.contact_radius_mm = 7.54 / 2.
         device.sweep_start_refusals = 2
         enabled = 1
@@ -786,6 +788,18 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(host.device.motion_starts, [])
         self.assertFalse(host.device.output(6)['duty'])
         self.assertFalse(host.device.output(7)['duty'])
+
+    def test_100_c_calibration_requires_mcu_measurement_band_before_actuation(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        host.nozzle_pad_measurement_band_c = None
+        with self.assertRaisesRegex(RuntimeError, '100 C pad calibration requires MCU'):
+            self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                     T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.assertIsNone(host.load_test_context)
+        self.assertEqual(host.device.calls, [])
+        self.assertEqual(host.device.motion_starts, [])
+        self.assertEqual((host.device.output(6)['duty'], host.device.output(7)['duty']), (0, 0))
 
     def test_sweep_rejects_tray_stop_or_mismatched_counters_without_advancing_xy(self):
         host = self.host()

@@ -48,6 +48,6 @@ jobs:
           sha256sum INVENTUR.IVB THERMAL_TEST_VERIFY.json klipper.dict > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_MCU_PAD_THERMAL_R8_BOOT17
+          name: INVENTURE_MCU_PAD_100C_BOOT17
           path: ${{ runner.temp }}/inventure-sd/
           if-no-files-found: error

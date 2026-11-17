@@ -13,13 +13,14 @@ import tempfile
 import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
+from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R12'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R13'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
 NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
-NOZZLE_PAD_TEMPERATURE = 160.
+NOZZLE_PAD_100C_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R9'
 NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
 NOZZLE_PAD_COLD_T1_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER-T1'
 NOZZLE_PAD_COLD_MAX = 50
@@ -497,6 +498,9 @@ class InventureMCU:
         self.nozzle_pad_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_ABI',0))
         self.nozzle_pad_sweep_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_ABI',0))
         self.nozzle_pad_cold_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_COLD_ABI',0))
+        pad_band=tuple(int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_MEASURE_'+bound+'_C',0))
+                       for bound in ('MIN','MAX'))
+        self.nozzle_pad_measurement_band_c=pad_band if all(pad_band) else None
         self.nozzle_service_target_max=float(self.mcu.get_constants().get(
             'INVENTURE_SERVICE_NOZZLE_TARGET_MAX',LEGACY_SERVICE_TARGET_MAX_C))
         if not LEGACY_SERVICE_TARGET_MAX_C<=self.nozzle_service_target_max<=SERVICE_TARGET_MAX_C:
@@ -1679,6 +1683,7 @@ class InventureMCU:
             'nozzle_pad_abi':getattr(self,'nozzle_pad_abi',0),
             'nozzle_pad_sweep_abi':getattr(self,'nozzle_pad_sweep_abi',0),
             'nozzle_pad_cold_abi':getattr(self,'nozzle_pad_cold_abi',0),
+            'nozzle_pad_measurement_band_c':getattr(self,'nozzle_pad_measurement_band_c',None),
             'nozzle_service_target_max_c':getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C),
             'native_nozzle_max_temp_c':{'T%d'%tool:self._native_nozzle_max_temp(tool) for tool in range(2)},
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
@@ -2363,7 +2368,7 @@ class InventureMCU:
         row=self._control_send('load_stream',[1 if starting else 2,
             stream['steps'] if starting else 0,stream['rate'] if starting else 0,
             stream['max_ms'] if starting else 0,1500,
-            round(max(180.,context['target']-25.)),round(context['target']+10.),
+            round(max(180.,context['target']-25.)),round(self._nozzle_heating_upper(context)),
             stream['token'],sequence,context['tool'],plan['channel'],plan['direction'],
             plan['cassette_direction']],mutate=True,owner=context)
         if self.load_test_context is not context:return
@@ -2469,13 +2474,18 @@ class InventureMCU:
         board_max=getattr(self,'guard_last',{}).get(self.ADC_PINS[tool],{}).get(
             'max_c',self.ADC_CEILINGS[tool])
         native_max=self._native_nozzle_max_temp(tool)
-        maximum=min(board_max,native_max) if native_max is not None else board_max
-        if target+NOZZLE_HEAT_WINDOW_C>maximum:
-            source='Klipper max_temp' if native_max==maximum else 'MCU temperature guard'
+        native_limited=native_max is not None and native_max<=board_max
+        maximum=math.floor(native_max if native_limited else board_max)
+        if target>maximum:
+            source='Klipper max_temp' if native_limited else 'MCU temperature guard'
             raise ValueError('T%d target %g C exceeds the allowed service range with %s=%g C '
                              '(maximum target %g C)'
-                             %(tool,target,source,maximum,maximum-NOZZLE_HEAT_WINDOW_C))
-        return min(round(target+20.),math.floor(maximum))
+                             %(tool,target,source,maximum,maximum))
+        return min(round(target+20.),maximum)
+
+    @staticmethod
+    def _nozzle_heating_upper(heater):
+        return min(heater['limit'],heater['target']+NOZZLE_HEAT_WINDOW_C)
 
     def _load_test_cancel(self,reason,phase='stopped'):
         # Invalidate before any serial wait. A queued timer cannot renew power
@@ -2512,7 +2522,7 @@ class InventureMCU:
         if context.get('cold_pad') and not all(0.<=value<NOZZLE_PAD_COLD_MAX for value in values[:2]):
             raise ValueError('Obie dysze musza byc ponizej 50 C podczas pomiaru pada')
         selected_max=(factory['pad_temperature_bounds'][1] if factory.get('pad_cooling')
-                      else min(context['limit'],context['target']+10.))
+                      else self._nozzle_heating_upper(context))
         if temperature>=selected_max:
             raise ValueError('Nozzle overtemperature')
         counter=self.status.get('p0')
@@ -2978,6 +2988,8 @@ class InventureMCU:
             params=pad_xyz_parameters(gcmd,center_only=center)
             if params['scan']=='SWEEP' and getattr(self,'nozzle_pad_sweep_abi',0)!=1:
                 raise ValueError('SCAN=SWEEP requires the '+NOZZLE_PAD_SWEEP_RELEASE+' MCU')
+            if (not center and getattr(self,'nozzle_pad_measurement_band_c',None)!=PAD_MEASUREMENT_BAND_C):
+                raise ValueError('100 C pad calibration requires MCU '+NOZZLE_PAD_100C_RELEASE)
             tool=params['center_tool'] if center else 0
             if center:
                 cold_abi=getattr(self,'nozzle_pad_cold_abi',0)
@@ -3006,8 +3018,8 @@ class InventureMCU:
             raise gcmd.error(str(exc))
         run=dict(phase='running',run_id=uuid.uuid4().hex,mode=params['mode'],params=params,budget=budget,
                  door_policy=door_policy,
-                 measurement_target_c=None if center else NOZZLE_PAD_TEMPERATURE,
-                 hot_targets_c={} if center else {'T%d'%tool: NOZZLE_PAD_TEMPERATURE if params['prep']=='EMPTY'
+                 measurement_target_c=None if center else PAD_TEMPERATURE_C,
+                 hot_targets_c={} if center else {'T%d'%tool: PAD_TEMPERATURE_C if params['prep']=='EMPTY'
                                 else plan['target'] for tool,(plan,_) in plans.items()})
         batch=dict(action='START',pad=run,tool=tool,parameters=plans,gcmd=gcmd,results={})
         self.nozzle_pad_run=run
@@ -3180,7 +3192,7 @@ class InventureMCU:
                 raise ValueError('Nozzle calibration TARGET must be %g..%g C and MAX_POWER 1..40 percent'
                                  %(target_min,target_limit))
             if pad is None or pad['prep']!='COLD':
-                target=NOZZLE_PAD_TEMPERATURE if pad_empty else p['target']
+                target=PAD_TEMPERATURE_C if pad_empty else p['target']
                 p['heater_cutoff']=self._nozzle_service_cutoff(index,target)
             plans[index]=(p,z_home_parameters(options,p,nozzle_test=True))
         return plans
@@ -3359,7 +3371,7 @@ class InventureMCU:
             def error(self,message):return gcmd.error(message)
             def respond_info(self,message):return gcmd.respond_info(message)
         if pad and pad_run['params']['prep'] in ('EMPTY','COLD'):
-            p=dict(p,target=NOZZLE_PAD_TEMPERATURE)
+            p=dict(p,target=PAD_TEMPERATURE_C)
             self.cmd_load_test(HeatCommand(),nozzle_test=True,pad_empty=True,cold_pad=cold_pad)
         elif nozzle_test:self.cmd_load_test(HeatCommand(),nozzle_test=True)
         else:self.cmd_load_test(HeatCommand())
@@ -3388,7 +3400,7 @@ class InventureMCU:
         if pad:
             context['factory']['pad_budget']=self.nozzle_z_context['pad']['budget']
             context['factory']['pad_temperature_bounds']=(0,NOZZLE_PAD_COLD_MAX) if cold_pad else (
-                155,round(max(h['target'] for h in heaters)+10.))
+                round(PAD_MEASUREMENT_BAND_C[0]),round(max(self._nozzle_heating_upper(h) for h in heaters)))
             context['factory']['pad_temperature_samples']=[]
         self._load_test_emit(context)
         if nozzle_test:return context
@@ -3573,7 +3585,7 @@ class InventureMCU:
         else:
             budget=feeder_budget(p)
             minimum=round(max(180.,context['target']-25.))
-            maximum=round(context['target']+10.)
+            maximum=round(self._nozzle_heating_upper(context))
         tool=context['tool'] if next_tool is None else next_tool
         if ceiling_steps is not None:action=10
         elif next_tool is not None:action=9 if pad else 7 if alignment else 5
@@ -3888,7 +3900,7 @@ class InventureMCU:
             tool=heater['tool']
             temperature,state=self.panel_temperature(tool,now)
             if state!='valid':raise ValueError('T%d ADC is %s at dual nozzle heat start'%(tool,state))
-            if temperature>=heater['target']+NOZZLE_HEAT_WINDOW_C:
+            if temperature>=self._nozzle_heating_upper(heater):
                 raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
             heater.update(start_temperature=temperature,
                 pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
@@ -3905,12 +3917,14 @@ class InventureMCU:
         for heater in heaters:
             tool=heater['tool'];target=heater['target']
             temperature,state=self.panel_temperature(tool,now)
-            upper=f['pad_temperature_bounds'][1] if f.get('pad_cooling') else target+NOZZLE_HEAT_WINDOW_C
+            upper=f['pad_temperature_bounds'][1] if f.get('pad_cooling') else self._nozzle_heating_upper(heater)
             if state!='valid':raise ValueError('T%d ADC is %s during dual nozzle heating'%(tool,state))
             if temperature>=upper:
                 raise ValueError('T%d exceeds the dual nozzle heating window at %.2f C'%(tool,temperature))
-            if f.get('pad_measurement') and not 155.<=temperature<=165.:
-                raise ValueError('T%d left the 160 C pad measurement band'%tool)
+            if f.get('pad_measurement'):
+                low,high=PAD_MEASUREMENT_BAND_C
+                if not low<=temperature<=high:
+                    raise ValueError('T%d left the %g..%g C pad measurement band'%(tool,low,high))
             if context['ready_latched'] and not target-10.<=temperature<=target+8.:
                 raise ValueError('T%d left the Z reference temperature band'%tool)
             start_temperature=heater['start_temperature']
@@ -3942,26 +3956,30 @@ class InventureMCU:
     def _nozzle_pad_cool_start(self,context):
         f=context['factory']
         f['pad_cooling']=True
-        for heater in f['dual_heaters']:
+        heaters=f['dual_heaters']
+        for heater in heaters:
             # Turning off the preceding heater may dispatch the next ADC report.
             now=self.reactor.monotonic()
             tool=heater['tool']
+            limit=self._nozzle_service_cutoff(tool,PAD_TEMPERATURE_C)
             temperature,state=self.panel_temperature(tool,now)
             if state!='valid':raise ValueError('T%d ADC is %s at pad cooldown start'%(tool,state))
             self._load_test_output(context,0,heater)
-            heater.update(target=NOZZLE_PAD_TEMPERATURE,limit=180,
+            heater.update(target=PAD_TEMPERATURE_C,limit=limit,
                           pid=dict(time=now,temperature=temperature,derivative=0.,integral=0.))
-        context.update(target=NOZZLE_PAD_TEMPERATURE,limit=180,duty=0,
+        context.update(target=PAD_TEMPERATURE_C,limit=heaters[context['tool']]['limit'],duty=0,
                        ready_latched=False,ready_since=None)
 
     def _pad_temperatures(self,context):
         now=self.reactor.monotonic()
         cold=context.get('cold_pad',False)
+        low,high=PAD_MEASUREMENT_BAND_C
         samples=[self.panel_temperature(tool,now) for tool in (0,1)]
-        if any(state!='valid' or not (0.<=value<NOZZLE_PAD_COLD_MAX if cold else 155.<=value<=165.)
+        if any(state!='valid' or not (0.<=value<NOZZLE_PAD_COLD_MAX if cold else low<=value<=high)
                for value,state in samples):
             raise ValueError('Pomiar zimnego pada wymaga obu dysz ponizej 50 C' if cold
-                             else 'Pad scan requires fresh temperatures in the 160 C measurement band')
+                             else 'Pad scan requires fresh temperatures in the %g..%g C measurement band'
+                             % (low,high))
         return tuple(value for value,_ in samples)
 
     def _factory_action(self,context,action):
@@ -4194,7 +4212,7 @@ class InventureMCU:
                     started=False,feed_completed=False,
                     feeder_windows_requested=0,feeder_ms_requested=0)
             service_max=getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C)
-            minimum,maximum=(NOZZLE_PAD_TEMPERATURE,NOZZLE_PAD_TEMPERATURE) if pad_empty else (180.,service_max)
+            minimum,maximum=(PAD_TEMPERATURE_C,PAD_TEMPERATURE_C) if pad_empty else (180.,service_max)
             try:
                 target=float(gcmd.get('TARGET',230.));duration=float(gcmd.get('DURATION',LOAD_HOLD_MAX_S))
                 power=float(gcmd.get('MAX_POWER',40.))
@@ -4214,7 +4232,8 @@ class InventureMCU:
                 self._feeder_service_preflight()
                 baseline=self._cassette_gpio_snapshot()
                 temperature,state=self.panel_temperature(int(tool[1]),self.reactor.monotonic())
-                if state!='valid' or temperature>=target+10:raise ValueError('Nozzle is not ready for controlled heating')
+                if state!='valid' or temperature>=min(cutoff,target+NOZZLE_HEAT_WINDOW_C):
+                    raise ValueError('Nozzle is not ready for controlled heating')
             except Exception as exc:raise gcmd.error(str(exc))
             now=self.reactor.monotonic()
             context=dict(tool=int(tool[1]),target=target,power=power,limit=cutoff,
