@@ -10,7 +10,7 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 160°C.
 ## Instalacja
 
 Zaktualizuj [moduł hosta](../README.md#aktualizacja-orange-pi) do wersji
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R9`. Tryb `CENTER TOOL=T1` działa z
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R10`. Tryb `CENTER TOOL=T1` działa z
 firmware MCU `RC8-CONTROL-R7-PAD-CENTER-T1` i `RC8-CONTROL-R7-PAD-THERMAL-R8`. `INVENTURE_VERSION` po
 restarcie pokazuje `nozzle_pad_cold_abi: 2` dla obu dysz. Pomiar T0
 współpracuje też z wcześniejszą aplikacją `RC8-CONTROL-R7-PAD-CENTER`.
@@ -99,7 +99,7 @@ dotknięciami. Przy niestabilnym styku w punkcie startu szuka zwarcia do
 dwóch dojazdów do limitu próby bez zwarcia. Przy niestabilnym odczycie
 procedura zachowuje oba potwierdzone końce przedziału i sprawdza inne
 pozycje. Domyślnie kończy pomiar dotknięciami, gdy przedział krawędzi
-ma szerokość do 0,1 mm. Zakres XY i limit Z pochodzą z ustawień tego
+ma szerokość do 0,05 mm. Zakres XY i limit Z pochodzą z ustawień tego
 samego przebiegu. Stół opada przed przejazdem między punktami dotknięcia.
 Pomiar Y zaczyna się przy wyznaczonym X. Po wyznaczeniu czterech krawędzi
 stół opuszcza się, a głowica wraca nad środek.
@@ -181,7 +181,9 @@ Gdy MCU odmawia startu przejazdu `SWEEP`, host sprawdza aktualne
 zabezpieczenia przed powtórnym dojazdem Z. Styk PC14 może ponownie się
 zamknąć po chwilowym rozwarciu, które skasowało potwierdzenie styku w MCU.
 Procedura wycofuje Z i powtarza dojazd. W razie dalszej odmowy przechodzi
-na pionowe próby na tej osi.
+na pionowe próby na tej osi. Domyślnie potwierdzony styk i rozwarcie
+dzieli wtedy najwyżej 0,05 mm. Krawędź przyjmuje się w połowie tego
+przedziału.
 
 Ustaw temperaturę wycofania odpowiednią osobno dla każdego materiału.
 Przykładowe 240°C dotyczy filamentu, dla którego taka nastawa jest
@@ -281,7 +283,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `PAD_DIAMETER_MM` | 7 mm dla fabrycznego pada, 5 mm dla osobnego pola w `TAP`. Zakres 2–10 mm | Zmierzona średnica pola używana do kontroli szerokości styku |
 | `SCAN_RADIUS_MM` | 5 mm dla pada Ø7 mm, 3,5 mm dla Ø5 mm. Zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka. Tryb `CENTER` domyślnie używa 5 mm. Pojedynczy przejazd `SWEEP` ma limit 6 mm |
 | `XY_SWEEP_SPEED` | 0,25 mm/s domyślnie, zakres 0,05–0,5 mm/s | Prędkość przejazdu po styku w `SCAN=SWEEP` |
-| `EDGE_TOLERANCE_MM` | 0,1 mm w `SWEEP`, 0,02 mm w `TAP`. Zakres 0,005–0,1 mm | Docelowa szerokość przedziału krawędzi przy pionowych dotknięciach |
+| `EDGE_TOLERANCE_MM` | 0,05 mm w `SWEEP`, 0,02 mm w `TAP`. Zakres 0,005–0,1 mm | Maksymalna szerokość przedziału krawędzi przy pionowych dotknięciach |
 | `Z_CLEARANCE_MM` | 1,5 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |
 | `Z_TAP_SPEED` | Domyślnie 0,25 mm/s dla `SWEEP` i 0,8 mm/s dla `TAP`. Zakres 0,2–1 mm/s | Prędkość pionowego podejścia do styku |
 | `RETRACT_SPEED` | 1,6 mm/s domyślnie, zakres 0,5–6 mm/s | Prędkość cofania filamentu podczas przygotowania |

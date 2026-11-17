@@ -14,7 +14,7 @@ import uuid
 from .inventure_fans_core import fan_test_result, normalized_tach, validate_report
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R9'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R10'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'

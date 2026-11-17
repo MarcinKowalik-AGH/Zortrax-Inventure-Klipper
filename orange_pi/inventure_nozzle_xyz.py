@@ -85,7 +85,7 @@ def pad_xyz_parameters(gcmd, center_only=False):
         pad_diameter_mm=diameter,
         scan_radius_mm=number('SCAN_RADIUS_MM', scan_radius, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
-        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .1 if scan == 'SWEEP' else .02, .005, .1),
+        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .05 if scan == 'SWEEP' else .02, .005, .1),
         z_clearance_mm=clearance,
         z_tap_speed=number('Z_TAP_SPEED', .25 if scan == 'SWEEP' else .8, .2, 1.),
         xy_repeat_mm=number('XY_REPEAT_MM', .08, .01, .25),

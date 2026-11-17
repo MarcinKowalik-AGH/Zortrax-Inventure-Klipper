@@ -1,5 +1,6 @@
 """Validate the pad geometry and guarded motion sequence without a board."""
 
+import ast
 import math
 import unittest
 
@@ -188,6 +189,11 @@ class NozzleXYZCoreTests(unittest.TestCase):
         with self.assertLogs(level='INFO') as logs:
             result = model.run()
         self.assertTrue(any('Y- edge_mm=' in row and 'method=tap' in row for row in logs.output))
+        brackets = [ast.literal_eval(row.split('confirmed edge bracket ', 1)[1].removesuffix(' mm'))
+                    for row in logs.output if 'confirmed edge bracket ' in row]
+        self.assertEqual(len(brackets), 2)
+        for low, high in brackets:
+            self.assertLessEqual(round((high - low) * XY_STEPS_PER_MM), 32)
         self.assertLess(math.dist(result['measurements']['T0']['center_xy_mm'], model.centers[0]), .02)
         trace = [a for _, _, a in model.trace]
         last_sweep = max(i for i, a in enumerate(trace) if a.get('stage') == 'pad_sweep')
@@ -216,7 +222,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
 
     def test_cold_center_confirms_open_next_to_an_unstable_scan_limit(self):
         xyz = pad_xyz_parameters(COLD_SMALL_PAD, center_only=True)
-        self.assertEqual(xyz['edge_tolerance_mm'], .1)
+        self.assertEqual(xyz['edge_tolerance_mm'], .05)
         model = SimulatedPad(xyz)
         model.sweep_without_opening.add((0, -1))
         model.cold_intermittent_contact = lambda xy: math.isclose(xy[0], 77.8)
@@ -233,7 +239,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryError, 'Przedział krawędzi PC14') as exc:
             model.run()
         low, high = exc.exception.details['edge_interval_mm']
-        self.assertGreater(high - low, .1)
+        self.assertGreater(high - low, .05)
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertFalse(any(a['kind'] == 'done' for _, _, a in model.trace))
 
@@ -373,6 +379,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
     def test_explicit_legacy_tap_keeps_point_to_point_probe(self):
         xyz = pad_xyz_parameters(dict(PARAMETERS, MODE='VERIFY_T0', SCAN='TAP'))
         self.assertEqual(xyz['z_tap_speed'], .8)
+        self.assertEqual(xyz['edge_tolerance_mm'], .02)
         model = SimulatedPad(xyz)
         result = model.run()
         self.assertEqual(result['measurements']['T0']['scan_method'], 'TAP')
