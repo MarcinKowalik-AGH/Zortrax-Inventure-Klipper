@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -1508,8 +1508,21 @@ class InventureMCU:
         self.printer.send_event('inventure:fan_report',i,sample,received)
 
     def _status(self, params):
+        # Serial callbacks run in serialhdl's background thread. Publish
+        # the status and its timestamp together on the procedure reactor.
+        if not self.adc_accepting:return
+        received=self.reactor.monotonic();generation=self.adc_generation
+        sample=dict(params)
+        def deliver(now):
+            if self.adc_accepting and generation==self.adc_generation:
+                self._deliver_status(sample,received)
+        self.reactor.register_async_callback(deliver)
+
+    def _deliver_status(self,params,received):
+        previous=self.status_received
+        if previous is not None and received<previous:return
         self.status = {k:v for k,v in params.items() if not k.startswith('#')}
-        self.status_received = self.reactor.monotonic()
+        self.status_received = received
     def _arm_result(self, params):
         self.status.update(armed=params['armed'], fault=params['fault'])
         self.gcode.respond_info('V9 ARM: armed=%d fault=%d' % (params['armed'], params['fault']))
@@ -2110,13 +2123,21 @@ class InventureMCU:
         self._inputs(p)
         return dict(self.inputs)
 
-    def _fresh_sensor_snapshot(self):
-        started=self.reactor.monotonic()
+    def _fresh_board_status(self):
         p=self._sensor_readback('sensor_board',[],BOARD_RESPONSE,self._status)
         limits={'armed':(0,1),'fault':(0,255),'seen':(0,255),'cable':(0,1)}
         limits.update({'p%d'%i:(0,0xffffffff) for i in range(6)})
         self._control_validate(p,limits)
-        self._status(p)
+        if not self.connected:raise ValueError('MCU disconnected during board readback')
+        received=p.get('#receive_time',self.reactor.monotonic())
+        if type(received) not in (int,float) or not math.isfinite(received):
+            raise ValueError('Invalid MCU board response timestamp')
+        self._deliver_status(p,received)
+        return dict(self.status)
+
+    def _fresh_sensor_snapshot(self):
+        started=self.reactor.monotonic()
+        self._fresh_board_status()
         inputs=self._fresh_inputs()
         uart=[]
         for i in range(2):
@@ -2518,12 +2539,32 @@ class InventureMCU:
     def _load_test_safety(self,context,control_state=None):
         self._feeder_service_preflight(allow_active=True,allow_load=True,control_state=control_state)
         if self.load_test_context is not context:raise ValueError('Load test was stopped')
+        received=getattr(self,'status_received',None)
         now=self.reactor.monotonic()
+        age=None if received is None else now-received
+        check=dict(checked_at=now,received_at=received,age_s=age,max_age_s=.75,
+                   source='periodic',refresh_count=context.get('board_status_refreshes',0))
+        context['board_status_check']=check
+        if age is None or not 0<=age<.75:
+            # A delayed periodic reply is not proof of a broken cable.
+            # Read the current MCU state once; this renews no heater/motion.
+            check['periodic_age_s']=age;check['source']='direct_query'
+            try:self._fresh_board_status()
+            except Exception as exc:
+                check['refresh_error']=str(exc)
+                raise ValueError('Board/cable status refresh failed: '+str(exc)) from exc
+            if self.load_test_context is not context or not self.connected:
+                raise ValueError('Load test was stopped during board readback')
+            received=self.status_received;now=self.reactor.monotonic()
+            age=None if received is None else now-received
+            context['board_status_refreshes']=check['refresh_count']+1
+            check.update(checked_at=now,received_at=received,age_s=age,
+                         refresh_count=context['board_status_refreshes'])
+        check.update(cable=self.status.get('cable'),fault=self.status.get('fault'))
         if now>=context['deadline']:
             raise ValueError('Nozzle did not reach target within 300 seconds'
                              if context['hold_started'] is None else 'hold_duration_finished')
-        received=getattr(self,'status_received',None)
-        if received is None or not 0<=now-received<.75:
+        if age is None or not 0<=age<.75:
             raise ValueError('Board/cable status is stale')
         if self.status.get('cable')!=0 or self.status.get('fault')!=0:
             raise ValueError('Extruder cable or MCU fault')
@@ -2717,6 +2758,8 @@ class InventureMCU:
                 nozzle=action.get('kind')=='nozzle_z_refine' and 'token' in action
                 stopped=factory is not None and (factory['move'] is not None or edge or nozzle or pad)
                 reason=str(exc);details=dict(getattr(exc,'details',{}))
+                if pad and 'board_status_check' in context:
+                    details['board_status']=dict(context['board_status_check'])
                 if operation in ('NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT','NOZZLE_PAD_CALIBRATION'):
                     details['control_before_stop']=dict(getattr(self,'control_last',{}))
                     details['uart']=dict(getattr(self,'uart_buffer_stats',{}))

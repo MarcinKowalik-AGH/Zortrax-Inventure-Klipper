@@ -746,6 +746,8 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual((result['tool'], result['stage']), ('T1', 'Y-_TOUCH'))
         self.assertEqual(result['error'], 'MCU pad session stopped: temperature_or_sensor_guard')
         self.assertEqual(result['details']['factory_state']['reason'], 4)
+        self.assertIn('board_status',result['details'])
+        self.assertLess(result['details']['board_status']['age_s'],.75)
         self.assertEqual(result['details']['temperatures_c']['T1'], 89.6)
         self.assertEqual(result['details']['secondary_error'], 'Unverified Z motion result')
         motion = result['details']['motion']
@@ -910,6 +912,36 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(host.device.calls, [])
         self.assertEqual(host.device.motion_starts, [])
         self.assertEqual((host.device.output(6)['duty'], host.device.output(7)['duty']), (0, 0))
+
+    def test_full_scan_recovers_delayed_board_status_at_t0_y_touch(self):
+        host=self.host();host.nozzle_pad_sweep_abi=1
+        device=host.device;device.hot=(100.,100.);device.contact_radius_mm=7.6/2.
+        device.sweep_open_steps[3]=8  # Exercise the Y tap path seen on the printer.
+        refresh=host.refresh;injected=[]
+        def delayed_periodic_status():
+            refresh()
+            context=host.load_test_context
+            if (context is not None and context.get('factory',{}).get('phase')=='Y_TOUCH'
+                    and not injected):
+                host.status_received=host.reactor.monotonic()-1.
+                host.stale_board=True
+                injected.append(True)
+        host.refresh=delayed_periodic_status
+        query=host.commands['sensor_board']
+        def fresh_board(args):
+            host.stale_board=False
+            return dict(host.board_reply)
+        query.reply=fresh_board
+        self.cmd(host,'START',PREP='EMPTY',ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30,T1_Z_MAX=137.20)
+        before=len(query.calls)
+        self.advance(host,lambda:host.nozzle_z_context is None,timeout=1800.)
+        result=self.cmd(host,'STATUS')
+        self.assertEqual(injected,[True])
+        self.assertEqual(len(query.calls),before+1)
+        self.assertEqual(result['phase'],'candidate',result)
+        self.assertEqual(set(result['measurements']),{'T0','T1','T0_RETURN'})
+        self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
     def test_sweep_rejects_tray_stop_or_mismatched_counters_without_advancing_xy(self):
         host = self.host()

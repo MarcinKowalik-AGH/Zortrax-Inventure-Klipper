@@ -293,7 +293,9 @@ class LoadTests(unittest.TestCase):
             if cause=='temperature':h.temperatures[0]=241.
             elif cause=='stale_adc':h.stale_adc.add(0);h.adc_received[0]=95.
             elif cause=='ground':h.raw_adc[0]=0
-            elif cause=='board_age':h.stale_board=True;h.status_received=95.
+            elif cause=='board_age':
+                h.stale_board=True;h.status_received=95.
+                h.commands['sensor_board'].failure=ValueError('No board response')
             elif cause=='cable':h.status['cable']=1
             elif cause=='fault':h.control_reply['fault']=4
             elif cause=='owner':ops.state.owner=object()
@@ -302,6 +304,72 @@ class LoadTests(unittest.TestCase):
             h.reactor.pause(101.)
             self.assertEqual(h.load_test_last['phase'],'failed',cause)
             self.assertIsNone(h.load_test_context,cause);self.assertFalse(h.device.active(),cause)
+
+    def test_board_serial_report_is_published_only_on_the_reactor(self):
+        h,_,_=self.host();callbacks=[]
+        h.reactor.register_async_callback=callbacks.append
+        old_status=dict(h.status);old_received=h.status_received
+        h.reactor.now+=.01
+        received=h.reactor.monotonic();report=dict(h.status,cable=1,p0=123)
+        h._status(report);report['cable']=0
+        self.assertEqual(h.status,old_status)
+        self.assertEqual(h.status_received,old_received)
+        callbacks.pop()(h.reactor.monotonic())
+        self.assertEqual(h.status['cable'],1)
+        self.assertEqual(h.status['p0'],123)
+        self.assertEqual(h.status_received,received)
+
+    def test_queued_board_report_cannot_replace_newer_readback_or_cross_shutdown(self):
+        h,_,_=self.host();callbacks=[]
+        h.reactor.register_async_callback=callbacks.append
+        h._status(dict(h.status,p0=9))
+        h.reactor.now+=.02
+        h.board_reply['p0']=20;h._fresh_board_status()
+        newest=h.status_received
+        callbacks.pop()(h.reactor.monotonic())
+        self.assertEqual((h.status['p0'],h.status_received),(20,newest))
+        h._status(dict(h.status,p0=30))
+        h.adc_accepting=False;h.adc_generation+=1
+        callbacks.pop()(h.reactor.monotonic())
+        self.assertEqual((h.status['p0'],h.status_received),(20,newest))
+
+    def test_stale_periodic_board_status_is_recovered_by_read_only_query(self):
+        h,_,_=self.host();self.heat(h);context=h.load_test_context
+        h.stale_board=True;h.status_received=h.reactor.monotonic()-1.
+        query=h.commands['sensor_board'];before=len(query.calls)
+        h.reactor.pause(h.reactor.now+.3)
+        self.assertIs(h.load_test_context,context)
+        self.assertEqual(len(query.calls),before+1)
+        check=context['board_status_check']
+        self.assertEqual(check['source'],'direct_query')
+        self.assertGreaterEqual(check['periodic_age_s'],1.)
+        self.assertLess(check['age_s'],.75)
+        self.assertEqual(check['refresh_count'],1)
+        self.assertEqual(h.mcu.callbacks['inventure_status'],h._status)
+
+    def test_board_recheck_with_old_timestamp_still_stops_heating(self):
+        h,_,_=self.host();self.heat(h);context=h.load_test_context
+        h.stale_board=True;h.status_received=h.reactor.monotonic()-2.
+        h.board_reply['#receive_time']=h.reactor.monotonic()-1.
+        h.reactor.pause(h.reactor.now+.3)
+        self.assertIsNone(h.load_test_context)
+        self.assertEqual(h.load_test_last['reason'],'Board/cable status is stale')
+        self.assertGreaterEqual(context['board_status_check']['age_s'],1.)
+        self.assertFalse(h.device.active())
+
+    def test_board_recheck_stops_for_cable_fault_and_concurrent_cancel(self):
+        for cause in ('cable','fault','cancel'):
+            with self.subTest(cause=cause):
+                h,_,_=self.host();self.heat(h)
+                h.stale_board=True;h.status_received=h.reactor.monotonic()-1.
+                if cause=='cancel':
+                    def reply(args):
+                        h._load_test_cancel('operator_stop');h._control_abort();return h.board_reply
+                    h.commands['sensor_board'].reply=reply
+                else:h.commands['sensor_board'].reply=lambda args:dict(h.board_reply,**{cause:1})
+                h.reactor.pause(h.reactor.now+.3)
+                self.assertIsNone(h.load_test_context)
+                self.assertFalse(h.device.active())
 
     def test_fan_failure_and_failed_heating_stop_the_service(self):
         for cause in ('fan','rise','reach'):

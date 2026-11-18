@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
-  "host_module_sha256": "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
+  "host_module_sha256": "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 531,
-  "previous_host_commit": "d583ec6bd44660a89ac6d61dfe348cca1e740d65",
+  "verified_public_host_tests": 537,
+  "previous_host_commit": "b948177aa1375ba862d58ba305e62d0cf47ddcad",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -760,11 +760,11 @@
       110
     ],
     "package_filename": "INVENTURE_MCU_PAD_100C_R12_BOOT17.zip",
-    "release_tag": "inventure-pad-xyz-r18",
-    "host_package_filename": "INVENTURE_ORANGE_PI_PAD_XYZ_R18.zip",
+    "release_tag": "inventure-pad-xyz-r19",
+    "host_package_filename": "INVENTURE_ORANGE_PI_PAD_XYZ_R19.zip",
     "ivb_sha256": "5c890be7cccac852df31cab32b2db94d544ba34464377d61c34c798743828067",
-    "audit_report": "docs/INVENTURE_PAD_XYZ_R18.md",
-    "release_notes": "docs/INVENTURE_PAD_XYZ_R18.md",
+    "audit_report": "docs/INVENTURE_PAD_XYZ_R19.md",
+    "release_notes": "docs/INVENTURE_PAD_XYZ_R19.md",
     "application_sha256": "dff4ae4a9f7cb9f31a45e20686178fd8f8b83051846f16993c0a84f3b6ff2781",
     "ivb_bytes": 102956
   },
@@ -812,5 +812,14 @@
     "readiness": "both nozzles inside the band continuously for 2 seconds",
     "regression_log": "klippy(14).log: T0 at 105.08424908424908 C stopped by host at X+_TOUCH",
     "physical_full_run": "pending user printer test"
+  },
+  "board_status_freshness": {
+    "periodic_poll_s": 0.25,
+    "max_sample_age_s": 0.75,
+    "dispatch": "reactor with connection generation",
+    "delayed_periodic_sample": "read current board status before deciding to stop",
+    "failure_diagnostics": "details.board_status includes sample age and readback outcome",
+    "mcu_changed": false,
+    "hardware_failure_root_cause": "klippy(15).log has no failing status age; background-thread race reproduced in host tests"
   }
 }

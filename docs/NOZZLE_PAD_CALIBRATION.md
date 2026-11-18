@@ -10,12 +10,14 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18` i aplikacja MCU
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19` i aplikacja MCU
 `RC8-CONTROL-R7-PAD-THERMAL-R12`. Zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
 `INVENTURE_MCU_PAD_100C_R12_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r18).
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r19).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
+Przy już wgranym MCU R12 przejście z hosta R18 na R19 wymaga tylko
+aktualizacji hosta; obraz MCU jest identyczny.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
@@ -287,6 +289,8 @@ odpowiednie dla pionowych prób w całym obszarze skanu.
 Poleceniem `STATUS` sprawdzisz etap i wynik. Po błędzie odczytasz również
 ostatnią dyszę, etap, odczyty temperatur i dostępny powód zatrzymania
 sesji na MCU. Zakończone pomiary dysz pozostają w `measurements`.
+Host R19 dodaje w `details.board_status` wiek statusu płyty, źródło próbki
+i wynik bezpośredniego odczytu po opóźnieniu raportu okresowego.
 Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
 Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
 

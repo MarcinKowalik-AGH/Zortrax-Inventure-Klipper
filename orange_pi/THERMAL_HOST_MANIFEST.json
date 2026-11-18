@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e",
+  "module_sha256": "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -81,9 +81,10 @@
     "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3",
     "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc",
     "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0",
-    "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821"
+    "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821",
+    "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -701,5 +702,14 @@
     "readiness": "both nozzles inside the band continuously for 2 seconds",
     "regression_log": "klippy(14).log: T0 at 105.08424908424908 C stopped by host at X+_TOUCH",
     "physical_full_run": "pending user printer test"
+  },
+  "board_status_freshness": {
+    "periodic_poll_s": 0.25,
+    "max_sample_age_s": 0.75,
+    "dispatch": "reactor with connection generation",
+    "delayed_periodic_sample": "read current board status before deciding to stop",
+    "failure_diagnostics": "details.board_status includes sample age and readback outcome",
+    "mcu_changed": false,
+    "hardware_failure_root_cause": "klippy(15).log has no failing status age; background-thread race reproduced in host tests"
   }
 }

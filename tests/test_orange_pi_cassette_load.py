@@ -136,7 +136,9 @@ class CassetteLoadTests(unittest.TestCase):
             h,ops,p13,_=self.host();h.cmd_load_test(Command(ACTION='LOAD'));self.ready(h)
             count=len(self.feed_starts(h))
             if cause=='cable':h.status['cable']=1
-            elif cause=='stale':h.stale_board=True;h.status_received=h.reactor.now-1.
+            elif cause=='stale':
+                h.stale_board=True;h.status_received=h.reactor.now-1.
+                h.commands['sensor_board'].failure=ValueError('No board response')
             elif cause=='overheat':h.temperatures[0]=241.
             elif cause=='output_guard':h.device.outputs[6].update(duty=0,reason=4)
             elif cause=='lease':
