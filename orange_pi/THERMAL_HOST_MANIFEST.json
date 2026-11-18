@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R20",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be",
+  "module_sha256": "41111130d61d06e0b3420c669f2daa7beb1eb42be95a6280d67b7a59e51818b9",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -82,9 +82,10 @@
     "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc",
     "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0",
     "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821",
-    "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e"
+    "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e",
+    "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R20",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -415,7 +416,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "6cddca3bb220ee56b30394e0dfe80ce8239ebb3880dd8cf21a57cc2187646385",
+      "sha256": "9d38da0351d1b67243fb98b8e6cf7421de1262073df5e1ca408437dffdd466b9",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -433,7 +434,8 @@
         "e09956de13855de66b12160a813a521816dae22f0a538b4b49f1da938ada7572",
         "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48",
         "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb",
-        "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345"
+        "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345",
+        "6cddca3bb220ee56b30394e0dfe80ce8239ebb3880dd8cf21a57cc2187646385"
       ]
     }
   },
@@ -660,7 +662,8 @@
     "measurement_band_c": [
       90,
       110
-    ]
+    ],
+    "default_z_clearance_mm": 1.0
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
@@ -711,5 +714,19 @@
     "failure_diagnostics": "details.board_status includes sample age and readback outcome",
     "mcu_changed": false,
     "hardware_failure_root_cause": "klippy(15).log has no failing status age; background-thread race reproduced in host tests"
+  },
+  "pad_z_release_recovery": {
+    "report": "docs/INVENTURE_PAD_XYZ_R20.md",
+    "source": "existing homing Z _z_recover_release",
+    "max_downward_steps": 16,
+    "max_downward_mm": 0.0199501246882793,
+    "increment_steps": 4,
+    "max_attempts_per_sample_default": 4,
+    "required_samples": 2,
+    "z_repeat_mm_default": 0.05,
+    "default_clearance_mm": 1.0,
+    "preserve_partial_xy": true,
+    "failure_log": "klippy(16).log; T0 XY complete, first final Z release unqualified",
+    "physical_full_run": "pending user printer test"
   }
 }

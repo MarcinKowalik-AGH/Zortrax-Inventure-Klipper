@@ -943,6 +943,64 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(set(result['measurements']),{'T0','T1','T0_RETURN'})
         self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
+    def test_full_scan_recovers_pc14_reclosure_at_center_for_both_tools(self):
+        host=self.host();host.nozzle_pad_sweep_abi=1
+        device=host.device;device.hot=(100.,100.);device.contact_radius_mm=7.6/2.
+        injected=set()
+        def motion(args):
+            context=host.load_test_context;factory=(context or {}).get('factory',{})
+            tool=(context or {}).get('tool')
+            if (args[0]==1 and args[4] and not args[1]&4 and args[9]&args[10]&8
+                    and factory.get('phase','').startswith('Z_PAD_') and tool not in injected):
+                device.release_edges=[(0,False)]
+                device.reclose_before_open_verification=True
+                device.release_recovery_closed_blocks=1
+                injected.add(tool)
+            return device.move(args)
+        host.commands['motion']=Wire(motion)
+        self.cmd(host,'START',PREP='EMPTY',ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30,T1_Z_MAX=137.20)
+        self.assertEqual(host.nozzle_pad_run['params']['z_clearance_mm'],1.)
+        self.advance(host,lambda:host.nozzle_z_context is None,timeout=1800.)
+        result=self.cmd(host,'STATUS')
+        self.assertEqual(result['phase'],'candidate',result)
+        self.assertEqual(injected,{0,1})
+        self.assertEqual(set(result['xy_measurements']),{'T0','T1','T0_RETURN'})
+        recovered=[row for row in result['z_release_diagnostics'] if row['recovery_steps']]
+        self.assertEqual({row['tool'] for row in recovered},{'T0','T1'})
+        self.assertTrue(all(row['accepted'] and 0<row['recovery_steps']<=16 for row in recovered))
+        self.cmd(host,'SAVE',RUN_ID=result['run_id'],ACK='PAD_RESULT_REVIEWED')
+        saved=json.loads(self.saved.read_text())
+        self.assertEqual(saved['z_release_diagnostics'],result['z_release_diagnostics'])
+
+    def test_persistent_pc14_reclosure_keeps_xy_and_stops_after_bounded_z_retries(self):
+        host=self.host();host.nozzle_pad_sweep_abi=1
+        device=host.device;device.hot=(100.,100.);device.contact_radius_mm=7.6/2.
+        def motion(args):
+            context=host.load_test_context;factory=(context or {}).get('factory',{})
+            if (args[0]==1 and args[4] and not args[1]&4 and args[9]&args[10]&8
+                    and factory.get('phase','').startswith('Z_PAD_')):
+                device.release_edges=[(0,False)]
+                device.reclose_before_open_verification=True
+                device.release_recovery_closed_blocks=4
+            return device.move(args)
+        host.commands['motion']=Wire(motion)
+        self.cmd(host,'START',PREP='EMPTY',ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30,T1_Z_MAX=137.20)
+        self.advance(host,lambda:host.nozzle_z_context is None,timeout=1800.)
+        result=self.cmd(host,'STATUS')
+        self.assertEqual(result['phase'],'failed',result)
+        self.assertEqual(result['error'],'PC14 release was not repeatable at pad center')
+        self.assertEqual(result['stage'],'Z_PAD_T0_SAMPLE_1_ATTEMPT_4')
+        self.assertEqual(set(result['xy_measurements']),{'T0'})
+        rows=result['z_release_diagnostics']
+        self.assertEqual(len(rows),4)
+        self.assertTrue(all(not row['accepted'] and row['recovery_steps']==16 for row in rows))
+        self.assertEqual(len(result['details']['attempts']),4)
+        self.assertIsNone(result['candidate'])
+        self.assertTrue(all(call[0]!=9 for call in device.calls))
+        self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
+
     def test_sweep_rejects_tray_stop_or_mismatched_counters_without_advancing_xy(self):
         host = self.host()
         move = {'counts': (1920, -1920, 0, 0)}

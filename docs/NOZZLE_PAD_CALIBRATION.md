@@ -10,13 +10,13 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19` i aplikacja MCU
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R20` i aplikacja MCU
 `RC8-CONTROL-R7-PAD-THERMAL-R12`. Zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
 `INVENTURE_MCU_PAD_100C_R12_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r19).
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r20).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
-Przy już wgranym MCU R12 przejście z hosta R18 na R19 wymaga tylko
+Przy już wgranym MCU R12 przejście z wcześniejszego hosta na R20 wymaga tylko
 aktualizacji hosta; obraz MCU jest identyczny.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
@@ -289,8 +289,13 @@ odpowiednie dla pionowych prób w całym obszarze skanu.
 Poleceniem `STATUS` sprawdzisz etap i wynik. Po błędzie odczytasz również
 ostatnią dyszę, etap, odczyty temperatur i dostępny powód zatrzymania
 sesji na MCU. Zakończone pomiary dysz pozostają w `measurements`.
-Host R19 dodaje w `details.board_status` wiek statusu płyty, źródło próbki
+Host R19 i nowsze dodają w `details.board_status` wiek statusu płyty, źródło próbki
 i wynik bezpośredniego odczytu po opóźnieniu raportu okresowego.
+Host R20 zachowuje zakończony skan XY w `xy_measurements`, nawet gdy
+końcowy pomiar Z nie uzyska potwierdzenia. `z_release_diagnostics`
+pokazuje każdą próbę rozwarcia, odczyt PC14 i ewentualne dodatkowe kroki
+w dół. Etapy `Z_PAD_T0_SAMPLE_1_ATTEMPT_1` jednoznacznie odróżniają
+pomiar Z od wcześniejszego szukania krawędzi XY.
 Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
 Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
 
@@ -318,7 +323,7 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `SCAN_RADIUS_MM` | 5 mm dla pada Ø7 mm, 3,5 mm dla Ø5 mm. Zakres 3–6 mm | Połowa szerokości obszaru prób w X i w Y od przybliżonego środka. Tryb `CENTER` domyślnie używa 5 mm. Pojedynczy przejazd `SWEEP` ma limit 6 mm |
 | `XY_SWEEP_SPEED` | 0,25 mm/s domyślnie, zakres 0,05–0,5 mm/s | Prędkość przejazdu po styku w `SCAN=SWEEP` |
 | `EDGE_TOLERANCE_MM` | 0,05 mm w `SWEEP`, 0,02 mm w `TAP`. Zakres 0,005–0,1 mm | Maksymalna szerokość przedziału krawędzi przy pionowych dotknięciach |
-| `Z_CLEARANCE_MM` | 1,5 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |
+| `Z_CLEARANCE_MM` | 1 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |
 | `Z_TAP_SPEED` | Domyślnie 0,25 mm/s dla `SWEEP` i 0,8 mm/s dla `TAP`. Zakres 0,2–1 mm/s | Prędkość pionowego podejścia do styku |
 | `RETRACT_SPEED` | 1,6 mm/s domyślnie, zakres 0,5–6 mm/s | Prędkość cofania filamentu podczas przygotowania |
 | `XY_REPEAT_MM`, `Z_REPEAT_MM` | 0,08 i 0,05 mm domyślnie | Tolerancje powtórnego T0. Limit XY służy też porównaniu środków dwóch przebiegów `SWEEP`, a limit Z porównaniu prób rozwarcia w środku pola |

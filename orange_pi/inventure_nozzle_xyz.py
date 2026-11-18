@@ -70,7 +70,7 @@ def pad_xyz_parameters(gcmd, center_only=False):
     required_tools = (center_tool,) if center_only else (0, 1) if mode == 'FULL' else (0,)
     ceilings = tuple(number('T%d_Z_MAX' % tool, None, 20., 150., optional=tool not in required_tools)
                      for tool in (0, 1))
-    clearance = number('Z_CLEARANCE_MM', 1.5, .5, 4.)
+    clearance = number('Z_CLEARANCE_MM', 1., .5, 4.)
     for tool, ceiling in enumerate(ceilings):
         if ceiling is not None and (math.floor(ceiling * Z_STEPS_PER_MM)
                                     - round(clearance * Z_STEPS_PER_MM) < PAD_PREP_Z_STEPS):
@@ -193,29 +193,59 @@ class NozzleXYZProgram(ZHomeProgram):
         # A brief closure followed by a miss provides no edge information.
         return (False if misses == 2 else None), None
 
-    def _tap(self, point, safe_z, ceiling, tap_speed, release=False):
+    def _tap(self, point, safe_z, ceiling, tap_speed, release=False, sample_index=1):
+        if release:
+            return (yield from self._center_z_release(point,safe_z,ceiling,tap_speed,sample_index))
         closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed)
-        if not closed or not release:
-            yield from self._open_z_at(safe_z, allow_closed=True)
-            if not (closed or missed):
-                raise FactoryError('Unstable PC14 response during pad tap')
-            return closed
-
-        # Compare the same electrical Z edge as the previous nozzle Z test:
-        # release during a slow downward move, qualified by a second fresh read.
-        allowed = min(self.z_steps - safe_z, round(self.settings['z_release_mm'] * Z_STEPS_PER_MM))
-        _, hit, raw = yield from self._z_move(
-            -allowed, self.settings['z_release_speed'], Z_BOTTOM | NOZZLE_CONTACT,
-            Z_BOTTOM | NOZZLE_CONTACT, None, 0, allow_contact_transient=True)
-        opening = self.z_steps
-        valid = hit == NOZZLE_CONTACT and raw['nozzle_contact'] == 1
-        if valid:
-            fresh = yield dict(kind='z_verify_open', delay_s=Z_OPEN_CONFIRM_S)
-            valid = fresh['nozzle_contact'] == 1
         yield from self._open_z_at(safe_z, allow_closed=True)
-        if not valid:
-            raise FactoryError('PC14 release was not repeatable at pad center')
-        return opening
+        if not (closed or missed):
+            raise FactoryError('Unstable PC14 response during pad tap')
+        return closed
+
+    def _center_z_release(self,point,safe_z,ceiling,tap_speed,sample_index):
+        history=[]
+        for attempt in range(self.settings['z_transient_retries']+1):
+            yield from self._phase('Z_PAD_T%d_SAMPLE_%d_ATTEMPT_%d' %
+                                   (self.p['tool'],sample_index,attempt+1))
+            closed,missed=yield from self._touch(point,safe_z,ceiling,tap_speed,settle=True)
+            record=dict(tool='T%d'%self.p['tool'],sample=sample_index,attempt=attempt+1,
+                        touch_steps=self.z_steps,closed=closed,missed=missed,
+                        release_hit=None,release_sent_steps=None,release_raw=None,
+                        settle_raw=None,recovery_steps=0,accepted=False)
+            opening=None
+            if closed:
+                allowed=min(self.z_steps-safe_z,round(self.settings['z_release_mm']*Z_STEPS_PER_MM))
+                lower=self.z_steps-allowed
+                sent,hit,raw=yield from self._z_move(
+                    -allowed,self.settings['z_release_speed'],Z_BOTTOM|NOZZLE_CONTACT,
+                    Z_BOTTOM|NOZZLE_CONTACT,None,0,allow_contact_transient=True)
+                record.update(release_hit=hit,release_sent_steps=sent,
+                              release_raw=raw['nozzle_contact'],edge_steps=self.z_steps)
+                valid=hit==NOZZLE_CONTACT and raw['nozzle_contact']==1
+                if valid:
+                    fresh=yield dict(kind='z_verify_open',delay_s=Z_OPEN_CONFIRM_S)
+                    record['settle_raw']=fresh['nozzle_contact']
+                    valid=fresh['nozzle_contact']==1
+                if hit==NOZZLE_CONTACT and not valid and self.settings['z_release_recovery_steps']:
+                    # Reuse the bounded homing-Z recovery: four downward
+                    # steps at a time, at most 16 total, with a fresh open
+                    # confirmation at rest. Never raise the table for recovery.
+                    progress=dict(release_recovery_samples=0,release_recovery_max_steps=0)
+                    recovery_start=self.z_steps
+                    valid=yield from self._module('z_release_recovery',
+                                                  self._z_recover_release(lower,progress))
+                    record['recovery_steps']=recovery_start-self.z_steps
+                if valid:
+                    opening=self.z_steps
+                    record.update(accepted=True,release_steps=opening)
+            history.append(record)
+            yield dict(kind='xyz_z_release',diagnostic=record)
+            yield from self._open_z_at(safe_z,allow_closed=True)
+            if opening is not None:return opening
+            logging.info('Inventure pad T%d center Z sample %d attempt %d unqualified: %s',
+                         self.p['tool'],sample_index,attempt+1,record)
+        raise FactoryError('PC14 release was not repeatable at pad center',
+                           sample=sample_index,attempts=history,center_mm=_xy_mm(point))
 
     def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed, confirm=False):
         def contact(value):
@@ -467,9 +497,13 @@ class NozzleXYZProgram(ZHomeProgram):
                 or abs(widths[0] - widths[1]) > .6):
             raise FactoryError('Pad contact outline is not consistent with a round %g mm pad' % diameter,
                                electrical_diameter_mm=widths)
+        yield dict(kind='xyz_xy_sample',tool=self.p['tool'],measurement=dict(
+            center_xy_mm=_xy_mm(origin),edges_mm=[_xy_mm(pair) for pair in edges],
+            electrical_diameter_mm=widths,scan_method=method,xy_center_repeat_mm=repeat))
         releases = []
-        for _ in range(2):
-            z = yield from self._tap(origin, safe_z, ceiling, xyz['z_tap_speed'], release=True)
+        for sample in range(2):
+            z = yield from self._tap(origin, safe_z, ceiling, xyz['z_tap_speed'],
+                                    release=True,sample_index=sample+1)
             if type(z) is not int:
                 raise FactoryError('No PC14 contact at the fitted pad center')
             releases.append(z)

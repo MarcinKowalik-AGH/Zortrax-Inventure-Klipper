@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R19'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R20'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2975,7 +2975,7 @@ class InventureMCU:
         else:
             state={key:run.get(key) for key in ('phase','run_id','error','mode','measurements',
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
-                   'retract_e_steps','saved_file')}
+                   'retract_e_steps','saved_file','xy_measurements','z_release_diagnostics')}
             state.update(prep=run['params']['prep'],scan=run['params']['scan'])
             if run.get('door_policy') is not None:state['door_policy']=run['door_policy']
             if run['phase']=='failed':
@@ -3031,6 +3031,7 @@ class InventureMCU:
             path=config.with_name('inventure_nozzle_pad.json')
             record={key:run[key] for key in ('run_id','measurement_target_c','sample_temperatures_c',
                                            'measurements','candidate','retract_e_steps')}
+            record.update({key:run[key] for key in ('xy_measurements','z_release_diagnostics') if key in run})
             record.update(prep=run['params']['prep'],scan=run['params']['scan'])
             try:self._write_calibration_file(path,dict(record,schema=1))
             except OSError as exc:raise gcmd.error(str(exc))
@@ -4178,6 +4179,17 @@ class InventureMCU:
             f['pad_temperature_samples'].append({'tool':'T%d'%context['tool'],
                 'T0':t0,'T1':t1})
             return row
+        if kind in ('xyz_xy_sample','xyz_z_release'):
+            run=self.nozzle_z_context['pad']
+            name='T%d'%context['tool']
+            if name=='T0' and 'T0' in run.get('measurements',{}):name='T0_RETURN'
+            if kind=='xyz_xy_sample':
+                run.setdefault('xy_measurements',{})[name]=dict(action['measurement'])
+            else:
+                rows=run.setdefault('z_release_diagnostics',[])
+                rows.append(dict(action['diagnostic'],measurement=name))
+                rows[:]=rows[-64:]
+            return dict(f['snapshot'])
         if kind=='xyz_sample':
             run=self.nozzle_z_context['pad']
             run.setdefault('measurements',{})[action['name']]=action['measurement']
