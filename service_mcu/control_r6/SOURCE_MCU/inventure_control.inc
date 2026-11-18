@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <string.h>
 // Persistent generic capabilities: tests and geometry are host parameters.
 #line 12000 "inventure_control.inc"
 DECL_CONSTANT("INVENTURE_CONTROL_ABI",1);
@@ -6,6 +7,7 @@ DECL_CONSTANT("INVENTURE_MOTION_ABI",1);
 DECL_CONSTANT("INVENTURE_OUTPUT_ABI",1);
 DECL_CONSTANT("INVENTURE_LOAD_STREAM_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
+DECL_CONSTANT("INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
@@ -101,6 +103,15 @@ static struct {
     uint8_t active,reason,tool,mode,monitor,start_mode,start_monitor,dual_nozzle_z,nozzle_xy;
     uint8_t nozzle_pad,pad_cold,pad_homed,pad_sealed,pad_command,pad_preclear,pad_contact_ready;
 } fs;
+// Preserve the first failing sample before STOP or later ADC conversions can
+// erase the evidence. Reading this record never rearms or renews an owner.
+static struct {
+    uint32_t token,clock,age_ms[8];
+    uint16_t adc[8];
+    int16_t temperature[8],minimum[8],maximum[8],session_min,session_max;
+    uint8_t valid_mask,guard_mask,require_hot,pad_band,pad_cold,output_reason[2];
+} factory_guard_snapshot;
+static void factory_guard_capture(uint32_t now,uint8_t pad_band);
 static void fs_guard(uint32_t now);
 static uint8_t fs_xy_print_position_ready(void);
 static void fs_age_update(uint32_t now);
@@ -169,6 +180,27 @@ static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
         if(!valid || t<control_min[i] || t>=control_max[i])return 0;
     }
     return 1;
+}
+static void factory_guard_capture(uint32_t now,uint8_t pad_band) {
+    if(!fs.active || factory_guard_snapshot.token==fs.token)return;
+    factory_guard_snapshot.token=fs.token;factory_guard_snapshot.clock=now;
+    factory_guard_snapshot.session_min=fs.min_c;factory_guard_snapshot.session_max=fs.max_c;
+    factory_guard_snapshot.guard_mask=control_guard_mask|31;
+    factory_guard_snapshot.pad_band=pad_band||fs.pad_cold;
+    factory_guard_snapshot.pad_cold=fs.pad_cold;
+    factory_guard_snapshot.require_hot=(fs.mode!=IVT_STOP || (cm.active && cm.planned[3]))?BIT(fs.tool):0;
+    factory_guard_snapshot.valid_mask=0;
+    for(unsigned i=0;i<8;i++) {
+        uint8_t valid;
+        factory_guard_snapshot.temperature[i]=control_temp(i,now,&valid);
+        factory_guard_snapshot.adc[i]=cool_native_claimed?latest_adc[i]:cool_local_raw[i];
+        uint32_t stamp=cool_native_claimed?adc_time[i]:cool_local_time[i];
+        factory_guard_snapshot.age_ms[i]=(uint32_t)(now-stamp)/MS(1);
+        factory_guard_snapshot.minimum[i]=control_min[i];
+        factory_guard_snapshot.maximum[i]=control_max[i];
+        if(valid)factory_guard_snapshot.valid_mask|=BIT(i);
+    }
+    for(unsigned i=0;i<2;i++)factory_guard_snapshot.output_reason[i]=co[6+i].reason;
 }
 static uint8_t cm_hot_e_ready(unsigned tool,uint32_t now,int16_t maximum) {
     uint8_t valid;
@@ -417,7 +449,9 @@ static uint_fast8_t cm_event(struct timer *timer) {
         cm.elapsed>=cm.max_ms?CR_TIME:0;
     if(!why && cm.pad_sweep) {
         if(!fs.active || iv9_due(now,fs.deadline))why=CR_HEARTBEAT;
-        else if(!fs_pad_temperature_ok(now))why=CR_THERMAL;
+        else if(!fs_pad_temperature_ok(now)) {
+            factory_guard_capture(now,1);why=CR_THERMAL;
+        }
     }
     uint16_t hit=cm_input_hit(cm.stop_mask,cm.stop_value);
     if(!why && cm.pad_sweep && cm.done && hit==BIT(3)) {
@@ -1123,7 +1157,10 @@ static void fs_guard(uint32_t now) {
                         || ((cm.hit&BIT(3)) && !cm.planned[2] && !cm.pad_sweep)))))
             || (fs.nozzle_xy && cm.planned[3] && ((cm.active && !fs_xy_print_position_ready())
                 || (cm.phase==CM_DONE && cm.reason==CR_INPUT))))why=5;
-    if(why){control_stop_all();fs.reason=why;}
+    if(why){
+        if(why==4)factory_guard_capture(now,pad_probe);
+        control_stop_all();fs.reason=why;
+    }
 }
 #include "inventure_z_home.inc"
 static void fs_configure_tool(unsigned tool) {
@@ -1205,6 +1242,7 @@ void command_inventure_factory_session(uint32_t *args) {
         if(!reject) {
             for(unsigned i=0;i<2;i++)transport_stop_channel(i);
             gpio_pwm_write(feeder_clock,0);
+            memset(&factory_guard_snapshot,0,sizeof(factory_guard_snapshot));
             fs.token=token;fs.sequence=0;fs.deadline=now+MS(lease);fs.lease_ms=lease;
             fs.duration_ms=duration;fs.budget_steps=budget;fs.min_c=minimum;fs.max_c=maximum;
             fs.mode=IVT_STOP;fs.monitor=monitor;fs.reason=0;fs.active=1;
@@ -1287,3 +1325,27 @@ void command_inventure_factory_session(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_factory_session,HF_IN_SHUTDOWN,
  "inventure_factory_session action=%c tool=%c mode=%c monitor=%c duration_ms=%hu budget_steps=%u lease_ms=%hu min_c=%hi max_c=%hi token=%u sequence=%u");
+
+void command_inventure_factory_guard(uint32_t *args) {
+    unsigned sensor=args[1];
+    if(sensor>7)return;
+    irqstatus_t irq=irq_save();
+    uint32_t token=factory_guard_snapshot.token,clock=factory_guard_snapshot.clock;
+    uint32_t age=factory_guard_snapshot.age_ms[sensor];
+    uint16_t adc=factory_guard_snapshot.adc[sensor];
+    int16_t temp=factory_guard_snapshot.temperature[sensor];
+    int16_t minimum=factory_guard_snapshot.minimum[sensor],maximum=factory_guard_snapshot.maximum[sensor];
+    int16_t session_min=factory_guard_snapshot.session_min,session_max=factory_guard_snapshot.session_max;
+    uint8_t valid=!!(factory_guard_snapshot.valid_mask&BIT(sensor));
+    uint8_t enabled=!!(factory_guard_snapshot.guard_mask&BIT(sensor));
+    uint8_t hot=!!(factory_guard_snapshot.require_hot&BIT(sensor));
+    uint8_t band=factory_guard_snapshot.pad_band,cold=factory_guard_snapshot.pad_cold;
+    uint8_t t0=factory_guard_snapshot.output_reason[0],t1=factory_guard_snapshot.output_reason[1];
+    uint8_t reject=!token || token!=args[0];
+    irq_restore(irq);
+    sendf("inventure_factory_guard token=%u clock=%u sensor=%c adc=%hu temp_c=%hi age_ms=%u valid=%c guard_min_c=%hi guard_max_c=%hi guard_enabled=%c session_min_c=%hi session_max_c=%hi require_hot=%c pad_band=%c pad_cold=%c t0_output_reason=%c t1_output_reason=%c reject=%c",
+        token,clock,sensor,adc,temp,age,valid,minimum,maximum,enabled,session_min,session_max,
+        hot,band,cold,t0,t1,reject);
+}
+DECL_COMMAND_FLAGS(command_inventure_factory_guard,HF_IN_SHUTDOWN,
+    "inventure_factory_guard_query token=%u sensor=%c");

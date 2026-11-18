@@ -21,6 +21,7 @@ def package(build, output):
     ivb = (build/'INVENTUR.IVB').read_bytes()
     assert report['mcu_release'] == pad['mcu_release']
     assert report['heartbeat_timeout_s'] == 5
+    assert report['factory_guard_diagnostic_abi'] == 1
     assert dictionary['config']['INVENTURE_HEARTBEAT_TIMEOUT_MS'] == 5000
     assert report['nozzle_pad_measurement_band_c'] == pad['measurement_band_c'] == [95, 105]
     assert report['nozzle_service_target_max_c'] == 310

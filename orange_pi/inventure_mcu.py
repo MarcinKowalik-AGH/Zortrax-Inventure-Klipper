@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R16'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R17'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -41,6 +41,10 @@ FACTORY_COMMAND = ('inventure_factory_session action=%c tool=%c mode=%c monitor=
 FACTORY_RESPONSE = ('inventure_factory_state token=%u active=%c reason=%c reject=%c '
     'tool=%c mode=%c running=%c a=%c b=%c pulses=%u pulse_age_ms=%u starts=%u '
     'fault=%c sequence=%u remaining_ms=%u')
+FACTORY_GUARD_RESPONSE = ('inventure_factory_guard token=%u clock=%u sensor=%c adc=%hu '
+    'temp_c=%hi age_ms=%u valid=%c guard_min_c=%hi guard_max_c=%hi guard_enabled=%c '
+    'session_min_c=%hi session_max_c=%hi require_hot=%c pad_band=%c pad_cold=%c '
+    't0_output_reason=%c t1_output_reason=%c reject=%c')
 Z_EDGE_COMMAND = ('inventure_z_edge action=%c owner=%u token=%u operation=%c '
     'steps=%hu interval_us=%hu')
 Z_EDGE_RESPONSE = ('inventure_z_edge_state owner=%u token=%u operation=%c active=%c '
@@ -492,6 +496,10 @@ class InventureMCU:
         self.factory_motion_tools=int(self.mcu.get_constants().get('INVENTURE_FACTORY_MOTION_TOOLS',legacy_tools))
         if self.factory_abi==1:
             self.commands['factory_session']=self.mcu.lookup_query_command(FACTORY_COMMAND,FACTORY_RESPONSE)
+        self.factory_guard_diagnostic_abi=int(self.mcu.get_constants().get('INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI',0))
+        if self.factory_guard_diagnostic_abi==1:
+            self.commands['factory_guard']=self.mcu.lookup_query_command(
+                'inventure_factory_guard_query token=%u sensor=%c',FACTORY_GUARD_RESPONSE)
         self.z_home_abi=int(self.mcu.get_constants().get('INVENTURE_Z_HOME_ABI',0))
         self.z_edge_abi=int(self.mcu.get_constants().get('INVENTURE_Z_EDGE_ABI',0))
         self.nozzle_z_test_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_Z_TEST_ABI',0))
@@ -1674,6 +1682,7 @@ class InventureMCU:
             'output_abi':1 if getattr(self,'control_abi',0)==1 else 0,
             'load_stream_abi':getattr(self,'load_stream_abi',0),
             'factory_abi':getattr(self,'factory_abi',0), 'procedure_api':1, 'zortrax_menu_api':1,
+            'factory_guard_diagnostic_abi':getattr(self,'factory_guard_diagnostic_abi',0),
             'factory_feed_clock':getattr(self,'factory_feed_clock',0),
             'factory_motion_abi':getattr(self,'factory_motion_abi',0),
             'factory_motion_max_hz':getattr(self,'factory_motion_max_hz',0),
@@ -3776,6 +3785,43 @@ class InventureMCU:
         if reason!=primary:details['secondary_error']=reason
         return primary
 
+    def _factory_guard_readback(self,context):
+        if 'factory_guard' not in self.commands:return None
+        token=context['factory']['token'];rows=[]
+        limits={'token':(0,0xffffffff),'clock':(0,0xffffffff),'sensor':(0,7),
+                'adc':(0,65535),'temp_c':(-32768,32767),'age_ms':(0,0xffffffff),
+                'valid':(0,1),'guard_min_c':(-32768,32767),'guard_max_c':(-32768,32767),
+                'guard_enabled':(0,1),'session_min_c':(-32768,32767),
+                'session_max_c':(-32768,32767),'require_hot':(0,1),'pad_band':(0,1),
+                'pad_cold':(0,1),'t0_output_reason':(0,6),'t1_output_reason':(0,6),'reject':(0,1)}
+        for sensor in range(8):
+            row=self._control_send('factory_guard',[token,sensor],owner=context)
+            self._control_validate(row,limits)
+            if row['reject']:return None
+            if row['token']!=token or row['sensor']!=sensor or rows and row['clock']!=rows[0]['clock']:
+                raise ValueError('MCU guard snapshot identity changed')
+            rows.append(row)
+        conditions=[]
+        for row in rows:
+            sensor=row['sensor'];name='T%d'%sensor if sensor<2 else self.ADC_PINS[sensor]
+            temp=row['temp_c']
+            if not row['valid'] and (sensor<2 or row['guard_enabled']):
+                conditions.append(name+'_adc_stale' if row['age_ms']>=1000 else name+'_adc_invalid')
+            if row['guard_enabled'] and not row['guard_min_c']<=temp<row['guard_max_c']:
+                conditions.append(name+'_outside_sensor_limits')
+            if sensor>=2:continue
+            output_reason=row['t%d_output_reason'%sensor]
+            if output_reason>=3:
+                conditions.append(name+('_heater_lease_expired' if output_reason==3 else '_heater_guard'))
+            if temp>=row['session_max_c'] or row['require_hot'] and temp<row['session_min_c']:
+                conditions.append(name+'_outside_session_limits')
+            if row['pad_band']:
+                low,high=(0,NOZZLE_PAD_COLD_MAX) if row['pad_cold'] else (row['session_min_c'],row['session_min_c']+10)
+                if temp<low or (temp>=high if row['pad_cold'] else temp>high):
+                    conditions.append(name+'_measurement_'+('below_band' if temp<low else 'above_band'))
+        return dict(token=token,clock=rows[0]['clock'],conditions=conditions,sensors=rows,
+                    source='latched_MCU_sample_before_STOP')
+
     def _pad_failure_readback(self,context,reason,details):
         factory=context['factory']
         motion=context.get('motion')
@@ -3798,7 +3844,15 @@ class InventureMCU:
         cause=PAD_SESSION_STOP_REASONS.get(row['reason'])
         if cause is None:return reason
         details.setdefault('secondary_error',reason)
-        return 'MCU pad session stopped: '+cause
+        result='MCU pad session stopped: '+cause
+        try:
+            diagnostic=self._factory_guard_readback(context)
+            if diagnostic is not None:
+                details['mcu_guard']=diagnostic
+                if diagnostic['conditions']:result+=' | '+', '.join(diagnostic['conditions'])
+        except Exception as exc:
+            details['mcu_guard_readback_error']=str(exc)
+        return result
 
     def _factory_poll_move(self,context):
         from .inventure_factory_core import UINT32, delta32, uses_r0323_sequence

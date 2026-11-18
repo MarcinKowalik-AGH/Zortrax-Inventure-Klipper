@@ -31,6 +31,7 @@ uint32_t timer_from_us(uint32_t us){return us*120;}
 irqstatus_t irq_save(void){return 0;} void irq_restore(irqstatus_t x){(void)x;}
 void mock_shutdown(const char*s){last_failure=s;shutdown_count++;if(expect_failure)longjmp(failure,1);fprintf(stderr,"Unexpected shutdown: %s\n",s);assert(0);__builtin_unreachable();}
 static uint32_t factory_reply[15];
+static int64_t factory_guard_reply[18];
 #ifdef TEST_Z_HOME_WIRE
 static struct {
     uint32_t owner, token, active, status, reject;
@@ -118,6 +119,17 @@ void sendf(const char*f,...){
         return;
     }
 #endif
+    if(!strncmp(f,"inventure_factory_guard ",23)) {
+        va_list ap;va_start(ap,f);
+        for(unsigned i=0;i<18;i++) {
+            if(i==4 || i==7 || i==8 || i==10 || i==11)
+                factory_guard_reply[i]=va_arg(ap,int);
+            else if(i==0 || i==1 || i==5)
+                factory_guard_reply[i]=va_arg(ap,unsigned int);
+            else factory_guard_reply[i]=va_arg(ap,int);
+        }
+        va_end(ap);return;
+    }
     if(strncmp(f,"inventure_factory_state ",24))return;
     va_list ap;va_start(ap,f);
     for(unsigned i=0;i<15;i++)factory_reply[i]=va_arg(ap,unsigned int);

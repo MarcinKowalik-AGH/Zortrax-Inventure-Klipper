@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a new application from the verified RC8 source kit using GNU ARM."""
 import argparse
+import ast
 import importlib
 import json
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R10'
+MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R11'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -95,6 +96,13 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_OUTPUT_ABI'] == 1
     assert c['INVENTURE_LOAD_STREAM_ABI'] == 1
     assert c['INVENTURE_FACTORY_ABI'] == 1
+    assert c['INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI'] == 1
+    assert 'inventure_factory_guard_query token=%u sensor=%c' in dictionary['commands']
+    host_source=ast.parse((source.parents[2]/'orange_pi/inventure_mcu.py').read_text())
+    guard_response=next(ast.literal_eval(node.value) for node in host_source.body
+        if isinstance(node,ast.Assign) and any(isinstance(target,ast.Name)
+            and target.id=='FACTORY_GUARD_RESPONSE' for target in node.targets))
+    assert guard_response in dictionary['responses']
     assert c['INVENTURE_Z_HOME_ABI'] == 1
     assert c['INVENTURE_Z_EDGE_ABI'] == 1
     assert c['INVENTURE_NATIVE_Z_GUARD_ABI'] == 1
@@ -162,6 +170,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   heartbeat_timeout_s=c['INVENTURE_HEARTBEAT_TIMEOUT_MS']/1000.,
                   build_identity=build_identity,
                   motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
+                  factory_guard_diagnostic_abi=c['INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI'],
                   z_home_abi=c['INVENTURE_Z_HOME_ABI'],
                   z_edge_abi=c['INVENTURE_Z_EDGE_ABI'],
                   native_z_guard_abi=c['INVENTURE_NATIVE_Z_GUARD_ABI'],

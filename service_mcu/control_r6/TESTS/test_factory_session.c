@@ -705,6 +705,49 @@ static void pad_100_temperature_guard(void) {
     puts("PASS 100 C pad: both nozzle temperatures required at arming and during Z travel");
 }
 
+static void pad_guard_diagnostic(void) {
+    for(unsigned cause=0;cause<5;cause++) {
+        factory_reset(MS(2000),0);pad_adc(621);
+        uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,PAD_TEMP_MIN_C,120,801,0};
+        command_inventure_factory_session(start);
+        assert(fs.active && !factory_guard_snapshot.token);
+        GPIOE->IDR|=BIT(12);
+        motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,881);
+        GPIOE->IDR&=~BIT(12);pad_command(10,0,18000,1);
+        assert(fs.pad_sealed && !factory_reply[3]);
+        output(1,6,64,1500,120,882);output(1,7,64,1500,120,883);
+        motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,884);
+        assert(cm.active);
+        if(cause==0)inventure_adc_observe(ADC3,6,658); // 106 C
+        if(cause==1)inventure_adc_observe(ADC3,6,584); // 94 C
+        if(cause==2)adc_time[1]=mock_now-MS(1000);
+        if(cause==3)latest_adc[3]=4095;
+        if(cause==4){co[7].remaining=1;mock_now+=MS(2);}
+        control_guard(mock_now);
+        assert(!fs.active && fs.reason==4 && !cm.active && !co[6].duty && !co[7].duty);
+        assert(factory_guard_snapshot.token==801 && factory_guard_snapshot.pad_band);
+        if(cause==0)assert(factory_guard_snapshot.temperature[1]==106);
+        if(cause==1)assert(factory_guard_snapshot.temperature[1]==94);
+        if(cause==2)assert(!(factory_guard_snapshot.valid_mask&2) && factory_guard_snapshot.age_ms[1]>=1000);
+        if(cause==3)assert(factory_guard_snapshot.adc[3]==4095 && !(factory_guard_snapshot.valid_mask&8));
+        if(cause==4)assert(factory_guard_snapshot.output_reason[1]==3);
+        uint8_t saved[sizeof(factory_guard_snapshot)];
+        memcpy(saved,&factory_guard_snapshot,sizeof(saved));
+        pad_adc(621);control_stop_all();output(2,6,0,0,0,0);output(2,7,0,0,0,0);
+        control_guard(mock_now);
+        assert(!memcmp(saved,&factory_guard_snapshot,sizeof(saved)));
+        uint32_t query[]={801,1};command_inventure_factory_guard(query);
+        assert(factory_guard_reply[0]==801 && factory_guard_reply[2]==1 && !factory_guard_reply[17]);
+        assert(factory_guard_reply[3]==factory_guard_snapshot.adc[1]);
+        assert(factory_guard_reply[4]==factory_guard_snapshot.temperature[1]);
+        query[0]=881;command_inventure_factory_guard(query);assert(factory_guard_reply[17]==1);
+        control_command(1,CT_SERVICE);start[9]=885;
+        command_inventure_factory_session(start);
+        assert(fs.active && !factory_guard_snapshot.token);
+    }
+    puts("PASS latched pad guard: exact over/under band, stale/invalid ADC and heater expiry; STOP and fresh ADC cannot erase it; read-only token-scoped query");
+}
+
 static void pad_sweep_owner(void) {
     unsigned seq;
     uint32_t sweep=BIT(3)|BIT(4);
@@ -903,7 +946,7 @@ int main(void) {
     pad_xyz_owner(1427,250,PAD_LEGACY_TEMP_MIN_C,994);
     pad_xyz_owner(1614,270,PAD_LEGACY_TEMP_MIN_C,994);
     pad_xyz_owner(1918,310,PAD_TEMP_MIN_C,621);
-    pad_100_temperature_guard();pad_sweep_owner();
+    pad_100_temperature_guard();pad_guard_diagnostic();pad_sweep_owner();
     pad_sweep_open_confirmation();pad_cold_center(0);pad_cold_center(1);
     puts("PASS R7 FACTORY session register suite");return 0;
 }

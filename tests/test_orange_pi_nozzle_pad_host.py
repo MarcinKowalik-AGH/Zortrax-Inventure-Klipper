@@ -250,6 +250,48 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(status['phase'], 'awaiting_t0_confirmation', status)
         return status
 
+    def test_latched_mcu_guard_distinguishes_band_adc_and_heater_expiry(self):
+        cases=(('T1_measurement_above_band',1,dict(temp_c=106,adc=658)),
+               ('T0_measurement_below_band',0,dict(temp_c=94,adc=584)),
+               ('T1_adc_stale',1,dict(valid=0,age_ms=1001)),
+               ('PC1_adc_invalid',2,dict(valid=0,adc=4095)),
+               ('T1_heater_lease_expired',1,dict(t1_output_reason=3)))
+        for expected,sensor,changes in cases:
+            with self.subTest(expected=expected):
+                host=self.host();context={'factory':{'token':901}}
+                host.load_test_context=context
+                calls=[]
+                def query(args):
+                    calls.append(tuple(args));index=args[1]
+                    row=dict(token=901,clock=123456,sensor=index,adc=621,temp_c=100,
+                        age_ms=20,valid=1,guard_min_c=-20,guard_max_c=310,guard_enabled=1,
+                        session_min_c=95,session_max_c=120,require_hot=0,pad_band=1,
+                        pad_cold=0,t0_output_reason=2,t1_output_reason=2,reject=0)
+                    if index==sensor:row.update(changes)
+                    return row
+                host.commands['factory_guard']=Wire(query)
+                # Live host samples have already recovered to 100 C. The
+                # diagnostic must use the MCU record captured before STOP.
+                host.temperatures[:2]=[100.,100.]
+                diagnostic=host._factory_guard_readback(context)
+                self.assertIn(expected,diagnostic['conditions'])
+                self.assertEqual(diagnostic['source'],'latched_MCU_sample_before_STOP')
+                self.assertEqual(calls,[(901,i) for i in range(8)])
+                self.assertEqual(host.device.calls,[])
+
+    def test_guard_snapshot_rejects_mixed_identity_and_supports_legacy_mcu(self):
+        host=self.host();context={'factory':{'token':901}}
+        host.load_test_context=context
+        self.assertIsNone(host._factory_guard_readback(context))
+        def query(args):
+            return dict(token=901,clock=123456+args[1],sensor=args[1],adc=621,temp_c=100,
+                age_ms=20,valid=1,guard_min_c=-20,guard_max_c=310,guard_enabled=1,
+                session_min_c=95,session_max_c=120,require_hot=0,pad_band=1,
+                pad_cold=0,t0_output_reason=2,t1_output_reason=2,reject=0)
+        host.commands['factory_guard']=Wire(query)
+        with self.assertRaisesRegex(ValueError,'identity changed'):
+            host._factory_guard_readback(context)
+
     def test_cold_center_seeks_four_edges_and_emits_one_line(self):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1

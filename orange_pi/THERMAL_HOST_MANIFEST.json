@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R16",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R17",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0",
+  "module_sha256": "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -79,9 +79,10 @@
     "ce2b89aecb2edb21b9eab4a1585e4780dca74fb60173b9314db9c36c2a46ec4f",
     "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf",
     "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3",
-    "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc"
+    "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc",
+    "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R16",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R17",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -674,5 +675,17 @@
     "repairs_existing_T1_load_order": true,
     "preserves_save_config": true,
     "MCU_changed": false
+  },
+  "factory_guard_diagnostic": {
+    "abi": 1,
+    "report": "docs/INVENTURE_PAD_XYZ_R17.md",
+    "latched_before_stop": true,
+    "sensor_rows": 8,
+    "measurement_band_c": [
+      95,
+      105
+    ],
+    "heartbeat_timeout_s": 5,
+    "hardware_failure_root_cause": "not established by klippy(13).log; requires latched MCU record"
   }
 }
