@@ -15,11 +15,12 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
 NOZZLE_PAD_SWEEP_RELEASE = 'RC8-CONTROL-R7-PAD-SWEEP'
+NOZZLE_PAD_SWEEP_TIMEOUT_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R13'
 NOZZLE_PAD_100C_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R12'
 NOZZLE_PAD_COLD_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER'
 NOZZLE_PAD_COLD_T1_RELEASE = 'RC8-CONTROL-R7-PAD-CENTER-T1'
@@ -112,7 +113,7 @@ CONTROL_REJECTS = (None,'invalid_request','another_owner_is_busy','mcu_not_ready
     'FIRMWARE_RESTART_required_after_native_stop','required_sensor_or_door_interlock')
 MOTION_PHASES = ('idle','running','holding','done','stopped','failed')
 MOTION_REASONS = ('none','completed','stop_input','operator_stop','heartbeat_or_cable_lost',
-    'door_open','maximum_time','mcu_shutdown','timing_fault','thermal_guard')
+    'door_open','maximum_time','mcu_shutdown','timing_fault','thermal_guard','pad_sweep_unqualified')
 PAD_SESSION_STOP_REASONS = {3:'factory_lease_expired',4:'temperature_or_sensor_guard',
     5:'motion_or_interlock_guard',6:'heartbeat_or_cable_lost',7:'mcu_shutdown'}
 OUTPUT_REASONS = ('idle','applied','operator_off','duration_finished',
@@ -507,6 +508,7 @@ class InventureMCU:
         self.nozzle_xy_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_XY_ABI',0))
         self.nozzle_pad_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_ABI',0))
         self.nozzle_pad_sweep_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_ABI',0))
+        self.nozzle_pad_sweep_timeout_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI',0))
         self.nozzle_pad_cold_abi=int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_COLD_ABI',0))
         pad_band=tuple(int(self.mcu.get_constants().get('INVENTURE_NOZZLE_PAD_MEASURE_'+bound+'_C',0))
                        for bound in ('MIN','MAX'))
@@ -1707,6 +1709,7 @@ class InventureMCU:
             'nozzle_xy_abi':getattr(self,'nozzle_xy_abi',0),
             'nozzle_pad_abi':getattr(self,'nozzle_pad_abi',0),
             'nozzle_pad_sweep_abi':getattr(self,'nozzle_pad_sweep_abi',0),
+            'nozzle_pad_sweep_timeout_abi':getattr(self,'nozzle_pad_sweep_timeout_abi',0),
             'nozzle_pad_cold_abi':getattr(self,'nozzle_pad_cold_abi',0),
             'nozzle_pad_measurement_band_c':getattr(self,'nozzle_pad_measurement_band_c',None),
             'nozzle_service_target_max_c':getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C),
@@ -3051,6 +3054,10 @@ class InventureMCU:
             params=pad_xyz_parameters(gcmd,center_only=center)
             if params['scan']=='SWEEP' and getattr(self,'nozzle_pad_sweep_abi',0)!=1:
                 raise ValueError('SCAN=SWEEP requires the '+NOZZLE_PAD_SWEEP_RELEASE+' MCU')
+            if (not center and params['scan']=='SWEEP'
+                    and getattr(self,'nozzle_pad_sweep_timeout_abi',0)!=1):
+                raise ValueError('SCAN=SWEEP requires MCU '+NOZZLE_PAD_SWEEP_TIMEOUT_RELEASE
+                                 +' with bounded sweep-to-TAP fallback')
             if (not center and getattr(self,'nozzle_pad_measurement_band_c',None)!=PAD_MEASUREMENT_BAND_C):
                 raise ValueError('100 C pad calibration requires MCU '+NOZZLE_PAD_100C_RELEASE
                                  +' with the 90..110 C measurement band')
@@ -3997,7 +4004,8 @@ class InventureMCU:
         reason,hit=row['reason'],row['hit']
         expected_stop=reason=='stop_input' and hit==8
         exhausted=reason=='completed' and not hit and sent==abs(planned_a)
-        if (row['phase']!='done' or not (expected_stop or exhausted)
+        unqualified=reason=='pad_sweep_unqualified' and not hit
+        if (row['phase']!='done' or not (expected_stop or exhausted or unqualified)
                 or not 0<=sent==b['sent']<=abs(planned_a)
                 or abs(planned_a)!=abs(planned_b)
                 or a['direction']!=int(planned_a>0) or b['direction']!=int(planned_b>0)
@@ -4009,7 +4017,7 @@ class InventureMCU:
         position[0]+=(signed_a+signed_b)/(2.*XY_STEPS_PER_MM)
         position[1]+=(signed_a-signed_b)/(2.*XY_STEPS_PER_MM)
         factory['move']=None
-        return dict(ok=True,reason=reason,hit=hit,sent_steps=sent,position=position[:2])
+        return dict(ok=not unqualified,reason=reason,hit=hit,sent_steps=sent,position=position[:2])
 
     def _dual_nozzle_heat_start(self,context,now):
         f=context['factory']

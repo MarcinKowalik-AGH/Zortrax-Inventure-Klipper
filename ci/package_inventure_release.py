@@ -20,6 +20,8 @@ def package(build, output):
     dictionary = json.loads((build/'klipper.dict').read_text())
     ivb = (build/'INVENTUR.IVB').read_bytes()
     assert report['mcu_release'] == pad['mcu_release']
+    assert report['nozzle_pad_sweep_timeout_abi'] == pad['sweep_timeout_abi'] == 1
+    assert dictionary['config']['INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI'] == 1
     assert report['heartbeat_timeout_s'] == 5
     assert report['factory_guard_diagnostic_abi'] == 1
     assert dictionary['config']['INVENTURE_HEARTBEAT_TIMEOUT_MS'] == 5000

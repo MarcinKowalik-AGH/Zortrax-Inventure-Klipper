@@ -13,6 +13,7 @@ DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
+DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_COLD_ABI",2);
 #define CM_SERVICE_MAX_HZ 20000u
 #define CM_FACTORY_MAX_HZ 125000u
@@ -58,7 +59,7 @@ DECL_CONSTANT("INVENTURE_CONTROL_MAX_MS",600000);
 DECL_CONSTANT("INVENTURE_CONTROL_SENSOR_MASK",127);
 enum { CT_OFF,CT_NATIVE,CT_SERVICE };
 enum { CM_IDLE,CM_RUNNING,CM_HOLD,CM_DONE,CM_STOPPED,CM_FAILED };
-enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN,CR_TIMING,CR_THERMAL };
+enum { CR_NONE,CR_COMPLETE,CR_INPUT,CR_STOP,CR_HEARTBEAT,CR_DOOR,CR_TIME,CR_SHUTDOWN,CR_TIMING,CR_THERMAL,CR_PAD_UNQUALIFIED };
 static struct {
     uint32_t run,token,planned[4],sent[4],error[4],master,done,rate,pulse;
     uint32_t elapsed,fraction,last_tick,max_ms,hold_ms,hold_start,period;
@@ -299,7 +300,29 @@ static void cm_clear_steps(void) {
     motor_test_write(GPIOA,BIT(6)|BIT(7),0);
     motor_test_write(GPIOB,BIT(8)|BIT(9),0);cm.high=0;
 }
+static uint8_t cm_pad_timeout_unqualified(uint32_t now) {
+    // A measurement miss may keep its owner only while every independent
+    // guard remains healthy. Ordinary deadlines and user STOP stay fatal.
+    for(unsigned i=6;i<8;i++)if(co[i].duty) {
+        uint32_t dt=now-co[i].last_tick;
+        if(dt/MS(1)+(co[i].fraction+dt%MS(1))/MS(1)>=co[i].remaining)return 0;
+    }
+    return cm.active && cm.pad_sweep && !cm.hit && fs.active && fs.nozzle_pad
+        && fs.pad_homed && fs.pad_sealed && fs.pad_ceiling && fs.pad_z>=0
+        && (uint32_t)fs.pad_z==fs.pad_sweep_z && fs.pad_sweep_z<=fs.pad_ceiling
+        && control_mode==CT_SERVICE && control_ready(now) && !iv9_due(now,fs.deadline)
+        && (!door_policy_enabled() || door_closed_mask()==3)
+        && transport_live && transport_selected==fs.tool
+        && transport[fs.tool].configured && !transport[fs.tool].fault
+        && fs_nozzle_temperature_ok(fs.tool,now,0)
+        && fs_nozzle_temperature_ok(1-fs.tool,now,0)
+        && fs_pad_temperature_ok(now) && control_sensors_valid(control_guard_mask|31,now)
+        && !cm_input_hit(BIT(0)|BIT(1)|BIT(2)|BIT(4),BIT(0)|BIT(1)|BIT(2)|BIT(4));
+}
 static void cm_end(uint8_t reason) {
+    if(reason==CR_TIME && cm_pad_timeout_unqualified(timer_read_time())) {
+        reason=CR_PAD_UNQUALIFIED;fs.pad_contact_ready=0;
+    }
     if(fs.active && fs.nozzle_pad && reason==CR_INPUT && cm.planned[2]
             && !(cm.direction&BIT(2)) && (cm.hit&BIT(2)) && !(cm.hit&BIT(4))
             && !fs.pad_sealed) {
@@ -314,11 +337,13 @@ static void cm_end(uint8_t reason) {
         fs.pad_contact_ready=1;
     // Preserve established carriage position between factory segments.
     // A failed/safety/global STOP path always releases the driver.
-    if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT)))motor_test_write(GPIOE,BIT(10),0);
+    if(!(fs.active && (reason==CR_COMPLETE || reason==CR_STOP || reason==CR_INPUT
+            || reason==CR_PAD_UNQUALIFIED)))motor_test_write(GPIOE,BIT(10),0);
     if(cm.fast_mask)cm_fast_release();
     cm_clear_steps();
     cm.active=0;cm.reason=reason;cm.pad_open_pending=0;
-    cm.phase=reason==CR_COMPLETE || reason==CR_INPUT?CM_DONE:reason==CR_STOP?CM_STOPPED:CM_FAILED;
+    cm.phase=reason==CR_COMPLETE || reason==CR_INPUT || reason==CR_PAD_UNQUALIFIED
+        ?CM_DONE:reason==CR_STOP?CM_STOPPED:CM_FAILED;
 }
 static void control_motion_cancel(void) {
     if(!cm.active)return;

@@ -907,6 +907,105 @@ static void pad_sweep_open_confirmation(void) {
     puts("PASS PC14 sweep debounce: holds exact XY, resumes after transient opening and preserves immediate endstop guards");
 }
 
+static void pad_timeout_setup(unsigned *seq,unsigned doors) {
+    factory_reset(0,0);*seq=0;
+    if(doors)control_set_door_policy(1);
+    assert(door_policy_enabled()==doors);
+    uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,PAD_TEMP_MIN_C,111,801,0};
+    command_inventure_factory_session(start);
+    assert(fs.active && !factory_reply[3]);
+    GPIOE->IDR|=BIT(12);
+    motion(1,0,0,0,1000,0,1600,10,1000,BIT(2),BIT(2),0,951);
+    assert(!cm.active && fs.pad_homed && !fs.pad_z);
+    GPIOE->IDR&=~BIT(12);pad_adc(621);
+    pad_command(10,0,18000,++*seq);
+    assert(fs.pad_ceiling==18000 && !factory_reply[3]);
+    motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,952);
+    pad_run(1800,621,seq);
+    assert(fs.pad_contact_ready);
+    output(1,6,32,30000,111,958);output(1,7,32,30000,111,959);
+    assert(co[6].duty && co[7].duty);
+    motion(1,3,3200,3200,0,0,160,10,25000,BIT(3)|BIT(4),BIT(3)|BIT(4),0,953);
+    assert(cm.active && cm.pad_sweep && !fs.pad_contact_ready);
+}
+
+static void pad_sweep_timeout_fallback(void) {
+    for(unsigned sampler=0;sampler<2;sampler++) {
+        unsigned seq;pad_timeout_setup(&seq,0);
+        uint32_t started=mock_now;
+        while(cm.active) {
+            if(cm.sent[0]>=1078) {
+                // Short openings repeatedly pause the carriage without ever
+                // qualifying the 150 ms edge. Reclosure must add no travel.
+                if(cm.pad_open_pending && mock_now-cm.pad_open_since>=MS(140))
+                    GPIOC->IDR&=~BIT(14);
+                else GPIOC->IDR|=BIT(14);
+            }
+            if((int32_t)(fs.deadline-mock_now)<(int32_t)MS(750))
+                pad_command(2,0,0,++seq);
+            if(sampler && mock_now-started>=MS(24990)) {
+                mock_now=started+MS(25000);
+                command_inventure_heartbeat(NULL);pad_adc(621);control_guard(mock_now);
+            } else pad_timer_step(621);
+        }
+        assert(cm.reason==CR_PAD_UNQUALIFIED && cm.phase==CM_DONE && cm.elapsed==25000);
+        assert(fs.active && !fs.reason && control_mode==CT_SERVICE && !fs.pad_contact_ready);
+        assert(co[6].duty && co[7].duty);
+        assert(cm.sent[0]==1078 && cm.sent[1]==1078 && !cm.sent[2] && !cm.sent[3] && !cm.hit);
+        assert(!cm.high && !cm.pad_open_pending && !cm.timer_added && GPIOE->BSRR==BIT(10));
+        uint32_t run=cm.run;
+        motion(1,3,3200,3200,0,0,160,10,25000,BIT(3)|BIT(4),BIT(3)|BIT(4),0,954);
+        assert(!cm.active && cm.run==run); // No second sweep from the consumed contact.
+        motion(1,0,0,0,PAD_XY_CLEARANCE_STEPS,0,802,10,2000,0,0,0,955);
+        assert(cm.active);GPIOC->IDR|=BIT(14);pad_run(0,621,&seq);
+        assert(fs.active && fs.pad_z==1800-PAD_XY_CLEARANCE_STEPS);
+        motion(1,0,40,40,0,0,1600,10,1000,0,0,0,956);
+        assert(cm.active);pad_run(0,621,&seq);
+        motion(1,4,0,0,PAD_XY_CLEARANCE_STEPS+40,0,802,10,2000,BIT(3),0,0,957);
+        assert(cm.active);pad_run(PAD_XY_CLEARANCE_STEPS,621,&seq);
+        assert(fs.active && fs.pad_contact_ready && cm.reason==CR_INPUT && cm.hit==BIT(3));
+    }
+    // A guard coincident with the deadline may never turn into a measurement
+    // miss. Exercise both the STEP callback and the independent sampler.
+    for(unsigned sampler=0;sampler<2;sampler++)for(unsigned cause=0;cause<15;cause++) {
+        unsigned seq;pad_timeout_setup(&seq,cause==0);pad_timer_step(621);
+        uint32_t sent=cm.sent[0];
+        // The test jumps over host renewal ticks; keep the owner live across
+        // that jump, then independently inject lease expiry below.
+        fs.deadline=mock_now+MS(30000);
+        mock_now+=MS(25000);command_inventure_heartbeat(NULL);pad_adc(621);
+        if(cause==0)GPIOE->IDR&=~BIT(15);
+        if(cause==1)GPIOC->IDR|=BIT(13);
+        if(cause==2)GPIOE->IDR|=BIT(12);
+        if(cause==3)pad_adc(683);
+        if(cause==4){cool_local_time[1]=mock_now-MS(1000);adc_time[1]=mock_now-MS(1000);}
+        if(cause==5)GPIOD->IDR|=BIT(11);
+        if(cause==6)fs.deadline=mock_now;
+        if(cause==7)transport[fs.tool].fault=1;
+        if(cause==8)transport_live=0;
+        if(cause==9)co[7].reason=3;
+        if(cause==10)heartbeat_live=0;
+        if(cause==11)cm.pad_sweep=0; // Generic motion deadlines stay fatal.
+        if(cause==12)GPIOB->IDR|=BIT(11);
+        if(cause==13)GPIOC->IDR|=BIT(15);
+        if(cause==14){co[7].remaining=1000;co[7].last_tick=mock_now-MS(1000);}
+        if(sampler)control_guard(mock_now);
+        else {
+            sched_del_timer(&cm_timer);
+            assert(cm_event(&cm_timer)==SF_DONE);control_guard(mock_now);
+        }
+        if(cm.active || cm.reason==CR_PAD_UNQUALIFIED || cm.sent[0]!=sent)
+            fprintf(stderr,"timeout guard sampler=%u cause=%u phase=%u reason=%u sent=%u/%u fs=%u\n",
+                    sampler,cause,cm.phase,cm.reason,cm.sent[0],sent,fs.active);
+        assert(!cm.active && cm.reason!=CR_PAD_UNQUALIFIED && cm.sent[0]==sent);
+        assert(!fs.active && control_mode==CT_OFF && !co[6].duty && !co[7].duty);
+    }
+    unsigned seq;pad_timeout_setup(&seq,0);
+    motion(2,0,0,0,0,0,0,0,0,0,0,0,0);
+    assert(!fs.active && !cm.active && control_mode==CT_OFF); // Public STOP stays global.
+    puts("PASS bounded pad sweep timeout: exact 1078/3200 steps at 25 s, timer and sampler, TAP continuation; concurrent guards and global STOP stay fatal");
+}
+
 static void pad_cold_center(unsigned tool) {
     factory_reset(0,0);
     uint32_t start[]={8,tool,IVT_STOP,0,1000,0,1500,0,PAD_COLD_MAX_C,801,0};
@@ -969,6 +1068,6 @@ int main(void) {
     pad_xyz_owner(1614,270,PAD_LEGACY_TEMP_MIN_C,994);
     pad_xyz_owner(1918,310,PAD_TEMP_MIN_C,621);
     pad_100_adc_boundaries();pad_100_temperature_guard();pad_guard_diagnostic();pad_sweep_owner();
-    pad_sweep_open_confirmation();pad_cold_center(0);pad_cold_center(1);
+    pad_sweep_open_confirmation();pad_sweep_timeout_fallback();pad_cold_center(0);pad_cold_center(1);
     puts("PASS R7 FACTORY session register suite");return 0;
 }

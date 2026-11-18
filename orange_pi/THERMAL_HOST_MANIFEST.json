@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "e0f0765f451e863cea3a286cccd3fa68b1f427bc3bdc5bd66d223f12ecf30183",
+  "module_sha256": "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -84,9 +84,10 @@
     "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821",
     "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e",
     "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be",
-    "41111130d61d06e0b3420c669f2daa7beb1eb42be95a6280d67b7a59e51818b9"
+    "41111130d61d06e0b3420c669f2daa7beb1eb42be95a6280d67b7a59e51818b9",
+    "e0f0765f451e863cea3a286cccd3fa68b1f427bc3bdc5bd66d223f12ecf30183"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -614,7 +615,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -655,7 +656,7 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
       "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
       "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
@@ -665,7 +666,8 @@
       90,
       110
     ],
-    "default_z_clearance_mm": 1.0
+    "default_z_clearance_mm": 1.0,
+    "sweep_timeout_abi": 1
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
@@ -739,5 +741,18 @@
     "xy_contact_qualification_changed": false,
     "field_replay": "klippy(17).log; T1 second Z sample, 110507 steps, latch=8, later input open",
     "physical_full_run": "pending user printer test"
+  },
+  "pad_sweep_timeout_fallback": {
+    "report": "docs/INVENTURE_PAD_XYZ_R22.md",
+    "mcu_abi": 1,
+    "terminal_reason": "pad_sweep_unqualified",
+    "scope": "guarded pad sweep only; hard duration unchanged",
+    "fallback": "verified partial XY, lower Z, vertical TAP pair",
+    "regression_log": "klippy(14).log(1).zip; R21 run e8cea71f2d544cafb5da5c7430fe6b8d",
+    "regression_stage": "XYZ_SCAN_T0_RETURN",
+    "planned_motor_steps": 3200,
+    "sent_motor_steps": 1078,
+    "maximum_time_s": 25,
+    "physical_full_run": "pending R22/R13 printer test"
   }
 }

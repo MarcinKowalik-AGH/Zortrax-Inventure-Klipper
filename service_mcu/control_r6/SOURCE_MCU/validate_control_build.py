@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-THERMAL-R12',
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-THERMAL-R13',
                   'INVENTURE_SERVICE_NOZZLE_TARGET_MAX': 310,
                   'INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI': 1,
                   'INVENTURE_HEARTBEAT_TIMEOUT_MS': 5000}
@@ -295,6 +295,8 @@ def check_dictionary(path: Path) -> dict:
         raise ValueError('R7 missing two-nozzle contact pad calibration ABI')
     if conf.get('INVENTURE_NOZZLE_PAD_SWEEP_ABI') != 1:
         raise ValueError('R7 missing lateral contact pad sweep ABI')
+    if conf.get('INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI') != 1:
+        raise ValueError('R13 missing bounded unqualified sweep result ABI')
     if conf.get('INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS') != 150:
         raise ValueError('R7 missing 150 ms contact opening confirmation')
     if conf.get('INVENTURE_NOZZLE_PAD_COLD_ABI') != 2:
@@ -348,6 +350,7 @@ def check_dictionary(path: Path) -> dict:
             'NOZZLE_XY_ABI':conf['INVENTURE_NOZZLE_XY_ABI'],
             'NOZZLE_PAD_ABI':conf['INVENTURE_NOZZLE_PAD_ABI'],
             'NOZZLE_PAD_SWEEP_ABI':conf['INVENTURE_NOZZLE_PAD_SWEEP_ABI'],
+            'NOZZLE_PAD_SWEEP_TIMEOUT_ABI':conf['INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI'],
             'NOZZLE_PAD_SWEEP_OPEN_MS':conf['INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS'],
             'NOZZLE_PAD_COLD_ABI':conf['INVENTURE_NOZZLE_PAD_COLD_ABI'],
             'NOZZLE_PAD_MEASUREMENT_BAND_C':[conf['INVENTURE_NOZZLE_PAD_MEASURE_MIN_C'],

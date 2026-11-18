@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21",
-  "host_module_sha256": "e0f0765f451e863cea3a286cccd3fa68b1f427bc3bdc5bd66d223f12ecf30183",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22",
+  "host_module_sha256": "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 541,
-  "previous_host_commit": "75bde7e88b78880d99ad79caa999a951d505b5a6",
+  "verified_public_host_tests": 544,
+  "previous_host_commit": "1b32428661136853526852695f55884abe0cc7d3",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -706,7 +706,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -749,7 +749,7 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
       "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
       "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
@@ -759,15 +759,16 @@
       90,
       110
     ],
-    "package_filename": "INVENTURE_MCU_PAD_100C_R12_BOOT17.zip",
-    "release_tag": "inventure-pad-xyz-r21",
-    "host_package_filename": "INVENTURE_ORANGE_PI_PAD_XYZ_R21.zip",
-    "ivb_sha256": "5c890be7cccac852df31cab32b2db94d544ba34464377d61c34c798743828067",
-    "audit_report": "docs/INVENTURE_PAD_XYZ_R21.md",
-    "release_notes": "docs/INVENTURE_PAD_XYZ_R21.md",
-    "application_sha256": "dff4ae4a9f7cb9f31a45e20686178fd8f8b83051846f16993c0a84f3b6ff2781",
-    "ivb_bytes": 102956,
-    "default_z_clearance_mm": 1.0
+    "package_filename": "INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip",
+    "release_tag": "inventure-pad-xyz-r22",
+    "host_package_filename": "INVENTURE_ORANGE_PI_PAD_XYZ_R22.zip",
+    "ivb_sha256": "7bb8a9334d2aade7eb38f4d949d73f2e10870cde4b12e3c8803ba7cdff0b8f35",
+    "audit_report": "docs/INVENTURE_PAD_XYZ_R22.md",
+    "release_notes": "docs/INVENTURE_PAD_XYZ_R22.md",
+    "application_sha256": "946243f946bf2eeea1641b0ee5234065bbbf91f5c11ef1c78a4c383e9225f475",
+    "ivb_bytes": 103488,
+    "default_z_clearance_mm": 1.0,
+    "sweep_timeout_abi": 1
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
@@ -845,5 +846,18 @@
     "xy_contact_qualification_changed": false,
     "field_replay": "klippy(17).log; T1 second Z sample, 110507 steps, latch=8, later input open",
     "physical_full_run": "pending user printer test"
+  },
+  "pad_sweep_timeout_fallback": {
+    "report": "docs/INVENTURE_PAD_XYZ_R22.md",
+    "mcu_abi": 1,
+    "terminal_reason": "pad_sweep_unqualified",
+    "scope": "guarded pad sweep only; hard duration unchanged",
+    "fallback": "verified partial XY, lower Z, vertical TAP pair",
+    "regression_log": "klippy(14).log(1).zip; R21 run e8cea71f2d544cafb5da5c7430fe6b8d",
+    "regression_stage": "XYZ_SCAN_T0_RETURN",
+    "planned_motor_steps": 3200,
+    "sent_motor_steps": 1078,
+    "maximum_time_s": 25,
+    "physical_full_run": "pending R22/R13 printer test"
   }
 }

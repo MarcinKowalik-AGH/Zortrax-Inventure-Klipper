@@ -10,20 +10,26 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21` i aplikacja MCU
-`RC8-CONTROL-R7-PAD-THERMAL-R12`. Zaktualizuj
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22` i aplikacja MCU
+`RC8-CONTROL-R7-PAD-THERMAL-R13`. Zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
-`INVENTURE_MCU_PAD_100C_R12_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r21).
+`INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip` z
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r22).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
-Przy już wgranym MCU R12 przejście z wcześniejszego hosta na R21 wymaga tylko
-aktualizacji hosta; obraz MCU jest identyczny.
+Przejście z R21/R12 wymaga aktualizacji obu części. Host R22 sprawdza
+`nozzle_pad_sweep_timeout_abi: 1` przed rozpoczęciem ciepłego pomiaru SWEEP.
+MCU R13 zatrzymuje niepotwierdzony SWEEP w dotychczasowym limicie czasu
+i pozwala hostowi przejść do pionowych dotknięć TAP, jeśli wszystkie
+zabezpieczenia oraz właściciel sesji pozostają prawidłowe. Takie zatrzymanie
+nie stanowi pomiaru krawędzi. Zwykłe timeouty ruchu i błędy zabezpieczeń
+nadal przerywają sesję.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
 Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
 `baud_match: true`, `heartbeat_timeout_s: 5` i
-`nozzle_pad_measurement_band_c: [90, 110]`.
+`nozzle_pad_measurement_band_c: [90, 110]` oraz
+`nozzle_pad_sweep_timeout_abi: 1`.
 
 Zimny tryb `CENTER` dla obu dysz obsługuje też wcześniejsze wersje MCU
 z `nozzle_pad_cold_abi: 2`. Zimny pomiar T0 działa również z
