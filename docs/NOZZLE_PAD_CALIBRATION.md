@@ -10,13 +10,13 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R20` i aplikacja MCU
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R21` i aplikacja MCU
 `RC8-CONTROL-R7-PAD-THERMAL-R12`. Zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
 `INVENTURE_MCU_PAD_100C_R12_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r20).
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r21).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
-Przy już wgranym MCU R12 przejście z wcześniejszego hosta na R20 wymaga tylko
+Przy już wgranym MCU R12 przejście z wcześniejszego hosta na R21 wymaga tylko
 aktualizacji hosta; obraz MCU jest identyczny.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
@@ -296,6 +296,12 @@ końcowy pomiar Z nie uzyska potwierdzenia. `z_release_diagnostics`
 pokazuje każdą próbę rozwarcia, odczyt PC14 i ewentualne dodatkowe kroki
 w dół. Etapy `Z_PAD_T0_SAMPLE_1_ATTEMPT_1` jednoznacznie odróżniają
 pomiar Z od wcześniejszego szukania krawędzi XY.
+W R21 środkowy pomiar Z uznaje zwarcie zapamiętane przez MCU po
+wykonaniu dodatniej liczby kroków. Późniejsze rozwarcie PC14 nie
+unieważnia zdarzenia styku. Nadal wymagane są potwierdzenie rozwarcia
+na postoju i dwie zgodne próbki; kwalifikacja krawędzi XY pozostaje
+bez zmian. Diagnostyka zawiera także latch, kroki i bieżący odczyt
+styku przy dotknięciu.
 Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
 Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
 

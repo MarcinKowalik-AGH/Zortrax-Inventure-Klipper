@@ -1001,6 +1001,38 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertTrue(all(call[0]!=9 for call in device.calls))
         self.assertEqual((device.output(6)['duty'],device.output(7)['duty']),(0,0))
 
+    def test_t1_second_z_sample_keeps_mcu_contact_latch_after_input_reopens(self):
+        host=self.host();host.nozzle_pad_sweep_abi=1
+        device=host.device;device.hot=(100.,100.);device.contact_radius_mm=7.6/2.
+        device.centers=((81.678125,68.3859375),(70.7640625,68.8203125))
+        device.touch_heights=(111813,110507)
+        injected=[]
+        def motion(args):
+            context=host.load_test_context;factory=(context or {}).get('factory',{})
+            if (args[0]==1 and args[4] and args[1]&4
+                    and factory.get('phase','').startswith('Z_PAD_T1_SAMPLE_2_')):
+                device.transient_closures=1
+                device.transient_closure_at=device.closures+1
+                injected.append(factory['phase'])
+            return device.move(args)
+        host.commands['motion']=Wire(motion)
+        self.cmd(host,'START',PREP='EMPTY',ACK='PAD_GEOMETRY_MEASURED',
+                 T0_PAD_X=81.70,T0_PAD_Y=68.20,T1_PAD_X=70.80,T1_PAD_Y=68.70,
+                 T0_Z_MAX=139.50,T1_Z_MAX=137.95,Z_CLEARANCE_MM=1)
+        self.advance(host,lambda:host.nozzle_z_context is None,timeout=1800.)
+        result=self.cmd(host,'STATUS')
+        self.assertEqual(result['phase'],'candidate',result)
+        self.assertEqual(injected,['Z_PAD_T1_SAMPLE_2_ATTEMPT_1'])
+        self.assertEqual(set(result['measurements']),{'T0','T1','T0_RETURN'})
+        row=next(r for r in result['z_release_diagnostics'] if r['tool']=='T1' and r['sample']==2)
+        self.assertEqual((row['touch_steps'],row['touch_hit'],row['touch_raw']),(110507,8,1))
+        self.assertGreater(row['touch_sent_steps'],0)
+        self.assertEqual(row['touch_qualification'],'mcu_latched_edge')
+        self.assertEqual((row['accepted'],row['release_hit'],row['release_sent_steps'],
+                          row['release_raw'],row['settle_raw']),(True,8,0,1,1))
+        self.assertAlmostEqual(result['measurements']['T1']['z_release_mm_from_pe12'],
+                               110506.5/Z_STEPS_PER_MM)
+
     def test_sweep_rejects_tray_stop_or_mismatched_counters_without_advancing_xy(self):
         host = self.host()
         move = {'counts': (1920, -1920, 0, 0)}

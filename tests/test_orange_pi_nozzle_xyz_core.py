@@ -167,6 +167,23 @@ class SimulatedPad:
 
 
 class NozzleXYZCoreTests(unittest.TestCase):
+    def test_zero_step_center_contact_is_not_accepted_as_a_z_sample(self):
+        model=SimulatedPad(pad_xyz_parameters(dict(PARAMETERS,MODE='VERIFY_T0')))
+        original=model._motion
+        def zero_step(action):
+            if model.phase.startswith('Z_PAD_') and action['steps']>0:
+                return dict(sent_steps=0,hit=NOZZLE_CONTACT,reason='stop_input',
+                            end_raw=dict(nozzle_contact=1,z_bottom=0))
+            return original(action)
+        model._motion=zero_step
+        with self.assertRaisesRegex(FactoryError,'PC14 contact was not confirmed at pad center'):
+            model.run()
+        attempts=[a['diagnostic'] for _,_,a in model.trace if a['kind']=='xyz_z_release']
+        self.assertEqual(len(attempts),4)
+        self.assertTrue(all(not a['accepted'] and not a['closed'] and a['touch_sent_steps']==0
+                            for a in attempts))
+        self.assertEqual(len(model.arms),1)
+
     def test_cold_center_backs_off_and_reuses_the_same_ceiling_after_contact_chatter(self):
         xyz = pad_xyz_parameters(COLD_SMALL_PAD, center_only=True)
         model = SimulatedPad(xyz)

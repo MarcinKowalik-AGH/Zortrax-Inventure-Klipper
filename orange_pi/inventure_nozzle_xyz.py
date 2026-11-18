@@ -166,17 +166,24 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('Guarded pad XY move did not complete')
         self.xy = (x, y)
 
-    def _touch(self, point, safe_z, ceiling, tap_speed, settle=False):
+    def _touch(self, point, safe_z, ceiling, tap_speed, settle=False,
+               latched_contact=False, observation=None):
         if self.z_steps != safe_z:
             raise FactoryError('Pad tap requires the verified XY clearance plane')
         yield from self._pad_xy_move(point)
         sent, hit, raw = yield from self._z_move(
             ceiling - safe_z, tap_speed, NOZZLE_CONTACT, 0, 1, 0,
             allow_contact_transient=True)
-        closed = hit == NOZZLE_CONTACT and sent > 0
+        closed = hit == NOZZLE_CONTACT and sent > 0 and raw['z_bottom'] == 0
+        if observation is not None:
+            observation.update(touch_hit=hit,touch_sent_steps=sent,
+                               touch_raw=raw['nozzle_contact'])
         if closed and settle:
             raw = yield dict(kind='z_verify_closed', delay_s=.15)
-        closed = closed and raw['nozzle_contact'] == 0
+        # Center Z measures the MCU-latched contact/release edges, like
+        # homing Z. The input may already be open at the later host read.
+        # XY probing still requires a currently closed, settled contact.
+        closed = closed and (latched_contact or raw['nozzle_contact'] == 0)
         missed = not hit and raw['nozzle_contact'] == 1 and self.z_steps == ceiling
         return closed, missed
 
@@ -207,11 +214,14 @@ class NozzleXYZProgram(ZHomeProgram):
         for attempt in range(self.settings['z_transient_retries']+1):
             yield from self._phase('Z_PAD_T%d_SAMPLE_%d_ATTEMPT_%d' %
                                    (self.p['tool'],sample_index,attempt+1))
-            closed,missed=yield from self._touch(point,safe_z,ceiling,tap_speed,settle=True)
+            observation={}
+            closed,missed=yield from self._touch(point,safe_z,ceiling,tap_speed,
+                                                latched_contact=True,observation=observation)
             record=dict(tool='T%d'%self.p['tool'],sample=sample_index,attempt=attempt+1,
                         touch_steps=self.z_steps,closed=closed,missed=missed,
                         release_hit=None,release_sent_steps=None,release_raw=None,
                         settle_raw=None,recovery_steps=0,accepted=False)
+            record.update(observation,touch_qualification='mcu_latched_edge')
             opening=None
             if closed:
                 allowed=min(self.z_steps-safe_z,round(self.settings['z_release_mm']*Z_STEPS_PER_MM))
@@ -244,7 +254,9 @@ class NozzleXYZProgram(ZHomeProgram):
             if opening is not None:return opening
             logging.info('Inventure pad T%d center Z sample %d attempt %d unqualified: %s',
                          self.p['tool'],sample_index,attempt+1,record)
-        raise FactoryError('PC14 release was not repeatable at pad center',
+        reason=('PC14 release was not repeatable at pad center' if any(row['closed'] for row in history)
+                else 'PC14 contact was not confirmed at pad center')
+        raise FactoryError(reason,
                            sample=sample_index,attempts=history,center_mm=_xy_mm(point))
 
     def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed, confirm=False):
