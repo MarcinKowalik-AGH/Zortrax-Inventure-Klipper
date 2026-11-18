@@ -37,12 +37,12 @@ def package(build, output):
     mcu_zip = output/pad['package_filename']
     names = ('INVENTUR.IVB', 'THERMAL_TEST_VERIFY.json', 'klipper.dict')
     files = {name: (build/name).read_bytes() for name in names}
-    files['README_PL.md'] = (root/'docs/INVENTURE_PAD_XYZ_R15.md').read_bytes()
+    files['README_PL.md'] = (root/pad['release_notes']).read_bytes()
     files['SHA256SUMS'] = ''.join(
         f'{sha256(data).hexdigest()}  {name}\n' for name, data in files.items()).encode('ascii')
     with ZipFile(mcu_zip, 'w') as archive:
         for name, data in files.items():
-            entry = ZipInfo(name, (2026, 11, 17, 0, 0, 0))
+            entry = ZipInfo(name, (2026, 11, 18, 0, 0, 0))
             entry.external_attr = 0o100644 << 16
             archive.writestr(entry, data, compress_type=ZIP_DEFLATED, compresslevel=9)
     with ZipFile(mcu_zip) as archive:

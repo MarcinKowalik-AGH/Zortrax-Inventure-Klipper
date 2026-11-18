@@ -1,5 +1,6 @@
 """Exercise the real host file installer with an isolated systemd/proc model."""
 import importlib.util
+import configparser
 import hashlib
 import io
 import json
@@ -185,6 +186,69 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual((self.config.read_bytes(),native.read_bytes()),before)
         self.assertEqual(self.dest.read_bytes(),self.old)
         self.assertTrue(self.active)
+
+    def test_repair_the_field_t1_startup_failure_without_changing_heater_settings(self):
+        self.legacy_nozzle_config()
+        before = (ROOT/'tests/fixtures/native_nozzles_r15_startup.cfg').read_bytes()
+        self.config.write_bytes(before)
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(check_only=True,configure_nozzles=True)
+        self.assertEqual(self.config.read_bytes(),before)
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        after = self.config.read_bytes()
+        self.assertLess(after.index(b'[inventure_mcu]'),after.index(b'[heater_generic inventure_t1]'))
+        # The field file already has the correct limits and both-heater fans.
+        # Relocating T1 must preserve every section's values, including motion.
+        parser = configparser.RawConfigParser()
+        parser.read_string(before.decode())
+        fixed = configparser.RawConfigParser()
+        fixed.read_string(after.decode())
+        self.assertEqual({s:dict(parser.items(s)) for s in parser.sections()},
+                         {s:dict(fixed.items(s)) for s in fixed.sections()})
+        backup, = self.config.parent.glob('printer.cfg.pre-nozzle-limit-*.bak')
+        self.assertEqual(backup.read_bytes(),before)
+        with patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        self.assertEqual(self.config.read_bytes(),after)
+        self.assertEqual(update.nozzle_limit_updates(self.live,self.config,True),{})
+
+    def test_new_and_repaired_t1_follow_nested_includes_and_precede_save_config(self):
+        self.legacy_nozzle_config()
+        native_dir = self.config.parent/'native'
+        native_dir.mkdir()
+        native = native_dir/'hardware.cfg'
+        native.write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
+        include = self.config.with_name('nested.cfg')
+        include.write_text('[include native/hardware.cfg]\n')
+        footer = b'#*# <---------------------- SAVE_CONFIG ---------------------->\n#*# [stepper_z]\n#*# position_endstop = 139.35\n'
+        t1 = (ROOT/'config/INVENTURE_NATIVE_T1_HEATER.cfg').read_bytes()
+        for existing in (False,True):
+            with self.subTest(existing_t1=existing):
+                self.config.write_bytes((t1+b'\n' if existing else b'')+
+                                        b'[include nested.cfg]\n\n'+footer)
+                changes = update.nozzle_limit_updates(self.live,self.config,True)
+                for path,(before,after) in changes.items():
+                    self.assertEqual(path.read_bytes(),before)
+                    path.write_bytes(after)
+                result = self.config.read_bytes()
+                self.assertTrue(result.endswith(footer))
+                self.assertLess(result.index(b'[include nested.cfg]'),result.index(b'[heater_generic inventure_t1]'))
+                self.assertLess(result.index(b'[heater_generic inventure_t1]'),result.index(b'#*#'))
+                self.assertEqual(result.count(b'[heater_generic inventure_t1]'),1)
+                self.assertEqual(update.nozzle_limit_updates(self.live,self.config,True),{})
+
+    def test_invalid_t0_load_order_is_rejected_before_stopping_or_writing(self):
+        self.legacy_nozzle_config()
+        data = (ROOT/'tests/fixtures/native_nozzles_r15_startup.cfg').read_bytes()
+        remaining, board = update.remove_config_section(data,'inventure_mcu')
+        self.config.write_bytes(update.append_config_section(remaining,board))
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError,'must precede'), patch('sys.stdout',new=io.StringIO()):
+            update.update(configure_nozzles=True)
+        self.assertEqual(self.config.read_bytes(),before)
+        self.assertEqual(self.dest.read_bytes(),self.old)
+        self.assertFalse(any('stop' in a for a in self.calls))
 
     def test_motor_r1_adapter_and_oled_upgrade_together_in_the_active_stage(self):
         self.dest.write_bytes((ROOT/'tests/fixtures/inventure_mcu_motor_r1.py').read_bytes())

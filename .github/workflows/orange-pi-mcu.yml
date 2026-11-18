@@ -10,7 +10,7 @@ on:
       - 'ci/**'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_PAD_XYZ_R15.md'
+      - 'docs/INVENTURE_PAD_XYZ_R16.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -32,6 +32,10 @@ jobs:
         run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - name: Verify the complete host and updater
         run: python -m unittest discover -s tests -p 'test_orange_pi*.py'
+      - name: Install native configuration test dependencies
+        run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6'
+      - name: Reproduce and repair the real Klipper startup failure
+        run: python ci/check_native_nozzle_startup.py
       - name: Prepare the pinned source kit
         run: python ci/prepare_kit.py --destination "$RUNNER_TEMP/inventure-kit"
       - name: Install GNU Arm 14.2.Rel1
@@ -49,7 +53,7 @@ jobs:
         run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_PAD_XYZ_R15
+          name: INVENTURE_PAD_XYZ_R16
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -60,7 +64,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-pad-xyz-r15-release
+      group: inventure-pad-xyz-r16-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +72,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_PAD_XYZ_R15
+          name: INVENTURE_PAD_XYZ_R16
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -83,8 +87,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R15 · procedure audit · safe bin parking" \
-              --notes-file docs/INVENTURE_PAD_XYZ_R15.md
+              --title "Inventure R16 · native T1 startup repair" \
+              --notes-file docs/INVENTURE_PAD_XYZ_R16.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

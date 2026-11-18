@@ -41,6 +41,35 @@ def check_print_job():
         raise ValueError('Finish or cancel the current print before updating the host')
 
 
+def remove_config_section(data, name):
+    """Move a whole section without flattening includes or multiline values."""
+    lines = data.decode('utf-8').splitlines(keepends=True)
+    start = end = None
+    for index, line in enumerate(lines):
+        header = configparser.RawConfigParser.SECTCRE.match(line.strip())
+        if header is not None and header.group('header') == name:
+            if start is not None:
+                raise ValueError('Multiple section definitions while relocating '+name)
+            start = index
+        elif start is not None and end is None and (
+                header is not None or line.startswith('#*#')):
+            end = index
+    if start is None:
+        raise ValueError('Cannot locate the section to relocate: '+name)
+    if end is None:
+        end = len(lines)
+    return (''.join(lines[:start]+lines[end:]).encode(),
+            ''.join(lines[start:end]).encode())
+
+
+def append_config_section(data, section):
+    """Keep new active configuration before Klipper's SAVE_CONFIG footer."""
+    marker = re.search(br'(?m)^#\*#', data)
+    position = marker.start() if marker else len(data)
+    active, autosave = data[:position], data[position:]
+    return active.rstrip(b'\r\n')+b'\n\n'+section.rstrip(b'\r\n')+b'\n\n'+autosave
+
+
 def nozzle_limit_updates(target, config, configure_nozzles=False):
     reader_spec = importlib.util.spec_from_file_location(
         'inventure_klipper_configfile', target/'klippy/configfile.py')
@@ -78,15 +107,22 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
     if not nozzles:
         raise ValueError('The active configuration has no stock Inventure R5 nozzle heater')
 
-    additions = ''
+    additions = b''
+    relocate = None
     if configure_nozzles:
+        if not active.has_section('inventure_mcu'):
+            raise ValueError('The native nozzle setup requires [inventure_mcu]')
         if 0 not in nozzles:
             raise ValueError('The native nozzle setup requires the stock T0 heater')
         if 1 not in nozzles:
             if active.has_section('heater_generic inventure_t1'):
                 raise ValueError('The name inventure_t1 is already used by another heater')
-            additions = (ROOT/'config/INVENTURE_NATIVE_T1_HEATER.cfg').read_text()+'\n'
+            additions = (ROOT/'config/INVENTURE_NATIVE_T1_HEATER.cfg').read_bytes()
             nozzles[1] = 'heater_generic inventure_t1'
+        elif active.sections().index(nozzles[1]) < active.sections().index('inventure_mcu'):
+            # R14/R15 prepended the generic T1 heater to printer.cfg. Klipper
+            # loads it before the board can register its shared ADC factory.
+            relocate = section_sources[nozzles[1]]
         heater_names = [nozzles[tool].split()[-1] for tool in (0, 1)]
         for section in active.sections():
             if not section.startswith('heater_fan '):
@@ -137,10 +173,30 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
         if found != set(options):
             raise ValueError('Cannot locate the active nozzle options in '+str(source))
         updates[source] = (original, ''.join(rewritten).encode())
+    if relocate is not None:
+        original = relocate.read_bytes()
+        before, after = updates.get(relocate, (original, original))
+        after, additions = remove_config_section(after, nozzles[1])
+        updates[relocate] = (before, after)
     if additions:
         original = config.read_bytes()
         before, after = updates.get(config, (original, original))
-        updates[config] = (before, additions.encode()+after)
+        updates[config] = (before, append_config_section(after, additions))
+    if configure_nozzles:
+        class StagedReader(module.ConfigFileReader):
+            def read_config_file(self, filename):
+                path = Path(filename).resolve()
+                if path in updates:
+                    return updates[path][1].decode('utf-8').replace('\r\n', '\n')
+                return super().read_config_file(filename)
+
+        staged_reader = StagedReader()
+        staged = staged_reader.build_fileconfig_with_includes(
+            staged_reader.read_config_file(config), str(config))
+        sections = staged.sections()
+        for section in nozzles.values():
+            if sections.index(section) < sections.index('inventure_mcu'):
+                raise ValueError('[inventure_mcu] must precede the native nozzle heater '+section)
     return updates
 
 
