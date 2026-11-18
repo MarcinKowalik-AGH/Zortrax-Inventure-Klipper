@@ -9,18 +9,19 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 
 ## Instalacja
 
-Pełny pomiar przy 100°C obsługuje host `RC8-CONTROL-R7-UIFAST-PAD-XYZ-R15`
-i aplikacji MCU `RC8-CONTROL-R7-PAD-THERMAL-R10`. Najpierw zaktualizuj
-[moduł hosta](../README.md#aktualizacja-orange-pi). Host R12 odrzuca
-nowy limit serwisowy 310°C podczas łączenia z MCU R10. Pobierz paczkę
-`INVENTURE_MCU_PAD_100C_R10_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r15).
+Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18` i aplikacja MCU
+`RC8-CONTROL-R7-PAD-THERMAL-R12`. Zaktualizuj
+[moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
+`INVENTURE_MCU_PAD_100C_R12_BOOT17.zip` z
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r18).
+Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
 Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
 `baud_match: true`, `heartbeat_timeout_s: 5` i
-`nozzle_pad_measurement_band_c: [95, 105]`.
+`nozzle_pad_measurement_band_c: [90, 110]`.
 
 Zimny tryb `CENTER` dla obu dysz obsługuje też wcześniejsze wersje MCU
 z `nozzle_pad_cold_abi: 2`. Zimny pomiar T0 działa również z
@@ -73,7 +74,10 @@ dla T0 i `SET_HEATER_TEMPERATURE HEATER=inventure_t1` dla T1 z parametrem
 
 W `PREP=RETRACT` podaj indywidualne cele dla obu materiałów, np. 260°C
 dla materiału wymagającego takiej temperatury do wycofania. Pomiar pada
-odbywa się po schłodzeniu do 100°C, w paśmie 95–105°C dla obu dysz.
+odbywa się po schłodzeniu do 100°C, w paśmie 90–110°C dla obu dysz. Obie dysze muszą pozostawać w tym
+paśmie przez 2 sekundy przed pomiarem; to samo pasmo obowiązuje podczas
+czyszczenia przy temperaturze pomiarowej, przełączania i całego skanu.
+Host i MCU porównują temperaturę z ADC przed obcięciem do pełnych stopni.
 
 ## Środek pada na zimnej dyszy
 

@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R11'
+MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R12'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -114,8 +114,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NOZZLE_PAD_SWEEP_ABI'] == 1
     assert c['INVENTURE_NOZZLE_PAD_SWEEP_OPEN_MS'] == 150
     assert c['INVENTURE_NOZZLE_PAD_COLD_ABI'] == 2
-    assert c['INVENTURE_NOZZLE_PAD_MEASURE_MIN_C'] == 95
-    assert c['INVENTURE_NOZZLE_PAD_MEASURE_MAX_C'] == 105
+    assert c['INVENTURE_NOZZLE_PAD_MEASURE_MIN_C'] == 90
+    assert c['INVENTURE_NOZZLE_PAD_MEASURE_MAX_C'] == 110
     assert c['INVENTURE_SERVICE_NOZZLE_TARGET_MAX'] == 310
     assert c['INVENTURE_FACTORY_FEED_CLOCK'] == 1
     assert c['INVENTURE_FACTORY_MOTION_ABI'] == 1

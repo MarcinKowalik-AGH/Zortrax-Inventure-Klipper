@@ -209,7 +209,7 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-THERMAL-R11',
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-PAD-THERMAL-R12',
                   'INVENTURE_SERVICE_NOZZLE_TARGET_MAX': 310,
                   'INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI': 1,
                   'INVENTURE_HEARTBEAT_TIMEOUT_MS': 5000}
@@ -299,8 +299,8 @@ def check_dictionary(path: Path) -> dict:
         raise ValueError('R7 missing 150 ms contact opening confirmation')
     if conf.get('INVENTURE_NOZZLE_PAD_COLD_ABI') != 2:
         raise ValueError('R7 missing cold pad center ABI')
-    if (conf.get('INVENTURE_NOZZLE_PAD_MEASURE_MIN_C'), conf.get('INVENTURE_NOZZLE_PAD_MEASURE_MAX_C')) != (95,105):
-        raise ValueError('MCU missing the 95..105 C pad measurement band')
+    if (conf.get('INVENTURE_NOZZLE_PAD_MEASURE_MIN_C'), conf.get('INVENTURE_NOZZLE_PAD_MEASURE_MAX_C')) != (90,110):
+        raise ValueError('MCU missing the 90..110 C pad measurement band')
     if (nozzle_z_test_command not in d.get('commands', {})
             or nozzle_z_test_response not in d.get('responses', {})):
         raise ValueError('R7 missing exact two-nozzle Z test command or response schema')

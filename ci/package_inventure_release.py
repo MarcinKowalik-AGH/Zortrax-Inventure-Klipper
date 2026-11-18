@@ -23,7 +23,7 @@ def package(build, output):
     assert report['heartbeat_timeout_s'] == 5
     assert report['factory_guard_diagnostic_abi'] == 1
     assert dictionary['config']['INVENTURE_HEARTBEAT_TIMEOUT_MS'] == 5000
-    assert report['nozzle_pad_measurement_band_c'] == pad['measurement_band_c'] == [95, 105]
+    assert report['nozzle_pad_measurement_band_c'] == pad['measurement_band_c'] == [90, 110]
     assert report['nozzle_service_target_max_c'] == 310
     assert report['boot17_abi'] == 1 and report['forced_baud'] == 0
     assert ivb[:7] == b'INVB001' and len(ivb) == report['ivb_bytes']

@@ -10,7 +10,7 @@ on:
       - 'ci/**'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_PAD_XYZ_R17.md'
+      - 'docs/INVENTURE_PAD_XYZ_R18.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -53,7 +53,7 @@ jobs:
         run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_PAD_XYZ_R17
+          name: INVENTURE_PAD_XYZ_R18
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -64,7 +64,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-pad-xyz-r17-release
+      group: inventure-pad-xyz-r18-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +72,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_PAD_XYZ_R17
+          name: INVENTURE_PAD_XYZ_R18
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -87,8 +87,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R17 · latched MCU pad guard diagnostics" \
-              --notes-file docs/INVENTURE_PAD_XYZ_R17.md
+              --title "Inventure R18 / MCU R12 · pad temperature tolerance ±10 C" \
+              --notes-file docs/INVENTURE_PAD_XYZ_R18.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

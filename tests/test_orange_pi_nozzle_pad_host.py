@@ -124,7 +124,7 @@ class PadDevice(DualNozzleDevice):
                 assert tool == 0 or self.h.nozzle_pad_cold_abi == 2
                 assert not budget and all(0. <= temp < 50. for temp in self.h.temperatures[:2])
             else:
-                assert tool == 0 and low == 95 and high == max(self.hot) + 10
+                assert tool == 0 and low == 90 and high == max(max(self.hot) + 10, 111)
             wire = [4, *args[1:]]
         elif action in (9, 10):
             self._settle()
@@ -145,7 +145,7 @@ class PadDevice(DualNozzleDevice):
                     self.cold_switches.append(tool)
             else:
                 assert self.session['tool'] == tool
-                lower, upper = (0., 49.99) if self.cold else (98., 102.)
+                lower, upper = (0., 49.99) if self.cold else (90., 110.)
                 assert all(lower <= temp <= upper for temp in self.h.temperatures[:2])
                 self.sealed = True
                 self.ceiling = budget
@@ -225,7 +225,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.printer.get_start_args = lambda: {'config_file': str(self.config)}
         host.allow_actuators = True
         host.nozzle_pad_abi = 1
-        host.nozzle_pad_measurement_band_c = (95, 105)
+        host.nozzle_pad_measurement_band_c = (90, 110)
         host.commands.update(control=Wire(device.control), output=Wire(device.out),
             motion=Wire(device.move), motion_driver=Wire(device.driver),
             factory_session=Wire(device.query_factory))
@@ -251,8 +251,8 @@ class NozzlePadHostTests(unittest.TestCase):
         return status
 
     def test_latched_mcu_guard_distinguishes_band_adc_and_heater_expiry(self):
-        cases=(('T1_measurement_above_band',1,dict(temp_c=106,adc=658)),
-               ('T0_measurement_below_band',0,dict(temp_c=94,adc=584)),
+        cases=(('T1_measurement_above_band',1,dict(temp_c=110,adc=683)),
+               ('T0_measurement_below_band',0,dict(temp_c=89,adc=558)),
                ('T1_adc_stale',1,dict(valid=0,age_ms=1001)),
                ('PC1_adc_invalid',2,dict(valid=0,adc=4095)),
                ('T1_heater_lease_expired',1,dict(t1_output_reason=3)))
@@ -265,7 +265,7 @@ class NozzlePadHostTests(unittest.TestCase):
                     calls.append(tuple(args));index=args[1]
                     row=dict(token=901,clock=123456,sensor=index,adc=621,temp_c=100,
                         age_ms=20,valid=1,guard_min_c=-20,guard_max_c=310,guard_enabled=1,
-                        session_min_c=95,session_max_c=120,require_hot=0,pad_band=1,
+                        session_min_c=90,session_max_c=120,require_hot=0,pad_band=1,
                         pad_cold=0,t0_output_reason=2,t1_output_reason=2,reject=0)
                     if index==sensor:row.update(changes)
                     return row
@@ -286,7 +286,7 @@ class NozzlePadHostTests(unittest.TestCase):
         def query(args):
             return dict(token=901,clock=123456+args[1],sensor=args[1],adc=621,temp_c=100,
                 age_ms=20,valid=1,guard_min_c=-20,guard_max_c=310,guard_enabled=1,
-                session_min_c=95,session_max_c=120,require_hot=0,pad_band=1,
+                session_min_c=90,session_max_c=120,require_hot=0,pad_band=1,
                 pad_cold=0,t0_output_reason=2,t1_output_reason=2,reject=0)
         host.commands['factory_guard']=Wire(query)
         with self.assertRaisesRegex(ValueError,'identity changed'):
@@ -732,8 +732,8 @@ class NozzlePadHostTests(unittest.TestCase):
                     and context['factory']['phase'] == 'Y-_TOUCH'
                     and device.session['active'] and device.active_motion()
                     and row.get('direction') == 1 and device.fraction() >= .3):
-                host.temperatures[1] = 93.6
-                host.raw_adc[1] = round(93.6 * 4095. / 660.)
+                host.temperatures[1] = 89.6
+                host.raw_adc[1] = round(89.6 * 4095. / 660.)
                 device.terminate(4)
             return device.move(args)
 
@@ -746,7 +746,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual((result['tool'], result['stage']), ('T1', 'Y-_TOUCH'))
         self.assertEqual(result['error'], 'MCU pad session stopped: temperature_or_sensor_guard')
         self.assertEqual(result['details']['factory_state']['reason'], 4)
-        self.assertEqual(result['details']['temperatures_c']['T1'], 93.6)
+        self.assertEqual(result['details']['temperatures_c']['T1'], 89.6)
         self.assertEqual(result['details']['secondary_error'], 'Unverified Z motion result')
         motion = result['details']['motion']
         self.assertEqual((motion['reason'], motion['hit']), ('operator_stop', 0))
@@ -839,6 +839,74 @@ class NozzlePadHostTests(unittest.TestCase):
             self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
                      T0_Z_MAX=137.30, T1_Z_MAX=137.20)
         self.assertIsNone(host.load_test_context)
+        self.assertEqual(host.device.calls, [])
+        self.assertEqual(host.device.motion_starts, [])
+        self.assertEqual((host.device.output(6)['duty'], host.device.output(7)['duty']), (0, 0))
+
+    def test_measurement_band_matches_adc_boundaries_and_rejects_nonfinite_values(self):
+        host = self.host()
+        for raw in range(4096):
+            temperature = raw * 3300. / 4095. / 5.
+            expected = 90 * 4095 <= raw * 660 <= 110 * 4095
+            self.assertEqual(host._pad_temperature_in_band(temperature), expected, raw)
+        for temperature in (90., 100., 105.08424908424908, 108.5, 110.):
+            self.assertTrue(host._pad_temperature_in_band(temperature), temperature)
+        for temperature in (89.99, 110.01, math.nan, math.inf, -math.inf):
+            self.assertFalse(host._pad_temperature_in_band(temperature), temperature)
+
+    def test_full_sweep_completes_t0_t1_t0_with_temperatures_oscillating_within_ten_c(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        device = host.device
+        device.hot = (100., 100.)
+        device.contact_radius_mm = 7.6 / 2.
+        refresh = device.refresh_heaters
+        observed = []
+
+        def oscillate(context):
+            refresh(context)
+            factory = context.get('factory') or {}
+            if not (factory.get('heat_started') and all(
+                    heater['target'] == 100. for heater in factory.get('dual_heaters', ()))):
+                return
+            # Include the actual reported failure and exceed the old hidden
+            # 108 C limit. Neither nozzle enters the old +/-2 C ready window.
+            raw = (652, 682, 559)[int(host.reactor.now) % 3]
+            for tool, sample in enumerate((raw, 1241 - raw)):
+                host.raw_adc[tool] = sample
+                host.temperatures[tool] = sample * 660. / 4095.
+            observed.append(tuple(host.temperatures[:2]))
+
+        device.refresh_heaters = oscillate
+        self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                 T0_Z_MAX=137.30, T1_Z_MAX=137.20)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
+        result = self.cmd(host, 'STATUS')
+        self.assertEqual(result['phase'], 'candidate', result)
+        self.assertEqual(set(result['measurements']), {'T0', 'T1', 'T0_RETURN'})
+        self.assertEqual([move['tool'] for move in device.sweep_moves], [0]*8 + [1]*8 + [0]*8)
+        self.assertTrue(any(t0 > 108. for t0, _ in observed))
+        self.assertTrue(any(t1 < 95. for _, t1 in observed))
+        self.assertTrue(all(90. <= value <= 110. for row in observed for value in row))
+        self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
+
+    def test_measurement_band_stops_each_nozzle_outside_ten_c(self):
+        for tool in (0, 1):
+            for temperature in (89.99, 110.01):
+                with self.subTest(tool=tool, temperature=temperature):
+                    host = self.host()
+                    host.temperatures[:2] = [100., 100.]
+                    host.temperatures[tool] = temperature
+                    with self.assertRaisesRegex(ValueError, '90..110 C measurement band'):
+                        host._pad_temperatures({})
+
+    def test_old_mcu_band_is_rejected_before_power_or_motion(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        host.nozzle_pad_measurement_band_c = (95, 105)
+        with self.assertRaisesRegex(RuntimeError, 'R12.*90..110 C'):
+            self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                     T0_Z_MAX=137.30, T1_Z_MAX=137.20)
         self.assertEqual(host.device.calls, [])
         self.assertEqual(host.device.motion_starts, [])
         self.assertEqual((host.device.output(6)['duty'], host.device.output(7)['duty']), (0, 0))

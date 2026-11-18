@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R17",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821",
+  "module_sha256": "f964650f64bd69d60ab64fdf1d93149b229fe952eb56bdb387528c472005678e",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -80,9 +80,10 @@
     "5fc348284997945ff4e67907a8642b8bd12c89e1c607346e630534d4650374cf",
     "eff8bad48a167e027a6953c645205f561ecd75cb43a953b8cc5cd77b41794cf3",
     "62a068c5ddbbc658b87c11761a361863a772268b1ec6cf16fbb103a3765112bc",
-    "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0"
+    "ee23eed2ca369d2dc24992aa9509a31206ba0c9b397a3df2c3dd1ae8fad78bd0",
+    "555853504c7b025800ef14364c82202451e443cd8a82cdad71296b33acc88821"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R17",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R18",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -413,7 +414,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345",
+      "sha256": "6cddca3bb220ee56b30394e0dfe80ce8239ebb3880dd8cf21a57cc2187646385",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -430,7 +431,8 @@
         "77a0bfe7dd047677427f03c5a2f7d359b6b24276812fb4447332d01a27475b04",
         "e09956de13855de66b12160a813a521816dae22f0a538b4b49f1da938ada7572",
         "e8b294b27f3338dbbb5b633da5a06094f98cb1ba22fc3cc4ca3b092b9a4cae48",
-        "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb"
+        "66f827025906443ba0047f278eb8ebe1ebb0eef7f176c9204cc259183d0f69bb",
+        "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345"
       ]
     }
   },
@@ -607,7 +609,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R10",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -648,15 +650,15 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R10",
+      "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R12",
       "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
       "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
       "heartbeat_timeout_s": 5
     },
     "measurement_band_c": [
-      95,
-      105
+      90,
+      110
     ]
   },
   "procedure_audit": {
@@ -678,14 +680,26 @@
   },
   "factory_guard_diagnostic": {
     "abi": 1,
-    "report": "docs/INVENTURE_PAD_XYZ_R17.md",
+    "report": "docs/INVENTURE_PAD_XYZ_R18.md",
     "latched_before_stop": true,
     "sensor_rows": 8,
     "measurement_band_c": [
-      95,
-      105
+      90,
+      110
     ],
     "heartbeat_timeout_s": 5,
     "hardware_failure_root_cause": "not established by klippy(13).log; requires latched MCU record"
+  },
+  "pad_temperature_tolerance": {
+    "target_c": 100,
+    "deviation_c": 10,
+    "measurement_band_c": [
+      90,
+      110
+    ],
+    "comparison": "inclusive fractional ADC temperature on host and MCU",
+    "readiness": "both nozzles inside the band continuously for 2 seconds",
+    "regression_log": "klippy(14).log: T0 at 105.08424908424908 C stopped by host at X+_TOUCH",
+    "physical_full_run": "pending user printer test"
   }
 }

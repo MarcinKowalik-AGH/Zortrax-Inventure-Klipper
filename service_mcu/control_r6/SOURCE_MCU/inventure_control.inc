@@ -38,8 +38,8 @@ DECL_CONSTANT("INVENTURE_SERVICE_NOZZLE_TARGET_MAX",SERVICE_NOZZLE_TARGET_MAX_C)
 #define PAD_SWEEP_MAX_STEPS 3840u
 #define PAD_SWEEP_MAX_HZ 320u
 #define PAD_SWEEP_OPEN_MS 150u
-#define PAD_TEMP_MIN_C 95
-#define PAD_TEMP_MAX_C 105
+#define PAD_TEMP_MIN_C 90
+#define PAD_TEMP_MAX_C 110
 #define PAD_LEGACY_TEMP_MIN_C 155
 #define PAD_COLD_MAX_C 50
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_MEASURE_MIN_C",PAD_TEMP_MIN_C);
@@ -168,8 +168,16 @@ static uint8_t pad_temperature_ok(uint32_t now,uint8_t cold,int16_t minimum) {
         uint8_t valid;
         int16_t t=control_temp(tool,now,&valid);
         if(!valid || co[6+tool].reason>=3)return 0;
-        if(cold ? (t<0 || t>=PAD_COLD_MAX_C || co[6+tool].duty || control_heater_duty[tool])
-                : (t<minimum || t>minimum+(PAD_TEMP_MAX_C-PAD_TEMP_MIN_C)))return 0;
+        if(cold) {
+            if(t<0 || t>=PAD_COLD_MAX_C || co[6+tool].duty || control_heater_duty[tool])return 0;
+        } else {
+            // Match the host's ADC-derived fractional temperature. Integer
+            // Celsius truncation must not admit 110.08 C into a 90..110 band.
+            uint16_t raw=cool_native_claimed?latest_adc[tool]:cool_local_raw[tool];
+            int32_t scaled=(int32_t)raw*660;
+            int16_t maximum=minimum+(minimum==PAD_LEGACY_TEMP_MIN_C?10:PAD_TEMP_MAX_C-PAD_TEMP_MIN_C);
+            if(scaled<(int32_t)minimum*4095 || scaled>(int32_t)maximum*4095)return 0;
+        }
     }
     return 1;
 }

@@ -675,12 +675,34 @@ static void pad_sweep_setup(unsigned *seq) {
     assert(fs.pad_ceiling==18000 && !factory_reply[3]);
 }
 
+static void pad_100_adc_boundaries(void) {
+    factory_reset(0,0);pad_adc(621);
+    assert(PAD_TEMP_MIN_C==90 && PAD_TEMP_MAX_C==110);
+    cool_native_seen|=3;cool_local_seen|=3;
+    for(unsigned tool=0;tool<2;tool++) {
+        latest_adc[tool]=cool_local_raw[tool]=621;
+        adc_time[tool]=cool_local_time[tool]=mock_now;
+    }
+    for(unsigned source=0;source<2;source++) {
+        cool_native_claimed=source;
+        for(unsigned tool=0;tool<2;tool++) {
+            for(unsigned raw=0;raw<4096;raw++) {
+                latest_adc[tool]=cool_local_raw[tool]=raw;
+                uint8_t expected=raw*660u>=90u*4095u && raw*660u<=110u*4095u;
+                assert(pad_temperature_ok(mock_now,0,PAD_TEMP_MIN_C)==expected);
+            }
+            latest_adc[tool]=cool_local_raw[tool]=621;
+        }
+    }
+    puts("PASS 90..110 C pad band: every ADC code, both tools and both sample sources; fractional limits preserved");
+}
+
 static void pad_100_temperature_guard(void) {
-    const unsigned outside_adc[]={584,658}; // 94 C and 106 C
+    const unsigned outside_adc[]={558,683}; // 89.93 C and 110.08 C
     for(unsigned i=0;i<2;i++) {
         factory_reset(0,0);
         pad_adc(621); // 100 C
-        uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,PAD_TEMP_MIN_C,110,801,0};
+        uint32_t start[]={8,0,IVT_STOP,0,1000,0,1500,PAD_TEMP_MIN_C,111,801,0};
         command_inventure_factory_session(start);
         assert(fs.active && !factory_reply[3]);
         GPIOE->IDR|=BIT(12);
@@ -718,16 +740,16 @@ static void pad_guard_diagnostic(void) {
         output(1,6,64,1500,120,882);output(1,7,64,1500,120,883);
         motion(1,4,0,0,2000,0,802,10,4000,BIT(3),0,0,884);
         assert(cm.active);
-        if(cause==0)inventure_adc_observe(ADC3,6,658); // 106 C
-        if(cause==1)inventure_adc_observe(ADC3,6,584); // 94 C
+        if(cause==0)inventure_adc_observe(ADC3,6,683); // 110.08 C
+        if(cause==1)inventure_adc_observe(ADC3,6,558); // 89.93 C
         if(cause==2)adc_time[1]=mock_now-MS(1000);
         if(cause==3)latest_adc[3]=4095;
         if(cause==4){co[7].remaining=1;mock_now+=MS(2);}
         control_guard(mock_now);
         assert(!fs.active && fs.reason==4 && !cm.active && !co[6].duty && !co[7].duty);
         assert(factory_guard_snapshot.token==801 && factory_guard_snapshot.pad_band);
-        if(cause==0)assert(factory_guard_snapshot.temperature[1]==106);
-        if(cause==1)assert(factory_guard_snapshot.temperature[1]==94);
+        if(cause==0)assert(factory_guard_snapshot.temperature[1]==110);
+        if(cause==1)assert(factory_guard_snapshot.temperature[1]==89);
         if(cause==2)assert(!(factory_guard_snapshot.valid_mask&2) && factory_guard_snapshot.age_ms[1]>=1000);
         if(cause==3)assert(factory_guard_snapshot.adc[3]==4095 && !(factory_guard_snapshot.valid_mask&8));
         if(cause==4)assert(factory_guard_snapshot.output_reason[1]==3);
@@ -946,7 +968,7 @@ int main(void) {
     pad_xyz_owner(1427,250,PAD_LEGACY_TEMP_MIN_C,994);
     pad_xyz_owner(1614,270,PAD_LEGACY_TEMP_MIN_C,994);
     pad_xyz_owner(1918,310,PAD_TEMP_MIN_C,621);
-    pad_100_temperature_guard();pad_guard_diagnostic();pad_sweep_owner();
+    pad_100_adc_boundaries();pad_100_temperature_guard();pad_guard_diagnostic();pad_sweep_owner();
     pad_sweep_open_confirmation();pad_cold_center(0);pad_cold_center(1);
     puts("PASS R7 FACTORY session register suite");return 0;
 }
