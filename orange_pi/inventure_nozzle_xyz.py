@@ -52,10 +52,11 @@ def pad_xyz_parameters(gcmd, center_only=False):
         mode = str(gcmd.get('MODE', 'FULL')).strip().upper()
         if mode not in ('FULL', 'VERIFY_T0'):
             raise FactoryError('Pad calibration MODE must be FULL or VERIFY_T0')
-    scan = 'SWEEP' if center_only else str(gcmd.get('SCAN', 'SWEEP')).strip().upper()
+    scan = str(gcmd.get('SCAN', 'SWEEP')).strip().upper()
     if scan not in ('SWEEP', 'TAP'):
         raise FactoryError('Pad calibration SCAN must be SWEEP or TAP')
-    diameter = number('PAD_DIAMETER_MM', PAD_TAP_DIAMETER_MM if scan == 'TAP' else PAD_DIAMETER_MM, 2., 10.)
+    warm_tap = scan == 'TAP' and not center_only
+    diameter = number('PAD_DIAMETER_MM', PAD_TAP_DIAMETER_MM if warm_tap else PAD_DIAMETER_MM, 2., 10.)
     scan_radius = 5. if center_only or diameter > PAD_TAP_DIAMETER_MM else 3.5
     prep = 'COLD' if center_only else str(gcmd.get('PREP', 'RETRACT')).strip().upper()
     if not center_only and prep not in ('RETRACT', 'EMPTY'):
@@ -87,9 +88,9 @@ def pad_xyz_parameters(gcmd, center_only=False):
         pad_diameter_mm=diameter,
         scan_radius_mm=number('SCAN_RADIUS_MM', scan_radius, 3., 6.),
         xy_sweep_speed=number('XY_SWEEP_SPEED', .25, .05, PAD_MAX_SWEEP_SPEED),
-        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .05 if scan == 'SWEEP' else .02, .005, .1),
+        edge_tolerance_mm=number('EDGE_TOLERANCE_MM', .02 if warm_tap else .05, .005, .1),
         z_clearance_mm=clearance,
-        z_tap_speed=number('Z_TAP_SPEED', .25 if scan == 'SWEEP' else .8, .2, 1.),
+        z_tap_speed=number('Z_TAP_SPEED', .8 if warm_tap else .25, .2, 1.),
         xy_repeat_mm=number('XY_REPEAT_MM', .08, .01, .25),
         z_repeat_mm=number('Z_REPEAT_MM', .05, .005, .25),
     )
@@ -437,8 +438,8 @@ class NozzleXYZProgram(ZHomeProgram):
             raise FactoryError('PC14 nie potwierdził zwarcia w próbach osi ' + name,
                                start_mm=_xy_mm(origin), z_limit_mm=_z_mm(ceiling))
 
-        if xyz['prep'] != 'COLD':
-            # Bound hot taps at the measured pad plane before sampling the rim.
+        if xyz['prep'] != 'COLD' or xyz['scan'] == 'TAP':
+            # Cap rim probes relative to the two confirmed vertical contacts.
             ceiling = min(ceiling, anchor_z + PAD_EDGE_TAP_HEADROOM_STEPS)
             safe_z = min(safe_z, anchor_z - PAD_MIN_SWEEP_CLEARANCE_STEPS)
             if safe_z < PAD_PREP_Z_STEPS:
@@ -464,13 +465,14 @@ class NozzleXYZProgram(ZHomeProgram):
             name = ('X', 'Y')[axis]
             pair = [None, None]
             contacts = []
-            for side in (1, 0):
-                pair[side], safe_z, contact_z = yield from self._sweep_edge(
-                    origin, axis, bounds[side], safe_z, ceiling, xyz)
-                if contact_z is not None:
-                    contacts.append(contact_z)
-                if pair[side] is None:
-                    break
+            if xyz['scan'] == 'SWEEP':
+                for side in (1, 0):
+                    pair[side], safe_z, contact_z = yield from self._sweep_edge(
+                        origin, axis, bounds[side], safe_z, ceiling, xyz)
+                    if contact_z is not None:
+                        contacts.append(contact_z)
+                    if pair[side] is None:
+                        break
             method = 'sweep'
             if (None in pair
                     or not min_sweep_width <= (pair[1] - pair[0]) / XY_STEPS_PER_MM <= max_width):
@@ -638,9 +640,12 @@ class NozzleXYZProgram(ZHomeProgram):
         # Report the measured midpoint, preserving half-step resolution.
         center = _xy_mm(tuple((low + high) / 2. for low, high in edges))
         widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
+        scan_method = xyz['scan']
+        if scan_method == 'SWEEP' and 'TAP' in sources.values():
+            scan_method = 'SWEEP+TAP'
         measurement = dict(center_xy_mm=center, edges_mm=[_xy_mm(pair) for pair in edges],
                            electrical_diameter_mm=widths, edge_sources=[sources],
-                           scan_method='SWEEP+TAP' if 'TAP' in sources.values() else 'SWEEP')
+                           scan_method=scan_method)
         name = 'T%d' % tool
         yield dict(kind='done', success=True, terminal='COLD_PAD_CENTER',
                    measurements={name: measurement}, retract_e_steps={name: 0})

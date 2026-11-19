@@ -1,10 +1,10 @@
-# Zortrax Inventure — host R24 / MCU R13
+# Zortrax Inventure — host R25 / MCU R13
 
-19 listopada 2026 na drukarce zapisano pierwszy pełny pomiar T0 → T1 → T0
-przy 100°C, z pustymi dyszami i tolerancją krawędzi 0,1 mm, na hoście R23.
-R24 skraca ponowne szukanie krawędzi i podaje czas od startu całej procedury.
-Do porównania kolejnych prób R23 służy zapis pierwszego przebiegu.
-[Wydanie R24](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r24) ·
+R25 pozwala wybrać pionowe pomiary `ACTION=CENTER SCAN=TAP` na zimnej
+dyszy T0 lub T1. Na drukarce z MCU R13 wystarcza aktualizacja hosta.
+Na R23 zapisano dwa pełne pomiary T0 → T1 → T0 przy 100°C z pustymi
+dyszami i tolerancją krawędzi 0,1 mm.
+[Wydanie R25](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r25) ·
 [instrukcja kalibracji](docs/NOZZLE_PAD_CALIBRATION.md) ·
 [wynik fizyczny R23](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) ·
 [wcześniejszy audyt procedur R10/R14](docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md).

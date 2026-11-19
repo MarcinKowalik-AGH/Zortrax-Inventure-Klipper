@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -3939,6 +3939,17 @@ class InventureMCU:
         if cause is None:return reason
         details.setdefault('secondary_error',reason)
         result='MCU pad session stopped: '+cause
+        if row['reason']==5:
+            action=factory.get('action') or {}
+            details['pending_pad_action']={k:action[k] for k in
+                ('kind','stage','x','y','steps','stop_mask','stop_value') if k in action}
+            # The guard may run between segments, after the host released
+            # the previous move. A retained terminal row is context only.
+            if 'motion' not in details:
+                try:
+                    details['last_motion_after_stop']=self._motion_query()
+                except Exception as exc:
+                    details['motion_readback_error']=str(exc)
         try:
             diagnostic=self._factory_guard_readback(context)
             if diagnostic is not None:

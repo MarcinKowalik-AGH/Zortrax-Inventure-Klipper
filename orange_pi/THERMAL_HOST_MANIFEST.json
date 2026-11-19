@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "1b02415053223b10d81c5698b08d3cddaec8bf12fbd59affbd27a1fe911ed948",
+  "module_sha256": "7ae8ed878fa1db43c697dc9b7def7f8ee8368516909b67947e03a269b7165cf0",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -87,9 +87,10 @@
     "41111130d61d06e0b3420c669f2daa7beb1eb42be95a6280d67b7a59e51818b9",
     "e0f0765f451e863cea3a286cccd3fa68b1f427bc3bdc5bd66d223f12ecf30183",
     "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828",
-    "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef"
+    "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef",
+    "1b02415053223b10d81c5698b08d3cddaec8bf12fbd59affbd27a1fe911ed948"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -421,7 +422,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "d4147b648f20e4fb0c8dff80943537178e993533a3ee9e8ca81b82a42a832063",
+      "sha256": "0881bef163473cfb956b6c285f1e6471d0e9e35249d8cb47570d858857a39586",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -443,7 +444,8 @@
         "6cddca3bb220ee56b30394e0dfe80ce8239ebb3880dd8cf21a57cc2187646385",
         "9d38da0351d1b67243fb98b8e6cf7421de1262073df5e1ca408437dffdd466b9",
         "2ef183c9f7e33882f7205a85d6685a1d7f4da7b0a70245c7bcc8e2e3483e93cf",
-        "f885ff7ca9e98035ef239497c7782b54928b389c4de8f5dc58d38eb89d954b4d"
+        "f885ff7ca9e98035ef239497c7782b54928b389c4de8f5dc58d38eb89d954b4d",
+        "d4147b648f20e4fb0c8dff80943537178e993533a3ee9e8ca81b82a42a832063"
       ]
     }
   },
@@ -674,7 +676,11 @@
     "default_z_clearance_mm": 1.0,
     "sweep_timeout_abi": 1,
     "full_procedure_timeout_s": 3600,
-    "last_saved_hardware_run": "6fa661efce2343d9be8f294437391a65"
+    "last_saved_hardware_run": "4eed5e30be704a6ca57440e1e7f27b44",
+    "cold_center_scan_methods": [
+      "SWEEP",
+      "TAP"
+    ]
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",

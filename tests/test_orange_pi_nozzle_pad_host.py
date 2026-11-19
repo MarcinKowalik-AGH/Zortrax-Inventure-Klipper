@@ -399,6 +399,88 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual([m['direction'] for m in device.sweep_moves], [3, 0, 1, 2])
         self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
 
+    def test_cold_tap_center_on_both_tools_uses_only_vertical_contacts(self):
+        for tool, ceiling, seed in ((0, 139.50, (81.70, 68.20)), (1, 137.95, (70.80, 68.70))):
+            with self.subTest(tool=tool):
+                host = self.host()
+                host.nozzle_pad_sweep_abi = 1
+                host.nozzle_pad_cold_abi = 2
+                device = host.device
+                device.centers = ((81.70, 68.36), (70.75, 68.80))
+                device.touch_heights = (111836, 110517)
+                device.contact_radius_mm = 3.8
+                name = 'T%d' % tool
+                command = Command(ACTION='CENTER', TOOL=name, SCAN='TAP', EDGE_TOLERANCE_MM=.1,
+                                  Z_CLEARANCE_MM=1, **{name+'_Z_MAX': ceiling,
+                                  name+'_PAD_X': seed[0], name+'_PAD_Y': seed[1]})
+                host.cmd_nozzle_pad_calibrate(command)
+                self.advance(host, lambda: host.nozzle_z_context is None)
+                run = host.nozzle_pad_run
+                self.assertEqual(run['phase'], 'verified', run)
+                result = run['measurements'][name]
+                self.assertEqual(result['scan_method'], 'TAP')
+                self.assertEqual(result['edge_sources'], [dict(X='TAP', Y='TAP')])
+                self.assertLess(math.dist(result['center_xy_mm'], device.centers[tool]), .1)
+                self.assertTrue(all(abs(width-7.6) <= .1 for width in result['electrical_diameter_mm']))
+                self.assertFalse(device.sweep_moves)
+                self.assertFalse(host.commands['output'].calls)
+                self.assertFalse(device.e_moves)
+                self.assertTrue(device.pad_moves)
+                for selected, _, height, inside in device.pad_moves:
+                    self.assertEqual(selected, tool)
+                    self.assertLessEqual(height, int(ceiling * Z_STEPS_PER_MM))
+                    if not inside:
+                        self.assertLessEqual(height, device.touch_heights[tool] + round(.05 * Z_STEPS_PER_MM))
+                self.assertFalse(self.saved.exists())
+
+    def test_cold_center_rejects_unknown_scan_before_starting(self):
+        host = self.host()
+        host.nozzle_pad_sweep_abi = 1
+        host.nozzle_pad_cold_abi = 2
+        with self.assertRaisesRegex(RuntimeError, 'SCAN must be SWEEP or TAP'):
+            host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', TOOL='T0', SCAN='BAD', T0_Z_MAX=139.5))
+        self.assertFalse(host.device.calls)
+        self.assertFalse(host.device.motion_starts)
+
+    def test_reason_five_between_pad_moves_reports_last_motion_without_claiming_it(self):
+        host = self.host()
+        context = {'factory': {'session': True, 'token': 901, 'action': {'kind': 'z_verify_closed'}}}
+        host.load_test_context = context
+        session = dict(token=901, active=0, reject=0, reason=5, remaining_ms=0)
+        host.commands['factory_session'] = Wire(lambda args: session)
+        last = dict(phase='done', reason='stop_input', hit=8, run=17, token=123)
+        calls = []
+        def read_motion():
+            calls.append(True)
+            return last
+        host._motion_query = read_motion
+        details = {}
+        reason = host._pad_failure_readback(context, 'Select INVENTURE_CONTROL MODE=SERVICE first', details)
+        self.assertEqual(reason, 'MCU pad session stopped: motion_or_interlock_guard')
+        self.assertEqual(details['last_motion_after_stop'], last)
+        self.assertEqual(details['pending_pad_action'], {'kind': 'z_verify_closed'})
+        self.assertNotIn('motion', details)
+        self.assertEqual(calls, [True])
+        self.assertEqual(host.commands['factory_session'].calls, [(0,)*11])
+
+    def test_cold_tap_center_honors_mcu_guard_on_y(self):
+        host = self.host()
+        host.nozzle_pad_cold_abi = 2
+        device = host.device
+        device.contact_radius_mm = 3.8
+        command = Command(ACTION='CENTER', TOOL='T0', SCAN='TAP', T0_Z_MAX=137.30,
+                          EDGE_TOLERANCE_MM=.1)
+        host.cmd_nozzle_pad_calibrate(command)
+        self.advance(host, lambda: host.load_test_context['factory']['phase'] == 'Y+_TOUCH')
+        count = len(device.motion_starts)
+        device.terminate(5)
+        self.advance(host, lambda: host.nozzle_z_context is None)
+        run = host.nozzle_pad_run
+        self.assertEqual(run['phase'], 'failed', run)
+        self.assertIn('motion_or_interlock_guard', run['error'])
+        self.assertEqual(len(device.motion_starts), count)
+        self.assertFalse(self.saved.exists())
+
     def test_cold_center_recovers_eight_step_open_and_missing_seed_contact(self):
         host = self.host()
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1

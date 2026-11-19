@@ -10,18 +10,17 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 Fizyczny pełny pomiar T0 → T1 → T0 został potwierdzony 19.11.2026
 w trybie `FULL / EMPTY / SWEEP+TAP`, dla przedziału krawędzi 0,1 mm.
 [Wyniki i zakres potwierdzenia](acceptance/INVENTURE_PAD_R23_2026-11-19.md).
-O 10:39:05 host potwierdził zapis pierwszej próby R23. Kolejne przebiegi na tej
-samej wersji pozwolą określić rozrzut między niezależnymi kalibracjami.
+Host potwierdził zapis obu prób R23 o 10:39:05 i 11:32:34.
 
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24` i aplikacja MCU
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25` i aplikacja MCU
 `RC8-CONTROL-R7-PAD-THERMAL-R13`. Przy działającym R13 wystarcza aktualizacja
 modułu na Orange Pi. Dla starszego MCU przygotowano plik
 `INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip`.
 [Instrukcja aktualizacji hosta](../README.md#aktualizacja-orange-pi) ·
-[pliki wydania](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r24).
+[pliki wydania](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r25).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
 Przejście z R21/R12 wymaga aktualizacji obu części. Od R22 host sprawdza
 `nozzle_pad_sweep_timeout_abi: 1` przed rozpoczęciem ciepłego pomiaru SWEEP.
@@ -105,6 +104,16 @@ egzemplarzu użyła 139,50 mm i wyznaczyła środek X81,7 / Y68,2 mm.
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER T0_Z_MAX=139.50
 ```
 
+Od R25 `CENTER` przyjmuje również `SCAN=TAP`. Ten wariant od początku
+ustala krawędzie za pomocą pionowych dotknięć. Dla każdego punktu
+weryfikuje dwa dojazdy, po opuszczeniu stołu sprawdza rozwarcie PC14
+i dopiero wtedy przemieszcza karetkę. Dla T0 z tolerancją krawędzi
+0,1 mm i zadanym prześwitem 1 mm użyj tego polecenia.
+
+```gcode
+ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER TOOL=T0 SCAN=TAP T0_PAD_X=81.70 T0_PAD_Y=68.20 T0_Z_MAX=139.50 Z_CLEARANCE_MM=1 EDGE_TOLERANCE_MM=0.1
+```
+
 Do skanu T1 użyj tego samego pola. Poniższe współrzędne T0
 wyznaczają nominalny start skanu T1 przy X70,9 / Y68,2 mm. Wpisz
 zweryfikowaną wartość `T1_Z_MAX` w milimetrach z kropką dziesiętną.
@@ -126,7 +135,7 @@ z limitem `T1_Z_MAX=137.95`. Dla tej pary zimnych odczytów ruch karetki
 po przełączeniu T0 → T1 wynosi X−10,9 / Y+0,5 mm. Te środki służą
 jako punkty startowe pełnego pomiaru przy 100°C.
 
-Tryb `CENTER` ustala referencję, mechanicznie wybiera wskazaną dyszę i mierzy po kolei
+Domyślny `CENTER SCAN=SWEEP` ustala referencję, mechanicznie wybiera wskazaną dyszę i mierzy po kolei
 X+, X−, Y+ i Y−. Domyślnie szuka do 5 mm w każdym kierunku. Dla pada
 Ø7 mm akceptuje zmierzoną szerokość styku do 8,5 mm. Czoło dyszy może
 poszerzyć obrys elektryczny. W próbie X zmierzono 7,54 mm. Głowica wraca
