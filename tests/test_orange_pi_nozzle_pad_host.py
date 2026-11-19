@@ -427,18 +427,23 @@ class NozzlePadHostTests(unittest.TestCase):
         device.unreliable_sweep_seed = (82.8, 68.)
         interrupted_taps = []
 
-        def inputs():
-            sample = device.inputs()
+        move = device.move
+        def inconsistent_contact(args):
             factory = (host.load_test_context or {}).get('factory', {})
-            action = factory.get('action') or {}
-            if (factory.get('phase') == 'X-_TOUCH' and action.get('kind') == 'z_verify_closed'
-                    and math.isclose(device.xy[0], 80.33125, abs_tol=.001)
-                    and sample['raw']['nozzle_contact'] == 0):
+            probe = (args[0] == 1 and args[4] and args[1] & device.BOTTOM
+                     and factory.get('phase') == 'X-_TOUCH'
+                     and math.isclose(device.xy[0], 80.33125, abs_tol=.001))
+            if probe:
                 interrupted_taps.append(device.xy[0])
-                sample['raw']['nozzle_contact'] = 1
-            return sample
-
-        host._fresh_inputs = inputs
+            seed = device.unreliable_sweep_seed
+            if probe and len(interrupted_taps) == 2:
+                # A true hit followed by a full no-hit ascent is unresolved.
+                device.unreliable_sweep_seed = device.xy
+            try:
+                return move(args)
+            finally:
+                device.unreliable_sweep_seed = seed
+        host.commands['motion'] = Wire(inconsistent_contact)
         command = Command(ACTION='CENTER', T0_Z_MAX=137.30, PAD_DIAMETER_MM=5.)
         host.cmd_nozzle_pad_calibrate(command)
         self.advance(host, lambda: host.nozzle_z_context is None)
@@ -495,7 +500,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host = self.host()
         started = self.cmd(host, 'START', **self.settings)
         self.assertEqual(started['phase'], 'running')
-        self.advance(host, lambda: host.nozzle_z_context is None)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
         result = self.cmd(host, 'STATUS')
         device = host.device
         self.assertEqual(result['phase'], 'candidate', result)
@@ -567,7 +572,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(started['hot_targets_c'], {'T0': 100., 'T1': 100.})
         self.assertEqual([heater['target'] for heater in host.load_test_context['factory']['dual_heaters']],
                          [100., 100.])
-        self.advance(host, lambda: host.nozzle_z_context is None)
+        self.advance(host, lambda: host.nozzle_z_context is None, timeout=1800.)
         result = self.cmd(host, 'STATUS')
         self.assertEqual((result['phase'], result['run_id']), ('candidate', started['run_id']), result)
         self.assertEqual([sample['tool'] for sample in result['sample_temperatures_c']],
@@ -726,6 +731,56 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(t1['scan_method'], 'SWEEP+TAP')
         self.assertAlmostEqual(t1['electrical_diameter_mm'][0], 7.6, delta=.05)
         self.assertLess(math.dist(t1['center_xy_mm'], device.centers[1]), .03)
+
+    def test_t1_repeat_x_negative_accepts_paired_latches_after_live_contact_opens(self):
+        for tolerance in (.05, .1):
+            with self.subTest(tolerance=tolerance):
+                host = self.host()
+                host.nozzle_pad_sweep_abi = 1
+                device = host.device
+                device.hot = (100., 100.)
+                device.contact_radius_mm = 3.8
+                device.centers = ((81.70, 68.20), (70.80, 68.70))
+                device.touch_heights = (111793, 110498)
+                # Force the last T1 X chord through vertical TAP, as in the
+                # field log. Every inside touch on its negative edge then
+                # latches PC14 but is open by the later host read.
+                device.sweep_start_refusals = 100
+                original = device.inputs
+                opened = set()
+                def transient_readback():
+                    row = original()
+                    f = (host.load_test_context or {}).get('factory', {})
+                    m = device.motion
+                    if (device.session and device.session['tool'] == 1
+                            and f.get('phase') == 'X-_TOUCH'
+                            and f.get('history', []).count('X-_TOUCH') >= 4
+                            and m and m['counts'][2] and m['directions'] & device.BOTTOM
+                            and m['hit'] == device.CONTACT and not m['stopped']
+                            and device.now() >= m['until']):
+                        row['raw']['nozzle_contact'] = 1
+                        row['raw_mask'] |= device.CONTACT
+                        opened.add(device.run)
+                    return row
+                device.inputs = host._fresh_inputs = transient_readback
+                self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
+                         T0_PAD_X=81.70, T0_PAD_Y=68.20, T1_PAD_X=70.80, T1_PAD_Y=68.70,
+                         T0_Z_MAX=139.50, T1_Z_MAX=137.95, Z_CLEARANCE_MM=1,
+                         EDGE_TOLERANCE_MM=tolerance, PROCEDURE_TIMEOUT=3600)
+                self.advance(host, lambda: host.nozzle_z_context is None, timeout=3600.)
+                result = self.cmd(host, 'STATUS')
+                self.assertEqual(result['phase'], 'candidate', result)
+                self.assertGreaterEqual(len(opened), 6)
+                self.assertEqual(set(result['measurements']), {'T0', 'T1', 'T0_RETURN'})
+                self.assertEqual(result['measurements']['T1']['scan_method'], 'SWEEP+TAP')
+                self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['X'], -10.9,
+                                       delta=tolerance)
+                self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['Y'], .5,
+                                       delta=tolerance)
+                self.assertFalse(self.saved.exists())
+                self.assertEqual(device.e_moves, [])
+                self.assertFalse(device.stepper_enabled)
+                self.assertEqual((device.output(6)['duty'], device.output(7)['duty']), (0, 0))
 
     def test_final_t0_return_timeout_uses_verified_partial_xy_then_tap_pair(self):
         host = self.host()

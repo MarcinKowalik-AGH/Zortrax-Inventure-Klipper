@@ -20,6 +20,7 @@ PAD_MIN_SWEEP_STEPS = round(.25 * XY_STEPS_PER_MM)
 PAD_MAX_UNCERTAIN_TAPS = 6
 PAD_MIN_SWEEP_CLEARANCE_STEPS = Z_STEPS_PER_MM // 2
 PAD_EDGE_TAP_HEADROOM_STEPS = round(.05 * Z_STEPS_PER_MM)
+PAD_EDGE_TAP_REPEAT_STEPS = math.floor(.05 * Z_STEPS_PER_MM)
 PAD_MAX_Z_SPEED = 3.9
 PAD_PREP_Z_STEPS = 20 * Z_STEPS_PER_MM
 
@@ -182,32 +183,44 @@ class NozzleXYZProgram(ZHomeProgram):
             raw = yield dict(kind='z_verify_closed', delay_s=.15)
         # Center Z measures the MCU-latched contact/release edges, like
         # homing Z. The input may already be open at the later host read.
-        # XY probing still requires a currently closed, settled contact.
+        # Sliding SWEEP still requires a currently closed, settled contact.
         closed = closed and (latched_contact or raw['nozzle_contact'] == 0)
         missed = not hit and raw['nozzle_contact'] == 1 and self.z_steps == ceiling
         return closed, missed
 
     def _edge_tap(self, point, safe_z, ceiling, tap_speed):
         misses = 0
+        heights = []
         for _ in range(2):
-            closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed, settle=True)
+            # This is a vertical probe, not a sliding sweep. Like center Z,
+            # qualify the locally latched edge rather than requiring the
+            # electrical contact to persist until a later host read.
+            closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed,
+                                                    latched_contact=True)
             height = self.z_steps
             yield from self._open_z_at(safe_z, allow_closed=True)
+            fresh = yield dict(kind='z_verify_open', delay_s=Z_OPEN_CONFIRM_S)
+            if fresh['nozzle_contact'] != 1 or fresh['z_bottom']:
+                raise FactoryError('PC14 did not remain open at pad XY clearance',
+                                   point_mm=_xy_mm(point))
             if closed:
-                return True, height
+                heights.append(height)
             misses += missed
-        # Two ascents to the limit with no PC14 latch qualify an open point.
-        # A brief closure followed by a miss provides no edge information.
-        return (False if misses == 2 else None), None
+        repeatable = len(heights) == 2 and max(heights)-min(heights) <= PAD_EDGE_TAP_REPEAT_STEPS
+        state = True if repeatable else False if misses == 2 else None
+        logging.info('Inventure pad T%d TAP xy=%s result=%s latched_z_steps=%s misses=%d',
+                     self.p['tool'], _xy_mm(point), state, heights, misses)
+        # Mixed hit/miss, zero-step or nonrepeatable contacts cannot move a
+        # verified XY bound. Two full no-hit ascents still qualify outside.
+        return state, min(heights) if repeatable else None
 
     def _tap(self, point, safe_z, ceiling, tap_speed, release=False, sample_index=1):
         if release:
             return (yield from self._center_z_release(point,safe_z,ceiling,tap_speed,sample_index))
-        closed, missed = yield from self._touch(point, safe_z, ceiling, tap_speed)
-        yield from self._open_z_at(safe_z, allow_closed=True)
-        if not (closed or missed):
+        state, _ = yield from self._edge_tap(point, safe_z, ceiling, tap_speed)
+        if state is None:
             raise FactoryError('Unstable PC14 response during pad tap')
-        return closed
+        return state
 
     def _center_z_release(self,point,safe_z,ceiling,tap_speed,sample_index):
         history=[]

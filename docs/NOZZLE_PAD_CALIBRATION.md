@@ -10,19 +10,21 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R22` i aplikacja MCU
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R23` i aplikacja MCU
 `RC8-CONTROL-R7-PAD-THERMAL-R13`. Zaktualizuj
 [moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
 `INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r22).
+[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r23).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
-Przejście z R21/R12 wymaga aktualizacji obu części. Host R22 sprawdza
+Przejście z R21/R12 wymaga aktualizacji obu części. Host R23 sprawdza
 `nozzle_pad_sweep_timeout_abi: 1` przed rozpoczęciem ciepłego pomiaru SWEEP.
 MCU R13 zatrzymuje niepotwierdzony SWEEP w dotychczasowym limicie czasu
 i pozwala hostowi przejść do pionowych dotknięć TAP, jeśli wszystkie
 zabezpieczenia oraz właściciel sesji pozostają prawidłowe. Takie zatrzymanie
 nie stanowi pomiaru krawędzi. Zwykłe timeouty ruchu i błędy zabezpieczeń
 nadal przerywają sesję.
+Przejście z R22/R13 na R23 wymaga tylko aktualizacji hosta. Aplikacja MCU R13
+pozostaje identyczna.
 Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
 FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
@@ -305,8 +307,10 @@ pomiar Z od wcześniejszego szukania krawędzi XY.
 W R21 środkowy pomiar Z uznaje zwarcie zapamiętane przez MCU po
 wykonaniu dodatniej liczby kroków. Późniejsze rozwarcie PC14 nie
 unieważnia zdarzenia styku. Nadal wymagane są potwierdzenie rozwarcia
-na postoju i dwie zgodne próbki; kwalifikacja krawędzi XY pozostaje
-bez zmian. Diagnostyka zawiera także latch, kroki i bieżący odczyt
+na postoju i dwie zgodne próbki; w R23 pionowe pomiary XY także wykorzystują zapamiętane styki. Każdy
+punkt wymaga dwóch dodatnich dojazdów o zgodnych wysokościach (do 0,05 mm),
+a po każdym odjeździe wymagane jest świeże potwierdzenie rozwarcia.
+Przejazd ślizgowy SWEEP nadal wymaga zwartego styku przed startem. Diagnostyka zawiera także latch, kroki i bieżący odczyt
 styku przy dotknięciu.
 Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
 Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
@@ -385,3 +389,8 @@ i potwierdź wypływ przed następnym drukiem.
 Wynik `VERIFY_T0` służy do sprawdzenia zgodności zmierzonych krawędzi
 z geometrią tacki na drukarce. Raport podaje elektryczną szerokość pola
 w obu osiach. Rozmiar i stan końcówki dyszy wpływają na tę szerokość.
+
+W próbie diagnostycznej R23 można użyć `EDGE_TOLERANCE_MM=0.1`. Jest to
+maksymalna szerokość przedziału między potwierdzonym stykiem i brakiem styku,
+a nie stały krok XY. Domyślny próg SWEEP pozostaje 0,05 mm; parametr 0,1 mm
+nie zmienia wymaganej powtarzalności wysokości pionowych dotknięć.

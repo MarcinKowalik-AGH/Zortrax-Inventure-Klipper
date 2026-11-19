@@ -48,6 +48,8 @@ class SimulatedPad:
         self.transient = False
         self.cold_settle_misses = 0
         self.cold_intermittent_contact = None
+        self.inconsistent_tap_points = None
+        self.point_tap_counts = {}
 
     def _inside(self):
         return bool(self.arms and (self.unbounded_pad
@@ -84,8 +86,19 @@ class SimulatedPad:
         if mask & Z_BOTTOM and value & Z_BOTTOM and target <= 0:
             if self.position <= sent:
                 sent, triggered = self.position, Z_BOTTOM
+        inconsistent_miss = False
+        if (steps > 0 and self.phase and self.phase.endswith('_TOUCH')
+                and self.inconsistent_tap_points is not None
+                and self.inconsistent_tap_points(self.xy)):
+            count = self.point_tap_counts.get(self.xy, 0)
+            self.point_tap_counts[self.xy] = count + 1
+            inconsistent_miss = bool(count % 2)
+            sent, triggered = ((abs(steps), 0) if inconsistent_miss else
+                               (abs(self.position - contact), NOZZLE_CONTACT))
         self.position += direction * sent
         raw = self._inputs()
+        if inconsistent_miss:
+            raw['nozzle_contact'] = 1
         if (self.transient and triggered == NOZZLE_CONTACT and steps > 0
                 and len(self.arms) == 1):
             raw['nozzle_contact'] = 1
@@ -167,6 +180,71 @@ class SimulatedPad:
 
 
 class NozzleXYZCoreTests(unittest.TestCase):
+    def edge_tap_samples(self, samples, fresh_open=1):
+        """Drive the real vertical-probe generator with MCU terminal packets."""
+        plan = parameters(dict(TOOL='T1', SPEED_PROFILE='OEM'))
+        settings = z_home_parameters({}, plan, nozzle_test=True)
+        program = NozzleXYZProgram(plan, settings)
+        safe_z = 137 * Z_STEPS_PER_MM
+        program.z_steps = safe_z
+        point = (round(67.503125 * XY_STEPS_PER_MM), round(68.803125 * XY_STEPS_PER_MM))
+        search = program._edge_tap(point, safe_z, safe_z + 700, .25)
+        samples = iter(samples)
+        self.edge_actions = []
+        answer = None
+        while True:
+            try:
+                action = search.send(answer)
+            except StopIteration as completed:
+                self.assertEqual(program.z_steps, safe_z)
+                return completed.value
+            self.edge_actions.append(action)
+            kind = action['kind']
+            answer = dict(nozzle_contact=1, z_bottom=0)
+            if kind == 'move':
+                self.assertEqual(action['stage'], 'pad_travel')
+                answer = dict(ok=True)
+            elif kind == 'z_contact_move':
+                sent, hit, raw = (next(samples) if action['steps'] > 0 else
+                                  (abs(action['steps']), 0, 1))
+                answer = dict(sent_steps=sent, hit=hit,
+                              reason='stop_input' if hit else 'completed',
+                              end_raw=dict(nozzle_contact=raw, z_bottom=0))
+            elif kind == 'z_verify_open':
+                self.assertGreaterEqual(action['delay_s'], .025)
+                answer['nozzle_contact'] = fresh_open
+            elif kind != 'z_inputs':
+                self.fail('Unexpected edge-probe action: %s' % action)
+
+    def test_edge_tap_accepts_two_repeatable_latches_after_live_input_reopens(self):
+        result = self.edge_tap_samples(((665, NOZZLE_CONTACT, 1), (671, NOZZLE_CONTACT, 1)))
+        self.assertEqual(result, (True, 137 * Z_STEPS_PER_MM + 665))
+        moves = [a for a in self.edge_actions if a['kind'] == 'z_contact_move']
+        self.assertEqual([a['steps'] for a in moves], [700, -665, 700, -671])
+        self.assertEqual(sum(a['kind'] == 'z_verify_open' for a in self.edge_actions), 2)
+
+    def test_edge_tap_keeps_mixed_or_zero_step_contact_unresolved(self):
+        for samples in (((665, NOZZLE_CONTACT, 1), (700, 0, 1)),
+                        ((0, NOZZLE_CONTACT, 1), (0, NOZZLE_CONTACT, 1)),
+                        ((0, NOZZLE_CONTACT, 1), (665, NOZZLE_CONTACT, 1))):
+            with self.subTest(samples=samples):
+                self.assertEqual(self.edge_tap_samples(samples), (None, None))
+        self.assertEqual(self.edge_tap_samples(((700, 0, 1), (700, 0, 1))), (False, None))
+
+    def test_edge_tap_requires_paired_z_within_fifty_microns(self):
+        for spread, expected in ((40, True), (41, None)):
+            with self.subTest(spread=spread):
+                state, height = self.edge_tap_samples(((650, NOZZLE_CONTACT, 1),
+                                                       (650 + spread, NOZZLE_CONTACT, 1)))
+                self.assertIs(state, expected)
+                self.assertEqual(height, 137 * Z_STEPS_PER_MM + 650 if expected else None)
+
+    def test_edge_tap_stops_before_next_probe_if_clearance_recloses(self):
+        with self.assertRaisesRegex(FactoryError, 'did not remain open'):
+            self.edge_tap_samples(((665, NOZZLE_CONTACT, 1), (665, NOZZLE_CONTACT, 1)), fresh_open=0)
+        ascents = [a for a in self.edge_actions if a['kind'] == 'z_contact_move' and a['steps'] > 0]
+        self.assertEqual(len(ascents), 1)
+
     def test_zero_step_center_contact_is_not_accepted_as_a_z_sample(self):
         model=SimulatedPad(pad_xyz_parameters(dict(PARAMETERS,MODE='VERIFY_T0')))
         original=model._motion
@@ -242,7 +320,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         self.assertEqual(xyz['edge_tolerance_mm'], .05)
         model = SimulatedPad(xyz)
         model.sweep_without_opening.add((0, -1))
-        model.cold_intermittent_contact = lambda xy: math.isclose(xy[0], 77.8)
+        model.inconsistent_tap_points = lambda xy: math.isclose(xy[0], 77.8)
         result = model.run()['measurements']['T0']
         self.assertEqual(result['scan_method'], 'SWEEP+TAP')
         self.assertLess(abs(result['center_xy_mm'][0] - model.centers[0][0]), .05)
@@ -252,7 +330,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
     def test_cold_center_rejects_an_unresolved_wide_edge(self):
         model = SimulatedPad(pad_xyz_parameters(COLD_SMALL_PAD, center_only=True))
         model.sweep_without_opening.add((0, -1))
-        model.cold_intermittent_contact = lambda xy: 80. <= xy[0] <= 81.
+        model.inconsistent_tap_points = lambda xy: 80. <= xy[0] <= 81.
         with self.assertRaisesRegex(FactoryError, 'Przedział krawędzi PC14') as exc:
             model.run()
         low, high = exc.exception.details['edge_interval_mm']
@@ -416,16 +494,36 @@ class NozzleXYZCoreTests(unittest.TestCase):
 
     def test_unverified_contact_stops_before_the_next_tool(self):
         for field, expected in [('unbounded_pad', 'PC14 nadal zwarty na końcu zakresu'),
-                                ('transient', 'PC14 nie potwierdził zwarcia')]:
+                                ('inconsistent_seed', 'PC14 nie potwierdził zwarcia')]:
             with self.subTest(field=field):
                 model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
-                setattr(model, field, True)
+                if field == 'inconsistent_seed':
+                    model.transient = True  # Disqualify sliding sweeps first.
+                    model.inconsistent_tap_points = lambda xy: True
+                else:
+                    setattr(model, field, True)
                 with self.assertRaisesRegex(FactoryError, expected):
                     model.run()
                 self.assertEqual(len(model.arms), 1)
-                _, _, last = model.trace[-1]
-                self.assertEqual(last['kind'], 'z_contact_move')
+                retreats = [a for _, _, a in model.trace if a['kind'] == 'z_contact_move']
+                last = retreats[-1]
                 self.assertLess(last['steps'], 0)
+                self.assertEqual(model.trace[-1][2]['kind'], 'z_verify_open')
+
+    def test_repeated_latched_contacts_allow_full_scan_after_live_t0_reopens(self):
+        model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
+        model.transient = True
+        result = model.run()
+        self.assertEqual(set(result['measurements']), {'T0', 'T1', 'T0_RETURN'})
+        self.assertEqual(result['measurements']['T0']['scan_method'], 'SWEEP+TAP')
+
+    def test_tap_only_full_scan_qualifies_latches_after_live_t0_reopens(self):
+        model = SimulatedPad(pad_xyz_parameters(dict(PARAMETERS, SCAN='TAP')))
+        model.transient = True
+        result = model.run()
+        self.assertEqual(set(result['measurements']), {'T0', 'T1', 'T0_RETURN'})
+        self.assertTrue(all(row['scan_method'] == 'TAP' for row in result['measurements'].values()))
+        self.assertFalse(any(a.get('stage') == 'pad_sweep' for _, _, a in model.trace))
 
     def test_sweep_counts_and_retract_uses_measured_plane(self):
         xyz = pad_xyz_parameters(dict(PARAMETERS, MODE='VERIFY_T0', Z_CLEARANCE_MM=.5))
