@@ -303,7 +303,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
         model = SimulatedPad(xyz)
         model.unbounded_pad = True
-        with self.assertRaisesRegex(FactoryError, 'PC14 nadal zwarty na końcu zakresu'):
+        with self.assertRaisesRegex(FactoryError, 'PC14 remained closed at the end of the scan range'):
             model.run()
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertLessEqual(model.position, model.contacts[0] - PAD_MIN_SWEEP_CLEARANCE_STEPS)
@@ -332,7 +332,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         model = SimulatedPad(pad_xyz_parameters(COLD_SMALL_PAD, center_only=True))
         model.sweep_without_opening.add((0, -1))
         model.inconsistent_tap_points = lambda xy: 80. <= xy[0] <= 81.
-        with self.assertRaisesRegex(FactoryError, 'Przedział krawędzi PC14') as exc:
+        with self.assertRaisesRegex(FactoryError, 'PC14 edge interval') as exc:
             model.run()
         low, high = exc.exception.details['edge_interval_mm']
         self.assertGreater(high - low, .05)
@@ -385,7 +385,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
         xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)
         model = SimulatedPad(xyz)
         model.centers = ((95., 68.),)
-        with self.assertRaisesRegex(FactoryError, 'PC14 nie potwierdził zwarcia w próbach osi X'):
+        with self.assertRaisesRegex(FactoryError, 'PC14 contact was not confirmed when probing axis X'):
             model.run()
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertFalse(any(a.get('stage') == 'pad_sweep' for _, _, a in model.trace))
@@ -461,7 +461,7 @@ class NozzleXYZCoreTests(unittest.TestCase):
     def test_cold_center_still_rejects_an_oversize_contact_outline(self):
         model = SimulatedPad(pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True))
         model.contact_radius_mm = 4.5
-        with self.assertRaisesRegex(FactoryError, 'Szerokość styku X .* poza zakresem .*8.5 mm'):
+        with self.assertRaisesRegex(FactoryError, 'Contact width on X is .* outside the .*8.5 mm range'):
             model.run()
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
 
@@ -548,8 +548,8 @@ class NozzleXYZCoreTests(unittest.TestCase):
                 self.assertEqual([phase for phase in phases if '_WIPE_' in phase], wipes)
 
     def test_unverified_contact_stops_before_the_next_tool(self):
-        for field, expected in [('unbounded_pad', 'PC14 nadal zwarty na końcu zakresu'),
-                                ('inconsistent_seed', 'PC14 nie potwierdził zwarcia')]:
+        for field, expected in [('unbounded_pad', 'PC14 remained closed at the end of the scan range'),
+                                ('inconsistent_seed', 'PC14 contact was not confirmed')]:
             with self.subTest(field=field):
                 model = SimulatedPad(pad_xyz_parameters(PARAMETERS))
                 if field == 'inconsistent_seed':

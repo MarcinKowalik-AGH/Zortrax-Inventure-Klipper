@@ -32,19 +32,26 @@ class LevelingUiTests(MenuFixture, unittest.TestCase):
     def tick(self):
         self.menu._tick(self.board.reactor.now)
 
-    def test_oled_declares_physical_nozzle_then_accepts_knob_prompt(self):
+    def test_oled_starts_with_automatic_T0_selection_then_accepts_knob_prompt(self):
         self.menu.open('leveling')
-        self.assertEqual(self.menu.view.title, 'Which nozzle is down?')
-        self.choose('T1 is down')
-        self.assertEqual(self.menu.view.title, 'Start with T1 down?')
+        self.assertEqual(self.menu.view.title, 'Start platform leveling?')
+        self.assertEqual(self.menu.view.kind, 'confirm')
+        self.assertIn(('Automatic T0 selection', None), self.menu.view.options)
         self.assertEqual(self.calls, [])
         self.menu.choose(self.menu.view.token, confirm=True)
-        self.assertEqual(self.calls, [dict(ACTION='START', ACTIVE_TOOL='T1')])
+        self.assertEqual(self.calls, [dict(ACTION='START')])
         self.run.update(phase='await_knobs', awaiting_operator=True, prompt_id=1)
         self.tick()
         self.choose('Knobs tightened / next')
         self.assertEqual(self.calls[-1], dict(ACTION='NEXT', RUN_ID='session', PROMPT_ID=1))
         self.assertNotIn('Knobs tightened / next', [row[0] for row in self.menu.view.options])
+
+    def test_legacy_menu_start_parameter_does_not_control_the_selector(self):
+        self.board.gcode.run_script_from_command('INVENTURE_ZORTRAX OP=OPEN ACTION=leveling ACTIVE_TOOL=T1')
+        self.assertEqual(self.menu.view.title, 'Start platform leveling?')
+        self.assertNotIn('ACTIVE_TOOL', self.menu.view.data['parameters'])
+        self.menu.choose(self.menu.view.token, confirm=True)
+        self.assertEqual(self.calls, [dict(ACTION='START')])
 
     def test_external_run_stale_adjustment_and_review_before_save(self):
         self.run.update(phase='adjust', run_id='external', awaiting_operator=True, prompt_id=4,
@@ -83,9 +90,9 @@ class LevelingUiTests(MenuFixture, unittest.TestCase):
         self.tick()
         self.assertEqual(output.count('// action:prompt_show'), 1)
         instruction = next(msg for msg in output if msg.startswith('// action:prompt_text'))
-        for expected in ('Poluzuj przednie pokrętło', '0.50', 'zgodnie z ruchem'):
+        for expected in ('Loosen the front knob', '0.50', 'clockwise'):
             self.assertIn(expected, instruction)
-        self.assertIn('// action:prompt_button Gotowe|ZORTRAX_PLATFORM_LEVEL ACTION=NEXT RUN_ID=external PROMPT_ID=8|primary', output)
+        self.assertIn('// action:prompt_button Continue|ZORTRAX_PLATFORM_LEVEL ACTION=NEXT RUN_ID=external PROMPT_ID=8|primary', output)
         self.choose('Adjusted / next')
         self.tick()
         self.assertEqual(output[-1], '// action:prompt_end')
@@ -106,7 +113,7 @@ class LevelingUiTests(MenuFixture, unittest.TestCase):
         self.assertIn('Leave selector in place', labels)
         self.assertIn('Seat tray, close doors', labels)
         self.assertIn('Knobs tightened / next', labels)
-        self.assertTrue(any('zamknij drzwi oraz pokrywę' in message for message in output))
+        self.assertTrue(any('close the front door and lid' in message for message in output))
         self.assertTrue(any('ACTION=NEXT RUN_ID=external PROMPT_ID=1' in message for message in output))
         self.run.update(prompt_id=2, door_pause=False)
         self.tick()
@@ -133,12 +140,12 @@ class FluiddLevelingMacros(unittest.TestCase):
         return self.templates[name].render(params=params, printer={'inventure_mcu': {'platform_level': run or {}}},
                                            action_respond_info=info, action_raise_error=error).strip()
 
-    def test_start_without_nozzle_prompts_then_dispatches_selection(self):
-        self.assertEqual(self.render('ZORTRAX_LEVEL'), '')
-        for tool in ('T0', 'T1'):
-            self.assertTrue(any('ZORTRAX_LEVEL ACTIVE_TOOL='+tool in msg for msg in self.messages))
-            self.assertEqual(self.render('ZORTRAX_LEVEL', ACTIVE_TOOL=tool),
-                             'ZORTRAX_PLATFORM_LEVEL ACTION=START ACTIVE_TOOL='+tool)
+    def test_start_selects_T0_automatically_even_with_legacy_tool_parameter(self):
+        for params in ({}, {'ACTIVE_TOOL': 'T0'}, {'ACTIVE_TOOL': 'T1'}):
+            with self.subTest(params=params):
+                self.assertEqual(self.render('ZORTRAX_LEVEL', **params),
+                                 'ZORTRAX_PLATFORM_LEVEL ACTION=START')
+                self.assertFalse(self.messages)
 
     def test_door_menu_button_is_a_separate_read_only_entry(self):
         self.assertEqual(self.render('ZORTRAX_DOOR_LOCK'), 'INVENTURE_DOOR_POLICY MENU=1')

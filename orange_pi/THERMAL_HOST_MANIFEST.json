@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1",
+  "release": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "43e3f7fa7e999c62a316916987f595cbef05bb1289566ad5a5f7c32db77cdfd5",
+  "module_sha256": "76762c5f639d7b32ead9c16ef77a2988560b545b11f8a944c9a5a39d51d17e96",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -90,9 +90,10 @@
     "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef",
     "1b02415053223b10d81c5698b08d3cddaec8bf12fbd59affbd27a1fe911ed948",
     "7ae8ed878fa1db43c697dc9b7def7f8ee8368516909b67947e03a269b7165cf0",
-    "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643"
+    "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643",
+    "43e3f7fa7e999c62a316916987f595cbef05bb1289566ad5a5f7c32db77cdfd5"
   ],
-  "host_revision": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1",
+  "host_revision": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -374,22 +375,26 @@
   "zortrax_menu_api": 1,
   "extra_modules": {
     "inventure_menu_core.py": {
-      "sha256": "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f",
-      "allowed_existing_sha256": []
+      "sha256": "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf",
+      "allowed_existing_sha256": [
+        "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f"
+      ]
     },
     "inventure_menu_service.py": {
-      "sha256": "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f",
+      "sha256": "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
-        "700a1090dfc9a48b84da275a2261e2338ebc8ec02029bd4481237fc719a05f6d"
+        "700a1090dfc9a48b84da275a2261e2338ebc8ec02029bd4481237fc719a05f6d",
+        "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f"
       ]
     },
     "inventure_oem_menu.py": {
-      "sha256": "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54",
+      "sha256": "1fe298aca80c4a60acf279bd68ed62762fd32fea3f25ee493c40a5cd3dacb971",
       "allowed_existing_sha256": [
         "5917dd4e9cf326501f8ab32e4b5bb60e47faf057743f7cb1dd2b05b34ce40795",
-        "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad"
+        "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad",
+        "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54"
       ]
     },
     "inventure_oled_uifast_transport.py": {
@@ -426,7 +431,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "0881bef163473cfb956b6c285f1e6471d0e9e35249d8cb47570d858857a39586",
+      "sha256": "cf41b518d4ed2ed6dc45d09d9ee642859b63a6fa1c2342a96a38c10fc6dd688a",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -449,15 +454,24 @@
         "9d38da0351d1b67243fb98b8e6cf7421de1262073df5e1ca408437dffdd466b9",
         "2ef183c9f7e33882f7205a85d6685a1d7f4da7b0a70245c7bcc8e2e3483e93cf",
         "f885ff7ca9e98035ef239497c7782b54928b389c4de8f5dc58d38eb89d954b4d",
-        "d4147b648f20e4fb0c8dff80943537178e993533a3ee9e8ca81b82a42a832063"
+        "d4147b648f20e4fb0c8dff80943537178e993533a3ee9e8ca81b82a42a832063",
+        "0881bef163473cfb956b6c285f1e6471d0e9e35249d8cb47570d858857a39586"
       ]
     },
     "inventure_leveling_transport.py": {
-      "sha256": "ad927afa74f3a28c0a019f68804e6c90716aae2b375f2bc0aaf988237a7e2001",
-      "allowed_existing_sha256": []
+      "sha256": "d79637bf6d89932b3935722bb949f9870d70164687ff7e98631c58ef831edfc1",
+      "allowed_existing_sha256": [
+        "ad927afa74f3a28c0a019f68804e6c90716aae2b375f2bc0aaf988237a7e2001"
+      ]
     },
     "inventure_platform_level.py": {
-      "sha256": "b16a0b3792ac50966d2b4029a5f1ca09256a883636703c771aaa95ccdc32cf82",
+      "sha256": "36bd76f511dccdcca08c60416462ed69fef367eb660881be7933574db796d483",
+      "allowed_existing_sha256": [
+        "b16a0b3792ac50966d2b4029a5f1ca09256a883636703c771aaa95ccdc32cf82"
+      ]
+    },
+    "inventure_fluidd.py": {
+      "sha256": "463b08e04d4b397381d726f7082a200bed133dd30ef7891c53d563dc2206216a",
       "allowed_existing_sha256": []
     }
   },
@@ -823,6 +837,9 @@
     ],
     "final_point": 2,
     "physical_qualification": "pending first full hardware run",
-    "fluidd_global_door_menu": "ZORTRAX_DOOR_LOCK"
+    "fluidd_global_door_menu": "ZORTRAX_DOOR_LOCK",
+    "operator_selects_tool": false,
+    "operator_interface_language": "en",
+    "unknown_selector_preheat": "both_tools_at_waste_bin"
   }
 }

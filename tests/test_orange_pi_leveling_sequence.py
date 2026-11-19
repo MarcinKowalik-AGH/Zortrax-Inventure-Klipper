@@ -3,6 +3,7 @@ import json
 import math
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 from test_orange_pi_door_policy import Command, policy
@@ -22,6 +23,8 @@ class PlatformDevice(z_host.ZDevice):
         self.z = 1000
         self.contact_at = None
         self.edge_immediate = True
+        self.physical_tool = None
+        self.first_heating_xy = None
         self.press_temperatures = []
         self.sample_points = []
         self.phase_at_power_on = []
@@ -65,6 +68,8 @@ class PlatformDevice(z_host.ZDevice):
     def out(self, args):
         if args[0] == 1 and args[2]:
             assert self.doors_closed or not self.door_lock_enabled
+            if self.first_heating_xy is None:
+                self.first_heating_xy = self.xy
             self.phase_at_power_on.append((args[1], self.h.platform_level_run['phase']))
         return super().out(args)
 
@@ -91,6 +96,7 @@ class PlatformDevice(z_host.ZDevice):
             self.xy = (self.xy[0] + (da + db) / 1280.,
                        self.xy[1] + (da - db) / 1280.)
             if math.dist(self.xy, (154.5, 154.5)) < .01:
+                self.physical_tool = 'T0'
                 self.press_temperatures.append(tuple(self.h.temperatures[:2]))
         # Retain physical guards; only an endstop that can actually change on
         # this XY leg is an eligible hit in the common fixture's move engine.
@@ -101,6 +107,7 @@ class PlatformDevice(z_host.ZDevice):
             assert self.doors_closed or not self.door_lock_enabled
             assert self.session and self.session['active'] and not self.session['dual']
             assert self.session['tool'] == 0 and not self.h.platform_level_run['operator_confirmed']
+            assert self.physical_tool == 'T0' and self.press_temperatures, 'No T0 press before probing'
             distances = [math.dist(self.xy, xy) for xy in self.pads]
             nearest = distances.index(min(distances))
             assert distances[nearest] < .01, 'PC14 sensing away from conductive pad: %r' % (self.xy,)
@@ -113,7 +120,8 @@ class PlatformDevice(z_host.ZDevice):
 
 
 class SequenceTests(unittest.TestCase):
-    def simulate(self, active, fail_final_stop=False, door_lock=False, both_rear=False, open_throughout=False):
+    def simulate(self, active, fail_final_stop=False, door_lock=False, both_rear=False,
+                 open_throughout=False, binding=True):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'printer.cfg'
             saved = json.dumps(saved_pad_record())
@@ -124,6 +132,10 @@ class SequenceTests(unittest.TestCase):
             board.printer.get_start_args = lambda: {'config_file': str(config)}
             board.nozzle_z_dual_abi = 1
             board.device = device = PlatformDevice(board)
+            device.physical_tool = active
+            if binding:
+                board.printer.objects['inventure_tools'] = SimpleNamespace(enabled=True, require_binding=lambda: None)
+                board.printer.objects['inventure_operations'].state.selector_tool = int(active[1])
             device.door_lock_enabled = door_lock
             device.doors_closed = not open_throughout
             device.fail_final_stop = fail_final_stop
@@ -134,7 +146,7 @@ class SequenceTests(unittest.TestCase):
                                   factory_session=Wire(device.query_factory), z_edge=Wire(device.z_edge))
             board.door_policy_global = True
             board.commands['door_policy'] = Wire(device.door_policy)
-            board.cmd_platform_level(Command(ACTION='START', ACTIVE_TOOL=active))
+            board.cmd_platform_level(Command(ACTION='START'))
             prompts = []
             previous_rear = None
             until = board.reactor.now + 3605.
@@ -209,14 +221,16 @@ class SequenceTests(unittest.TestCase):
                 self.assertGreaterEqual(device.press_temperatures[-1][0], 195.)
             temperature = device.press_temperatures[0]
             self.assertGreaterEqual(temperature[0], 195.)
-            if active == 'T1':
+            expected_bin_x = (82.8 if active == 'T0' else 72.) if binding else 77.4
+            self.assertLess(math.dist(device.first_heating_xy, (expected_bin_x, 152.5)), .01)
+            if active == 'T1' or not binding:
                 self.assertGreaterEqual(temperature[1], 195.)
             else:
                 self.assertLess(temperature[1], 50.)
             self.assertFalse(any(phase in ('preparing', 'await_knobs')
                                  for channel, phase in device.phase_at_power_on))
             self.assertEqual({channel for channel, _ in device.phase_at_power_on},
-                             {6, 7} if active == 'T1' else {6})
+                             {6, 7} if active == 'T1' or not binding else {6})
             self.assertEqual(device.z, 0)
             self.assertLess(math.dist(device.xy, (82.8, 152.5)), .01)
             self.assertEqual([device.output(i)['duty'] for i in (6, 7)], [0, 0])
@@ -225,8 +239,8 @@ class SequenceTests(unittest.TestCase):
             self.assertEqual(pad_file.read_text(), saved)
             saved_level = json.loads(config.with_name('inventure_platform_level.json').read_text())
             self.assertGreater(saved_level['depth_um'], 130000)
+            self.assertEqual(saved_level['initial_tool'], active if binding else 'UNKNOWN')
             if door_lock:
-                self.assertEqual(saved_level['initial_tool'], active)
                 self.assertEqual(saved_level['resume_datums'], run['resume_datums'])
                 self.assertTrue(saved_level['global_door_enabled'])
 
@@ -235,6 +249,11 @@ class SequenceTests(unittest.TestCase):
 
     def test_from_t1(self):
         self.simulate('T1')
+
+    def test_unknown_native_binding_with_either_nozzle_physically_lowered(self):
+        for active in ('T0', 'T1'):
+            with self.subTest(initial_tool=active):
+                self.simulate(active, binding=False)
 
     def test_terminal_stop_must_succeed_before_save(self):
         self.simulate('T0', fail_final_stop=True)

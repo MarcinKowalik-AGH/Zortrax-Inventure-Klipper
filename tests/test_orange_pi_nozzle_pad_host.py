@@ -317,7 +317,7 @@ class NozzlePadHostTests(unittest.TestCase):
         run = host.nozzle_pad_run
         self.assertEqual(run['phase'], 'verified', run)
         self.assertEqual(len(command.lines), 1, command.lines)
-        self.assertIn('środek X=', command.lines[0])
+        self.assertIn('center X=', command.lines[0])
         self.assertIn('X−=', command.lines[0])
         self.assertIn('Y+=', command.lines[0])
         self.assertEqual(host.commands['output'].calls, [])
@@ -356,7 +356,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(list(run['measurements']), ['T1'])
         self.assertLess(math.dist(run['measurements']['T1']['center_xy_mm'], device.centers[1]), .03)
         self.assertEqual(len(command.lines), 1)
-        self.assertTrue(command.lines[0].startswith('Pad T1 | środek'))
+        self.assertTrue(command.lines[0].startswith('Pad T1 | center'))
         self.assertEqual(host.commands['output'].calls, [])
         self.assertEqual(device.e_moves, [])
         self.assertFalse(self.saved.exists())
@@ -366,7 +366,7 @@ class NozzlePadHostTests(unittest.TestCase):
         host.nozzle_pad_sweep_abi = host.nozzle_pad_cold_abi = 1
         with self.assertRaisesRegex(RuntimeError, 'requires T1_Z_MAX'):
             host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', TOOL='T1', T0_Z_MAX=137.30))
-        with self.assertRaisesRegex(RuntimeError, 'CENTER TOOL=T1 wymaga firmware MCU'):
+        with self.assertRaisesRegex(RuntimeError, 'CENTER TOOL=T1 requires MCU firmware'):
             host.cmd_nozzle_pad_calibrate(Command(ACTION='CENTER', TOOL='T1', T1_Z_MAX=137.20))
         self.assertIsNone(getattr(host, 'nozzle_z_context', None))
         self.assertFalse(host.device.calls)
@@ -534,7 +534,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(run['phase'], 'verified', run)
         self.assertEqual(len(command.lines), 1)
         x, y = run['measurements']['T0']['center_xy_mm']
-        self.assertIn('środek X=%.1f Y=%.1f mm |' % (x, y), command.lines[0])
+        self.assertIn('center X=%.1f Y=%.1f mm |' % (x, y), command.lines[0])
         self.assertLess(abs(x - device.centers[0][0]), .05)
         self.assertTrue(all(z <= device.ceiling for _, _, z, _ in device.pad_moves))
         self.assertFalse(device.contact)

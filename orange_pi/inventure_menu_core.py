@@ -37,7 +37,7 @@ SERVICE_ACTIONS = {
 CHOICE_ACTIONS = frozenset(('sd_browser','spool_catalog_model','spool_catalog_support',
     'heat','maintenance_t0','maintenance_t1','move_platform','fan_test'))
 SETTING_ACTIONS = frozenset(('sort_desc','sort_asc','sort_name','sort_size',
-    'language_en','language_pl','door_lock','door_unlock'))
+    'language_en','door_lock','door_unlock'))
 NAV_ACTIONS = frozenset(('back','go_status','cancel_no','question_no','question_yes'))
 ALL_ACTIONS = READ_ACTIONS | set(NATIVE_ACTIONS) | set(SERVICE_ACTIONS) | CHOICE_ACTIONS | SETTING_ACTIONS | NAV_ACTIONS
 
@@ -91,7 +91,8 @@ class SettingsStore:
             self._validate(value)
             if hashlib.sha256(self._bytes(value)).hexdigest()!=envelope.get('sha256'):
                 raise MenuError('Menu settings checksum differs')
-            self.value=dict(value)
+            # Verify the original settings before migrating a legacy language preference.
+            self.value=dict(value, language='en')
 
     @staticmethod
     def _bytes(value):return json.dumps(value,sort_keys=True,separators=(',',':')).encode()
@@ -103,6 +104,7 @@ class SettingsStore:
 
     def set(self, **updates):
         value=dict(self.value,**updates);self._validate(value)
+        value['language']='en'
         if value==self.value:return False
         if self.path is not None:
             self.path.parent.mkdir(parents=True,exist_ok=True)

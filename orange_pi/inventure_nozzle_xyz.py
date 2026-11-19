@@ -304,11 +304,11 @@ class NozzleXYZProgram(ZHomeProgram):
                 if state is True:
                     break
             if state is not False:
-                raise FactoryError('PC14 nie potwierdził rozwarcia przy granicy skanu',
+                raise FactoryError('PC14 release was not confirmed at the scan boundary',
                                    direction=label, point_mm=_xy_mm(endpoint))
         elif state is True:
             if confirm:
-                raise FactoryError('PC14 nadal zwarty na końcu zakresu', point_mm=_xy_mm(endpoint))
+                raise FactoryError('PC14 remained closed at the end of the scan range', point_mm=_xy_mm(endpoint))
             raise FactoryError('Pad edge is outside the qualified scan box',
                                axis=name, point_mm=_xy_mm(endpoint))
 
@@ -336,7 +336,7 @@ class NozzleXYZProgram(ZHomeProgram):
             known_positions = [lower, *sorted(uncertain), upper]
             left, right = max(zip(known_positions, known_positions[1:]), key=lambda pair: pair[1] - pair[0])
             if right - left <= 1 or len(uncertain) >= PAD_MAX_UNCERTAIN_TAPS:
-                raise FactoryError('Przedział krawędzi PC14 nadal ma %.2f mm' % ((upper - lower) / XY_STEPS_PER_MM),
+                raise FactoryError('PC14 edge interval is still %.2f mm wide' % ((upper - lower) / XY_STEPS_PER_MM),
                                    direction=label, edge_interval_mm=_xy_mm((lower, upper)))
             midpoint = (left + right) // 2
             state = yield from contact(midpoint)
@@ -435,7 +435,7 @@ class NozzleXYZProgram(ZHomeProgram):
             if contact is True:
                 break
         else:
-            raise FactoryError('PC14 nie potwierdził zwarcia w próbach osi ' + name,
+            raise FactoryError('PC14 contact was not confirmed when probing axis ' + name,
                                start_mm=_xy_mm(origin), z_limit_mm=_z_mm(ceiling))
 
         if xyz['prep'] != 'COLD' or xyz['scan'] == 'TAP':
@@ -492,7 +492,7 @@ class NozzleXYZProgram(ZHomeProgram):
             # Vertical taps can qualify a short X chord off the pad center.
             min_width = .5 if axis == 0 else min_sweep_width
             if not min_width <= width <= max_width:
-                raise FactoryError('Szerokość styku %s %.2f mm poza zakresem %.1f–%.1f mm' %
+                raise FactoryError('Contact width on %s is %.2f mm, outside the %.1f–%.1f mm range' %
                                    (name, width, min_width, max_width))
             for side, edge in zip(('-', '+'), pair):
                 logging.info('Inventure pad T%d %s%s edge_mm=%.4f method=%s',

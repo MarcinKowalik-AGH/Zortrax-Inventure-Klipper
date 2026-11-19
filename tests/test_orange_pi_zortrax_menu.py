@@ -1,6 +1,7 @@
 """Real menu adapter, one-use operator authority, existing backend contracts."""
 import ast
 from contextlib import contextmanager
+import hashlib
 import importlib
 import io
 import json
@@ -42,10 +43,10 @@ class MenuFixture:
 
 class MenuCoreTests(unittest.TestCase):
     def test_complete_original_and_paused_menu_vocabulary_has_a_route(self):
-        actions={n.action for page in menu_module.MENU.values() for n in page[3]
+        actions={n.action for page in menu_module.MENU.values() for n in page[2]
             if n.action and not n.action.startswith('bench_')}
         self.assertEqual(actions-core.ALL_ACTIONS,set())
-        self.assertEqual([x.label_en for x in menu_module.MENU['root'][3]],
+        self.assertEqual([x.label for x in menu_module.MENU['root'][2]],
             ['Models','Maintenance','Material','Settings','Information'])
 
     def test_operator_menu_preserves_OEM_leaves_and_keeps_bench_branch_separate(self):
@@ -213,13 +214,27 @@ class MenuServiceTests(unittest.TestCase,MenuFixture):
             s.open('sort_name');self.assertEqual(core.SettingsStore(path).value['sorting'],'name')
             self.assertEqual(h.device.packets,[])
 
-    def test_saved_language_is_applied_on_ready_and_M300_launcher_stays_English(self):
-        h,s=self.host();s.settings.value['language']='pl'
-        menu=menu_module.OEMMenu('en',root_page='root',operational=True)
-        oled=types.SimpleNamespace(oem_menu=menu,menu_profile='zortrax')
-        h.printer.objects['inventure_oled']=oled;s._ready();self.assertEqual(menu.language,'pl')
-        oled.menu_profile='m300';s._ready();self.assertEqual(menu.language,'en')
-        self.assertEqual(h.device.packets,[])
+    def test_legacy_polish_settings_use_english_with_both_menu_profiles(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'menu.json'
+            legacy = {'sorting': 'name', 'language': 'pl'}
+            path.write_text(json.dumps(dict(schema=1, settings=legacy,
+                sha256=hashlib.sha256(core.SettingsStore._bytes(legacy)).hexdigest())))
+            board, service = self.host(zortrax_settings_file=str(path))
+            self.assertEqual(service.settings.value, {'sorting': 'name', 'language': 'en'})
+            for profile, page in (('zortrax', 'root'), ('m300', 'launcher')):
+                with self.subTest(profile=profile):
+                    menu = menu_module.OEMMenu('pl', root_page=page, operational=True)
+                    board.printer.objects['inventure_oled'] = types.SimpleNamespace(oem_menu=menu, menu_profile=profile)
+                    service._ready()
+                    menu.page = 'language'
+                    self.assertEqual(menu.view()['language'], 'en')
+                    self.assertEqual(menu.view()['labels'], ['Back', 'English'])
+                    self.assertFalse(service.capability('language_pl')['available'])
+                    menu.page = 'doorlock'
+                    self.assertEqual(menu.view()['title'], 'Door lock')
+                    self.assertEqual(menu.view()['labels'], ['Back', 'Disable door lock', 'Enable door lock'])
+            self.assertEqual(board.device.packets, [])
 
     def test_model_source_change_between_preview_and_confirmation_is_detected(self):
         with tempfile.TemporaryDirectory() as root:

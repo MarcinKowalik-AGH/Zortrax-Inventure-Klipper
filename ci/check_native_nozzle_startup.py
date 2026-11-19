@@ -39,7 +39,23 @@ def load_config(klipper, config):
     for name in ('ZORTRAX_LEVEL', 'ZORTRAX_LEVEL_NEXT', 'ZORTRAX_LEVEL_STATUS',
                  'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK'):
         assert printer.lookup_object('gcode_macro '+name)
-    assert 'ZORTRAX_PLATFORM_LEVEL' in printer.lookup_object('gcode').ready_gcode_handlers
+    gcode = printer.lookup_object('gcode')
+    assert 'ZORTRAX_PLATFORM_LEVEL' in gcode.ready_gcode_handlers
+    from extras.inventure_fluidd import register_legacy_commands
+    register_legacy_commands(printer, gcode)
+    enabled = printer.lookup_object('gcode_macro INV_D_VERSIONS', None)
+    if enabled is None:
+        assert 'INV_D_WERSJE' not in gcode.ready_gcode_handlers
+    else:
+        assert 'INV_D_WERSJE' in gcode.ready_gcode_handlers
+        assert printer.lookup_object('gcode_macro INV_D_WERSJE', None) is None
+        register_legacy_commands(printer, gcode)  # keep existing command bindings
+        calls = []
+        enabled.template.run_gcode_from_command = calls.append
+        alias = gcode.create_gcode_command('INV_D_WERSJE', 'INV_D_WERSJE SAMPLE=1', {})
+        gcode.ready_gcode_handlers['INV_D_WERSJE'](alias)
+        assert calls[0]['params'] == {'SAMPLE': '1'} and calls[0]['rawparams'] == 'SAMPLE=1'
+        assert 'INV_R_WYBIERZ_T1' not in gcode.ready_gcode_handlers
     print(json.dumps(dict(status='CONFIG_LOADED', limits_c=[t0.max_temp,t1.max_temp],
                          adc_readers=len(board.adcs), fan_heaters=['extruder','inventure_t1'])))
 
@@ -86,7 +102,8 @@ def check():
         for mode in ('repair_field','fresh_include'):
             if mode == 'fresh_include':
                 (root/'hardware.cfg').write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
-                field.write_text('[include hardware.cfg]\n\n'
+                (root/'fluidd.cfg').write_bytes((ROOT/'fluidd/inventure_01_diagnostyka.cfg').read_bytes())
+                field.write_text('[include hardware.cfg]\n[include fluidd.cfg]\n\n'
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True)

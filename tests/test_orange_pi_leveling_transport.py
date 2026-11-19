@@ -41,6 +41,7 @@ class PlatformTransportTests(unittest.TestCase):
     def host(self):
         board = z_host.ZHomeHostTests().host(edges=True)
         board.allow_actuators = True
+        board.nozzle_z_dual_abi = 1
         board.printer.get_start_args = lambda: {'config_file': str(self.config)}
         self.write_record(saved_pad_record())
         return board
@@ -100,7 +101,7 @@ class PlatformTransportTests(unittest.TestCase):
 
     def assert_start_rejected_without_actuation(self, board, reason, **values):
         with self.assertRaisesRegex(RuntimeError, reason):
-            board.cmd_platform_level(Command(**{'ACTION': 'START', 'ACTIVE_TOOL': 'T0', **values}))
+            board.cmd_platform_level(Command(**{'ACTION': 'START', **values}))
         actuations = [p for p in board.device.packets
                       if p[0] in ('motion', 'output') and p[1] == 1]
         self.assertEqual(actuations, [])
@@ -141,20 +142,53 @@ class PlatformTransportTests(unittest.TestCase):
     def test_t1_native_limit_rejects_both_nozzle_start_without_leaving_a_timer(self):
         board = self.host()
         board.shared_adc_sensors = ((), (SimpleNamespace(maximum=180.),))
-        self.assert_start_rejected_without_actuation(board, '(?i)(T1|200)', ACTIVE_TOOL='T1')
+        self.assert_start_rejected_without_actuation(board, '(?i)(T1|200)', ACTIVE_TOOL='T0')
         self.assertIsNone(board.load_test_context)
         board.reactor.pause(board.reactor.now + 1.)
         self.assertFalse(board.device.edge_starts)
         self.assertEqual(board.device.packets, [])
 
-    def test_active_tool_is_physical_operator_input_or_verified_binding(self):
+    def test_only_a_verified_native_binding_identifies_the_initial_nozzle(self):
         board = self.host()
-        self.assert_start_rejected_without_actuation(board, 'ACTIVE_TOOL', ACTIVE_TOOL='')
         ops = board.printer.objects['inventure_operations']
         ops.state.selector_tool = 1
+        self.assertEqual(transport._initial_tool(board), 'UNKNOWN')
         board.printer.objects['inventure_tools'] = SimpleNamespace(enabled=True, require_binding=lambda: None)
-        self.assert_start_rejected_without_actuation(board, 'ACTIVE_TOOL', ACTIVE_TOOL='T0')
-        self.assertEqual(transport._active_tool(board, Command()), 'T1')
+        self.assertEqual(transport._initial_tool(board), 'T1')
+        ops.state.selector_tool = 0
+        self.assertEqual(transport._initial_tool(board), 'T0')
+
+        def stale_binding():
+            raise RuntimeError('Native binding lost')
+
+        board.printer.command_error = RuntimeError
+        board.printer.objects['inventure_tools'].require_binding = stale_binding
+        self.assertEqual(transport._initial_tool(board), 'UNKNOWN')
+
+    def test_unknown_selector_requires_dual_heat_support_before_any_motion(self):
+        board = self.host()
+        board.nozzle_z_dual_abi = 0
+        self.assert_start_rejected_without_actuation(board, 'dual-nozzle')
+
+    def test_common_park_is_inside_both_configured_purge_paths(self):
+        t0 = dict(defaults(0), center_x=88., center_y=152.5, purge_span=20.)
+        t1 = dict(t0, center_x=80., purge_span=12.)
+        self.assertEqual(transport._initial_bin('UNKNOWN', t0, t1), (82., 152.5))
+        for profile in (dict(t1, center_x=66.), dict(t1, center_y=154.5)):
+            with self.assertRaisesRegex(ValueError, 'waste-bin'):
+                transport._initial_bin('UNKNOWN', t0, profile)
+
+    def test_unknown_selector_honors_each_configured_nozzle_power(self):
+        board = self.host()
+        board.procedure_profiles = ({}, {'max_power': 40.}, {'max_power': 25.})
+        board.cmd_platform_level(Command(ACTION='START'))
+        heaters = board.load_test_context['factory']['dual_heaters']
+        self.assertEqual([heater['power'] for heater in heaters], [40., 25.])
+
+    def test_incompatible_custom_purge_paths_fail_before_starting(self):
+        board = self.host()
+        board.procedure_profiles = ({}, {}, {'center_y': 149.})
+        self.assert_start_rejected_without_actuation(board, 'waste-bin')
 
     def test_open_doors_with_global_interlock_enabled_block_start(self):
         board = self.host()
@@ -201,7 +235,7 @@ class PlatformTransportTests(unittest.TestCase):
                      motor_busy=False, lock_command_mask=0, reject=None)
         board.door_policy_global = True
         board._door_policy_query = lambda: dict(doors)
-        board.cmd_platform_level(Command(ACTION='START', ACTIVE_TOOL='T0'))
+        board.cmd_platform_level(Command(ACTION='START'))
         limit = board.reactor.now + 200.
         while not board.platform_level_status().get('door_pause'):
             self.assertIsNotNone(board.load_test_context, board.platform_level_status())

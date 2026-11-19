@@ -129,9 +129,9 @@ class EngineTests(unittest.TestCase):
             if phase == 'adjust':
                 level.notice(board, dict(phase=phase, instructions=data))
         self.assertEqual(len(reply.lines), 2)
-        self.assertIn('Poluzuj tylne lewe', reply.lines[0])
-        self.assertIn('zgodnie z ruchem wskazówek zegara o 0.75', reply.lines[0])
-        self.assertIn('tylne prawe', reply.lines[1])
+        self.assertIn('Loosen the rear-left knob', reply.lines[0])
+        self.assertIn('clockwise by 0.75 turns', reply.lines[0])
+        self.assertIn('rear-right knob', reply.lines[1])
         level.notice(board, run)
         self.assertIn('RUN_ID=' + run['run_id'], reply.lines[-1])
 

@@ -151,38 +151,38 @@ def status(board):
 
 
 def adjustment_text(instruction):
-    knob = {'rear_left': 'tylne lewe', 'rear_right': 'tylne prawe',
-            'front': 'przednie'}[instruction['knob']]
-    tighten = instruction['action'] == 'tighten'
-    action = 'Dokręć' if tighten else 'Poluzuj'
-    direction = 'przeciwnie do ruchu' if tighten else 'zgodnie z ruchem'
-    return '%s %s pokrętło %s wskazówek zegara o %.2f obrotu.' % (
-        action, knob, direction, instruction['turns'])
+    knob = {'rear_left': 'rear-left', 'rear_right': 'rear-right',
+            'front': 'front'}[instruction['knob']]
+    action = instruction['action'].capitalize()
+    direction = instruction['direction']
+    turns = instruction['turns']
+    unit = 'turn' if turns == 1 else 'turns'
+    return '%s the %s knob %s by %.2f %s.' % (action, knob, direction, turns, unit)
 
 
 def notice(board, run):
     phase = run['phase']
     if phase == 'await_knobs':
-        message = 'Dokręć trzy pokrętła pod platformą.'
+        message = 'Tighten the three knobs under the platform.'
     elif phase == 'adjust':
         message = adjustment_text(run['instructions'][0])
     elif phase == 'candidate':
-        message = ('Pomiar zakończony. Głębokość %.3f mm, odchylenie środka %+.3f mm. '
+        message = ('Measurement complete. Platform depth %.3f mm, center deviation %+.3f mm. '
                    % (run['candidate_depth_um'] / 1000., run['center_error_steps'] / STEPS_PER_MM))
         if run['deformed']:
-            message += 'Środek tacki poza tolerancją. Wymień tackę i powtórz poziomowanie.'
+            message += 'The center of the tray is out of tolerance. Replace the tray and repeat leveling.'
         else:
-            message += 'Zapis wyniku: ZORTRAX_PLATFORM_LEVEL ACTION=SAVE RUN_ID=' + run['run_id']
+            message += 'Save with ZORTRAX_PLATFORM_LEVEL ACTION=SAVE RUN_ID=' + run['run_id']
     elif phase in ('failed', 'cancelled'):
-        message = ('Poziomowanie przerwane. ' + str(run.get('error') or 'Anulowano na żądanie operatora.'))
+        message = ('Leveling stopped. ' + str(run.get('error') or 'Cancelled by the operator.'))
     else:
         return
     if phase in PROMPTS:
         if run.get('door_pause'):
-            message += (' Grzanie i napędy są wyłączone. Pozostaw selektor dyszy w aktualnym '
-                        'położeniu. Po regulacji zamknij drzwi i pokrywę.')
-        message += ' Wybierz Dalej (ZORTRAX_PLATFORM_LEVEL ACTION=NEXT).'
-    board.gcode.respond_info('Platforma T0 | ' + message)
+            message += (' Heater power and motors are off. Leave the nozzle selector in place. '
+                        'Close the door and lid after adjusting the knobs.')
+        message += ' Select Next (ZORTRAX_PLATFORM_LEVEL ACTION=NEXT).'
+    board.gcode.respond_info('Platform leveling T0 | ' + message)
 
 
 def _new_run():

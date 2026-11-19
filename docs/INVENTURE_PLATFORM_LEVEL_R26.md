@@ -1,5 +1,7 @@
 # Zortrax Inventure — poziomowanie platformy w pięciu punktach
 
+> Historical firmware audit and R26/R26.1 operator notes (Polish). For the current installer, English controls and automatic T0 selection, see [Five-point platform leveling in R26.2](INVENTURE_PLATFORM_LEVEL_R26_2.md).
+
 ## Co reguluje ta procedura
 
 W menu fabrycznym funkcja znajduje się pod **Konserwacja → Poziomowanie platformy**. Dysza T0 dotyka pięciu metalizowanych pól tacki. Drukarka prowadzi operatora przez ustawienie trzech śrub, ustala wspólną głębokość odniesienia Z i sprawdza ugięcie środka. Wzajemne offsety T0/T1 pochodzą z oddzielnej kalibracji dysz. Poziomowanie platformy pozostawia te offsety bez zmian i nie tworzy siatki kompensacji wysokości do druku. [Instrukcja producenta, str. 34](https://support.zortrax.com/wp-content/uploads/2022/01/instrukcja_obslugi_inventure_2021.03.30.pdf)

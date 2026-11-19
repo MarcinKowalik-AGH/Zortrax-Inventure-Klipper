@@ -3,6 +3,7 @@
 import argparse
 from collections import defaultdict
 import configparser
+from hashlib import sha256
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -205,29 +206,103 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
     return updates
 
 
+def macro_sections(text):
+    """Locate complete macro definitions without consuming comments or the SAVE_CONFIG footer."""
+    headers = list(re.finditer(r'(?m)^[ \t]*\[([^\]\n]+)\].*$|^#\*#.*$', text))
+    for index, header in enumerate(headers):
+        section = header.group(1)
+        if section is None:  # Klipper's generated footer
+            break
+        if not section.lower().startswith('gcode_macro '):
+            continue
+        limit = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        lines = text[header.start():limit].splitlines(keepends=True)
+        while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith(('#', ';'))):
+            lines.pop()
+        body = ''.join(lines).rstrip('\r\n')
+        yield section.split(None, 1)[1].upper(), header.start(), body
+
+
 def add_leveling_macros(target, config, updates):
-    """Install the Fluidd leveling and door controls once, respecting active includes."""
-    reader = klipper_config_module(target).ConfigFileReader()
-    original = config.read_bytes()
-    before, staged = updates.get(config, (original, original))
-    active = reader.build_fileconfig_with_includes(staged.decode('utf-8'), str(config))
+    """Upgrade shipped Fluidd buttons in place and install the requested leveling controls."""
+    config = config.resolve()
+    sources = {}
+    originals = {}
+    module = klipper_config_module(target)
+
+    class StagedReader(module.ConfigFileReader):
+        def read_config_file(self, filename):
+            path = Path(filename).resolve()
+            if path not in sources:
+                if path in updates:
+                    originals[path], sources[path] = updates[path]
+                else:
+                    originals[path] = sources[path] = path.read_bytes()
+            return sources[path].decode('utf-8').replace('\r\n', '\n')
+
+    reader = StagedReader()
+
+    def read_active():
+        return reader.build_fileconfig_with_includes(reader.read_config_file(config), str(config))
+
+    active = read_active()
     if not active.has_section('inventure_mcu'):
         raise ValueError('Platform leveling requires [inventure_mcu] in the active config')
-    template = (ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg').read_text()
-    present = {s.casefold(): s for s in active.sections()}
-    for section in re.split(r'(?m)(?=^\[gcode_macro )', template):
-        if not section.startswith('[gcode_macro '):
+
+    leveling = ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg'
+    templates = {}
+    required = {}
+    for path in [leveling, ROOT/'config/INVENTURE_NOZZLE_PAD.cfg', *sorted((ROOT/'fluidd').glob('*.cfg'))]:
+        for name, _, body in macro_sections(path.read_text()):
+            templates[name] = body
+            if path == leveling:
+                required[name] = body
+
+    # Compare whole published sections. Extra options, comments or changed
+    # Jinja belong to the operator. Leave overrides split across files intact.
+    history = (ROOT/'config/fluidd_macro_history.sha256').read_text().splitlines()
+    known = dict(line.split() for line in history if line and not line.startswith('#'))
+    present = {section.casefold() for section in active.sections()}
+    occurrences = defaultdict(list)
+    for path, data in sources.items():
+        for name, start, body in macro_sections(data.decode('utf-8')):
+            occurrences[name].append((path, start, body))
+
+    by_file = defaultdict(list)
+    for name, matches in occurrences.items():
+        if len(matches) != 1:
             continue
-        wanted = reader.build_fileconfig(section, 'INVENTURE_PLATFORM_LEVEL.cfg')
-        name, = wanted.sections()
-        existing = present.get(name.casefold())
+        path, start, body = matches[0]
+        digest = sha256(body.replace('\r\n', '\n').encode('utf-8')).hexdigest()
+        target_name = known.get(digest)
+        if target_name is None or (target_name != name and 'gcode_macro ' + target_name.casefold() in present):
+            continue
+        replacement = templates[target_name]
+        if '\r\n' in body:
+            replacement = replacement.replace('\n', '\r\n')
+        by_file[path].append((start, len(body), replacement))
+
+    for path, replacements in by_file.items():
+        text = sources[path].decode('utf-8')
+        for start, size, replacement in sorted(replacements, reverse=True):
+            text = text[:start] + replacement + text[start + size:]
+        sources[path] = text.encode('utf-8')
+
+    active = read_active()
+    present = {s.casefold(): s for s in active.sections()}
+    for name, section in required.items():
+        key = 'gcode_macro ' + name
+        existing = present.get(key.casefold())
         if existing:
-            if active.get(existing, 'gcode').strip() != wanted.get(name, 'gcode').strip():
+            wanted = reader.build_fileconfig(section, str(leveling))
+            if active.get(existing, 'gcode').strip() != wanted.get(key, 'gcode').strip():
                 raise ValueError('A different Fluidd macro already uses ['+existing+']')
         else:
-            staged = append_config_section(staged, section.encode('utf-8'))
-    if staged != before:
-        updates[config] = (before, staged)
+            sources[config] = append_config_section(sources[config], section.encode('utf-8'))
+
+    for path, staged in sources.items():
+        if staged != originals[path]:
+            updates[path] = (originals[path], staged)
 
 
 def atomic_config_write(path, data):

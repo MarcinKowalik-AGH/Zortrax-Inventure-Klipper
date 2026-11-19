@@ -149,6 +149,59 @@ class OrangePiUpdateTests(unittest.TestCase):
         update.add_leveling_macros(self.live, self.config, repeated)
         self.assertEqual(repeated, {})
 
+    def test_level_upgrade_replaces_stock_buttons_inside_active_includes_only(self):
+        self.legacy_nozzle_config()
+        nested = self.config.parent/'groups'
+        nested.mkdir()
+        level = nested/'level.cfg'
+        old_level = (ROOT/'tests/fixtures/platform_level_buttons_r26_1.cfg').read_text()
+        level.write_bytes(old_level.replace('\n', '\r\n').encode())
+        self.config.write_text('[inventure_mcu]\n[include menus.cfg]\n#*# SAVE_CONFIG\n')
+        self.config.with_name('menus.cfg').write_text('[include groups/*.cfg]\n')
+        enabled = nested/'optional.cfg'
+        edited = ('[gcode_macro INV_D_STATUS]\ndescription: My status button\n'
+                  'gcode:\n    M118 user status\n')
+        version = ('[gcode_macro INV_D_WERSJE]\n'
+                   'description: Inventure / wersja aplikacji MCU, bootloader i ustawienie UART P4\n'
+                   'gcode:\n    INVENTURE_VERSION\n')
+        nozzle = ('[gcode_macro ZORTRAX_NOZZLE_PAD_CALIBRATE]\n'
+                  'description: Kalibracja serwisowa XYZ dysz T0 i T1 na polu stykowym\n'
+                  'gcode:\n    INVENTURE_NOZZLE_PAD_CALIBRATE {rawparams}\n')
+        enabled.write_text(edited + '\n' + version + '\n# My note\n' + nozzle)
+        inactive = self.config.with_name('unused.cfg')
+        inactive.write_text(version)
+        plan = {}
+        update.add_leveling_macros(self.live, self.config, plan)
+        self.assertEqual(set(plan), {enabled, level})
+        for path, (before, after) in plan.items():
+            self.assertEqual(path.read_bytes(), before)
+            path.write_bytes(after)
+        self.assertEqual(level.read_text(), (ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg').read_text())
+        self.assertIn(b'\r\n', level.read_bytes())
+        self.assertEqual(inactive.read_text(), version)
+        self.assertIn(edited, enabled.read_text())
+        self.assertIn('# My note\n', enabled.read_text())
+        self.assertIn('gcode_macro INV_D_VERSIONS', enabled.read_text())
+        self.assertNotIn('INV_D_WERSJE', enabled.read_text())
+        self.assertIn('Measure T0 and T1 XYZ offsets', enabled.read_text())
+        self.assertNotIn('INV_R_HOME_X', enabled.read_text())
+        repeated = {}
+        update.add_leveling_macros(self.live, self.config, repeated)
+        self.assertEqual(repeated, {})
+
+    def test_level_upgrade_preserves_colliding_and_custom_optional_buttons(self):
+        self.legacy_nozzle_config()
+        old = ('[gcode_macro INV_D_WERSJE]\n'
+               'description: Inventure / wersja aplikacji MCU, bootloader i ustawienie UART P4\n'
+               'gcode:\n    INVENTURE_VERSION\n')
+        custom = '[gcode_macro INV_D_VERSIONS]\ngcode:\n    M118 custom\n'
+        self.config.write_text('[inventure_mcu]\n' + old + custom)
+        plan = {}
+        update.add_leveling_macros(self.live, self.config, plan)
+        staged = plan[self.config][1].decode()
+        self.assertIn(old + custom, staged)
+        self.assertEqual(staged.count('[gcode_macro INV_D_VERSIONS]'), 1)
+
     def test_level_buttons_preserve_existing_custom_command(self):
         self.legacy_nozzle_config()
         self.config.write_text('[inventure_mcu]\n[gcode_macro zortrax_level]\n'

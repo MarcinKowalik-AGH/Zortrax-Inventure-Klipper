@@ -64,13 +64,13 @@ class DoorPolicyTests(unittest.TestCase):
         self.assertTrue(h.door_policy_last['enabled']);self.assertEqual(w.calls,[(1,0)])
 
     def test_fluidd_menu_reads_current_mcu_setting_and_uses_existing_write_commands(self):
-        for enabled, label in ((0,'wyłączona'),(1,'włączona')):
+        for enabled, label in ((0,'disabled'),(1,'enabled')):
             with self.subTest(enabled=enabled):
                 board, wire = self.global_host(policy(enabled=enabled, disable_bit=1-enabled))
                 query = Command(MENU=1)
                 board.cmd_door_policy(query)
                 self.assertEqual(wire.calls, [(0,1)])
-                self.assertIn('action:prompt_text Globalna kontrola drzwi i pokrywy jest '+label+'.', query.lines)
+                self.assertIn('action:prompt_text Global door and lid monitoring is '+label+'.', query.lines)
                 button = next(line for line in query.lines if line.endswith('ENABLE='+str(1-enabled)))
                 command, *arguments = button.split('|')[1].split()
                 self.assertEqual(command, 'INVENTURE_DOOR_POLICY')

@@ -4,13 +4,13 @@ W Fluidd przejdź do ustawień makr/kategorii (Macro Categories) i utwórz poni�
 
 | Kategoria Fluidd | Prefiks makr | Co można sprawdzić |
 |---|---|---|
-| 01 Inventure — Diagnostyka | `INV_D_` | wersja MCU/BOOT, UART/P4, inputy, RFID UART, resources, planowanie |
+| 01 Inventure — Diagnostics | `INV_D_` | wersja MCU/BOOT, UART/P4, inputy, RFID UART, resources, planowanie |
 | 02 Inventure — OLED/Menu | `INV_O_` | status sesji, transport OLED, menu OEM, plansza testowa i reinit |
-| 03 Inventure — Materiały | `INV_M_` | P11/P12/P13/P14 status, katalog, zużycie |
-| 04 Inventure — Kalibracja | `INV_C_` | P09/P10/toolframe i offsety |
-| 05 Inventure — Druk | `INV_P_` | P15 preflight, P16 interlock, P17 cycle |
-| 06 Inventure — Termika / Fan / Ruch | `INV_T_`, `INV_F_`, `INV_R_` | termika i tacho, stan osi (tylko odczyt); TEST w osobnej paczce |
-| 07 Inventure — Ruch (TEST) | `INV_R_` | fizyczne homing i wybór narzędzia; **osobny plik opt-in** |
+| 03 Inventure — Materials | `INV_M_` | P11/P12/P13/P14 status, katalog, zużycie |
+| 04 Inventure — Calibration | `INV_C_` | P09/P10/toolframe i offsety |
+| 05 Inventure — Printing | `INV_P_` | P15 preflight, P16 interlock, P17 cycle |
+| 06 Inventure — Thermal / Fans / Motion | `INV_T_`, `INV_F_`, `INV_R_` | termika i tacho, stan osi (tylko odczyt); TEST w osobnej paczce |
+| 07 Inventure — Motion (TEST) | `INV_R_` | fizyczne homing i wybór narzędzia; **osobny plik opt-in** |
 
 **Tryb diagnostyczny:** `inventure_01_diagnostyka.cfg` zawiera 29 makr. Przetwarzanie makr nie zmienia stanu grzałek, silników i RFID. Statusy modułów opcjonalnych sprawdzają, czy sekcja jest wczytana.
 

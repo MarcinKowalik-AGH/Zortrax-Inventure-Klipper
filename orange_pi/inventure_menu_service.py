@@ -60,10 +60,6 @@ class ZortraxMenuService:
             self.printer.register_event_handler(event,self._shutdown)
 
     def _ready(self):
-        oled=self._obj('inventure_oled')
-        if oled is not None and getattr(oled,'oem_menu',None) is not None:
-            oled.oem_menu.language='en' if getattr(oled,'menu_profile','m300')=='m300' else self.settings.value['language']
-            oled.oem_menu.generation+=1
         self.reactor.update_timer(self.timer,self.reactor.monotonic()+.25)
     def _shutdown(self,*args):
         self.stopped=True;self.view=None;self.active=None;self.last_native_key=None;self.fan_session=None
@@ -99,27 +95,27 @@ class ZortraxMenuService:
             return
         command = 'ZORTRAX_PLATFORM_LEVEL'
         owner = ' RUN_ID=' + run['run_id']
-        emit('// action:prompt_begin Poziomowanie platformy')
+        emit('// action:prompt_begin Platform leveling')
         if phase == 'candidate':
-            emit('// action:prompt_text Głębokość platformy %.3f mm' % (run['candidate_depth_um'] / 1000.))
+            emit('// action:prompt_text Platform depth %.3f mm' % (run['candidate_depth_um'] / 1000.))
             if run.get('deformed'):
-                emit('// action:prompt_text Środek tacki jest odkształcony. Wymień tackę i powtórz poziomowanie.')
+                emit('// action:prompt_text The center of the tray is deformed. Replace the tray and repeat leveling.')
             else:
-                emit('// action:prompt_button Zapisz wynik|' + command + ' ACTION=SAVE' + owner + '|primary')
+                emit('// action:prompt_button Save result|' + command + ' ACTION=SAVE' + owner + '|primary')
         else:
             if phase == 'await_knobs':
-                emit('// action:prompt_text Dokręć wszystkie trzy pokrętła pod platformą.')
+                emit('// action:prompt_text Tighten all three knobs under the platform.')
             else:
                 from .inventure_platform_level import adjustment_text
                 for instruction in run['instructions']:
                     emit('// action:prompt_text ' + adjustment_text(instruction))
-                emit('// action:prompt_text Głowica jest gorąca. Załóż rękawice ochronne do regulacji.')
+                emit('// action:prompt_text The hotend is hot. Wear protective gloves when adjusting the knobs.')
             if run.get('door_pause'):
-                emit('// action:prompt_text Napędy i grzanie zatrzymane. Możesz otworzyć osłony.')
-                emit('// action:prompt_text Pozostaw selektor dyszy w obecnym położeniu. Przed wybraniem Gotowe osadź tackę i zamknij drzwi oraz pokrywę.')
-            emit('// action:prompt_button Gotowe|' + command + ' ACTION=NEXT' + owner
+                emit('// action:prompt_text Motion and heating have stopped. You may open the front door and lid.')
+                emit('// action:prompt_text Leave the nozzle selector in place. Seat the tray and close the front door and lid before selecting Continue.')
+            emit('// action:prompt_button Continue|' + command + ' ACTION=NEXT' + owner
                  + ' PROMPT_ID=%d|primary' % run['prompt_id'])
-        emit('// action:prompt_footer_button Anuluj|' + command + ' ACTION=CANCEL' + owner)
+        emit('// action:prompt_footer_button Cancel|' + command + ' ACTION=CANCEL' + owner)
         emit('// action:prompt_show')
     @staticmethod
     def _xy_line_options(axis,detail):
@@ -174,10 +170,14 @@ class ZortraxMenuService:
         reviews=[]
         if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
         elif action=='leveling':
-            title = ('Start with %s down?' % params['ACTIVE_TOOL'] if params and 'ACTIVE_TOOL' in params
-                     else 'Knobs and tray checked?')
-            if params and 'ACTIVE_TOOL' in params:
-                reviews = ['Both nozzles to 200C' if params['ACTIVE_TOOL'] == 'T1' else 'T0 target 200C']
+            if self.capability(action)['backend'] == 'platform_level':
+                title = 'Start platform leveling?'
+                reviews = ['Automatic T0 selection', 'Nozzle target: 200C']
+            else:
+                title = 'Knobs and tray checked?'
+        elif action in ('door_lock','door_unlock'):
+            title = 'Enable door lock?' if action=='door_lock' else 'Disable door lock?'
+            reviews = ['Global: front door + lid']
         elif action=='alignment':
             if self._xy_available():
                 reviews=['Clean, level tray','Filament in T0 and T1','Tool heights checked']
@@ -256,24 +256,14 @@ class ZortraxMenuService:
                 ('F%d %s'%(i,name),('fan_page',dict(channel=i))) for i,name in enumerate(self.board.FAN_NAMES)])
         if action.startswith('sort_'):
             self.settings.set(sorting=action[5:]);return self._info('Models sorting',self.settings.value['sorting'])
-        if action.startswith('language_'):
-            language=action[-2:];oled=self._obj('inventure_oled')
-            if language=='pl' and getattr(oled,'menu_profile','m300')=='m300':
-                return self._info('Language','M300 launcher uses English')
-            self.settings.set(language=language)
-            if oled is not None and oled.oem_menu is not None:oled.oem_menu.language=language;oled.oem_menu.generation+=1
-            return self._info('Language',language)
+        if action=='language_en':
+            return self._info('Language','English')
         capability=self.capability(action)
         if action in ('heat_t0','heat_t1','spool_load'):capability=dict(available=True)
         if not capability['available']:return self._info('Unavailable',capability['reason'],action=action)
         title=None
-        if action == 'leveling' and capability['backend'] == 'platform_level':
-            if 'ACTIVE_TOOL' not in params:
-                return self._set_view('choice', 'Which nozzle is down?',
-                    [('Back', ('close', {}))] + [
-                        (tool + ' is down', ('request', dict(action=action, ACTIVE_TOOL=tool))) for tool in ('T0', 'T1')])
-            if params['ACTIVE_TOOL'] not in ('T0', 'T1'):
-                raise MenuError('Select the physically lowered nozzle T0 or T1')
+        if action == 'leveling':
+            params.pop('ACTIVE_TOOL', None)  # Older launchers supplied this parameter.
         if action in SERVICE_ACTIONS or action in ('heat_t0','heat_t1'):
             from .inventure_factory_core import parameters, require_heated_target
             tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
@@ -427,7 +417,7 @@ class ZortraxMenuService:
             self.active=dict(backend='service',object=self.board.load_test_context,action=action)
         elif action=='leveling':
             if self.capability(action)['backend'] == 'platform_level':
-                self._call(self.board, 'cmd_platform_level', ACTION='START', ACTIVE_TOOL=params['ACTIVE_TOOL'])
+                self._call(self.board, 'cmd_platform_level', ACTION='START')
                 run_id = self._platform_status().get('run_id')
                 if not run_id:
                     raise MenuError('Platform leveling did not establish a run')

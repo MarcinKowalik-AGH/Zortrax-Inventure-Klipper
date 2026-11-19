@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1'
+HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -652,6 +652,8 @@ class InventureMCU:
                 if not self.adc_accepting: break
                 sensor.handle_sample(read_time + .003, temperature)
     def _ready(self):
+        from .inventure_fluidd import register_legacy_commands
+        register_legacy_commands(self.printer, self.gcode)
         self.connected = True
         if self.p4_abi:
             self.commands['p4_baud'].send([])
@@ -1213,7 +1215,7 @@ class InventureMCU:
     def cmd_door_policy(self,gcmd):
         menu = gcmd.get_int('MENU', 0, minval=0, maxval=1)
         if menu and not getattr(self, 'door_policy_global', False):
-            raise gcmd.error('Menu blokady drzwiczek wymaga globalnej kontroli drzwi w MCU')
+            raise gcmd.error('The door lock menu requires global door control on the MCU')
         enabled=None if gcmd.get('ENABLE',None) is None else gcmd.get_int('ENABLE',minval=0,maxval=1)
         try:state=self._door_policy_query(enabled)
         except Exception as exc:
@@ -1226,11 +1228,11 @@ class InventureMCU:
         if enabled == 0:
             gcmd.respond_info('Door lock disabled for both doors. Be careful of moving printer parts.')
         if menu and enabled is None:
-            label = 'włączona' if state['enabled'] else 'wyłączona'
-            gcmd.respond_info('action:prompt_begin Blokada drzwiczek')
-            gcmd.respond_info('action:prompt_text Globalna kontrola drzwi i pokrywy jest ' + label + '.')
-            gcmd.respond_info('action:prompt_button Wyłącz blokadę|INVENTURE_DOOR_POLICY MENU=1 ENABLE=0')
-            gcmd.respond_info('action:prompt_button Włącz blokadę|INVENTURE_DOOR_POLICY MENU=1 ENABLE=1')
+            label = 'enabled' if state['enabled'] else 'disabled'
+            gcmd.respond_info('action:prompt_begin Door lock')
+            gcmd.respond_info('action:prompt_text Global door and lid monitoring is ' + label + '.')
+            gcmd.respond_info('action:prompt_button Disable door lock|INVENTURE_DOOR_POLICY MENU=1 ENABLE=0')
+            gcmd.respond_info('action:prompt_button Enable door lock|INVENTURE_DOOR_POLICY MENU=1 ENABLE=1')
             gcmd.respond_info('action:prompt_show')
         elif menu:
             gcmd.respond_info('action:prompt_end')
@@ -2624,7 +2626,7 @@ class InventureMCU:
         temperature=values[context['tool']]
         factory=context.get('factory') or {}
         if context.get('cold_pad') and not all(0.<=value<NOZZLE_PAD_COLD_MAX for value in values[:2]):
-            raise ValueError('Obie dysze musza byc ponizej 50 C podczas pomiaru pada')
+            raise ValueError('Both nozzles must stay below 50 C during cold pad measurement')
         selected_max=(factory['pad_temperature_bounds'][1] if factory.get('pad_cooling')
                       else self._nozzle_heating_upper(context))
         if factory.get('pad_measurement') and not context.get('cold_pad'):
@@ -3008,13 +3010,13 @@ class InventureMCU:
                 result=run['measurements'][tool]
                 x,y=result['center_xy_mm']
                 (xm,xp),(ym,yp)=result['edges_mm']
-                gcmd.respond_info('%s | środek X=%.1f Y=%.1f mm | X−=%.1f X+=%.1f Y−=%.1f Y+=%.1f' %
+                gcmd.respond_info('%s | center X=%.1f Y=%.1f mm | X−=%.1f X+=%.1f Y−=%.1f Y+=%.1f' %
                                   (label,x,y,xm,xp,ym,yp))
             elif phase=='running':
                 context=getattr(self,'load_test_context',None) or {}
-                gcmd.respond_info(label+' | pomiar w toku | '+context.get('factory',{}).get('phase','start'))
+                gcmd.respond_info(label+' | measuring | '+context.get('factory',{}).get('phase','start'))
             else:
-                gcmd.respond_info(label+' | pomiar przerwany | '+str(run.get('error') or phase))
+                gcmd.respond_info(label+' | measurement stopped | '+str(run.get('error') or phase))
             return
         if run is None:
             state=dict(phase='idle',run_id=None)
@@ -3139,9 +3141,9 @@ class InventureMCU:
             if center:
                 cold_abi=getattr(self,'nozzle_pad_cold_abi',0)
                 if tool==1 and cold_abi!=2:
-                    raise ValueError('CENTER TOOL=T1 wymaga firmware MCU '+NOZZLE_PAD_COLD_T1_RELEASE)
+                    raise ValueError('CENTER TOOL=T1 requires MCU firmware '+NOZZLE_PAD_COLD_T1_RELEASE)
                 if cold_abi not in (1,2):
-                    raise ValueError('ACTION=CENTER wymaga firmware MCU '+NOZZLE_PAD_COLD_RELEASE)
+                    raise ValueError('ACTION=CENTER requires MCU firmware '+NOZZLE_PAD_COLD_RELEASE)
             budget=pad_xyz_e_budget(params)
             plans=self._nozzle_probe_plans(gcmd,(tool,) if center else (0,1),pad=params,
                                          residual=None if center else self._read_nozzle_xy_offsets())
@@ -3151,13 +3153,13 @@ class InventureMCU:
                 now=self.reactor.monotonic()
                 temperatures=(self.panel_temperature(i,now) for i in (0,1))
                 if any(state!='valid' or not 0.<=temp<NOZZLE_PAD_COLD_MAX for temp,state in temperatures):
-                    raise ValueError('Pomiar na zimno wymaga obu dysz ponizej 50 C')
+                    raise ValueError('Cold measurement requires both nozzles below 50 C')
                 control=self._control_query()
                 self._feeder_service_preflight(control_state=control,allow_off=True)
                 if control['mode']=='OFF':
                     control=self._control_query(1,CONTROL_MODES.index('SERVICE'))
                     if control['reject'] or control['mode']!='SERVICE':
-                        raise ValueError('MCU nie wlaczyl trybu SERVICE')
+                        raise ValueError('MCU did not enter SERVICE mode')
             else:self._feeder_service_preflight()
         except (KeyError,OSError,TypeError,ValueError) as exc:
             raise gcmd.error(str(exc))
@@ -3542,9 +3544,8 @@ class InventureMCU:
         if platform is not None:
             f=context['factory']
             f['platform_level_run']=platform.run
-            if platform.run['initial_tool']=='T1':
-                f['dual_heaters']=[dict(tool=i,target=200.,power=p['max_power'],
-                    limit=platform.heater_cutoffs[i],duty=0,output_token=None) for i in (0,1)]
+            if platform.dual_heaters:
+                f['dual_heaters']=platform.dual_heaters
         if z_home:context['factory']['z_home_settings']=z_settings
         if dual and not cold_pad:
             heaters=[]
@@ -3766,7 +3767,7 @@ class InventureMCU:
                 or row['tool']!=tool or row['mode']!=f['mode']
                 or row['fault'] or row['sequence']!=seq or not row['remaining_ms']):
             if context.get('cold_pad'):
-                raise ValueError('MCU przerwał sesję pada | reject=%d reason=%d' % (row['reject'],row['reason']))
+                raise ValueError('MCU stopped the pad session | reject=%d reason=%d' % (row['reject'],row['reason']))
             raise ValueError('MCU factory guard/ownership rejected: '+json.dumps(row,sort_keys=True))
         if row['mode']==2 and not row['running']:
             raise ValueError('MCU did not start forward cassette feed: '+json.dumps(row,sort_keys=True))
@@ -4224,7 +4225,7 @@ class InventureMCU:
         if any(state!='valid' or not (0.<=value<NOZZLE_PAD_COLD_MAX if cold
                                      else self._pad_temperature_in_band(value))
                for value,state in samples):
-            raise ValueError('Pomiar zimnego pada wymaga obu dysz ponizej 50 C' if cold
+            raise ValueError('Cold pad measurement requires both nozzles below 50 C' if cold
                              else 'Pad scan requires fresh temperatures in the %g..%g C measurement band'
                              % (low,high))
         return tuple(value for value,_ in samples)
