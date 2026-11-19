@@ -1,12 +1,19 @@
 # Inventure — pomiar środka pada na zimno, 19 listopada 2026
 
-Archiwum `klippy(19).log` zawiera dwa osobne wyniki XY z tej samej drukarki. Na R24 T1 ukończyła
-`CENTER` z pionową weryfikacją obu osi. Po restarcie Klippera o 13:37:48
-T0 ukończyła pomiar od pierwszego punktu pionowymi dotknięciami. W tej
-sesji zapisano start MCU R13 i przebieg zgodny z `CENTER SCAN=TAP` z R25.
-Ostatni jawny odczyt wersji hosta w pliku pochodzi sprzed restartu i podaje R24.
-W późniejszym zapisie konsoli operator potwierdził także wynik T1 z polecenia
-`CENTER SCAN=TAP`.
+Na drukarce potwierdzono zimny pomiar środka XY metodą `CENTER SCAN=TAP`
+dla obu dysz na hoście R25 z MCU R13. Po restarcie Klippera o 13:37:48
+T0 ukończyła pomiar pionowymi dotknięciami, a o 13:59:03 konsola podała
+wynik T1. Wcześniejszy zimny pomiar T1 na R24 służy do porównania.
+
+O 14:08:04 operator odczytał `INVENTURE_VERSION`. Host podał
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25`, MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`,
+a bootloader `InventureBoot 1.7`. Host i P4 pracowały z prędkością
+750000 bodów (`baud_match=true`, `connected=true`).
+Pole `control_state` zawiera ostatnią odpowiedź MCU zapamiętaną przez host.
+Jej znacznik `#receive_time=407634.35011333297` w przeliczeniu na czas
+lokalny z wpisu startu Klippera odpowiada 13:59:03, czyli sekundzie
+zakończenia T1. MCU zgłosił wtedy `mode=OFF`, `active=0`, `armed=0`
+i `fault=0`.
 
 ## Wyniki z archiwum Klippera
 
@@ -47,9 +54,8 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=CENTER TOOL=T1 SCAN=TAP T1_PAD_X=70.80 T1_PA
 
 Środek i wszystkie cztery krawędzie T1 zgadzają się po zaokrągleniu do
 0,1 mm z wcześniejszą zimną próbą R24 oraz z obiema zapisanymi próbami
-R23 przy nastawie 100°C. Współrzędne nowej próby są dostępne z jednym
-miejscem po przecinku. W tym fragmencie konsoli brakuje dokładnych
-przedziałów styku oraz odczytu `INVENTURE_VERSION` po restarcie.
+R23 przy nastawie 100°C. Konsola podała współrzędne tej próby T1
+z jednym miejscem po przecinku.
 
 Obie dysze ukończyły na drukarce zimny pomiar środka XY. Pomiar wysokości
 i zapis offsetu XYZ wykonano w osobnych pełnych przebiegach przy 100°C.
@@ -67,7 +73,8 @@ R24 nie zawierał stanu zatrzymanego ruchu, który pozwoliłby wskazać
 konkretne wejście lub warunek. Dla T0 archiwum dokumentuje jeden
 ukończony zimny pomiar XY wykonany od pierwszego punktu pionowymi dotknięciami.
 
-Zapis konsoli operatora zawiera polecenie i wynik próby T1 z 13:52:36.
+Zapis konsoli operatora zawiera polecenie i wynik próby T1 z 13:52:36
+oraz odczyt wersji z 14:08:04.
 W pliku `klippy(19).log` wiersze 22546–22547 i 22612–22613 rejestrują
 zatrzymania T0, wiersz 22599 wynik T1,
 a wiersze 22844–22884 pionowe pomiary i wynik T0. SHA-256 pliku logu

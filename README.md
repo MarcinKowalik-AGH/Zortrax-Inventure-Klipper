@@ -1,7 +1,8 @@
 # Zortrax Inventure — host R25 / MCU R13
 
-R25 pozwala wybrać pionowe pomiary `ACTION=CENTER SCAN=TAP` na zimnej
-dyszy T0 lub T1. Na drukarce z MCU R13 wystarcza aktualizacja hosta.
+Na hoście R25 z MCU R13 obie dysze ukończyły zimny pomiar środka pada
+`ACTION=CENTER SCAN=TAP`. T0 wyznaczyła X = 81,7 i Y = 68,3 mm,
+a T1 wyznaczyła X = 70,8 i Y = 68,8 mm.
 Na R23 zapisano dwa pełne pomiary T0 → T1 → T0 przy 100°C z pustymi
 dyszami i tolerancją krawędzi 0,1 mm.
 [Wydanie R25](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r25) ·
