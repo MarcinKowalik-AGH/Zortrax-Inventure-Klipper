@@ -23,6 +23,28 @@ Pełny odczyt: [RESULT.json](INVENTURE_PAD_R23_2026-11-19_RESULT.json).
 - Od startu procedury do końca parkowania minęło 2138,084 s (35 min 38 s).
   Pole `elapsed_s=2078.3` w starym raporcie liczy czas od rozpoczęcia grzania.
 
+## Jak przebiegało próbkowanie pada
+
+![Pierwszy skan T0. Cztery krawędzie w XY, kolejne punkty X+ i dwa podejścia stołu w Z w każdym punkcie.](INVENTURE_PAD_R23_PROBKOWANIE.png)
+
+W każdym z trzech pomiarów (T0, T1, ponownie T0) host dwukrotnie wyznaczył
+krawędzie w kolejności X+, X−, Y+, Y−. Na końcu dwa razy zmierzył wysokość
+rozwarcia w wyznaczonym środku. Podczas pionowych prób TAP karetka zmieniała
+punkt XY po opuszczeniu stołu i potwierdzeniu rozwarcia PC14.
+
+Przy nastawie `Z_CLEARANCE_MM=1` poziom przejazdu T0 wynosił 138,500 mm od
+dolnej krańcówki PE12. W pierwszym punkcie stół dojechał do styku po 733
+krokach (0,914 mm), a przy pierwszej próbie T1 po 672 krokach (0,838 mm).
+Poziom przejazdu jest liczony względem limitu Z danej dyszy. Dlatego rzeczywista
+droga do styku zależy od punktu.
+
+W pierwszym pomiarze T0 karetka odjechała poziomo o 5 mm od środka
+startowego, po czym kolejne próby dzieliły przedział między stykiem i brakiem
+styku na pół. Na X+ ostatni potwierdzony przedział wyniósł 0,078125 mm.
+Przejazd od ostatniego punktu X+ do pierwszego punktu X− wyniósł 8,828125 mm
+przy opuszczonym stole. Długi zjazd stołu w okolice dolnej krańcówki nastąpił
+po całym skanie, przed zmianą narzędzia lub końcowym parkowaniem.
+
 ## Wyniki
 
 | Wielkość | T0 | T1 | T0_RETURN |
