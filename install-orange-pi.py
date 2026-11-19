@@ -70,11 +70,16 @@ def append_config_section(data, section):
     return active.rstrip(b'\r\n')+b'\n\n'+section.rstrip(b'\r\n')+b'\n\n'+autosave
 
 
-def nozzle_limit_updates(target, config, configure_nozzles=False):
+def klipper_config_module(target):
     reader_spec = importlib.util.spec_from_file_location(
         'inventure_klipper_configfile', target/'klippy/configfile.py')
     module = importlib.util.module_from_spec(reader_spec)
     reader_spec.loader.exec_module(module)
+    return module
+
+
+def nozzle_limit_updates(target, config, configure_nozzles=False):
+    module = klipper_config_module(target)
     source_reader = module.ConfigFileReader()
     sources = {}
     section_sources = {}
@@ -200,6 +205,31 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
     return updates
 
 
+def add_leveling_macros(target, config, updates):
+    """Install the five Fluidd entry points once, respecting active includes."""
+    reader = klipper_config_module(target).ConfigFileReader()
+    original = config.read_bytes()
+    before, staged = updates.get(config, (original, original))
+    active = reader.build_fileconfig_with_includes(staged.decode('utf-8'), str(config))
+    if not active.has_section('inventure_mcu'):
+        raise ValueError('Platform leveling requires [inventure_mcu] in the active config')
+    template = (ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg').read_text()
+    present = {s.casefold(): s for s in active.sections()}
+    for section in re.split(r'(?m)(?=^\[gcode_macro )', template):
+        if not section.startswith('[gcode_macro '):
+            continue
+        wanted = reader.build_fileconfig(section, 'INVENTURE_PLATFORM_LEVEL.cfg')
+        name, = wanted.sections()
+        existing = present.get(name.casefold())
+        if existing:
+            if active.get(existing, 'gcode').strip() != wanted.get(name, 'gcode').strip():
+                raise ValueError('A different Fluidd macro already uses ['+existing+']')
+        else:
+            staged = append_config_section(staged, section.encode('utf-8'))
+    if staged != before:
+        updates[config] = (before, staged)
+
+
 def atomic_config_write(path, data):
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.'+path.name+'.', delete=False) as handle:
         staged = Path(handle.name)
@@ -213,7 +243,8 @@ def atomic_config_write(path, data):
             staged.unlink(missing_ok=True)
 
 
-def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False):
+def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
+           configure_leveling=False):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
@@ -221,6 +252,8 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
     plan=core.install(target)
     config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
                     if upgrade_nozzle_limits or configure_nozzles else {})
+    if configure_leveling:
+        add_leveling_macros(target, config, config_updates)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     check_print_job()
@@ -272,7 +305,9 @@ def main():
     parser.add_argument('--configure-nozzles',action='store_true',
                         help='Configure both native nozzle heaters to 310 C and include T1 in cooling')
     args=parser.parse_args()
-    try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles)
+    parser.add_argument('--configure-leveling',action='store_true',
+                        help='Add the ZORTRAX_LEVEL platform leveling buttons to Fluidd')
+    try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,args.configure_leveling)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

@@ -26,6 +26,8 @@ on:
       - 'tests/test_orange_pi_z_home_core.py'
       - 'tests/test_orange_pi_z_home_host.py'
       - 'tests/test_orange_pi_zortrax_menu.py'
+      - 'tests/test_orange_pi*level*.py'
+      - 'config/INVENTURE_PLATFORM_LEVEL.cfg'
       - 'tests/test_orange_pi_oled_fast.py'
       - 'ci/benchmark_inventure_oled.py'
       - 'ci/check_native_nozzle_startup.py'
@@ -44,8 +46,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m unittest discover -s tests -p 'test_orange_pi*.py' -v
       - run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6'
+      - run: python -m unittest discover -s tests -p 'test_orange_pi*.py' -v
       - run: python ci/check_native_nozzle_startup.py
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json

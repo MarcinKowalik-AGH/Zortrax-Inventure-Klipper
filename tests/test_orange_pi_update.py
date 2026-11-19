@@ -104,6 +104,41 @@ class OrangePiUpdateTests(unittest.TestCase):
             'sensor_channel: 1\nmax_temp: 220\nmin_temp: 0\n')
         return heaters
 
+    def test_level_buttons_install_alongside_nozzle_updates_and_preserve_includes(self):
+        heaters = self.legacy_nozzle_config()
+        heaters.write_text(heaters.read_text().split('[extruder1]')[0])
+        self.config.write_text('[inventure_mcu]\n[include heaters.cfg]\n'
+                               '[include buttons.cfg]\n#*# SAVE_CONFIG\n')
+        template = (ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg').read_text()
+        start = template.index('[gcode_macro ZORTRAX_LEVEL_STATUS]')
+        end = template.index('[gcode_macro ', start+1)
+        buttons = self.config.with_name('buttons.cfg')
+        buttons.write_text(template[start:end])
+        updates = update.nozzle_limit_updates(self.live, self.config, True)
+        update.add_leveling_macros(self.live, self.config, updates)
+        self.assertNotIn(buttons, updates)
+        for path, (before, after) in updates.items():
+            self.assertEqual(path.read_bytes(), before)
+            path.write_bytes(after)
+        installed = self.config.read_text()
+        self.assertNotIn('[gcode_macro ZORTRAX_LEVEL_STATUS]', installed)
+        self.assertIn('[gcode_macro ZORTRAX_LEVEL]', installed)
+        self.assertIn('heater_generic inventure_t1', installed)
+        self.assertLess(installed.index('[gcode_macro ZORTRAX_LEVEL_CANCEL]'),
+                        installed.index('#*# SAVE_CONFIG'))
+        repeated = {}
+        update.add_leveling_macros(self.live, self.config, repeated)
+        self.assertEqual(repeated, {})
+
+    def test_level_buttons_preserve_existing_custom_command(self):
+        self.legacy_nozzle_config()
+        self.config.write_text('[inventure_mcu]\n[gcode_macro zortrax_level]\n'
+                               'gcode:\n    M118 custom\n')
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'different Fluidd macro'):
+            update.add_leveling_macros(self.live, self.config, {})
+        self.assertEqual(self.config.read_bytes(), before)
+
     def test_migrate_legacy_native_nozzle_limits_in_the_active_include(self):
         heaters=self.legacy_nozzle_config()
         before=heaters.read_bytes()

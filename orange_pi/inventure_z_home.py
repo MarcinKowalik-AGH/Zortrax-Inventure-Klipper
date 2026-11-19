@@ -427,10 +427,12 @@ class ZHomeProgram(FactoryProgram):
         self.z_steps += sent if operation == 0 else -sent
         return status == 1, sent
 
-    def _z_oem_reference(self, span):
+    def _z_oem_reference(self, span, upper_limit=None):
         p = self.settings
         start = self.z_steps
         lower, upper = start - span, start + span
+        if upper_limit is not None:
+            upper = min(upper, upper_limit)
         tracker = ZReleaseTracker(span, p['z_stable_cycles'], p['z_max_cycles'])
         up_steps = down_steps = zero_releases = 0
         while True:

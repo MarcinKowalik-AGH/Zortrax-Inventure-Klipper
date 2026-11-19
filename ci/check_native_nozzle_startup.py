@@ -36,6 +36,10 @@ def load_config(klipper, config):
     for _, fan in printer.lookup_objects('heater_fan'):
         fan.handle_ready()
         assert fan.heaters == [t0, t1]
+    for name in ('ZORTRAX_LEVEL', 'ZORTRAX_LEVEL_NEXT', 'ZORTRAX_LEVEL_STATUS',
+                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL'):
+        assert printer.lookup_object('gcode_macro '+name)
+    assert 'ZORTRAX_PLATFORM_LEVEL' in printer.lookup_object('gcode').ready_gcode_handlers
     print(json.dumps(dict(status='CONFIG_LOADED', limits_c=[t0.max_temp,t1.max_temp],
                          adc_readers=len(board.adcs), fan_heaters=['extruder','inventure_t1'])))
 
@@ -86,6 +90,7 @@ def check():
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True)
+            updater.add_leveling_macros(klipper,field,updates)
             assert updates
             for path,(before,after) in updates.items():
                 assert path.read_bytes() == before

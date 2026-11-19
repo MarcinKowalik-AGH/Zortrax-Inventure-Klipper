@@ -1,4 +1,11 @@
-# Zortrax Inventure — host R25 / MCU R13
+# Zortrax Inventure — host R26 / MCU R13
+
+R26 dodaje **poziomowanie platformy w pięciu punktach** z regulacją trzech pokręteł.
+Polecenie `ZORTRAX_PLATFORM_LEVEL` i przyciski `ZORTRAX_LEVEL` w Fluidd
+prowadzą przez tę samą procedurę. Pomiar wykonuje T0 przy 200°C.
+Pierwszy pełny przebieg tej funkcji na fizycznej drukarce czeka na potwierdzenie.
+[Procedura, instalacja i źródła firmware](docs/INVENTURE_PLATFORM_LEVEL_R26.md) ·
+[Wydanie R26](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-platform-level-r26)
 
 Na hoście R25 z MCU R13 obie dysze ukończyły zimny pomiar środka pada
 `ACTION=CENTER SCAN=TAP`. T0 wyznaczyła X = 81,7 i Y = 68,3 mm,

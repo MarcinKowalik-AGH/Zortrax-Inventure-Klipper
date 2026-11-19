@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R25'
+HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -386,6 +386,7 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_PROCEDURE',self.cmd_procedure,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_Z_TEST',self.cmd_nozzle_z_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_XY_TEST',self.cmd_nozzle_xy_test,when_not_ready=True)
+        self.gcode.register_command('ZORTRAX_PLATFORM_LEVEL', self.cmd_platform_level, when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_PAD_CALIBRATE',self.cmd_nozzle_pad_calibrate,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT_STOP',self.cmd_xy_repeat_stop,when_not_ready=True)
@@ -1545,6 +1546,7 @@ class InventureMCU:
         self.reactor.register_async_callback(deliver)
     def get_status(self, eventtime):
         return dict(self.status, temperatures=list(self.temperatures),
+                    platform_level=self.platform_level_status(),
                     host_revision=HOST_REVISION, host_module=str(Path(__file__).resolve()),
                     heat_test_abi=self.heat_test_abi,
                     motor_test_abi=getattr(self,'motor_test_abi',0),
@@ -2552,7 +2554,19 @@ class InventureMCU:
         if context is None:return
         self.load_test_context=None
         self.reactor.unregister_timer(context['timer'])
-        if context.get('factory') is not None:context['factory']['reference_valid']=False
+        if context.get('factory') is not None:
+            factory=context['factory']
+            factory['reference_valid']=False
+            run=factory.get('platform_level_run')
+            if run is not None:
+                from .inventure_platform_level import notice, publish_candidate
+                if phase=='done':
+                    publish_candidate(run)
+                else:
+                    run.pop('_pending_result',None)
+                    run.update(phase='cancelled' if phase=='stopped' else 'failed',error=reason,
+                               candidate_depth_um=None)
+                notice(self,run)
         context['duty']=0
         self._load_test_emit(context,phase,reason)
 
@@ -3023,6 +3037,35 @@ class InventureMCU:
             raise ValueError('Pad calibration requires both doors closed while global Door lock is enabled')
         return state
 
+    def cmd_platform_level(self,gcmd):
+        from .inventure_platform_level import command
+        return command(self,gcmd)
+
+    def platform_level_status(self):
+        from .inventure_platform_level import status
+        return status(self)
+
+    def platform_level_available(self):
+        from .inventure_leveling_transport import available
+        return available(self)
+
+    def _start_platform_level(self,gcmd,run):
+        from .inventure_leveling_transport import start
+        try:
+            start(self,gcmd,run)
+        except (ValueError,TypeError,KeyError,OSError) as exc:
+            raise gcmd.error(str(exc)) from exc
+
+    def _platform_level_confirm_doors(self,gcmd,run):
+        from .inventure_leveling_transport import confirm_doors
+        try:confirm_doors(self,run)
+        except ValueError as exc:raise gcmd.error(str(exc)) from exc
+
+    def _stop_platform_level(self,gcmd,run):
+        context=getattr(self,'load_test_context',None)
+        if context and context.get('factory',{}).get('platform_level_run') is run:
+            self.cmd_control_stop(gcmd)
+
     def cmd_nozzle_pad_calibrate(self,gcmd):
         from .inventure_nozzle_xyz import pad_xyz_e_budget, pad_xyz_parameters
         action=str(gcmd.get('ACTION','STATUS')).upper()
@@ -3386,7 +3429,7 @@ class InventureMCU:
                 ', '.join((*PROCEDURES,*Z_HOME_PROCEDURES)))
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
-    def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None):
+    def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None,platform=None):
         from .inventure_factory_core import (
             parameters, FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
         )
@@ -3443,7 +3486,9 @@ class InventureMCU:
                 raise ValueError('Load test already active; use STATUS or STOP')
             if z_home:
                 self._z_home_inputs({} if dual else {'nozzle_contact':1})
-                if alignment:
+                if platform is not None:
+                    program=platform.execute()
+                elif alignment:
                     from .inventure_nozzle_xy import NozzleXYProgram
                     batch=self.nozzle_z_context
                     program=NozzleXYProgram(p,z_settings).run_nozzle_xy(
@@ -3482,6 +3527,12 @@ class InventureMCU:
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
+        if platform is not None:
+            f=context['factory']
+            f['platform_level_run']=platform.run
+            if platform.run['initial_tool']=='T1':
+                f['dual_heaters']=[dict(tool=i,target=200.,power=p['max_power'],
+                    limit=platform.heater_cutoffs[i],duty=0,output_token=None) for i in (0,1)]
         if z_home:context['factory']['z_home_settings']=z_settings
         if dual and not cold_pad:
             heaters=[]
@@ -3732,7 +3783,11 @@ class InventureMCU:
             coarse=dual and action.get('stage')=='coarse' and f['heat_started']
             qualified=(f['reference_valid'] and f['selection_commanded'] and
                        (context['ready_latched'] or coarse or cold and f.get('pad_measurement')))
-            if not (qualified or clearance):
+            level_setup=('platform_level_run' in f and action.get('stage')=='level_setup'
+                         and 'Z' in f['homed'] and not f['heat_started']
+                         and 0<=pos[2]+action['steps']/Z_STEPS_PER_MM<=110.
+                         and (action['stop_mask'] & 8 and not action['stop_value'] & 8))
+            if not (qualified or clearance or level_setup):
                 raise ValueError('Z probe requires the heated, selected nozzle and a valid lower reference')
             self._z_home_inputs(action['initial_raw'])
             if self.load_test_context is not context:raise ValueError('Z reference was stopped')
@@ -3747,6 +3802,9 @@ class InventureMCU:
             dz=distance if axis=='Z' else 0.;length=abs(distance)
             mask={'X':1,'Y':2,'Z':4}[axis]
             stop_value=0 if releasing else mask
+            if 'platform_level_run' in f:
+                mask|=16 if axis=='Z' else 24
+                stop_value|=16
         else:
             xy_ready='dual_heaters' in f and not e and {'X','Y'}.issubset(f['homed'])
             if not f['reference_valid'] and not xy_ready:
@@ -3755,6 +3813,10 @@ class InventureMCU:
                 raise ValueError('Factory motion outside service envelope')
             dx=x-pos[0];dy=y-pos[1];dz=0.;length=math.hypot(dx,dy) or abs(e)
             stop_value=0
+            if 'platform_level_run' in f:
+                if e:raise ValueError('E travel is not part of platform leveling')
+                self._z_home_inputs({'nozzle_contact':1})
+                mask,stop_value=24,16
             if action.get('stage')=='pad_travel':
                 if 'pad_budget' not in f or e or action['speed']>8:
                     raise ValueError('Unexpected pad traverse')
@@ -3782,6 +3844,9 @@ class InventureMCU:
         speed=action['speed']
         if sweep:requested_rate=math.ceil(XY_STEPS_PER_MM*speed)
         else:requested_rate=max(1,math.ceil(Z_STEPS_PER_MM*speed if probe else master*speed/length))
+        if 'platform_level_run' in f and not home and not probe:
+            # R13 fast XY does not accept local PC14/PC13 stop inputs.
+            requested_rate=min(requested_rate,MAX_MASTER_RATE)
         fast_xy=(p['speed_profile']=='OEM' and not home and (counts[0] or counts[1])
                  and requested_rate>MAX_MASTER_RATE)
         if fast_xy and (not f['session'] or requested_rate>FACTORY_MOTION_MAX_RATE):
@@ -4014,6 +4079,8 @@ class InventureMCU:
             if now>=m['deadline']:raise ValueError('Factory motion deadline exceeded')
             return None
         if m['home']:
+            if 'platform_level_run' in f and row['hit']!={'X':1,'Y':2,'Z':4}[a['axis']]:
+                raise ValueError('Platform homing stopped without its selected endstop')
             if row['reason']!='stop_input' or not row['hit']&m['mask']:
                 message=('failed to release its limit' if kind=='home_release'
                          else 'failed to reach its limit')
@@ -4152,6 +4219,9 @@ class InventureMCU:
 
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
+        if kind.startswith('level_') and 'platform_level_run' in f:
+            from .inventure_leveling_transport import factory_action
+            return factory_action(self,context,action)
         if kind=='module':
             name=action['name']
             if action['state']=='start':f['module_stack'].append(name)
@@ -4159,7 +4229,7 @@ class InventureMCU:
                 f['module_stack'].pop()
                 if name=='select_tool':
                     if f['operation'] in ('NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT',
-                                          'NOZZLE_PAD_CALIBRATION'):
+                                          'NOZZLE_PAD_CALIBRATION','PLATFORM_LEVEL'):
                         stroke=f['motion_legs'].get('selector_press')
                         if stroke is None or stroke['reason']!='completed':
                             raise ValueError('Nozzle calibration requires a completed mechanical selector press')
@@ -4286,9 +4356,9 @@ class InventureMCU:
             if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')
             if 'z_home_settings' in f:
                 self._z_home_inputs({'nozzle_contact':1,
-                    'z_bottom':int(f['operation'] in ('Z_PREPARE','NOZZLE_Z_PREPARE'))})
+                    'z_bottom':int(f['operation'] in ('Z_PREPARE','NOZZLE_Z_PREPARE','PLATFORM_LEVEL'))})
                 if self.load_test_context is not context:return None
-            if 'xy_budget' in f or 'pad_budget' in f:
+            if 'xy_budget' in f or 'pad_budget' in f or 'platform_level_run' in f:
                 state=self._control_query(2)
                 if self.load_test_context is not context:return None
                 if state['reject'] or state['active'] or state['armed']:
@@ -4296,13 +4366,20 @@ class InventureMCU:
             f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
             self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
                 else 'factory_procedure_completed',phase='done')
-            if 'xy_budget' not in f and 'pad_budget' not in f:self._control_abort()
+            if not any(key in f for key in ('xy_budget','pad_budget','platform_level_run')):self._control_abort()
             return None
         raise ValueError('Unknown factory action '+kind)
 
     def _factory_tick(self,context):
         f=context['factory'];now=self.reactor.monotonic()
         if now>=f['total_deadline']:raise ValueError('Factory procedure timeout')
+        if 'platform_level_run' in f:
+            self._z_home_inputs({})
+            if self.load_test_context is not context:return
+            if f.get('level_paused'):
+                from .inventure_leveling_transport import paused_tick
+                paused_tick(self,context)
+                return
         probe=self._active_nozzle_z_sample(context)
         waiting=probe is not None and now<probe.get('poll_after',0.)
         # Only a running MCU sample uses the last control response between

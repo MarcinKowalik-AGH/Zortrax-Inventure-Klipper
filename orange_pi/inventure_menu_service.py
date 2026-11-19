@@ -12,10 +12,18 @@ from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, MODEL_MATERIALS,
     NATIVE_ACTIONS, READ_ACTIONS, SERVICE_ACTIONS, SUPPORT_MATERIALS,
     MenuError, SettingsStore, View, source_identity)
 
+LEVEL_PHASE_TITLES = {
+    'preparing': 'Preparing platform', 'await_knobs': 'Tighten all 3 knobs',
+    'heating': 'Heating nozzles', 'reference': 'Finding reference',
+    'measuring': 'Measuring platform', 'adjust': 'Adjust platform',
+    'finishing': 'Finishing', 'candidate': 'Leveling result',
+}
+
 
 class Command:
     def __init__(self, service, **values):self.service=service;self.values=values
     def get(self,key,default=None):return self.values.get(key,default)
+    def get_command_parameters(self):return dict(self.values)
     def get_int(self,key,default=None,minval=None,maxval=None):
         value=int(self.get(key,default))
         if minval is not None and value<minval or maxval is not None and value>maxval:raise MenuError('Invalid '+key)
@@ -39,6 +47,7 @@ class ZortraxMenuService:
         self.view=None;self.active=None;self.last=None;self.messages=[];self.stopped=False
         self.fan_session=None
         self.executing=False;self.last_buttons=0;self.last_sequence=None;self.last_native_key=None
+        self.platform_dialog = None
         self.last_pause_view=None
         self.platform_step=float(config.get('zortrax_platform_step',1.))
         self.platform_speed=float(config.get('zortrax_platform_speed',1.))
@@ -72,6 +81,46 @@ class ZortraxMenuService:
     def _xy_status(self):
         read=getattr(self.board,'nozzle_xy_status',None)
         return read() if callable(read) else {}
+    def _platform_status(self):
+        read = getattr(self.board, 'platform_level_status', None)
+        return read() if callable(read) else {}
+    def _platform_fluidd_prompt(self, run):
+        phase = run.get('phase')
+        key = None
+        if run.get('awaiting_operator') or phase == 'candidate':
+            key = (run['run_id'], phase, run.get('prompt_id'))
+        if key == self.platform_dialog:
+            return
+        emit = self.gcode.respond_raw
+        if self.platform_dialog is not None:
+            emit('// action:prompt_end')
+        self.platform_dialog = key
+        if key is None:
+            return
+        command = 'ZORTRAX_PLATFORM_LEVEL'
+        owner = ' RUN_ID=' + run['run_id']
+        emit('// action:prompt_begin Poziomowanie platformy')
+        if phase == 'candidate':
+            emit('// action:prompt_text Głębokość platformy %.3f mm' % (run['candidate_depth_um'] / 1000.))
+            if run.get('deformed'):
+                emit('// action:prompt_text Środek tacki jest odkształcony. Wymień tackę i powtórz poziomowanie.')
+            else:
+                emit('// action:prompt_button Zapisz wynik|' + command + ' ACTION=SAVE' + owner + '|primary')
+        else:
+            if phase == 'await_knobs':
+                emit('// action:prompt_text Dokręć wszystkie trzy pokrętła pod platformą.')
+            else:
+                from .inventure_platform_level import adjustment_text
+                for instruction in run['instructions']:
+                    emit('// action:prompt_text ' + adjustment_text(instruction))
+                emit('// action:prompt_text Głowica jest gorąca. Załóż rękawice ochronne do regulacji.')
+            if run.get('door_pause'):
+                emit('// action:prompt_text Napędy i grzanie zatrzymane. Możesz otworzyć osłony.')
+                emit('// action:prompt_text Pozostaw selektor dyszy w obecnym położeniu. Przed wybraniem Gotowe osadź tackę i zamknij drzwi oraz pokrywę.')
+            emit('// action:prompt_button Gotowe|' + command + ' ACTION=NEXT' + owner
+                 + ' PROMPT_ID=%d|primary' % run['prompt_id'])
+        emit('// action:prompt_footer_button Anuluj|' + command + ' ACTION=CANCEL' + owner)
+        emit('// action:prompt_show')
     @staticmethod
     def _xy_line_options(axis,detail):
         choices=(0,) if axis=='X' and detail.get('x_mode')=='STOCK_REFERENCE' else range(-6,7)
@@ -88,6 +137,7 @@ class ZortraxMenuService:
         cal=self._status('inventure_calibration')
         filament=self._obj('inventure_filament');level=self._obj('inventure_leveling');align=self._obj('inventure_alignment');pre=self._obj('inventure_preflight')
         xy=self._xy_status();lines=xy.get('lines') or {}
+        platform = self._platform_status()
         return (id(ctx) if ctx is not None else None, f.get('token'),
             None if ctx is None else ctx.get('measurement',{}).get('completed_jogs'),
             getattr(ops,'epoch',None),getattr(self._obj('inventure_materials'),'generation',None),
@@ -97,6 +147,9 @@ class ZortraxMenuService:
             getattr(getattr(level,'session',None),'candidate',None),
             id(getattr(align,'lease',None)),getattr(align,'state',None),
             repr(getattr(align,'candidate',None)),
+            platform.get('run_id'), platform.get('phase'), platform.get('next_point'),
+            platform.get('prompt_id'), platform.get('awaiting_operator'),
+            repr(platform.get('instructions')), platform.get('candidate_depth_um'), platform.get('deformed'),
             self._xy_available(),xy.get('run_id'),xy.get('phase'),lines.get('X'),lines.get('Y'),repr(xy.get('candidate')),
             getattr(pre,'epoch',None),getattr(getattr(pre,'ticket',None),'token',None),
             tuple(getattr(self.board,'fan_manual_last',{}).get(k) for k in ('run','channel','phase')))
@@ -120,7 +173,11 @@ class ZortraxMenuService:
     def _confirm(self,action,params=None,title=None):
         reviews=[]
         if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
-        elif action=='leveling':title='Knobs and tray checked?'
+        elif action=='leveling':
+            title = ('Start with %s down?' % params['ACTIVE_TOOL'] if params and 'ACTIVE_TOOL' in params
+                     else 'Knobs and tray checked?')
+            if params and 'ACTIVE_TOOL' in params:
+                reviews = ['Both nozzles to 200C' if params['ACTIVE_TOOL'] == 'T1' else 'T0 target 200C']
         elif action=='alignment':
             if self._xy_available():
                 reviews=['Clean, level tray','Filament in T0 and T1','Tool heights checked']
@@ -138,6 +195,10 @@ class ZortraxMenuService:
             return dict(available=True,backend='host_view',reason=None)
         if action=='alignment' and self._xy_available():
             return dict(available=True,backend='nozzle_xy',reason=None)
+        if action == 'leveling':
+            available = getattr(self.board, 'platform_level_available', None)
+            if callable(available) and available():
+                return dict(available=True, backend='platform_level', reason=None)
         if action in NATIVE_ACTIONS:
             name=NATIVE_ACTIONS[action];enabled=self._enabled(name)
             if action in ('pause','resume','cancel_yes') and not enabled:
@@ -206,6 +267,13 @@ class ZortraxMenuService:
         if action in ('heat_t0','heat_t1','spool_load'):capability=dict(available=True)
         if not capability['available']:return self._info('Unavailable',capability['reason'],action=action)
         title=None
+        if action == 'leveling' and capability['backend'] == 'platform_level':
+            if 'ACTIVE_TOOL' not in params:
+                return self._set_view('choice', 'Which nozzle is down?',
+                    [('Back', ('close', {}))] + [
+                        (tool + ' is down', ('request', dict(action=action, ACTIVE_TOOL=tool))) for tool in ('T0', 'T1')])
+            if params['ACTIVE_TOOL'] not in ('T0', 'T1'):
+                raise MenuError('Select the physically lowered nozzle T0 or T1')
         if action in SERVICE_ACTIONS or action in ('heat_t0','heat_t1'):
             from .inventure_factory_core import parameters, require_heated_target
             tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
@@ -358,8 +426,15 @@ class ZortraxMenuService:
             self._service_ready();self._call(self.board,'cmd_load_test',ACTION='HEAT',TOOL='T'+action[-1],**params)
             self.active=dict(backend='service',object=self.board.load_test_context,action=action)
         elif action=='leveling':
-            obj=self._obj('inventure_leveling');self._call(obj,'cmd_start',ACK='KNOBS_AND_TRAY_CHECKED')
-            self.active=dict(backend='level',object=obj,session=obj.session,action=action)
+            if self.capability(action)['backend'] == 'platform_level':
+                self._call(self.board, 'cmd_platform_level', ACTION='START', ACTIVE_TOOL=params['ACTIVE_TOOL'])
+                run_id = self._platform_status().get('run_id')
+                if not run_id:
+                    raise MenuError('Platform leveling did not establish a run')
+                self.active = dict(backend='platform_level', object=self.board, run_id=run_id, action=action)
+            else:
+                obj=self._obj('inventure_leveling');self._call(obj,'cmd_start',ACK='KNOBS_AND_TRAY_CHECKED')
+                self.active=dict(backend='level',object=obj,session=obj.session,action=action)
         elif action=='alignment':
             if self._xy_available():
                 self._service_ready()
@@ -443,6 +518,7 @@ class ZortraxMenuService:
         if backend=='service':return getattr(self.board,'load_test_context',None) is obj
         if backend=='filament':return getattr(obj,'job',None)==a['job']
         if backend=='level':return getattr(obj,'session',None) is a['session']
+        if backend=='platform_level':return self._platform_status().get('run_id') == a['run_id']
         if backend=='align':return getattr(obj,'lease',None)==a['session']
         if backend=='nozzle_xy':return self._xy_status().get('run_id')==a['run_id']
         if backend=='preflight':return getattr(obj,'epoch',None)==a['epoch']
@@ -469,6 +545,36 @@ class ZortraxMenuService:
             if detail.get('factory'):
                 steps=detail['factory'].get('e_sent_steps',0)
                 options.append(('E %.1fmm nominal'%(steps/960.),None))
+        elif backend == 'platform_level':
+            detail = self._platform_status()
+            phase = detail['phase']
+            if phase not in LEVEL_PHASE_TITLES:
+                self.active = None
+                self.last = detail
+                return self._info('Platform leveling', detail.get('error') or phase, result=detail)
+            if phase in ('await_knobs', 'adjust') and detail.get('awaiting_operator'):
+                if phase == 'adjust':
+                    for instruction in detail.get('instructions', []):
+                        knob = instruction['knob'].replace('_', ' ').title()
+                        arrow = 'CCW' if instruction['direction'] == 'counterclockwise' else 'CW'
+                        options += [(knob + ': ' + instruction['action'], None),
+                                    ('%.2f turns %s' % (instruction['turns'], arrow), None)]
+                    options.append(('Hot head / wear gloves', None))
+                if detail.get('door_pause'):
+                    options += [('Access now permitted', None), ('Leave selector in place', None),
+                                ('Seat tray, close doors', None), ('and lid before Next', None)]
+                label = 'Adjusted / next' if phase == 'adjust' else 'Knobs tightened / next'
+                options.append((label, ('continue', dict(prompt=detail['prompt_id']))))
+            elif phase == 'candidate':
+                if detail.get('deformed'):
+                    options.append(('Replace deformed tray', None))
+                else:
+                    options.append(('Review / save result', ('commit_request', {})))
+                depth = detail.get('candidate_depth_um')
+                if depth is not None:
+                    options.append(('Depth %.3fmm' % (depth / 1000.), None))
+            elif detail.get('next_point') is not None:
+                options.append(('Pad %s' % detail['next_point'], None))
         elif backend=='nozzle_xy':
             detail=self._xy_status();phase=detail['phase']
             if phase not in ('printing','select'):
@@ -531,7 +637,10 @@ class ZortraxMenuService:
         key=(backend,phase,tuple((x[0],repr(x[1])) for x in options),self._binding())
         if key!=self.last_native_key:
             self.last_native_key=key
-            title='Review XY' if phase=='review_xy' else str(phase).replace('_',' ').title()
+            title = (LEVEL_PHASE_TITLES[phase] if backend == 'platform_level' else
+                     'Review XY' if phase=='review_xy' else str(phase).replace('_',' ').title())
+            if backend == 'platform_level' and phase in ('await_knobs', 'adjust') and not detail.get('awaiting_operator'):
+                title = 'Please wait'
             self._set_view('running',title,options,data=dict(backend=backend,phase=phase))
         return self.view
 
@@ -547,6 +656,7 @@ class ZortraxMenuService:
         elif backend=='filament':
             if obj.job==active['job']:self._call(obj,'cmd_cancel')
         elif backend in ('level','align'):self._call(obj,'cmd_cancel')
+        elif backend=='platform_level':self._call(obj, 'cmd_platform_level', ACTION='CANCEL', RUN_ID=active['run_id'])
         elif backend=='nozzle_xy':self._call(obj,'cmd_nozzle_xy_test',ACTION='STOP',RUN_ID=active['run_id'])
         elif backend=='preflight':
             if obj.epoch==active['epoch']:self._call(obj,'cmd_cancel')
@@ -570,6 +680,12 @@ class ZortraxMenuService:
         if verb=='commit_request':
             active=self.active
             if active is None:raise MenuError('Calibration owner ended')
+            if active['backend'] == 'platform_level':
+                data = self._platform_status()
+                if data.get('phase') != 'candidate' or data.get('deformed'):
+                    raise MenuError('No valid leveling result to save')
+                return self._set_view('confirm', 'Save leveling result?',
+                    [('No / Back', ('close', {})), ('Yes / Save', ('commit', {}))])
             if active['backend']=='nozzle_xy':
                 detail=self._xy_status()
                 candidate=detail.get('candidate');lines=detail.get('lines') or {}
@@ -599,6 +715,8 @@ class ZortraxMenuService:
                 [('Back',('close',{}))]+self._xy_line_options(axis,self._xy_status()))
         if verb=='continue':
             if backend=='filament':self._call(obj,'cmd_continue',TOKEN=args['owner_token'])
+            elif backend=='platform_level':
+                self._call(obj, 'cmd_platform_level', ACTION='NEXT', RUN_ID=active['run_id'], PROMPT_ID=args['prompt'])
             elif backend=='level':self._call(obj,'cmd_advance',ACK='ADJUSTED_AND_DOORS_CLOSED')
             elif backend=='align':self._call(obj,'cmd_advance')
             else:raise MenuError('This owner has no continuation')
@@ -611,7 +729,9 @@ class ZortraxMenuService:
             self._call(obj,'cmd_nozzle_xy_test',ACTION='LINE',RUN_ID=active['run_id'],
                 AXIS=args['axis'],LINE=args['line'])
         elif verb=='commit':
-            if backend=='level':
+            if backend=='platform_level':
+                self._call(obj, 'cmd_platform_level', ACTION='SAVE', RUN_ID=active['run_id'])
+            elif backend=='level':
                 params={'ACK':'SAVE_HOST_LEVELING'}
                 if args.get('deformed'):params['DEFORMATION_ACK']='ACCEPT_DEFORMED_TRAY'
                 self._call(obj,'cmd_commit',**params)
@@ -674,7 +794,13 @@ class ZortraxMenuService:
             filament=self._obj('inventure_filament')
             ctx=getattr(self.board,'load_test_context',None)
             xy=self._xy_status()
-            if self.active is None and xy.get('phase') in ('printing','select'):
+            platform = self._platform_status()
+            self._platform_fluidd_prompt(platform)
+            if self.active is None and platform.get('run_id') and platform.get('phase') in LEVEL_PHASE_TITLES:
+                self.active = dict(backend='platform_level', object=self.board,
+                                   run_id=platform['run_id'], action='leveling')
+                self.view=None;self.last_native_key=None
+            elif self.active is None and xy.get('phase') in ('printing','select'):
                 self.active=dict(backend='nozzle_xy',object=self.board,run_id=xy['run_id'],action='alignment')
                 self.view=None;self.last_native_key=None
             elif self.active is None and ctx is not None:
@@ -685,8 +811,11 @@ class ZortraxMenuService:
                 self.active=dict(backend='filament',object=filament,job=filament.job,action='native_filament')
                 self.view=None;self.last_native_key=None
             if self.active is not None and not self.executing:
-                if (self.active['backend']=='nozzle_xy' and self.view is not None
+                if (self.active['backend'] in ('nozzle_xy','platform_level') and self.view is not None
                         and eventtime>=self.view.deadline):
+                    self.view=None;self.last_native_key=None
+                if (self.active['backend'] == 'platform_level' and self.view is not None
+                        and self.view.kind == 'confirm' and self.view.binding != self._binding()):
                     self.view=None;self.last_native_key=None
                 if self.view is None or self.view.kind=='running':self._running_view()
             elif self.view is not None and self.reactor.monotonic()>=self.view.deadline:
@@ -714,6 +843,8 @@ class ZortraxMenuService:
             if op=='OPEN':
                 from .inventure_factory_core import defaults
                 allowed={k.upper() for k in defaults()}|{'T0_TEMP','T1_TEMP','MODE','X_MODE','T0_PROFILE'}
+                if gcmd.get('ACTION') == 'leveling':
+                    allowed.add('ACTIVE_TOOL')
                 query=getattr(gcmd,'get_command_parameters',None)
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 params={k:v for k,v in values.items() if k not in ('OP','ACTION')}

@@ -59,7 +59,8 @@ def install(target,apply=False,rollback=None,service='klipper'):
     extra_modules=meta.get('extra_modules',{})
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
                     'inventure_oled_uifast_transport.py','inventure_z_home.py',
-                    'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py'}
+                    'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
+                    'inventure_platform_level.py','inventure_leveling_transport.py'}
     if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras:
         raise ValueError('Unexpected optional module manifest')
     names.extend(extra_modules);optional.update(extra_modules)
