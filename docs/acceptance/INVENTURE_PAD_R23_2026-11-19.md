@@ -86,7 +86,8 @@ Pola offsetu i przesunięcia karetki mają przeciwne znaki z definicji.
 
 ## Co pozostaje osobnym etapem
 
-- Powtarzalność między niezależnymi przebiegami będzie można policzyć po kolejnych próbach.
+- Porównanie dwóch niezależnych przebiegów znajduje się poniżej. Kolejne
+  próby poszerzą serię do oceny powtarzalności.
 - PREP=EMPTY: wykonane kroki E dla T0 i T1 wynoszą zero. Ten przebieg
   nie jest testem gorącej retrakcji ani załadunku filamentu.
 - Zapis nie stosuje automatycznie offsetu do natywnej zmiany narzędzia
@@ -113,3 +114,29 @@ Obie odpowiedzi z 10:39:05 zawierają `phase=saved` i ścieżkę
 diagnostyka Z i wartości kandydata są identyczne z odczytem przed zapisem.
 SHA256 załącznika `Wklejony tekst(20261119-093934).txt` wynosi
 `4879ceb5a7a25d4c562c3f44fd5af30a93e7131c261f5b347dc90cf3e5df7ac0`.
+
+## Drugi pełny przebieg
+
+W pliku `klippy(17).log(1).zip` próba `4eed5e30be704a6ca57440e1e7f27b44`
+zakończyła pomiary T0 → T1 → T0 i parkowanie po 35 min 22 s. Ostatni
+status nowej próby to `candidate` z `error=null` i `saved_file=null`.
+Status `saved` w tym pliku dotyczy pierwszej próby.
+[Pełny wynik drugiej próby](INVENTURE_PAD_R23_2026-11-19_PROBA_2.json).
+
+| Wynik [mm] | Próba 1 | Próba 2 | Zmiana (2 − 1) |
+|---|---:|---:|---:|
+| Offset T1 w X | +10,950000 | +10,950000 | 0,000000 |
+| Offset T1 w Y | −0,432812 | −0,451562 | −0,018750 |
+| O ile niżej jest T1 | 1,630923 | 1,635287 | +0,004364 |
+| Z po ponownym osadzeniu T0 względem pierwszego T0 | +0,019950 | +0,019950 | 0,000000 |
+
+W drugiej próbie krawędzie wyznaczono ponownie pionowym TAP. Było 180
+sprawdzeń punktu XY po dwa podejścia, a 24 końcowe przedziały krawędzi miały
+szerokość od 0,0765625 do 0,0796875 mm. Stół przy potwierdzonych stykach
+krawędziowych TAP przebywał 0,894–0,973 mm dla T0 (razem z powrotem T0)
+i 0,819–0,879 mm dla T1. Zakresy obejmują wszystkie zapisane wysokości
+styku w próbach XY, łącznie z punktami startowymi. Odległości obliczono z
+liczników MCU przy 802 krokach/mm, od poziomu przejazdu odpowiedniej dyszy.
+Wszystkie sześć końcowych próbek Z przyjęto w pierwszym podejściu.
+SHA256 drugiego archiwum wynosi
+`1a70e855faff9a6b214c463253f8ee7f25c9744c88db3dcf784f1511327e6cec`.

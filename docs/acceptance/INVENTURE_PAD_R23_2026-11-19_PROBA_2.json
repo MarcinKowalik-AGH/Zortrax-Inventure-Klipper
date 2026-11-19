@@ -1,0 +1,335 @@
+{
+  "candidate": {
+    "t0_reseat_mm": {
+      "X": 0.0,
+      "Y": 0.0,
+      "Z": 0.01995
+    },
+    "t1_carriage_shift_mm": {
+      "X": -10.95,
+      "Y": 0.451562
+    },
+    "t1_lower_by_mm": 1.635287,
+    "t1_offset_mm": {
+      "X": 10.95,
+      "Y": -0.451562
+    }
+  },
+  "door_policy": {
+    "default_enabled": false,
+    "enabled": false,
+    "front_door_closed": true,
+    "lid_closed": true,
+    "lock_command_mask": 0,
+    "motor_busy": false,
+    "oem_disable_bit": 1,
+    "oem_disable_bit_index": 3,
+    "physical_lock_position_verified": false,
+    "reject": null,
+    "resets_on_mcu_restart": true,
+    "scope": "global"
+  },
+  "error": null,
+  "hot_targets_c": {
+    "T0": 100.0,
+    "T1": 100.0
+  },
+  "measurement_target_c": 100.0,
+  "measurements": {
+    "T0": {
+      "center_xy_mm": [
+        81.7,
+        68.34375
+      ],
+      "edges_mm": [
+        [
+          77.9109375,
+          85.4890625
+        ],
+        [
+          64.51796875,
+          72.16796875
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.578125,
+        7.65
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0265625,
+      "z_release_mm_from_pe12": 139.40399002493766,
+      "z_release_spread_mm": 0.0
+    },
+    "T0_RETURN": {
+      "center_xy_mm": [
+        81.7,
+        68.34375
+      ],
+      "edges_mm": [
+        [
+          77.9109375,
+          85.4890625
+        ],
+        [
+          64.51796875,
+          72.16796875
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.578125,
+        7.65
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0265625,
+      "z_release_mm_from_pe12": 139.42394014962593,
+      "z_release_spread_mm": 0.0
+    },
+    "T1": {
+      "center_xy_mm": [
+        70.75,
+        68.7953125
+      ],
+      "edges_mm": [
+        [
+          67.0,
+          74.49921875
+        ],
+        [
+          65.0078125,
+          72.58359375
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.49921875,
+        7.57578125
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0171875,
+      "z_release_mm_from_pe12": 137.7786783042394,
+      "z_release_spread_mm": 0.003740648379052369
+    }
+  },
+  "mode": "FULL",
+  "phase": "candidate",
+  "prep": "EMPTY",
+  "retract_e_steps": {
+    "T0": 0,
+    "T1": 0
+  },
+  "run_id": "4eed5e30be704a6ca57440e1e7f27b44",
+  "sample_temperatures_c": [
+    {
+      "T0": 94.93040293040293,
+      "T1": 92.99633699633699,
+      "tool": "T0"
+    },
+    {
+      "T0": 102.18315018315018,
+      "T1": 100.89377289377289,
+      "tool": "T1"
+    },
+    {
+      "T0": 102.02197802197801,
+      "T1": 100.89377289377289,
+      "tool": "T0"
+    }
+  ],
+  "saved_file": null,
+  "scan": "SWEEP",
+  "xy_measurements": {
+    "T0": {
+      "center_xy_mm": [
+        81.7,
+        68.34375
+      ],
+      "edges_mm": [
+        [
+          77.9109375,
+          85.4890625
+        ],
+        [
+          64.51796875,
+          72.16796875
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.578125,
+        7.65
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0265625
+    },
+    "T0_RETURN": {
+      "center_xy_mm": [
+        81.7,
+        68.34375
+      ],
+      "edges_mm": [
+        [
+          77.9109375,
+          85.4890625
+        ],
+        [
+          64.51796875,
+          72.16796875
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.578125,
+        7.65
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0265625
+    },
+    "T1": {
+      "center_xy_mm": [
+        70.75,
+        68.7953125
+      ],
+      "edges_mm": [
+        [
+          67.0,
+          74.49921875
+        ],
+        [
+          65.0078125,
+          72.58359375
+        ]
+      ],
+      "electrical_diameter_mm": [
+        7.49921875,
+        7.57578125
+      ],
+      "scan_method": "SWEEP+TAP",
+      "xy_center_repeat_mm": 0.0171875
+    }
+  },
+  "z_release_diagnostics": [
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 111806,
+      "measurement": "T0",
+      "missed": false,
+      "recovery_steps": 4,
+      "release_hit": 8,
+      "release_raw": 0,
+      "release_sent_steps": 0,
+      "release_steps": 111802,
+      "sample": 1,
+      "settle_raw": null,
+      "tool": "T0",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 1,
+      "touch_sent_steps": 729,
+      "touch_steps": 111806
+    },
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 111806,
+      "measurement": "T0",
+      "missed": false,
+      "recovery_steps": 4,
+      "release_hit": 8,
+      "release_raw": 0,
+      "release_sent_steps": 0,
+      "release_steps": 111802,
+      "sample": 2,
+      "settle_raw": null,
+      "tool": "T0",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 1,
+      "touch_sent_steps": 729,
+      "touch_steps": 111806
+    },
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 110500,
+      "measurement": "T1",
+      "missed": false,
+      "recovery_steps": 0,
+      "release_hit": 8,
+      "release_raw": 1,
+      "release_sent_steps": 1,
+      "release_steps": 110500,
+      "sample": 1,
+      "settle_raw": 1,
+      "tool": "T1",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 1,
+      "touch_sent_steps": 668,
+      "touch_steps": 110501
+    },
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 110501,
+      "measurement": "T1",
+      "missed": false,
+      "recovery_steps": 4,
+      "release_hit": 8,
+      "release_raw": 0,
+      "release_sent_steps": 0,
+      "release_steps": 110497,
+      "sample": 2,
+      "settle_raw": null,
+      "tool": "T1",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 1,
+      "touch_sent_steps": 668,
+      "touch_steps": 110501
+    },
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 111818,
+      "measurement": "T0_RETURN",
+      "missed": false,
+      "recovery_steps": 0,
+      "release_hit": 8,
+      "release_raw": 1,
+      "release_sent_steps": 4,
+      "release_steps": 111818,
+      "sample": 1,
+      "settle_raw": 1,
+      "tool": "T0",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 0,
+      "touch_sent_steps": 745,
+      "touch_steps": 111822
+    },
+    {
+      "accepted": true,
+      "attempt": 1,
+      "closed": true,
+      "edge_steps": 111822,
+      "measurement": "T0_RETURN",
+      "missed": false,
+      "recovery_steps": 4,
+      "release_hit": 8,
+      "release_raw": 0,
+      "release_sent_steps": 0,
+      "release_steps": 111818,
+      "sample": 2,
+      "settle_raw": null,
+      "tool": "T0",
+      "touch_hit": 8,
+      "touch_qualification": "mcu_latched_edge",
+      "touch_raw": 1,
+      "touch_sent_steps": 745,
+      "touch_steps": 111822
+    }
+  ]
+}
