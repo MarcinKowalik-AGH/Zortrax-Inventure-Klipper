@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R23'
+HOST_REVISION = 'RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -2264,7 +2264,8 @@ class InventureMCU:
             state=self._control_query()
             if getattr(self,'motion_last',{}).get('active'):
                 motion=self._motion_query()
-                self.gcode.respond_info('V9_MOTION '+json.dumps(motion,sort_keys=True))
+                if not (context or {}).get('pad_run_id'):
+                    self.gcode.respond_info('V9_MOTION '+json.dumps(motion,sort_keys=True))
             for name,row in list(getattr(self,'output_last',{}).items()):
                 if row.get('duty'):
                     updated=self._output_query(OUTPUT_NAMES.index(name))
@@ -2348,6 +2349,9 @@ class InventureMCU:
                     result['factory']['nozzle_temperatures_c']={
                         'T%d'%heater['tool']:self.panel_temperature(heater['tool'],now)[0]
                         for heater in f['dual_heaters']}
+            if f['operation']=='NOZZLE_PAD_CALIBRATION':
+                result['stage']='nozzle_pad_calibration'
+                result['elapsed_s']=round(now-f['started'],2)
             cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
@@ -2498,6 +2502,19 @@ class InventureMCU:
 
     def _load_test_emit(self,context,phase=None,reason=None):
         if context.get('cold_pad'):return
+        if context.get('pad_run_id'):
+            if phase is not None:
+                result=self._load_test_report(context,phase,reason)
+                logging.info('V9_LOAD_TEST %s',json.dumps(result,separators=(',',':')))
+                return result
+            factory=context.get('factory')
+            if factory is None:return
+            now=self.reactor.monotonic()
+            progress=dict(run_id=context['pad_run_id'],stage=factory['phase'],
+                          tool='T%d'%context['tool'],elapsed_s=round(now-factory['started'],2),
+                          temperatures_c={'T%d'%i:self.panel_temperature(i,now)[0] for i in (0,1)})
+            self.gcode.respond_info('V9_NOZZLE_PAD_PROGRESS '+json.dumps(progress,separators=(',',':')))
+            return
         result=self._load_test_report(context,phase,reason)
         self.gcode.respond_info('V9_LOAD_TEST '+json.dumps(result,sort_keys=True))
         return result
@@ -2978,7 +2995,8 @@ class InventureMCU:
         else:
             state={key:run.get(key) for key in ('phase','run_id','error','mode','measurements',
                    'candidate','measurement_target_c','sample_temperatures_c','hot_targets_c',
-                   'retract_e_steps','saved_file','xy_measurements','z_release_diagnostics')}
+                   'retract_e_steps','saved_file','xy_measurements','z_release_diagnostics',
+                   'measurement_settings','elapsed_s')}
             state.update(prep=run['params']['prep'],scan=run['params']['scan'])
             if run.get('door_policy') is not None:state['door_policy']=run['door_policy']
             if run['phase']=='failed':
@@ -2988,6 +3006,7 @@ class InventureMCU:
             if batch is not None and batch.get('pad') is run:
                 f=(batch.get('child') or {}).get('factory') or {}
                 now=self.reactor.monotonic()
+                if 'started' in f:state['elapsed_s']=round(now-f['started'],2)
                 state.update(stage=f.get('phase'),tool='T%d'%batch['tool'],
                              position=f.get('position'),
                              temperatures_c={name:self.panel_temperature(tool,now)[0]
@@ -3022,8 +3041,7 @@ class InventureMCU:
             return
         if action=='STOP':
             if batch is not None and run is not None and batch.get('pad') is run:
-                self._nozzle_z_finish('stopped',reason='operator_stop')
-                self._control_abort()
+                self.cmd_control_stop(gcmd)
             else:self._nozzle_pad_emit(gcmd)
             return
         if action=='SAVE':
@@ -3034,7 +3052,8 @@ class InventureMCU:
             path=config.with_name('inventure_nozzle_pad.json')
             record={key:run[key] for key in ('run_id','measurement_target_c','sample_temperatures_c',
                                            'measurements','candidate','retract_e_steps')}
-            record.update({key:run[key] for key in ('xy_measurements','z_release_diagnostics') if key in run})
+            record.update({key:run[key] for key in ('xy_measurements','z_release_diagnostics',
+                          'hot_targets_c','measurement_settings','elapsed_s') if key in run})
             record.update(prep=run['params']['prep'],scan=run['params']['scan'])
             try:self._write_calibration_file(path,dict(record,schema=1))
             except OSError as exc:raise gcmd.error(str(exc))
@@ -3092,6 +3111,11 @@ class InventureMCU:
                  measurement_target_c=None if center else PAD_TEMPERATURE_C,
                  hot_targets_c={} if center else {'T%d'%tool: PAD_TEMPERATURE_C if params['prep']=='EMPTY'
                                 else plan['target'] for tool,(plan,_) in plans.items()})
+        run['measurement_settings']=dict(
+            params, host_revision=HOST_REVISION, mcu_release=getattr(self,'mcu_release','unknown'),
+            procedure_timeout_s=plans[tool][0]['procedure_timeout'],
+            pad_xy_mm={'T%d'%i:[settings['z_probe_x'],settings['z_probe_y']]
+                       for i,(_,settings) in plans.items()})
         batch=dict(action='START',pad=run,tool=tool,parameters=plans,gcmd=gcmd,results={})
         self.nozzle_pad_run=run
         self.nozzle_z_context=batch
@@ -3119,6 +3143,8 @@ class InventureMCU:
         if batch.get('pad') is not None:
             run=batch['pad']
             run.update(phase=phase,error=result.get('reason'))
+            factory=(batch.get('child') or {}).get('factory') or {}
+            if 'started' in factory:run['elapsed_s']=round(self.reactor.monotonic()-factory['started'],2)
             for key in ('measurements','candidate','sample_temperatures_c','retract_e_steps'):
                 if key in result:run[key]=result[key]
             if phase=='failed' and 'child' in batch:
@@ -3258,7 +3284,8 @@ class InventureMCU:
             options=NozzleParameters(name,pads[index])
             if pad is not None and not pad_empty and options.get('TARGET') is None:
                 raise ValueError('Pad calibration requires explicit '+name+'_TARGET for the retract material')
-            p=parameters(options,getattr(self,'procedure_profiles',None),max_target=target_limit)
+            operation='NOZZLE_PAD_CALIBRATION' if pad is not None and pad['mode']=='FULL' else None
+            p=parameters(options,getattr(self,'procedure_profiles',None),operation,max_target=target_limit)
             if not target_min<=p['target']<=target_limit or not 1.<=p['max_power']<=40.:
                 raise ValueError('Nozzle calibration TARGET must be %g..%g C and MAX_POWER 1..40 percent'
                                  %(target_min,target_limit))
@@ -3474,7 +3501,7 @@ class InventureMCU:
                 round(PAD_MEASUREMENT_BAND_C[0]),max(
                     round(max(self._nozzle_heating_upper(h) for h in heaters)),
                     math.floor(PAD_MEASUREMENT_BAND_C[1])+1))
-            context['factory']['pad_temperature_samples']=[]
+            context['factory']['pad_temperature_samples']=pad_run.setdefault('sample_temperatures_c',[])
         self._load_test_emit(context)
         if nozzle_test:return context
 
@@ -4387,6 +4414,9 @@ class InventureMCU:
                 jog=None,last_jog=None,next_report=now+5.,busy=False,flow_mark=None,
                 measurement=dict(dir0_steps=0,dir1_steps=0,completed_jogs=0,zeroed_by_operator=False),
                 cassette_load=plan,stream=None,last_stream=None,cold_pad=cold_pad)
+            batch=getattr(self,'nozzle_z_context',None)
+            if nozzle_test and batch and 'pad' in batch:
+                context['pad_run_id']=batch['pad']['run_id']
             self.load_test_context=context
             context['timer']=self.reactor.register_timer(lambda t:self._load_test_tick(context,t),now+.25)
             self._load_test_emit(context);return

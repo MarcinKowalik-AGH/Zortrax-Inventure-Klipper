@@ -110,7 +110,7 @@
     }
   },
   "mode": "FULL",
-  "phase": "candidate",
+  "phase": "saved",
   "prep": "EMPTY",
   "retract_e_steps": {
     "T0": 0,
@@ -134,7 +134,7 @@
       "tool": "T0"
     }
   ],
-  "saved_file": null,
+  "saved_file": "/home/klipper/printer_data/config/inventure_nozzle_pad.json",
   "scan": "SWEEP",
   "xy_measurements": {
     "T0": {

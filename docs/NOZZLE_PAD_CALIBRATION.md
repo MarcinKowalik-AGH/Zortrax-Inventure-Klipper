@@ -10,28 +10,28 @@ po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 Fizyczny pełny pomiar T0 → T1 → T0 został potwierdzony 19.11.2026
 w trybie `FULL / EMPTY / SWEEP+TAP`, dla przedziału krawędzi 0,1 mm.
 [Wyniki i zakres potwierdzenia](acceptance/INVENTURE_PAD_R23_2026-11-19.md).
-Wynik tej próby jest kandydatem; zapis i zastosowanie offsetu są osobnymi etapami.
+O 10:39:05 host potwierdził zapis pierwszej próby R23. Kolejne przebiegi na tej
+samej wersji pozwolą określić rozrzut między niezależnymi kalibracjami.
 
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
-`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R23` i aplikacja MCU
-`RC8-CONTROL-R7-PAD-THERMAL-R13`. Zaktualizuj
-[moduł hosta](../README.md#aktualizacja-orange-pi) i pobierz paczkę
-`INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip` z
-[GitHub Releases](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r23).
+`RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24` i aplikacja MCU
+`RC8-CONTROL-R7-PAD-THERMAL-R13`. Przy działającym R13 wystarcza aktualizacja
+modułu na Orange Pi. Dla starszego MCU przygotowano plik
+`INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip`.
+[Instrukcja aktualizacji hosta](../README.md#aktualizacja-orange-pi) ·
+[pliki wydania](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r24).
 Starsze MCU z pasmem 95–105°C wymagają aktualizacji przed pełnym pomiarem.
-Przejście z R21/R12 wymaga aktualizacji obu części. Host R23 sprawdza
+Przejście z R21/R12 wymaga aktualizacji obu części. Od R22 host sprawdza
 `nozzle_pad_sweep_timeout_abi: 1` przed rozpoczęciem ciepłego pomiaru SWEEP.
 MCU R13 zatrzymuje niepotwierdzony SWEEP w dotychczasowym limicie czasu
 i pozwala hostowi przejść do pionowych dotknięć TAP, jeśli wszystkie
 zabezpieczenia oraz właściciel sesji pozostają prawidłowe. Takie zatrzymanie
 nie stanowi pomiaru krawędzi. Zwykłe timeouty ruchu i błędy zabezpieczeń
 nadal przerywają sesję.
-Przejście z R22/R13 na R23 wymaga tylko aktualizacji hosta. Aplikacja MCU R13
-pozostaje identyczna.
-Sprawdź `SHA256SUMS`, skopiuj `INVENTUR.IVB` do głównego katalogu karty SD
-FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
+Przy aktualizacji starszego MCU do R13 sprawdź `SHA256SUMS`, skopiuj
+`INVENTUR.IVB` do głównego katalogu karty SD FAT32 i wgraj aplikację przez InventureBoot 1.7. MCU pobiera prędkość P4
 z ustawień bootloadera.
 Po `FIRMWARE_RESTART` odczytaj `INVENTURE_VERSION`. Sprawdź obie wersje,
 `baud_match: true`, `heartbeat_timeout_s: 5` i
@@ -320,6 +320,13 @@ styku przy dotknięciu.
 Zapis offsetu wymaga pełnego wyniku w stanie `candidate`.
 Próbę zatrzymuje `ACTION=STOP` lub `INVENTURE_STOP`.
 
+Od R24 drugi pomiar pionowy danej krawędzi na tej samej dyszy wykorzystuje
+pierwszy do wyboru punktów. Oba końce węższego przedziału muszą uzyskać
+potwierdzenie na obecnej linii pomiaru. Jeśli się to nie uda, host przeszukuje
+cały dotychczasowy zakres. Powrotna T0 zaczyna własny skan od początku.
+W czasie pracy `V9_NOZZLE_PAD_PROGRESS` podaje etap, dyszę, temperatury i czas
+od startu procedury. Pełną telemetrię mechaniki daje `INVENTURE_LOAD_TEST ACTION=STATUS`.
+
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STOP
 ```
@@ -347,8 +354,8 @@ Zatrzymanie aktywnej próby albo jej zakończenie przełącza MCU w tryb
 | `Z_CLEARANCE_MM` | 1 mm domyślnie, zakres 0,5–4 mm | O ile poziom przejazdu pomiędzy próbami leży poniżej podanego limitu |
 | `Z_TAP_SPEED` | Domyślnie 0,25 mm/s dla `SWEEP` i 0,8 mm/s dla `TAP`. Zakres 0,2–1 mm/s | Prędkość pionowego podejścia do styku |
 | `RETRACT_SPEED` | 1,6 mm/s domyślnie, zakres 0,5–6 mm/s | Prędkość cofania filamentu podczas przygotowania |
-| `XY_REPEAT_MM`, `Z_REPEAT_MM` | 0,08 i 0,05 mm domyślnie | Tolerancje powtórnego T0. Limit XY służy też porównaniu środków dwóch przebiegów `SWEEP`, a limit Z porównaniu prób rozwarcia w środku pola |
-| `PROCEDURE_TIMEOUT` | 1800 s domyślnie, zakres 60–3600 s | Całkowity limit czasu liczony od startu sesji |
+| `XY_REPEAT_MM`, `Z_REPEAT_MM` | 0,08 i 0,05 mm domyślnie | Tolerancje powrotnej T0. Host porównuje też oba dopasowania XY w `SWEEP` oraz `TAP` i parę rozwarć w środku pola |
+| `PROCEDURE_TIMEOUT` | 3600 s dla `FULL`, 1800 s dla `VERIFY_T0` i `CENTER`. Zakres 60–3600 s | Łączny limit od startu sesji. Jawna wartość polecenia ma pierwszeństwo przed profilem i wartością domyślną |
 
 Gdy brak jawnego środka T1, Klipper korzysta z nominalnego odstępu
 dysz i uwzględnia zapisany wcześniej offset XY z kalibracji wydrukiem.
@@ -368,6 +375,9 @@ ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=SAVE ACK=PAD_RESULT_REVIEWED RUN_ID=<run_id>
 ```
 
 Polecenie zapisuje dane w `inventure_nozzle_pad.json` obok `printer.cfg`.
+Każdy kolejny zatwierdzony zapis zastępuje ten plik. Podczas serii prób
+zachowaj pełny `STATUS` z identyfikatorem każdego przebiegu albo skopiuj
+plik pod osobną nazwą przed następnym `SAVE`.
 Plik zawiera docelową temperaturę pomiaru, odczyty temperatur na
 początku każdego skanu oraz dane do weryfikacji i ewentualnego
 przeniesienia korekt do konfiguracji druku.
@@ -380,7 +390,9 @@ liczonej od PE12, T1 wystaje niżej.
 |---|---|
 | `measurements` | Środki, krawędzie elektryczne i pomiary Z dla T0, T1 i powtórnego T0 |
 | `scan_method` | Metoda użyta dla danej dyszy |
-| `xy_center_repeat_mm` | Największa różnica współrzędnej środka między przebiegami `SWEEP` |
+| `edge_sources` | Metoda, która wyznaczyła krawędzie X i Y w każdym przebiegu, w kolejności pomiarów |
+| `xy_center_repeat_mm` | Największa różnica współrzędnej środka między dwoma przebiegami tej samej dyszy |
+| `measurement_settings`, `elapsed_s` | Parametry pomiaru, limity Z, punkty startowe, wersje hosta i MCU oraz osobno łączny czas sesji |
 | `sample_temperatures_c` | Zmierzona temperatura obu dysz na początku każdego skanu |
 | `t1_offset_mm` | Względne przesunięcie końcówki T1 w XY wobec T0 |
 | `t1_carriage_shift_mm` | Zmiana pozycji karetki w XY, aby T1 trafiła w punkt T0 |

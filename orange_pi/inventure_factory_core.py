@@ -319,6 +319,8 @@ def parameters(gcmd, configured=None, operation=None, *, max_target=LEGACY_SERVI
 
 def _parameters(tool, values, operation=None, *, max_target=LEGACY_SERVICE_TARGET_MAX_C):
     p = defaults(tool)
+    if operation == 'NOZZLE_PAD_CALIBRATION':
+        p['procedure_timeout'] = 3600.
     oem = str(values.get('speed_profile', p['speed_profile'])).strip().upper() == 'OEM'
     if oem:
         p.update(OEM_SPEEDS)

@@ -551,6 +551,60 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual(record['candidate'], candidate)
         self.assertEqual(record['sample_temperatures_c'], samples)
         self.assertEqual(record['measurement_target_c'], 100.)
+        self.assertEqual(record['measurement_settings'], started['measurement_settings'])
+        self.assertEqual(record['measurement_settings']['host_revision'], adapter.HOST_REVISION)
+        self.assertEqual(record['measurement_settings']['edge_tolerance_mm'], .02)
+        self.assertEqual(record['measurement_settings']['procedure_timeout_s'], 3600.)
+        self.assertEqual(record['hot_targets_c'], result['hot_targets_c'])
+        self.assertEqual(record['elapsed_s'], result['elapsed_s'])
+        self.assertTrue(all(m['xy_center_repeat_mm'] is not None for m in record['measurements'].values()))
+
+    def test_full_pad_timeout_preserves_config_and_explicit_command_precedence(self):
+        for mode, profiles, explicit, expected in (
+                ('FULL', None, {}, 3600), ('VERIFY_T0', None, {}, 1800),
+                ('FULL', ({'procedure_timeout': 1200}, {}, {}), {}, 1200),
+                ('FULL', ({'procedure_timeout': 1200}, {'procedure_timeout': 900}, {}), {}, 900),
+                ('FULL', ({'procedure_timeout': 1200}, {}, {}), {'PROCEDURE_TIMEOUT': 60}, 60)):
+            with self.subTest(mode=mode, expected=expected):
+                host = self.host()
+                host.procedure_profiles = profiles
+                started = self.cmd(host, 'START', MODE=mode, **self.settings, **explicit)
+                factory = host.load_test_context['factory']
+                self.assertEqual(factory['total_deadline'] - factory['started'], expected)
+                self.assertEqual(started['measurement_settings']['procedure_timeout_s'], expected)
+                if expected == 60:
+                    self.advance(host, lambda: host.nozzle_z_context is None, timeout=62.)
+                    self.assertIn('timeout', self.cmd(host, 'STATUS')['error'].lower())
+                else:
+                    self.cmd(host, 'STOP')
+
+    def test_pad_progress_keeps_motion_checks_and_explicit_diagnostics(self):
+        host = self.host()
+        started = self.cmd(host, 'START', **self.settings)
+        context = host.load_test_context
+        factory = context['factory']
+        self.advance(host, lambda: factory['heat_started'] and host.motion_last.get('active'))
+        count = len(host.commands['motion'].calls)
+        host._control_poll(host.reactor.now)
+        self.assertGreater(len(host.commands['motion'].calls), count)
+        self.assertFalse(any(line.startswith(('V9_LOAD_TEST ', 'V9_MOTION ')) for line in host.gcode.lines))
+        progress = [json.loads(line.split(' ', 1)[1]) for line in host.gcode.lines
+                    if line.startswith('V9_NOZZLE_PAD_PROGRESS ')]
+        self.assertTrue(progress)
+        self.assertTrue(all(row['run_id'] == started['run_id'] for row in progress))
+        status = Command(ACTION='STATUS')
+        host.cmd_load_test(status)
+        explicit = json.loads(status.lines[-1].split(' ', 1)[1])
+        self.assertIn('module_history', explicit['factory'])
+        self.assertEqual(explicit['stage'], 'nozzle_pad_calibration')
+        self.assertEqual(explicit['elapsed_s'], round(host.reactor.now - factory['started'], 2))
+        self.assertGreater(context['start'], factory['started'])
+        terminal = self.cmd(host, 'STOP')
+        # STOP may deliver its response to the original asynchronous command.
+        terminal = terminal or self.cmd(host, 'STATUS')
+        self.assertEqual(terminal['phase'], 'stopped')
+        self.assertAlmostEqual(terminal['elapsed_s'], explicit['elapsed_s'], delta=.5)
+        self.assertEqual(host.load_test_last['phase'], 'stopped')
 
     def test_requires_surveyed_limits_before_any_motion_or_heating(self):
         host = self.host()
@@ -680,6 +734,8 @@ class NozzlePadHostTests(unittest.TestCase):
                             for move in device.sweep_moves))
         for name, tool in (('T0', 0), ('T1', 1), ('T0_RETURN', 0)):
             center = result['measurements'][name]['center_xy_mm']
+            self.assertEqual(result['measurements'][name]['edge_sources'],
+                             [{'X':'SWEEP','Y':'SWEEP'}] * 2)
             self.assertLess(math.dist(center, device.centers[tool]), .005)
         self.assertAlmostEqual(result['candidate']['t1_offset_mm']['X'], 10.79, delta=.005)
         self.assertAlmostEqual(result['candidate']['t1_offset_mm']['Y'], .15, delta=.005)
@@ -729,6 +785,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertEqual([move['sent'] for move in device.sweep_moves[12:14]], [513, 193])
         t1 = result['measurements']['T1']
         self.assertEqual(t1['scan_method'], 'SWEEP+TAP')
+        self.assertEqual(t1['edge_sources'], [{'X':'SWEEP','Y':'SWEEP'}, {'X':'TAP','Y':'SWEEP'}])
         self.assertAlmostEqual(t1['electrical_diameter_mm'][0], 7.6, delta=.05)
         self.assertLess(math.dist(t1['center_xy_mm'], device.centers[1]), .03)
 
@@ -747,7 +804,7 @@ class NozzlePadHostTests(unittest.TestCase):
                 # latches PC14 but is open by the later host read.
                 device.sweep_start_refusals = 100
                 original = device.inputs
-                opened = set()
+                opened = {}
                 def transient_readback():
                     row = original()
                     f = (host.load_test_context or {}).get('factory', {})
@@ -760,7 +817,7 @@ class NozzlePadHostTests(unittest.TestCase):
                             and device.now() >= m['until']):
                         row['raw']['nozzle_contact'] = 1
                         row['raw_mask'] |= device.CONTACT
-                        opened.add(device.run)
+                        opened.setdefault(device.xy, set()).add(device.run)
                     return row
                 device.inputs = host._fresh_inputs = transient_readback
                 self.cmd(host, 'START', PREP='EMPTY', ACK='PAD_GEOMETRY_MEASURED',
@@ -770,9 +827,13 @@ class NozzlePadHostTests(unittest.TestCase):
                 self.advance(host, lambda: host.nozzle_z_context is None, timeout=3600.)
                 result = self.cmd(host, 'STATUS')
                 self.assertEqual(result['phase'], 'candidate', result)
-                self.assertGreaterEqual(len(opened), 6)
+                # At least two distinct inside points must qualify solely
+                # from paired latches on this T1 return chord.
+                self.assertGreaterEqual(sum(len(runs) >= 2 for runs in opened.values()), 2)
                 self.assertEqual(set(result['measurements']), {'T0', 'T1', 'T0_RETURN'})
                 self.assertEqual(result['measurements']['T1']['scan_method'], 'SWEEP+TAP')
+                self.assertEqual(result['measurements']['T1']['edge_sources'],
+                                 [{'X':'TAP','Y':'TAP'}] * 2)
                 self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['X'], -10.9,
                                        delta=tolerance)
                 self.assertAlmostEqual(result['candidate']['t1_carriage_shift_mm']['Y'], .5,
@@ -853,6 +914,7 @@ class NozzlePadHostTests(unittest.TestCase):
         self.assertLess(0, motion['drivers']['Z']['sent'])
         self.assertLess(motion['drivers']['Z']['sent'], motion['drivers']['Z']['planned'])
         self.assertEqual(set(result['measurements']), {'T0'})
+        self.assertEqual([row['tool'] for row in result['sample_temperatures_c']], ['T0','T1'])
         self.assertIsNone(result['candidate'])
         self.assertEqual([row[0] for row in device.calls[-2:]], [2, 0])
         self.assertFalse(device.stepper_enabled)

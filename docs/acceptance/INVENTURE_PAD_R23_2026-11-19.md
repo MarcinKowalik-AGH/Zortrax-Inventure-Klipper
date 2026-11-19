@@ -1,7 +1,8 @@
 # Inventure — potwierdzenie pełnej kalibracji pada, 19.11.2026
 
 Fizyczny przebieg **T0 → T1 → T0_RETURN zakończył się poprawnie**.
-Status użytkownika z 10:32:59: `phase=candidate`, `error=null`.
+O 10:32:59 host zgłosił `phase=candidate` i `error=null`. O 10:39:05
+potwierdził `phase=saved` dla tego samego przebiegu. To pierwsza zapisana próba serii.
 
 Identyfikator: `6fa661efce2343d9be8f294437391a65`.
 Pełny odczyt: [RESULT.json](INVENTURE_PAD_R23_2026-11-19_RESULT.json).
@@ -15,12 +16,12 @@ Pełny odczyt: [RESULT.json](INVENTURE_PAD_R23_2026-11-19_RESULT.json).
   kwalifikacją R23. Log nie zawiera wyniku `INVENTURE_VERSION` z dokładnym
   identyfikatorem hosta. Wydanie R23 odpowiada commitowi
   `dc4d0f11398fcbfa8558714ba67a916883bee165`.
-- Zakres fizycznego potwierdzenia: FULL, PREP=EMPTY, SCAN=SWEEP,
-  rzeczywista metoda pomiarowa wszystkich trzech próbek SWEEP+TAP,
-  temperatura zadana obu dysz 100°C, dopuszczalne pasmo 90–110°C.
-- Log pokazuje odrzucane starty SWEEP i pomiary pionowe. Sukces nie
-  oznacza osobnego potwierdzenia wszystkich ślizgowych przejazdów SWEEP.
-- Pełny przebieg trwał 2078,3 s, około 34 min 38 s.
+- Zakres próby obejmuje FULL, PREP=EMPTY, SCAN=SWEEP, temperaturę zadaną
+  obu dysz 100°C i dopuszczalne pasmo 90–110°C. Host oznaczył każdy
+  z trzech skanów jako SWEEP+TAP. Wszystkie 24 końcowe krawędzie
+  wyznaczono dotknięciami pionowymi po odrzuconych startach ślizgu.
+- Od startu procedury do końca parkowania minęło 2138,084 s (35 min 38 s).
+  Pole `elapsed_s=2078.3` w starym raporcie liczy czas od rozpoczęcia grzania.
 
 ## Wyniki
 
@@ -63,7 +64,7 @@ Pola offsetu i przesunięcia karetki mają przeciwne znaki z definicji.
 
 ## Co pozostaje osobnym etapem
 
-- `saved_file=null`: dostarczony status nie potwierdza zapisu.
+- Powtarzalność między niezależnymi przebiegami będzie można policzyć po kolejnych próbach.
 - PREP=EMPTY: wykonane kroki E dla T0 i T1 wynoszą zero. Ten przebieg
   nie jest testem gorącej retrakcji ani załadunku filamentu.
 - Zapis nie stosuje automatycznie offsetu do natywnej zmiany narzędzia
@@ -78,13 +79,15 @@ do wcześniejszej historii; nie są powodem zatrzymania tego przebiegu.
 
 ## Zapis zatwierdzonego wyniku
 
-Jeśli kandydat nadal znajduje się w bieżącej sesji hosta:
+Konsola zarejestrowała kolejno polecenia:
 
 ```gcode
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=SAVE RUN_ID=6fa661efce2343d9be8f294437391a65 ACK=PAD_RESULT_REVIEWED
 ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STATUS
 ```
 
-Oczekiwany odczyt po zapisie: `phase=saved` oraz ścieżka `saved_file`
-do `inventure_nozzle_pad.json` obok głównego pliku konfiguracji Klippera.
-Nie wymaga to ponownego pomiaru ani zmiany limitów.
+Obie odpowiedzi z 10:39:05 zawierają `phase=saved` i ścieżkę
+`/home/klipper/printer_data/config/inventure_nozzle_pad.json`. Wszystkie pomiary,
+diagnostyka Z i wartości kandydata są identyczne z odczytem przed zapisem.
+SHA256 załącznika `Wklejony tekst(20261119-093934).txt` wynosi
+`4879ceb5a7a25d4c562c3f44fd5af30a93e7131c261f5b347dc90cf3e5df7ac0`.

@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R23",
+  "release": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef",
+  "module_sha256": "1b02415053223b10d81c5698b08d3cddaec8bf12fbd59affbd27a1fe911ed948",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -86,9 +86,10 @@
     "9b5ebcdd72d013fb14de7f60b6ee92e5f24e779e8a4ffe93dbbcf559e58527be",
     "41111130d61d06e0b3420c669f2daa7beb1eb42be95a6280d67b7a59e51818b9",
     "e0f0765f451e863cea3a286cccd3fa68b1f427bc3bdc5bd66d223f12ecf30183",
-    "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828"
+    "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828",
+    "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef"
   ],
-  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R23",
+  "host_revision": "RC8-CONTROL-R7-UIFAST-PAD-XYZ-R24",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -254,7 +255,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784",
+  "factory_core_sha256": "512689fa19deb6a382dc27845c3f41977e0eeba60966b323b9f88c618e801673",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -363,7 +364,8 @@
     "b9e0b4f40dc5463df578ae86cd7e7611eb9519df5bb2ca5fdc55958c1421d329",
     "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
     "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
-    "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db"
+    "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db",
+    "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -419,7 +421,7 @@
       "allowed_existing_sha256": []
     },
     "inventure_nozzle_xyz.py": {
-      "sha256": "f885ff7ca9e98035ef239497c7782b54928b389c4de8f5dc58d38eb89d954b4d",
+      "sha256": "d4147b648f20e4fb0c8dff80943537178e993533a3ee9e8ca81b82a42a832063",
       "allowed_existing_sha256": [
         "6601ba8288c6e83882ffddc459aed01fa241c94b69bcab76e67090fb857d7973",
         "1b7442d767075ce688390a10dd09ad443151faba355e586a797f5dc4f7b37b74",
@@ -440,7 +442,8 @@
         "411ec99861c71962f609113dd7df2a6ee6e76a095875534d62fdc3fecaa73345",
         "6cddca3bb220ee56b30394e0dfe80ce8239ebb3880dd8cf21a57cc2187646385",
         "9d38da0351d1b67243fb98b8e6cf7421de1262073df5e1ca408437dffdd466b9",
-        "2ef183c9f7e33882f7205a85d6685a1d7f4da7b0a70245c7bcc8e2e3483e93cf"
+        "2ef183c9f7e33882f7205a85d6685a1d7f4da7b0a70245c7bcc8e2e3483e93cf",
+        "f885ff7ca9e98035ef239497c7782b54928b389c4de8f5dc58d38eb89d954b4d"
       ]
     }
   },
@@ -669,7 +672,9 @@
       110
     ],
     "default_z_clearance_mm": 1.0,
-    "sweep_timeout_abi": 1
+    "sweep_timeout_abi": 1,
+    "full_procedure_timeout_s": 3600,
+    "last_saved_hardware_run": "6fa661efce2343d9be8f294437391a65"
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
@@ -770,7 +775,16 @@
     ],
     "recommended_field_tolerance_mm": 0.1,
     "regression_run_id": "c70982618fa54ea1be7661c8ef7a2aa3",
-    "physical_full_run": "pending R23 printer test",
+    "physical_full_run": {
+      "run_id": "6fa661efce2343d9be8f294437391a65",
+      "host_series": "R23",
+      "mcu": "R13",
+      "mode": "FULL",
+      "prep": "EMPTY",
+      "edge_tolerance_mm": 0.1,
+      "phase": "saved",
+      "record": "docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md"
+    },
     "MCU_changed": false
   }
 }

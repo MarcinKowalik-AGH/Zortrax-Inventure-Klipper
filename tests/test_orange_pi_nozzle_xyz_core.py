@@ -3,6 +3,7 @@
 import ast
 import math
 import unittest
+from unittest.mock import patch
 
 from orange_pi.inventure_factory_core import FactoryError, XY_STEPS_PER_MM, parameters
 from orange_pi.inventure_nozzle_xyz import (
@@ -388,6 +389,60 @@ class NozzleXYZCoreTests(unittest.TestCase):
             model.run()
         self.assertEqual(model._inputs()['nozzle_contact'], 1)
         self.assertFalse(any(a.get('stage') == 'pad_sweep' for _, _, a in model.trace))
+
+    def test_second_pass_reprobes_hint_and_recovers_from_shift_or_noise(self):
+        plan = parameters(dict(TOOL='T0', SPEED_PROFILE='OEM'))
+        program = NozzleXYZProgram(plan, z_home_parameters({}, plan, nozzle_test=True))
+        def probe(point, safe_z, ceiling, speed):
+            state = yield point[0]
+            return state, None
+        program._edge_tap = probe
+        for side in (1, -1):
+            for distance, ambiguous in ((2422, False), (2100, False), (2810, False), (2422, True)):
+                def measure(hint):
+                    tested = []
+                    search = program._edge((0, 0), 0, side * 3200, 100, 110, 64, .25,
+                                           confirm=True, prior_edge=hint)
+                    response = None
+                    while True:
+                        try:
+                            x = search.send(response)
+                        except StopIteration as done:
+                            return done.value, tested
+                        response = abs(x) <= distance
+                        if ambiguous and hint is not None and len(tested) == 1:
+                            response = None
+                        tested.append((x, response))
+                with self.subTest(side=side, distance=distance, ambiguous=ambiguous):
+                    expected, full = measure(None)
+                    actual, tested = measure(side * 2430)
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(tested[0], (side * 3200, False))
+                    inside = max(abs(x) for x, state in tested if state is True)
+                    outside = min(abs(x) for x, state in tested if state is False)
+                    self.assertLessEqual(outside - inside, 64)
+                    self.assertEqual(abs(actual), (outside + inside) / 2)
+                    if distance == 2422 and not ambiguous:
+                        self.assertLess(len(tested), len(full))
+
+    def test_standalone_tap_detects_a_shift_between_xy_passes_before_center_z(self):
+        xyz = pad_xyz_parameters(dict(PARAMETERS, MODE='VERIFY_T0', SCAN='TAP'))
+        model = SimulatedPad(xyz)
+        edge = NozzleXYZProgram._edge
+        count = 0
+        def shifted_chord(program, *args, **kwargs):
+            nonlocal count
+            result = yield from edge(program, *args, **kwargs)
+            count += 1
+            if count == 4:
+                x, y = model.centers[0]
+                model.centers = ((x + .20, y), *model.centers[1:])
+            return result
+        with patch.object(NozzleXYZProgram, '_edge', shifted_chord):
+            with self.assertRaisesRegex(FactoryError, 'tap center did not repeat') as caught:
+                model.run()
+        self.assertGreater(caught.exception.details['xy_center_repeat_mm'], xyz['xy_repeat_mm'])
+        self.assertFalse(any(a['kind'] == 'xyz_z_release' for _, _, a in model.trace))
 
     def test_cold_center_accepts_the_measured_contact_width_of_the_stock_pad(self):
         xyz = pad_xyz_parameters({'T0_Z_MAX': 139.50}, center_only=True)

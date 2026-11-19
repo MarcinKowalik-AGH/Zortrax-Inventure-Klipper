@@ -272,7 +272,8 @@ class NozzleXYZProgram(ZHomeProgram):
         raise FactoryError(reason,
                            sample=sample_index,attempts=history,center_mm=_xy_mm(point))
 
-    def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed, confirm=False):
+    def _edge(self, origin, axis, outside, safe_z, ceiling, units, tap_speed,
+              confirm=False, prior_edge=None):
         def contact(value):
             xy = list(origin)
             xy[axis] = value
@@ -309,6 +310,22 @@ class NozzleXYZProgram(ZHomeProgram):
                 raise FactoryError('PC14 nadal zwarty na końcu zakresu', point_mm=_xy_mm(endpoint))
             raise FactoryError('Pad edge is outside the qualified scan box',
                                axis=name, point_mm=_xy_mm(endpoint))
+
+        # The second pass measures a new chord. Use the first pass only to
+        # choose which two bisection points to try first. Both endpoints of
+        # the coarse bracket must qualify on this chord before narrowing.
+        if prior_edge is not None and min(inside, outside) < prior_edge < max(inside, outside):
+            inner, outer = inside, outside
+            direction = 1 if outer > inner else -1
+            while abs(outer - inner) > 4 * units:
+                midpoint = (inner + outer) // 2
+                if direction * (prior_edge - midpoint) > 0:
+                    inner = midpoint
+                else:
+                    outer = midpoint
+            if (inner == inside or (yield from contact(inner)) is True) and (
+                    outer == outside or (yield from contact(outer)) is False):
+                inside, outside = inner, outer
 
         uncertain = set()
         while abs(inside - outside) > units:
@@ -401,7 +418,7 @@ class NozzleXYZProgram(ZHomeProgram):
             edge = None
         return edge, retreat_z, contact_z
 
-    def _tap_edges(self, origin, axis, bounds, safe_z, ceiling, xyz):
+    def _tap_edges(self, origin, axis, bounds, safe_z, ceiling, xyz, prior_pair):
         name = ('X', 'Y')[axis]
         yield from self._phase(name + '_TOUCH')
         tap_speed = xyz['z_tap_speed']
@@ -431,14 +448,15 @@ class NozzleXYZProgram(ZHomeProgram):
         pair = [None, None]
         for side in (1, 0):
             yield from self._phase(name + ('+' if side else '-') + '_TOUCH')
-            pair[side] = yield from self._edge(anchor, axis, bounds[side], safe_z, ceiling,
-                                             units, tap_speed, confirm=True)
+            pair[side] = yield from self._edge(
+                anchor, axis, bounds[side], safe_z, ceiling, units, tap_speed,
+                confirm=True, prior_edge=prior_pair[side] if prior_pair else None)
         return pair, safe_z
 
-    def _scan_axes(self, seed, limits, safe_z, ceiling, xyz):
+    def _scan_axes(self, seed, limits, safe_z, ceiling, xyz, prior_edges=None):
         origin = list(seed)
         edges = []
-        used_taps = False
+        sources = {}
         diameter = xyz['pad_diameter_mm']
         min_sweep_width = diameter - PAD_WIDTH_TOLERANCE_MM
         max_width = diameter + PAD_WIDTH_TOLERANCE_MM
@@ -462,9 +480,11 @@ class NozzleXYZProgram(ZHomeProgram):
                 # Probe both sides of the same chord. No XY movement takes
                 # place at the contact height during these checks.
                 tap_ceiling = min(ceiling, max(contacts) + PAD_EDGE_TAP_HEADROOM_STEPS) if contacts else ceiling
-                pair, safe_z = yield from self._tap_edges(origin, axis, bounds, safe_z, tap_ceiling, xyz)
+                pair, safe_z = yield from self._tap_edges(
+                    origin, axis, bounds, safe_z, tap_ceiling, xyz,
+                    prior_edges[axis] if prior_edges else None)
                 method = 'tap'
-                used_taps = True
+            sources[name] = method.upper()
             low, high = pair
             width = (high - low) / XY_STEPS_PER_MM
             # Vertical taps can qualify a short X chord off the pad center.
@@ -477,20 +497,12 @@ class NozzleXYZProgram(ZHomeProgram):
                              self.p['tool'], name, side, edge / XY_STEPS_PER_MM, method)
             edges.append((low, high))
             origin[axis] = round((low + high) / 2.)
-        return edges, tuple(origin), safe_z, used_taps
-
-    def _scan_sweeps(self, seed, limits, safe_z, ceiling, xyz):
-        _, first, safe_z, first_taps = yield from self._scan_axes(seed, limits, safe_z, ceiling, xyz)
-        edges, origin, safe_z, second_taps = yield from self._scan_axes(first, limits, safe_z, ceiling, xyz)
-        repeat = max(abs(a - b) for a, b in zip(first, origin)) / XY_STEPS_PER_MM
-        if repeat > xyz['xy_repeat_mm']:
-            raise FactoryError('Pad sweep center did not repeat', xy_center_repeat_mm=repeat)
-        method = 'SWEEP+TAP' if first_taps or second_taps else 'SWEEP'
-        return edges, origin, safe_z, repeat, method
+        return edges, tuple(origin), safe_z, sources
 
     def _scan_taps(self, origin, limits, safe_z, ceiling, xyz):
         tol = max(1, math.floor(xyz['edge_tolerance_mm'] * XY_STEPS_PER_MM))
         tap_speed = xyz['z_tap_speed']
+        centers = []
         for _ in range(2):
             if not (yield from self._tap(origin, safe_z, ceiling, tap_speed)):
                 raise FactoryError('No PC14 contact at the pad seed or fitted center',
@@ -501,19 +513,29 @@ class NozzleXYZProgram(ZHomeProgram):
                 high = yield from self._edge(origin, axis, upper, safe_z, ceiling, tol, tap_speed)
                 edges.append((low, high))
             origin = tuple(round((low + high) / 2.) for low, high in edges)
-        return edges, origin
+            centers.append(origin)
+        return edges, centers[0], centers[1]
 
     def _scan(self, seed, limits, ceiling, xyz):
         safe_z = ceiling - round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
         yield from self._pad_xy_move(seed)
         yield from self._open_z_at(safe_z)
         if xyz['scan'] == 'SWEEP':
-            edges, origin, safe_z, repeat, method = yield from self._scan_sweeps(seed, limits, safe_z, ceiling, xyz)
+            prior_edges, first, safe_z, first_sources = yield from self._scan_axes(
+                seed, limits, safe_z, ceiling, xyz)
+            edges, origin, safe_z, second_sources = yield from self._scan_axes(
+                first, limits, safe_z, ceiling, xyz, prior_edges)
+            sources = [first_sources, second_sources]
+            method = 'SWEEP+TAP' if any('TAP' in row.values() for row in sources) else 'SWEEP'
         else:
-            edges, origin = yield from self._scan_taps(seed, limits, safe_z, ceiling, xyz)
-            repeat = None
+            edges, first, origin = yield from self._scan_taps(seed, limits, safe_z, ceiling, xyz)
+            sources = [dict(X='TAP', Y='TAP') for _ in range(2)]
             method = 'TAP'
 
+        repeat = max(abs(a - b) for a, b in zip(first, origin)) / XY_STEPS_PER_MM
+        if repeat > xyz['xy_repeat_mm']:
+            raise FactoryError('Pad %s center did not repeat' % xyz['scan'].lower(),
+                               xy_center_repeat_mm=repeat)
         widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
         diameter = xyz['pad_diameter_mm']
         # The nozzle face slightly enlarges the effective conductive outline.
@@ -522,9 +544,10 @@ class NozzleXYZProgram(ZHomeProgram):
                 or abs(widths[0] - widths[1]) > .6):
             raise FactoryError('Pad contact outline is not consistent with a round %g mm pad' % diameter,
                                electrical_diameter_mm=widths)
-        yield dict(kind='xyz_xy_sample',tool=self.p['tool'],measurement=dict(
-            center_xy_mm=_xy_mm(origin),edges_mm=[_xy_mm(pair) for pair in edges],
-            electrical_diameter_mm=widths,scan_method=method,xy_center_repeat_mm=repeat))
+        measurement = dict(center_xy_mm=_xy_mm(origin), edges_mm=[_xy_mm(pair) for pair in edges],
+                           electrical_diameter_mm=widths, scan_method=method,
+                           edge_sources=sources, xy_center_repeat_mm=repeat)
+        yield dict(kind='xyz_xy_sample', tool=self.p['tool'], measurement=measurement)
         releases = []
         for sample in range(2):
             z = yield from self._tap(origin, safe_z, ceiling, xyz['z_tap_speed'],
@@ -535,11 +558,7 @@ class NozzleXYZProgram(ZHomeProgram):
         spread = _z_mm(abs(releases[0] - releases[1]))
         if spread > xyz['z_repeat_mm']:
             raise FactoryError('Pad center Z release is not repeatable', spread_mm=spread)
-        return dict(center_xy_mm=_xy_mm(origin),
-                    edges_mm=[_xy_mm(pair) for pair in edges],
-                    electrical_diameter_mm=widths,
-                    scan_method=method, xy_center_repeat_mm=repeat,
-                    z_release_mm_from_pe12=_z_mm(sum(releases) / 2.),
+        return dict(measurement, z_release_mm_from_pe12=_z_mm(sum(releases) / 2.),
                     z_release_spread_mm=spread)
 
     def _pick(self, tool, plans):
@@ -612,7 +631,7 @@ class NozzleXYZProgram(ZHomeProgram):
         yield from self._pad_xy_move(seed)
         safe_z = ceiling - round(xyz['z_clearance_mm'] * Z_STEPS_PER_MM)
         yield from self._open_z_at(safe_z)
-        edges, origin, safe_z, used_taps = yield from self._scan_axes(seed, limits, safe_z, ceiling, xyz)
+        edges, origin, safe_z, sources = yield from self._scan_axes(seed, limits, safe_z, ceiling, xyz)
         yield from self._phase('PARK')
         yield from self._open_z_at(min(safe_z, ceiling - 5 * Z_STEPS_PER_MM))
         yield from self._pad_xy_move(origin)
@@ -620,7 +639,8 @@ class NozzleXYZProgram(ZHomeProgram):
         center = _xy_mm(tuple((low + high) / 2. for low, high in edges))
         widths = [(high - low) / XY_STEPS_PER_MM for low, high in edges]
         measurement = dict(center_xy_mm=center, edges_mm=[_xy_mm(pair) for pair in edges],
-                           electrical_diameter_mm=widths, scan_method='SWEEP+TAP' if used_taps else 'SWEEP')
+                           electrical_diameter_mm=widths, edge_sources=[sources],
+                           scan_method='SWEEP+TAP' if 'TAP' in sources.values() else 'SWEEP')
         name = 'T%d' % tool
         yield dict(kind='done', success=True, terminal='COLD_PAD_CENTER',
                    measurements={name: measurement}, retract_e_steps={name: 0})
