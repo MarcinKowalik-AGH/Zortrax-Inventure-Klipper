@@ -121,7 +121,16 @@ class InventureFilament:
         if old is None or p['pulses']!=old['pulses']:
             self.pulse_ages[i]=((p['clock']-p['last_pulse_clock'])&0xffffffff)/rate if p['pulses'] or p['last_pulse_clock'] else 99.
         else:self.pulse_ages[i]+=delta32(p['clock'],old['clock'])/rate
-        self.reports[i]=p;self.received[i]=received;self.printer.send_event('inventure:transport_report',i,dict(p))
+        self.reports[i]=p;self.received[i]=received
+        jam = getattr(self.board, 'filament_jam', None)
+        if jam is not None and p['fault'] in (2, 3):
+            try:
+                jam.monitor.observe_legacy_fault(i, p)
+            except Exception as exc:
+                # P14 still receives the original counters and fault; an
+                # unsuccessful handoff remains subject to normal fatal guards.
+                self.error = 'Filament recovery handoff failed: ' + str(exc)
+        self.printer.send_event('inventure:transport_report',i,dict(p))
     def _configure(self):
         if self.configuring or self.running or self.assisting or self.materials.pair is None:return
         pair=self.materials.pair;generation=self.materials.generation;self.configuring=True
@@ -140,7 +149,9 @@ class InventureFilament:
             self.th.wait_moves();self.tools.require_binding();self.commands['select'].send_wait_ack([tool]);self.selected=tool
     def _sample(self,i):
         now=self.reactor.monotonic();r=self.reports[i];age=99. if self.received[i] is None else now-self.received[i]
-        if r is None or age>.5 or not r['live'] or r['fault']:
+        jam = getattr(self.board, 'filament_jam', None)
+        managed = bool(r and r['fault'] in (2, 3) and jam and jam.monitor.legacy_fault_managed(i, r))
+        if r is None or not 0 <= age <= .5 or not r['live'] or (r['fault'] and not managed):
             owner=self.ops.state.owner
             if (self.running or owner is not None and owner.kind=='print') and self.ops.state.fatal is None:self.ops.fatal('P13 stale/inactive/faulted transport','FILAMENT_RUNTIME')
             raise self.printer.command_error('P13 stale/inactive/faulted transport')
@@ -179,7 +190,11 @@ class InventureFilament:
                 if self.configured_generation==self.materials.generation and self.materials.pair is not None and not self.running and not self.assisting:
                     owner=self.ops.state.owner
                     active=owner is not None and self.ops.state.mode=='running' and (owner.kind=='print' or owner.kind in ('toolchange','alignment','calibration') and any(h.target_temp for h in self.heaters[:2]))
-                    for i,s in enumerate(self.materials.pair):self._mode(AUTO if active and s.source=='cartridge' else STOP,i,active)
+                    jam = getattr(self.board, 'filament_jam', None)
+                    for i,s in enumerate(self.materials.pair):
+                        if jam is not None and jam.monitor.legacy_mode_delegated(i):
+                            continue
+                        self._mode(AUTO if active and s.source=='cartridge' else STOP,i,active)
                 if self.jog_until and now>=self.jog_until:self._mode(STOP);self.jog_until=0.
             self.commands['query'].send([])
             owner=self.ops.state.owner

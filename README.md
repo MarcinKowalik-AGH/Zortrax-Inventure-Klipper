@@ -2,40 +2,41 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R26.3 with MCU R13** corrects a premature stop during five-point platform leveling. Start from the OLED or Fluidd. At the waste bin it preheats according to the known selector state, then physically selects T0 before the first contact with the platform. The operator adjusts the three knobs as prompted. The separate **Settings → Door lock** option controls door and lid supervision. [Field diagnosis and R26.3 instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_3.md) · [R26.3 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-platform-level-r26.3)
+**Host R27 with MCU R13** adds filament jam controls to the OLED and Fluidd. The recovery path depends on the active nozzle and whether its filament comes from a cassette or an external spool. The status command reports the printer's recovery state. [R27 operator instructions and hardware prerequisites](docs/INVENTURE_FILAMENT_JAM_R27.md) · [R27 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-filament-jam-r27)
 
 <a id="aktualizacja-orange-pi"></a>
 
 ## Update an existing Orange Pi installation
 
-With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the Fluidd leveling and door macros, and restarts Klipper. An installed R13 MCU can run this release.
+With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, adds the filament recovery buttons and native Klipper pause support to the active configuration, and restarts Klipper. Keep the installed R13 MCU.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-platform-level-r26.3 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-platform-level-r26.3" refs/tags/inventure-platform-level-r26.3 &&
-python3 "$HOME/inventure-platform-level-r26.3/install-orange-pi.py" --configure-leveling
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-filament-jam-r27 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-filament-jam-r27" refs/tags/inventure-filament-jam-r27 &&
+python3 "$HOME/inventure-filament-jam-r27/install-orange-pi.py" --configure-jam
 ```
 
 If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
 
 ```gcode
 INVENTURE_VERSION
-ZORTRAX_LEVEL_STATUS
+ZORTRAX_JAM_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3`, the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`, and a fresh leveling session `phase: idle`. To start, fit the original tray, check that its five contact pads are clean, and use **Maintenance → Platform leveling** or `ZORTRAX_LEVEL`. This requires the saved full T0/T1 central pad calibration beside the active `printer.cfg`. [Full operator instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
+The host should report `RC8-CONTROL-R7-FILAMENT-JAM-R27` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. On a fresh installation, add `--configure-leveling` to the same installer command to install the leveling and global door policy buttons as well. [Five-point leveling instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
 
 ## Printer procedures
 
 | Task | Operator interface | What it measures or controls |
 |---|---|---|
+| Recover filament transport | `ZORTRAX_JAM_STATUS`, `ZORTRAX_JAM_REPORT`, OLED recovery prompts | Cassette and external spool recovery for the selected nozzle. [Requirements and operator actions](docs/INVENTURE_FILAMENT_JAM_R27.md) |
 | Level the platform | `ZORTRAX_LEVEL`, `ZORTRAX_LEVEL_NEXT`, `ZORTRAX_LEVEL_STATUS`, `ZORTRAX_LEVEL_SAVE`, `ZORTRAX_LEVEL_CANCEL` | Five tray pads and three adjustments using T0. The saved report contains platform depth and center deviation. |
 | Set the door policy | **Settings → Door lock**, `ZORTRAX_DOOR_LOCK` | One global setting for the front door and lid. Read its current state with `INVENTURE_DOOR_POLICY`. |
 | Align the nozzles | `ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STATUS` | The full central pad procedure measures T0, T1 and T0 after reseating. It reports the relative XY offset and Z difference. |
 | Inspect service procedures | `INVENTURE_PROCEDURE ACTION=LIST` | Homing, parking, selecting a nozzle, wiping, purging, loading and unloading. Use `INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T0 PROCEDURE=SELECT` to inspect one operation. |
 | Inspect the shared menu | `INVENTURE_ZORTRAX OP=CATALOG` | Available firmware-backed actions and their status. The OLED and the console use the same procedure handlers. |
 
-The nozzle alignment and five-point leveling tests have separate hardware records. Two full central pad runs at 100 °C were saved on R23 with empty nozzles and a 0.1 mm edge tolerance. Individual cold center measurements on R25 returned T0 at (81.7, 68.3) mm and T1 at (70.8, 68.8) mm. A five-point field run selected T0 and reached the front-right pad before the host stopped at 512 contact cycles. A complete R26.3 run on the printer remains to be verified. [Full calibration runs](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) · [Individual cold measurements](docs/acceptance/INVENTURE_PAD_COLD_XY_2026-11-19.md)
+Two full central pad runs at 100 °C were saved on R23 with empty nozzles and a 0.1 mm edge tolerance. Individual cold center measurements on R25 returned T0 at (81.7, 68.3) mm and T1 at (70.8, 68.8) mm. The R26.3 five-point run completed and was saved on the printer, with a platform depth of 138.349 mm and a center deviation of +0.031 mm. [Full calibration runs](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) · [Individual cold measurements](docs/acceptance/INVENTURE_PAD_COLD_XY_2026-11-19.md)
 
 ## Service reference
 

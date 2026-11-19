@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3'
+HOST_REVISION = 'RC8-CONTROL-R7-FILAMENT-JAM-R27'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -406,6 +406,8 @@ class InventureMCU:
                                     when_not_ready=True)
         self.gcode.register_command('INVENTURE_SENSOR_TEST', self.cmd_sensor_test,
                                     when_not_ready=True)
+        from .inventure_filament_jam import FilamentJam
+        self.filament_jam = FilamentJam(self)
         from .inventure_menu_service import ZortraxMenuService
         self.zortrax=ZortraxMenuService(self,config)
     def _build_config(self):
@@ -1561,6 +1563,7 @@ class InventureMCU:
     def get_status(self, eventtime):
         return dict(self.status, temperatures=list(self.temperatures),
                     platform_level=self.platform_level_status(),
+                    filament_jam=self.filament_jam.get_status(eventtime) if hasattr(self, 'filament_jam') else {},
                     host_revision=HOST_REVISION, host_module=str(Path(__file__).resolve()),
                     heat_test_abi=self.heat_test_abi,
                     motor_test_abi=getattr(self,'motor_test_abi',0),
@@ -2368,7 +2371,7 @@ class InventureMCU:
             if f['operation']=='NOZZLE_PAD_CALIBRATION':
                 result['stage']='nozzle_pad_calibration'
                 result['elapsed_s']=round(now-f['started'],2)
-            cleaning_planned=(f['operation'] in ('AUTO','CLEAN')
+            cleaning_planned=(f['operation'] in ('AUTO','CLEAN','JAM_EXTERNAL','JAM_CASSETTE')
                 or f['operation']=='PURGE' and f['parameters']['clean_after'])
             result['cleaning_pending']=bool(cleaning_planned and not f['cleaning_done']
                 and not (f.get('result') or {}).get('success'))
@@ -3490,7 +3493,18 @@ class InventureMCU:
                 raise ValueError('SPEED_PROFILE=OEM for T%d requires the %s MCU application'%(p['tool'],release))
             if 'factory_session' not in self.commands:
                 raise ValueError('Factory procedures require the RC8-CONTROL-R7-FACTORY MCU application')
-            needs_feeder = operation in ('AUTO','UNLOAD') or (
+            if operation in ('JAM_CASSETTE','JAM_EXTERNAL'):
+                if p['speed_profile'] != 'OEM' or gcmd.get('TARGET', None) is None:
+                    raise ValueError('The idle jam test requires SPEED_PROFILE=OEM and a material-specific TARGET')
+                monitor = getattr(getattr(self, 'filament_jam', None), 'monitor', None)
+                if monitor is not None:
+                    chosen = monitor.source('T%d' % p['tool'])
+                    if chosen not in ('UNKNOWN', operation[4:]):
+                        raise ValueError('Jam test source conflicts with the selected material source for T%d' % p['tool'])
+                pause = self.printer.lookup_object('pause_resume', None)
+                if pause is not None and pause.get_status(self.reactor.monotonic()).get('is_paused'):
+                    raise ValueError('Finish the paused print before starting an idle jam test')
+            needs_feeder = operation in ('AUTO','UNLOAD','JAM_CASSETTE') or (
                 operation in ('MANUAL','PURGE') and p['feeder'])
             if needs_feeder and not getattr(self,'factory_feed_clock',0):
                 raise ValueError('Factory cassette transport requires the '+FACTORY_FEED_RELEASE+' MCU application')
@@ -4080,6 +4094,8 @@ class InventureMCU:
                 m['last_edge']=edge
             m['last_pulse']=pulses
             ok=delta32(pulses,m['pulse_base'])>=a['count'];stop=ok
+        elif kind=='feed_until_starts':
+            ok=delta32(snap['starts'],a['starts_base'])>=a['count'];stop=ok
         elif kind=='retract_until_quiet':
             quiet=f['unload_quiet']
             if snap['pulses']!=quiet[0]:quiet[:]=[snap['pulses'],now-snap['pulse_age_ms']/1000.]
@@ -4366,12 +4382,12 @@ class InventureMCU:
             snap=f['snapshot'];expired=now>=action['until']
             ok=(bool(snap['a']) and not expired) if kind=='wait_a' else not snap['a'] or bool(snap['b'])
             return dict(snap,ok=ok) if ok or expired else None
-        if kind in ('feed_until_edges','retract_until_quiet','retract_until_a'):
+        if kind in ('feed_until_edges','feed_until_starts','retract_until_quiet','retract_until_a'):
             if f['move'] is not None:return self._factory_poll_move(context)
             if kind=='retract_until_a' and not f['snapshot']['a']:
                 return dict(f['snapshot'],ok=True,sent_steps=0)
             mm=action.get('mm',action.get('timeout_s',0)*action['speed'])
-            action=dict(action,e=mm if kind=='feed_until_edges' else -mm)
+            action=dict(action,e=mm if kind in ('feed_until_edges','feed_until_starts') else -mm)
             return self._factory_begin_move(context,action)
         if kind=='done':
             if f['module_stack']:raise ValueError('Factory procedure left a module unfinished')

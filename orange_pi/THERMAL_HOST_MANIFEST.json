@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3",
+  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R27",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc",
+  "module_sha256": "aa5ca50fe1ebd2ba9484cde98e3323d7d03d9229a96f5d49b05d66c8de4d631c",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -92,9 +92,10 @@
     "7ae8ed878fa1db43c697dc9b7def7f8ee8368516909b67947e03a269b7165cf0",
     "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643",
     "43e3f7fa7e999c62a316916987f595cbef05bb1289566ad5a5f7c32db77cdfd5",
-    "76762c5f639d7b32ead9c16ef77a2988560b545b11f8a944c9a5a39d51d17e96"
+    "76762c5f639d7b32ead9c16ef77a2988560b545b11f8a944c9a5a39d51d17e96",
+    "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc"
   ],
-  "host_revision": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3",
+  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R27",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -260,7 +261,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "512689fa19deb6a382dc27845c3f41977e0eeba60966b323b9f88c618e801673",
+  "factory_core_sha256": "22cbf3cb0148503684723ed61192a59fc358cfd79c0a28ea2c8457a159357df7",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -370,32 +371,36 @@
     "4910ae0f8169ea49d112c0419f88cebee86d839e4129547e25581600f37e8e0a",
     "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
     "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db",
-    "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784"
+    "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784",
+    "512689fa19deb6a382dc27845c3f41977e0eeba60966b323b9f88c618e801673"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
   "extra_modules": {
     "inventure_menu_core.py": {
-      "sha256": "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf",
+      "sha256": "f89dbcc9767715bfec59b936f747bc5139bc03401953775a8917c939a447aebd",
       "allowed_existing_sha256": [
-        "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f"
+        "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f",
+        "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf"
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f",
+      "sha256": "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
         "700a1090dfc9a48b84da275a2261e2338ebc8ec02029bd4481237fc719a05f6d",
-        "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f"
+        "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f",
+        "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f"
       ]
     },
     "inventure_oem_menu.py": {
-      "sha256": "1fe298aca80c4a60acf279bd68ed62762fd32fea3f25ee493c40a5cd3dacb971",
+      "sha256": "293d0fc229f6f2627bb05c2b9c533eb42fb8133923cafe302aa8c6449a598368",
       "allowed_existing_sha256": [
         "5917dd4e9cf326501f8ab32e4b5bb60e47faf057743f7cb1dd2b05b34ce40795",
         "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad",
-        "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54"
+        "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54",
+        "1fe298aca80c4a60acf279bd68ed62762fd32fea3f25ee493c40a5cd3dacb971"
       ]
     },
     "inventure_oled_uifast_transport.py": {
@@ -477,6 +482,45 @@
     "inventure_fluidd.py": {
       "sha256": "463b08e04d4b397381d726f7082a200bed133dd30ef7891c53d563dc2206216a",
       "allowed_existing_sha256": []
+    },
+    "inventure_filament_jam.py": {
+      "sha256": "de6b167d75e5e39c82f4f7c90398346aca65a91ad2e862d5ce0fc08b89421614"
+    },
+    "inventure_jam_service.py": {
+      "sha256": "b24e5e2f99d5799269f5d4b542f752344c258af28e1a4d5cebe4e5fcfa3d8e1c"
+    },
+    "inventure_jam_monitor.py": {
+      "sha256": "8222949b9606f65d85f653571467b2ea10b924a5510e21ca19d92da7e17d945d"
+    },
+    "inventure_jam_motion.py": {
+      "sha256": "04ab7d3fa848888f20af4772cefbd755b6b050fdadc4c3c070b67fc01a61c1b1"
+    },
+    "inventure_jam_sources.py": {
+      "sha256": "18461a6fc0dabd7692587b5f020a5905a67d6d211edc7e0c99e931e44ce7278a"
+    },
+    "inventure_filament.py": {
+      "sha256": "26812ba572b2991201496a8bfedb6c4dfc38b2f621d52c2a133bb751ff3c74a1",
+      "allowed_existing_sha256": [
+        "36aa49c510c652e8e6c54c2ad266f6e04e0845567bc5d8ec0a66d95c8c507e5d"
+      ]
+    },
+    "inventure_consumption.py": {
+      "sha256": "b06c2086d2de278082139bac379a29e6e16dc4fa42cdc8c5847d78e9f5f3a68b",
+      "allowed_existing_sha256": [
+        "a71279fd2c8d5264e1ed40da88af0d37e71bf90f92e7fa3d3269e2130123176f"
+      ]
+    },
+    "inventure_cycle.py": {
+      "sha256": "e99edcc510736c65a465675c660fad0c782d4d01637869e72d5f18eabbf3b8c9",
+      "allowed_existing_sha256": [
+        "f3661a751280eef9c4395e5c8b7d9097aca0e87a5e81b50e18ba43f698687830"
+      ]
+    },
+    "inventure_cycle_core.py": {
+      "sha256": "96e3230a85498d7f24934368566672c6da5f4344e8c019e83954af3822dd3f27",
+      "allowed_existing_sha256": [
+        "2e9aacd6b00f0ec8c269faf845d7a82a73aba6d29f07ca4be4ce2f3136dfb134"
+      ]
     }
   },
   "axis_timer_motion": {
@@ -840,7 +884,7 @@
       3
     ],
     "final_point": 2,
-    "physical_qualification": "pending first full hardware run",
+    "physical_qualification": "R26.3 hardware run completed and saved; depth 138.349 mm, center deviation +0.031 mm",
     "fluidd_global_door_menu": "ZORTRAX_DOOR_LOCK",
     "operator_selects_tool": false,
     "operator_interface_language": "en",
@@ -848,5 +892,19 @@
     "contact_total_cycle_limit": null,
     "center_stable_cycles": 101,
     "point_stable_cycles": 151
+  },
+  "filament_jam": {
+    "command": "ZORTRAX_FILAMENT_JAM",
+    "source_options": [
+      "CASSETTE",
+      "EXTERNAL",
+      "UNKNOWN"
+    ],
+    "frontend_config": "config/INVENTURE_FILAMENT_JAM.cfg",
+    "installer_option": "--configure-jam",
+    "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
+    "stock_reference": "Inventure 1.6.1 r0323, filament transport sections 11.3 and 11.4",
+    "documentation": "docs/INVENTURE_FILAMENT_JAM_R27.md",
+    "physical_qualification": "pending T0 and T1 printer validation"
   }
 }

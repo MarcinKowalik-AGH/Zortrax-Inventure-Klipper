@@ -70,7 +70,8 @@ MENU = {
    Item('Model hotend maintenance',action='maintenance_t0'),
    Item('Support hotend maintenance',action='maintenance_t1')]),
  'material':('Material','material',[
-   Item('Model','model_material'),Item('Support','support_material')]),
+   Item('Model','model_material'),Item('Support','support_material'),
+   Item('Filament recovery',action='filament_jam')]),
  'model_material':('Model','material',[
    Item('Unload model material',action='unload_t0'),
    Item('Load model material','load_model')]),

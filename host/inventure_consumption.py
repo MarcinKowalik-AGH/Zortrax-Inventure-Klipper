@@ -74,7 +74,8 @@ class InventureConsumption:
                     raise AccountingError('TAG_IDENTITY_CHANGED')
                 if c.intent is None and tag.remaining_mm!=c.durable_anchor_mm:
                     raise AccountingError('RFID_DURABLE_BASE_CHANGED_OUTSIDE_P14')
-            if p.get('fault'):
+            jam = getattr(self.board, 'filament_jam', None)
+            if p.get('fault') and not (jam and jam.monitor.legacy_fault_managed(channel, p)):
                 self.ledger.jam={'tool':channel,'fault':p.get('fault'),'at':now,'cause':'P13_MCU_TRANSPORT_FAULT'}
                 raise AccountingError('JAM_FAULT_%s'%p['fault'])
             f,r=self.ledger.account(channel,p,now,clock_hz=self.clock_hz,max_gap=self.max_gap)

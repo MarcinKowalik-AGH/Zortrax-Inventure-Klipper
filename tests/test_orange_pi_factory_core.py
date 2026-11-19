@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 
-spec = importlib.util.spec_from_file_location('factory_core',
+spec = importlib.util.spec_from_file_location('orange_pi.inventure_factory_core',
     Path(__file__).resolve().parents[1] / 'orange_pi/inventure_factory_core.py')
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)

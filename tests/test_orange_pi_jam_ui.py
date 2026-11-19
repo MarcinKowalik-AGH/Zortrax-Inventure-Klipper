@@ -1,0 +1,158 @@
+"""Filament recovery decisions share the same run across the panel and Fluidd."""
+import configparser
+from pathlib import Path
+import types
+import unittest
+
+from jinja2 import Environment
+from test_orange_pi_zortrax_menu import MenuFixture, core, menu_module
+
+
+class JamUI(MenuFixture, unittest.TestCase):
+    def setUp(self):
+        self.board, self.menu = self.host()
+        self.run = dict(run_id=None, prompt_id=0, phase='idle', tool=None,
+                        source='UNKNOWN', active=False, allowed_actions=['SOURCE'],
+                        sources={'T0': 'CASSETTE', 'T1': 'UNKNOWN'}, message='Ready')
+        self.calls = []
+        self.board.filament_jam = types.SimpleNamespace(
+            cmd=self.command, get_status=lambda now: self.run.copy())
+        self.output = []
+        self.board.gcode.register_output_handler(self.output.append)
+
+    def command(self, cmd):
+        self.calls.append(cmd.get_command_parameters())
+        if cmd.get('ACTION') == 'SOURCE' and self.run['active']:
+            self.run.update(source=cmd.get('SOURCE'), prompt_id=2, phase='recovering',
+                            allowed_actions=['CANCEL'], message='Checking transport')
+        if cmd.get('ACTION') == 'CANCEL':
+            self.run.update(active=False, phase='cancelled', allowed_actions=[],
+                            message='Recovery cancelled. Print paused.')
+
+    def tick(self):
+        self.menu._tick(self.board.reactor.monotonic())
+
+    def choose(self, label):
+        index = [option[0] for option in self.menu.view.options].index(label)
+        self.menu.choose(self.menu.view.token, index=index)
+
+    def simulate_jam(self):
+        self.run.update(phase='waiting', tool='T1', run_id='job1', prompt_id=1, active=True,
+                        allowed_actions=['SOURCE', 'CANCEL'], message='Select the T1 material source.')
+        self.tick()
+
+    def test_source_setup_and_report_are_separate_explicit_choices(self):
+        self.assertIn('filament_jam', [item.action for item in menu_module.MENU['material'][2]])
+        self.menu.open('filament_jam')
+        self.choose('T1 source: UNKNOWN')
+        self.assertEqual(self.calls, [])
+        self.choose('External spool')
+        self.assertEqual(self.calls, [dict(ACTION='SOURCE', TOOL='T1', SOURCE='EXTERNAL')])
+        self.run.update(allowed_actions=['REPORT'])
+        self.menu.open('filament_jam')
+        self.choose('Report filament jam')
+        self.assertEqual(len(self.calls), 1)
+        self.menu.choose(self.menu.view.token, confirm=True)
+        self.assertEqual(self.calls[-1], dict(ACTION='REPORT'))
+
+    def test_idle_service_test_explicitly_selects_nozzle_source_and_temperature(self):
+        self.menu.open('filament_jam')
+        self.choose('Test recovery at idle')
+        self.assertNotIn('T0 / External spool', [x[0] for x in self.menu.view.options])
+        self.choose('T1 / External spool')
+        self.choose('260 C')
+        self.assertEqual(self.board.device.packets, [])
+        self.assertIn(('Heat to 260 C', None), self.menu.view.options)
+        service = []
+        def start(cmd):
+            service.append(cmd.get_command_parameters())
+            self.board.load_test_context = {'factory': {}, 'tool': 1}
+        self.board.cmd_procedure = start
+        self.board._load_test_report = lambda ctx: dict(phase='preparing', tool='T1',
+            factory=dict(operation='JAM_EXTERNAL', phase='HOME'))
+        self.menu.choose(self.menu.view.token, confirm=True)
+        self.assertEqual(service, [dict(ACTION='JAM_EXTERNAL', TOOL='T1', TARGET=260, SPEED_PROFILE='OEM')])
+        self.assertIn(('T1 / EXTERNAL test', None), self.menu.view.options)
+
+    def test_external_run_presents_same_one_time_source_choice_on_both_interfaces(self):
+        self.simulate_jam()
+        self.tick()
+        self.assertEqual(self.output.count('// action:prompt_show'), 1)
+        self.assertTrue(any('SOURCE=EXTERNAL' in msg and 'RUN_ID=job1' in msg
+                            and 'PROMPT_ID=1' in msg and 'TOOL=T1' in msg for msg in self.output))
+        self.assertEqual(self.menu.active['backend'], 'jam')
+        self.menu.choose(self.menu.view.token, index=0)
+        self.assertEqual(self.calls, [])
+        self.choose('Use external spool')
+        self.assertEqual(self.calls[-1], dict(ACTION='SOURCE', TOOL='T1', SOURCE='EXTERNAL',
+                                             RUN_ID='job1', PROMPT_ID=1))
+        self.tick()
+        self.assertEqual(self.output[-1], '// action:prompt_end')
+        self.assertNotIn('Flow verified / resume', [x[0] for x in self.menu.view.options])
+
+    def test_stale_confirmation_does_not_transfer_to_new_prompt(self):
+        self.simulate_jam()
+        self.run.update(allowed_actions=['CONFIRM','CANCEL'], prompt_id=2,
+                        message='Verify flow at the nozzle.')
+        self.tick()
+        self.run['prompt_id'] = 3
+        with self.assertRaisesRegex(core.MenuError, 'expired'):
+            self.choose('Flow verified / resume')
+        self.assertEqual(self.calls, [])
+        self.tick()
+        self.choose('Flow verified / resume')
+        self.assertEqual(self.calls[-1], dict(ACTION='CONFIRM', RUN_ID='job1', PROMPT_ID=3))
+
+    def test_oled_shows_model_and_support_cartridge_warnings_in_first_visible_row(self):
+        for tool, code in [('T0', 176), ('T1', 177)]:
+            self.simulate_jam()
+            self.run.update(tool=tool, reason='CASSETTE_JAM', source='CASSETTE', prompt_id=2,
+                            allowed_actions=['RETRY','CANCEL'])
+            self.tick()
+            panel = self.menu.view_status()
+            self.assertEqual(panel['labels'][0], '%s #%d Cartridge jam' % (tool, code))
+            self.assertEqual(panel['window'], 0)
+            self.assertTrue(any('action:prompt_begin #%d' % code in msg for msg in self.output))
+
+    def test_back_and_cancel_leave_job_paused(self):
+        self.simulate_jam()
+        self.menu.panel_back()
+        self.assertEqual(self.calls, [])
+        self.menu.choose(self.menu.view.token, confirm=True)
+        self.assertEqual(self.calls, [dict(ACTION='CANCEL', RUN_ID='job1', PROMPT_ID=1)])
+        self.assertIn('paused', self.menu.view.data['reason'])
+        self.tick()
+        self.assertEqual(self.output[-1], '// action:prompt_end')
+
+
+class JamMacroTests(unittest.TestCase):
+    def setUp(self):
+        config = configparser.RawConfigParser()
+        config.read(Path(__file__).resolve().parents[1] / 'config/INVENTURE_FILAMENT_JAM.cfg')
+        env = Environment(variable_start_string='{', variable_end_string='}')
+        self.macros = {s.split()[1]: env.from_string(config.get(s, 'gcode')) for s in config.sections()}
+
+    def render(self, name, **params):
+        def error(msg):
+            raise ValueError(msg)
+        run = dict(active=True, prompt_id=4, run_id='A', allowed_actions=['RETRY', 'CANCEL'])
+        return self.macros['ZORTRAX_JAM_' + name].render(
+            params=params, printer=dict(inventure_mcu=dict(filament_jam=run)), action_raise_error=error).strip()
+
+    def test_service_uses_an_explicit_material_source_tool_and_temperature(self):
+        for params in [{}, dict(TOOL='T0', SOURCE='EXTERNAL', TARGET=360),
+                       dict(TOOL='T2', SOURCE='CASSETTE', TARGET=240),
+                       dict(TOOL='T1', SOURCE='UNKNOWN', TARGET=230)]:
+            with self.assertRaises(ValueError):
+                self.render('SERVICE_TEST', **params)
+        self.assertEqual(self.render('SERVICE_TEST', TOOL='T1', SOURCE='EXTERNAL', TARGET=265),
+                         'INVENTURE_PROCEDURE ACTION=JAM_EXTERNAL TOOL=T1 TARGET=265.0 SPEED_PROFILE=OEM')
+
+    def test_flow_confirmation_and_retry_are_guarded(self):
+        self.assertEqual(self.render('RETRY'), 'ZORTRAX_FILAMENT_JAM ACTION=RETRY RUN_ID=A PROMPT_ID=4')
+        with self.assertRaises(ValueError):
+            self.render('CONFIRM_FLOW')
+        with self.assertRaises(ValueError):
+            self.render('SOURCE')
+        self.assertIn('TOOL=T1 SOURCE=CASSETTE RUN_ID=A PROMPT_ID=4',
+                      self.render('SOURCE', TOOL='T1', SOURCE='CASSETTE'))

@@ -6,6 +6,7 @@ qualification flags, native coordinates, RFID identities or print checkpoints.
 """
 import json
 import math
+import textwrap
 from pathlib import Path
 
 from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, MODEL_MATERIALS,
@@ -48,6 +49,7 @@ class ZortraxMenuService:
         self.fan_session=None
         self.executing=False;self.last_buttons=0;self.last_sequence=None;self.last_native_key=None
         self.platform_dialog = None
+        self.jam_dialog = None
         self.last_pause_view=None
         self.platform_step=float(config.get('zortrax_platform_step',1.))
         self.platform_speed=float(config.get('zortrax_platform_speed',1.))
@@ -77,6 +79,78 @@ class ZortraxMenuService:
     def _xy_status(self):
         read=getattr(self.board,'nozzle_xy_status',None)
         return read() if callable(read) else {}
+    def _jam_status(self):
+        jam = getattr(self.board, 'filament_jam', None)
+        return jam.get_status(self.reactor.monotonic()) if jam is not None else {}
+
+    @staticmethod
+    def _jam_title(run):
+        tool = run.get('tool')
+        reason = run.get('reason')
+        if tool in ('T0', 'T1') and reason in ('CASSETTE_JAM', 'RUNOUT'):
+            code, label = (176, 'Cartridge jam') if reason == 'CASSETTE_JAM' else (161, 'Material empty')
+            return '#%d %s' % (code + (tool == 'T1'), label)
+        return {'EXTRUDER_JAM': 'Extruder jam', 'MATERIAL_MISSING': 'Material missing',
+                'CARTRIDGE_ERROR': 'Cartridge error', 'MONITOR_ERROR': 'Transport monitor'}.get(
+                    reason, 'Filament recovery')
+
+    @staticmethod
+    def _jam_choices(run):
+        # Each operator reply only applies to the displayed run and phase.
+        owner = dict(RUN_ID=run['run_id'], PROMPT_ID=run['prompt_id'])
+        choices = []
+        actions = run['allowed_actions']
+        if 'SOURCE' in actions:
+            for label, source in [('Use cartridge', 'CASSETTE'), ('Use external spool', 'EXTERNAL')]:
+                choices.append((label, dict(owner, ACTION='SOURCE', TOOL=run['tool'], SOURCE=source)))
+        for action, label in [('RETRY', 'Retry recovery'), ('CONFIRM', 'Flow verified / resume'),
+                              ('CANCEL', 'Stop recovery')]:
+            if action in actions:
+                choices.append((label, dict(owner, ACTION=action)))
+        return choices
+
+    def _jam_fluidd_prompt(self, run):
+        # Progress is always on the OLED. Open a web dialog only for operator input.
+        key = (run['run_id'], run['prompt_id']) if (
+            run.get('active') and run['phase'] in ('waiting', 'verifying')) else None
+        if key == self.jam_dialog:
+            return
+        emit = self.gcode.respond_raw
+        if self.jam_dialog is not None:
+            emit('// action:prompt_end')
+        self.jam_dialog = key
+        if key is None:
+            return
+        emit('// action:prompt_begin %s - %s' % (self._jam_title(run), run['tool']))
+        emit('// action:prompt_text ' + ' '.join(run['message'].split()))
+        for label, params in self._jam_choices(run):
+            cmd = 'ZORTRAX_FILAMENT_JAM ' + ' '.join('%s=%s' % item for item in params.items())
+            emit('// action:prompt_button ' + label + '|' + cmd)
+        emit('// action:prompt_show')
+
+    def _jam_menu(self):
+        run = self._jam_status()
+        if not run:
+            return self._info('Filament recovery', 'Filament monitoring is unavailable')
+        if run.get('active'):
+            self.active = dict(backend='jam', object=self.board.filament_jam,
+                               action='filament_jam', run_id=run['run_id'])
+            self.last_native_key = None
+            return self._running_view()
+        options = [('Back', ('close', {}))]
+        if 'REPORT' in run.get('allowed_actions', ()):
+            options.append(('Report filament jam', ('jam_report', {})))
+        if 'SOURCE' in run.get('allowed_actions', ()):
+            if self._native_job()[2] not in ('printing','paused') and 'factory_session' in self.board.commands:
+                options.append(('Test recovery at idle', ('jam_test', {})))
+            sources = run.get('sources', {})
+            for tool in ('T0', 'T1'):
+                current = sources.get(tool, 'UNKNOWN')
+                options.append(('%s source: %s' % (tool, current), ('jam_source_menu', dict(tool=tool))))
+        if run.get('message'):
+            options.extend((line, None) for line in textwrap.wrap(run['message'], 25))
+        return self._set_view('choice', 'Filament recovery', options)
+
     def _platform_status(self):
         read = getattr(self.board, 'platform_level_status', None)
         return read() if callable(read) else {}
@@ -134,7 +208,9 @@ class ZortraxMenuService:
         filament=self._obj('inventure_filament');level=self._obj('inventure_leveling');align=self._obj('inventure_alignment');pre=self._obj('inventure_preflight')
         xy=self._xy_status();lines=xy.get('lines') or {}
         platform = self._platform_status()
-        return (id(ctx) if ctx is not None else None, f.get('token'),
+        jam = self._jam_status()
+        return (jam.get('run_id'), jam.get('prompt_id'), jam.get('phase'),
+            tuple(jam.get('allowed_actions', ())),id(ctx) if ctx is not None else None, f.get('token'),
             None if ctx is None else ctx.get('measurement',{}).get('completed_jogs'),
             getattr(ops,'epoch',None),getattr(self._obj('inventure_materials'),'generation',None),
             cal.get('revision'),self._native_job(),getattr(filament,'job',None),
@@ -232,6 +308,7 @@ class ZortraxMenuService:
         if action in ('go_status','back','cancel_no','question_no'):self.view=None;return
         if action=='question_yes':return self._info('Confirmation','No bound question is active; open the intended operation')
         if action=='job_info':return self._job_view()
+        if action=='filament_jam':return self._jam_menu()
         if action in READ_ACTIONS:return self._read(action)
         if action=='sd_browser':return self._browse()
         if action in ('spool_catalog_model','spool_catalog_support'):
@@ -328,7 +405,10 @@ class ZortraxMenuService:
     def _job_view(self):
         job=self._native_job();state=job[2]
         options=[('Back',('close',{}))]
-        if state=='printing':options.append(('Pause current print',('request',dict(action='pause'))))
+        if state=='printing':
+            options.append(('Pause current print',('request',dict(action='pause'))))
+            if getattr(self.board, 'filament_jam', None) is not None:
+                options.append(('Filament recovery', ('request', dict(action='filament_jam'))))
         elif state=='paused':
             options += [('Resume this print',('request',dict(action='resume'))),
                 ('Stop this print',('request',dict(action='cancel_yes')))]
@@ -505,6 +585,7 @@ class ZortraxMenuService:
         a=self.active
         if a is None:return False
         obj=a['object'];backend=a['backend']
+        if backend=='jam':return self._jam_status().get('run_id') == a['run_id']
         if backend=='service':return getattr(self.board,'load_test_context',None) is obj
         if backend=='filament':return getattr(obj,'job',None)==a['job']
         if backend=='level':return getattr(obj,'session',None) is a['session']
@@ -533,8 +614,26 @@ class ZortraxMenuService:
             if isinstance(temperature,(int,float)) and isinstance(target,(int,float)):
                 options.append(('T%d %.1f / %.0fC'%(ctx['tool'],temperature,target),None))
             if detail.get('factory'):
+                operation = detail['factory'].get('operation')
+                if operation in ('JAM_CASSETTE', 'JAM_EXTERNAL'):
+                    options += [('%s / %s test' % (detail['tool'], operation[4:]), None),
+                                (str(phase).replace('_', ' '), None)]
                 steps=detail['factory'].get('e_sent_steps',0)
                 options.append(('E %.1fmm nominal'%(steps/960.),None))
+        elif backend == 'jam':
+            detail = self._jam_status()
+            phase = detail['phase']
+            if not detail.get('active'):
+                self.active = None
+                self.last = detail
+                return self._info('Filament recovery', detail['message'], result=detail)
+            # The first row is harmless when an operator presses OK to read a warning.
+            options = [('%s %s' % (detail['tool'], self._jam_title(detail)), None),
+                       ('Source: ' + detail['source'], None)]
+            options.extend((line, None) for line in textwrap.wrap(detail['message'], 25))
+            for label, params in self._jam_choices(detail):
+                verb = 'cancel_request' if params['ACTION'] == 'CANCEL' else 'jam_command'
+                options.append((label, (verb, params)))
         elif backend == 'platform_level':
             detail = self._platform_status()
             phase = detail['phase']
@@ -631,6 +730,8 @@ class ZortraxMenuService:
                      'Review XY' if phase=='review_xy' else str(phase).replace('_',' ').title())
             if backend == 'platform_level' and phase in ('await_knobs', 'adjust') and not detail.get('awaiting_operator'):
                 title = 'Please wait'
+            if backend == 'jam':
+                title = self._jam_title(detail)
             self._set_view('running',title,options,data=dict(backend=backend,phase=phase))
         return self.view
 
@@ -643,6 +744,10 @@ class ZortraxMenuService:
         if not owned:return self._info('Owner changed','Previous procedure no longer owns these resources')
         if backend=='service':
             if self.board.load_test_context is obj:self._call(self.board,'cmd_load_test',ACTION='STOP')
+        elif backend=='jam':
+            detail = self._jam_status()
+            self._call(obj, 'cmd', ACTION='CANCEL', RUN_ID=active['run_id'], PROMPT_ID=detail['prompt_id'])
+            return self._info('Filament recovery', self._jam_status()['message'])
         elif backend=='filament':
             if obj.job==active['job']:self._call(obj,'cmd_cancel')
         elif backend in ('level','align'):self._call(obj,'cmd_cancel')
@@ -665,6 +770,56 @@ class ZortraxMenuService:
             action=args['action'];params={k:v for k,v in args.items() if k!='action'}
             if self.active is not None and action=='print_model':return self._confirm(action,params)
             return self.open(action,**params)
+        if verb == 'jam_test':
+            sources = self._jam_status().get('sources', {})
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for tool in ('T0', 'T1'):
+                for source, label in [('CASSETTE', 'Cartridge'), ('EXTERNAL', 'External spool')]:
+                    if sources.get(tool, 'UNKNOWN') in ('UNKNOWN', source):
+                        options.append((tool + ' / ' + label, ('jam_test_temperature', dict(TOOL=tool, SOURCE=source))))
+            return self._set_view('choice', 'Recovery test', options)
+        if verb == 'jam_test_temperature':
+            options = [('Back', ('jam_test', {}))]
+            options.extend(('%d C' % target, ('jam_test_confirm', dict(args, TARGET=target)))
+                           for target in range(180, 311, 5))
+            return self._set_view('choice', 'Service temperature', options)
+        if verb == 'jam_test_confirm':
+            return self._set_view('confirm', 'Start recovery test?',
+                [('No / Back', ('jam_test_temperature', dict(TOOL=args['TOOL'], SOURCE=args['SOURCE']))),
+                 ('Start %s / %s' % (args['TOOL'], args['SOURCE']), ('jam_test_start', args)),
+                 ('Heat to %d C' % args['TARGET'], None)])
+        if verb == 'jam_test_start':
+            self._service_ready()
+            self._call(self.board, 'cmd_procedure', ACTION='JAM_' + args['SOURCE'],
+                       TOOL=args['TOOL'], TARGET=args['TARGET'], SPEED_PROFILE='OEM')
+            if self.board.load_test_context is None:
+                raise MenuError('Recovery test did not start')
+            self.active = dict(backend='service', object=self.board.load_test_context, action='jam_test')
+            self.last_native_key = None
+            return self._running_view()
+        if verb == 'jam_report':
+            return self._set_view('confirm', 'Pause for a jam?',
+                [('No / Back', ('request', dict(action='filament_jam'))),
+                 ('Yes / report jam', ('jam_command', dict(ACTION='REPORT')))])
+        if verb == 'jam_source_menu':
+            tool = args['tool']
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for label, source in [('Cartridge', 'CASSETTE'), ('External spool', 'EXTERNAL'),
+                                  ('Clear selection', 'UNKNOWN')]:
+                options.append((label, ('jam_command', dict(ACTION='SOURCE', TOOL=tool, SOURCE=source))))
+            return self._set_view('choice', tool + ' material source', options)
+        if verb == 'jam_command':
+            self._call(self.board.filament_jam, 'cmd', **args)
+            self.last_native_key = None
+            if self.active is not None:
+                return self._running_view()
+            return self._jam_menu()
+        if verb=='cancel_request' and self.active and self.active['backend']=='jam':
+            if 'CANCEL' not in self._jam_status().get('allowed_actions', ()):
+                return
+            return self._set_view('confirm', 'End jam recovery?',
+                [('No / Back', ('close', {})), ('Yes / end recovery', ('cancel', {})),
+                 ('No automatic resume', None)])
         if verb=='cancel_request':return self._set_view('confirm','Cancel operation?',
             [('No / continue',('close',{})),('Yes / stop',('cancel',{}))])
         if verb=='commit_request':
@@ -785,7 +940,18 @@ class ZortraxMenuService:
             ctx=getattr(self.board,'load_test_context',None)
             xy=self._xy_status()
             platform = self._platform_status()
-            self._platform_fluidd_prompt(platform)
+            jam = self._jam_status()
+            if jam.get('active'):
+                self._platform_fluidd_prompt({})
+                self._jam_fluidd_prompt(jam)
+                if (self.active is None or self.active['backend'] != 'jam'
+                        or self.active['run_id'] != jam['run_id']):
+                    self.active = dict(backend='jam', object=self.board.filament_jam,
+                                       action='filament_jam', run_id=jam['run_id'])
+                    self.view=None;self.last_native_key=None
+            else:
+                self._jam_fluidd_prompt({})
+                self._platform_fluidd_prompt(platform)
             if self.active is None and platform.get('run_id') and platform.get('phase') in LEVEL_PHASE_TITLES:
                 self.active = dict(backend='platform_level', object=self.board,
                                    run_id=platform['run_id'], action='leveling')
@@ -801,10 +967,10 @@ class ZortraxMenuService:
                 self.active=dict(backend='filament',object=filament,job=filament.job,action='native_filament')
                 self.view=None;self.last_native_key=None
             if self.active is not None and not self.executing:
-                if (self.active['backend'] in ('nozzle_xy','platform_level') and self.view is not None
+                if (self.active['backend'] in ('nozzle_xy','platform_level','jam') and self.view is not None
                         and eventtime>=self.view.deadline):
                     self.view=None;self.last_native_key=None
-                if (self.active['backend'] == 'platform_level' and self.view is not None
+                if (self.active['backend'] in ('platform_level','jam') and self.view is not None
                         and self.view.kind == 'confirm' and self.view.binding != self._binding()):
                     self.view=None;self.last_native_key=None
                 if self.view is None or self.view.kind=='running':self._running_view()
@@ -816,9 +982,14 @@ class ZortraxMenuService:
                     self.last_pause_view=job;self._job_view()
         except Exception as exc:
             reason=str(exc)
-            try:self._cancel_active()
-            except Exception as cancel_error:reason+='; cancellation: '+str(cancel_error)
-            self._info('Procedure interrupted',reason)
+            if self.active and self.active['backend'] == 'jam':
+                # Failure to render a view must not stop recovery or resume a print.
+                self.last_native_key = None
+                self._info('Recovery display', reason)
+            else:
+                try:self._cancel_active()
+                except Exception as cancel_error:reason+='; cancellation: '+str(cancel_error)
+                self._info('Procedure interrupted',reason)
         return self.reactor.monotonic()+.25
     def get_status(self,now):
         return dict(api=1,view=None if self.view is None else self.view.status(),

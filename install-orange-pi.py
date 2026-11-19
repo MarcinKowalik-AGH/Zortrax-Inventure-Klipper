@@ -224,7 +224,11 @@ def macro_sections(text):
 
 
 def add_leveling_macros(target, config, updates):
-    """Upgrade shipped Fluidd buttons in place and install the requested leveling controls."""
+    add_fluidd_controls(target, config, updates, leveling=True)
+
+
+def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False):
+    """Stage the selected controls in the active Klipper configuration and its includes."""
     config = config.resolve()
     sources = {}
     originals = {}
@@ -247,21 +251,47 @@ def add_leveling_macros(target, config, updates):
 
     active = read_active()
     if not active.has_section('inventure_mcu'):
-        raise ValueError('Platform leveling requires [inventure_mcu] in the active config')
+        raise ValueError('Inventure controls require [inventure_mcu] in the active config')
 
-    leveling = ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg'
+    level_config = ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg'
+    jam_config = ROOT/'config/INVENTURE_FILAMENT_JAM.cfg'
+    selected = set()
+    if leveling:
+        selected.add(level_config)
+    if jam:
+        selected.add(jam_config)
+        def add_native_section(name, body, commands):
+            if active.has_section(name):
+                return
+            for section in active.sections():
+                prefix, _, command = section.upper().partition(' ')
+                if prefix == 'GCODE_MACRO' and command in commands:
+                    if not active.has_option(section, 'rename_existing'):
+                        raise ValueError('Cannot enable ['+name+'] alongside ['+section
+                                         +'] without rename_existing')
+            sources[config] = append_config_section(sources[config], body.encode('utf-8'))
+
+        add_native_section('pause_resume', '[pause_resume]',
+                           {'PAUSE', 'RESUME', 'CLEAR_PAUSE', 'CANCEL_PRINT'})
+        gcodes = config.parent.parent/'gcodes'
+        if config.parent.name == 'config' and gcodes.is_dir():
+            add_native_section('virtual_sdcard', '[virtual_sdcard]\npath: '+str(gcodes),
+                               {'M20', 'M21', 'M23', 'M24', 'M25', 'M26', 'M27', 'M28', 'M29',
+                                'M30', 'SDCARD_RESET_FILE', 'SDCARD_PRINT_FILE'})
     templates = {}
     required = {}
-    for path in [leveling, ROOT/'config/INVENTURE_NOZZLE_PAD.cfg', *sorted((ROOT/'fluidd').glob('*.cfg'))]:
+    for path in [level_config, ROOT/'config/INVENTURE_NOZZLE_PAD.cfg',
+                 *([jam_config] if jam else []), *sorted((ROOT/'fluidd').glob('*.cfg'))]:
         for name, _, body in macro_sections(path.read_text()):
             templates[name] = body
-            if path == leveling:
-                required[name] = body
+            if path in selected:
+                required[name] = (path, body)
 
     # Compare whole published sections. Extra options, comments or changed
     # Jinja belong to the operator. Leave overrides split across files intact.
     history = (ROOT/'config/fluidd_macro_history.sha256').read_text().splitlines()
-    known = dict(line.split() for line in history if line and not line.startswith('#'))
+    known = (dict(line.split() for line in history if line and not line.startswith('#'))
+             if leveling else {})
     present = {section.casefold() for section in active.sections()}
     occurrences = defaultdict(list)
     for path, data in sources.items():
@@ -290,11 +320,11 @@ def add_leveling_macros(target, config, updates):
 
     active = read_active()
     present = {s.casefold(): s for s in active.sections()}
-    for name, section in required.items():
+    for name, (path, section) in required.items():
         key = 'gcode_macro ' + name
         existing = present.get(key.casefold())
         if existing:
-            wanted = reader.build_fileconfig(section, str(leveling))
+            wanted = reader.build_fileconfig(section, str(path))
             if active.get(existing, 'gcode').strip() != wanted.get(key, 'gcode').strip():
                 raise ValueError('A different Fluidd macro already uses ['+existing+']')
         else:
@@ -319,7 +349,7 @@ def atomic_config_write(path, data):
 
 
 def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
-           configure_leveling=False):
+           configure_leveling=False, configure_jam=False):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
@@ -327,8 +357,9 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
     plan=core.install(target)
     config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
                     if upgrade_nozzle_limits or configure_nozzles else {})
-    if configure_leveling:
-        add_leveling_macros(target, config, config_updates)
+    if configure_leveling or configure_jam:
+        add_fluidd_controls(target, config, config_updates,
+                           leveling=configure_leveling, jam=configure_jam)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     check_print_job()
@@ -381,8 +412,11 @@ def main():
                         help='Configure both native nozzle heaters to 310 C and include T1 in cooling')
     parser.add_argument('--configure-leveling',action='store_true',
                         help='Add the leveling buttons and the global door menu to Fluidd')
+    parser.add_argument('--configure-jam', action='store_true',
+                        help='Add Inventure filament recovery controls and Klipper pause support')
     args=parser.parse_args()
-    try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,args.configure_leveling)
+    try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,
+               args.configure_leveling,args.configure_jam)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

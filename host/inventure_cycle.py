@@ -96,7 +96,7 @@ class InventureCycle:
         self._sync();lease=self.ops.state.owner
         if lease is not None and str(lease.kind)=='print' and self.cycle.phase in (Phase.RUNNING,Phase.PAUSED,Phase.RESUMING):
             self.cycle.cancel(lease.epoch)
-    def _resume_checks(self):
+    def _resume_checks(self, commit=True):
         self._sync();lease=self.ops.state.owner
         if lease is None or str(lease.kind)!='print' or str(self.ops.state.mode)!='paused':
             raise self.printer.command_error('P17 resume requires P02 paused print lease')
@@ -125,9 +125,11 @@ class InventureCycle:
         checks['P14_ACCOUNTING']=bool(l['automatic_step_accounting'] and not l['stopped'] and not l['error'] and not l['jam'] and not l['storage_busy']
             and all(c is not None and not c['uncertain'] and c['intent'] is None and c['report_current'] for c in l['channels']))
         rf=self.printer.lookup_object('inventure_rfid',None)
-        checks['P12_RFID']=bool(rf is not None and mat is not None and mat.pair is not None and all(
-            sel.source=='spool' or rf.error_for(i,sel.material_id) is None for i,sel in enumerate(mat.pair)))
-        try:self.cycle.resume(lease.epoch,snap['job_id'],checks)
+        checks['P12_RFID']=bool(mat is not None and mat.pair is not None and all(
+            sel.source=='spool' or (sel.source=='cartridge' and rf is not None
+            and rf.error_for(i,sel.material_id) is None) for i,sel in enumerate(mat.pair)))
+        verify = self.cycle.resume if commit else self.cycle.check_resume
+        try:verify(lease.epoch,snap['job_id'],checks)
         except CycleError as exc:raise self.printer.command_error('P17 '+str(exc))
     def cmd_pause(self,gcmd):
         if not self.enabled or self.stopped:raise gcmd.error('P17 disabled')

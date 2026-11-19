@@ -24,7 +24,18 @@ def load_config(klipper, config):
         'config_file': str(config), 'debuginput': True,
         'start_reason': 'startup', 'software_version': 'native-nozzle-startup-test',
     })
-    printer._read_config()
+    try:
+        printer._read_config()
+        check_loaded(printer, config)
+    finally:
+        # virtual_sdcard starts an I/O thread before Klipper connects.
+        # This configuration-only test must release it without entering the reactor.
+        dispatcher = printer.lookup_object('aio_executor', None)
+        if dispatcher is not None:
+            dispatcher._handle_disconnect()
+
+
+def check_loaded(printer, config):
     heaters = printer.lookup_object('heaters')
     t0, t1 = [heaters.lookup_heater(name) for name in ('extruder', 'inventure_t1')]
     assert t0.max_temp == t1.max_temp == 310
@@ -37,10 +48,18 @@ def load_config(klipper, config):
         fan.handle_ready()
         assert fan.heaters == [t0, t1]
     for name in ('ZORTRAX_LEVEL', 'ZORTRAX_LEVEL_NEXT', 'ZORTRAX_LEVEL_STATUS',
-                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK'):
+                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK',
+                 'ZORTRAX_JAM_REPORT', 'ZORTRAX_JAM_STATUS', 'ZORTRAX_JAM_SOURCE',
+                 'ZORTRAX_JAM_RETRY', 'ZORTRAX_JAM_CONFIRM_FLOW', 'ZORTRAX_JAM_CANCEL',
+                 'ZORTRAX_JAM_SERVICE_TEST'):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
     assert 'ZORTRAX_PLATFORM_LEVEL' in gcode.ready_gcode_handlers
+    assert 'ZORTRAX_FILAMENT_JAM' in gcode.ready_gcode_handlers
+    assert printer.lookup_object('pause_resume') is not None
+    if config.parent.name == 'config':
+        virtual_sd = printer.lookup_object('virtual_sdcard')
+        assert virtual_sd.sdcard_dirname == str(config.parent.parent/'gcodes')
     from extras.inventure_fluidd import register_legacy_commands
     register_legacy_commands(printer, gcode)
     enabled = printer.lookup_object('gcode_macro INV_D_VERSIONS', None)
@@ -78,6 +97,14 @@ def prepare_runtime(destination):
                 continue
             target = klipper/'klippy/serialhdl.py' if path.name == 'serialhdl.py' else klipper/'klippy/extras'/path.name
             shutil.copyfile(path,target)
+    patch_spec = importlib.util.spec_from_file_location('jam_operations_patch',
+                    ROOT/'orange_pi/patch_jam_operations.py')
+    patch = importlib.util.module_from_spec(patch_spec)
+    patch_spec.loader.exec_module(patch)
+    operations = klipper/'klippy/extras/inventure_operations.py'
+    patched = patch.render(operations.read_bytes())
+    assert sha256(patched).hexdigest() == patch.PATCHED_SHA256
+    operations.write_bytes(patched)
     return klipper
 
 
@@ -101,13 +128,16 @@ def check():
         print('REPRODUCED: R15 field startup fails before shared ADC registration')
         for mode in ('repair_field','fresh_include'):
             if mode == 'fresh_include':
-                (root/'hardware.cfg').write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
-                (root/'fluidd.cfg').write_bytes((ROOT/'fluidd/inventure_01_diagnostyka.cfg').read_bytes())
+                field = root/'printer_data/config/printer.cfg'
+                field.parent.mkdir(parents=True)
+                (field.parent.parent/'gcodes').mkdir()
+                (field.parent/'hardware.cfg').write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
+                (field.parent/'fluidd.cfg').write_bytes((ROOT/'fluidd/inventure_01_diagnostyka.cfg').read_bytes())
                 field.write_text('[include hardware.cfg]\n[include fluidd.cfg]\n\n'
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True)
-            updater.add_leveling_macros(klipper,field,updates)
+            updater.add_fluidd_controls(klipper,field,updates,leveling=True,jam=True)
             assert updates
             for path,(before,after) in updates.items():
                 assert path.read_bytes() == before

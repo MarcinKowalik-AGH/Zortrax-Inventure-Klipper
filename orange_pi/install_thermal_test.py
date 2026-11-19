@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime,timezone
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -10,6 +11,19 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parent
 def sha(data):return hashlib.sha256(data).hexdigest()
+
+HOST_OVERLAYS = {'inventure_filament.py', 'inventure_consumption.py',
+                 'inventure_cycle.py', 'inventure_cycle_core.py'}
+
+def source_path(root, name):
+    return root.parent/'host'/name if name in HOST_OVERLAYS else root/name
+
+def load_operations_patch():
+    path = Path(__file__).with_name('patch_jam_operations.py')
+    spec = importlib.util.spec_from_file_location('inventure_jam_operations_patch', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 def running_service_script(service='klipper', proc_root=Path('/proc')):
     """Resolve the script of the running service, before stopping it.
@@ -60,13 +74,15 @@ def install(target,apply=False,rollback=None,service='klipper'):
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
                     'inventure_oled_uifast_transport.py','inventure_z_home.py',
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
-                    'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py'}
-    if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras:
+                    'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py',
+                    'inventure_filament_jam.py','inventure_jam_motion.py','inventure_jam_monitor.py',
+                    'inventure_jam_service.py','inventure_jam_sources.py'}
+    if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras | HOST_OVERLAYS:
         raise ValueError('Unexpected optional module manifest')
     names.extend(extra_modules);optional.update(extra_modules)
     def dest_path(name):return target/'klippy/serialhdl.py' if name=='serialhdl.py' else extras/name
     def digest(data):return None if data is None else sha(data)
-    incoming={name:(ROOT/name).read_bytes() for name in names}
+    incoming={name:source_path(ROOT, name).read_bytes() for name in names}
     expected={'inventure_mcu.py':meta['module_sha256'],
               'inventure_oled.py':meta['oled_module_sha256'],'serialhdl.py':meta['serialhdl_sha256']}
     accepted={'inventure_mcu.py':{meta['baseline_sha256'],*meta.get('allowed_existing_sha256',[]),expected['inventure_mcu.py']},
@@ -79,6 +95,20 @@ def install(target,apply=False,rollback=None,service='klipper'):
     for name,record in extra_modules.items():
         expected[name]=record['sha256']
         accepted[name]={record['sha256'],*record.get('allowed_existing_sha256',[])}
+    # Some diagnostic-only stages don't install the native print arbiter.
+    # Update it in the same transaction as the adapter wherever it exists.
+    operations = 'inventure_operations.py'
+    path = dest_path(operations)
+    if path.is_symlink():
+        raise ValueError('Expected a regular Inventure module: '+str(path))
+    if path.exists():
+        if not path.is_file():
+            raise ValueError('Expected a regular Inventure module: '+str(path))
+        patch = load_operations_patch()
+        incoming[operations] = patch.render(path.read_bytes())
+        names.append(operations)
+        expected[operations] = patch.PATCHED_SHA256
+        accepted[operations] = {patch.BASE_SHA256, patch.PATCHED_SHA256}
     before={};modes={}
     for name in names:
         dest=dest_path(name)

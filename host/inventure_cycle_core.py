@@ -47,11 +47,13 @@ class Cycle:
         if reason not in tuple(x.value for x in Reason):raise CycleError('INVALID_REASON')
         self.phase=Phase.PAUSED;self.reason=reason;self.epoch=epoch;self.snapshot=dict(snapshot)
         self.history.append(('pause',str(reason),epoch))
-    def resume(self,epoch,job_id,checks):
+    def check_resume(self,epoch,job_id,checks):
         if self.phase!=Phase.PAUSED or self.snapshot is None:raise CycleError('RESUME_REQUIRES_PAUSED_SNAPSHOT')
         if epoch!=self.epoch or job_id!=self.snapshot.get('job_id'):raise CycleError('JOB_CHANGED')
         if not checks or any(not passed for passed in checks.values()):
             raise CycleError('RESUME_INTERLOCK:'+','.join(k for k,v in checks.items() if not v))
+    def resume(self,epoch,job_id,checks):
+        self.check_resume(epoch,job_id,checks)
         self.phase=Phase.RESUMING;self.history.append(('resume_requested',str(self.reason),epoch))
     def resumed(self):
         if self.phase!=Phase.RESUMING:raise CycleError('INVALID_RESUME_ACK')

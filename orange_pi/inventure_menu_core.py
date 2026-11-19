@@ -35,7 +35,7 @@ SERVICE_ACTIONS = {
     'manual_unload_t0':('MANUAL',0),'manual_unload_t1':('MANUAL',1),
 }
 CHOICE_ACTIONS = frozenset(('sd_browser','spool_catalog_model','spool_catalog_support',
-    'heat','maintenance_t0','maintenance_t1','move_platform','fan_test'))
+    'heat','maintenance_t0','maintenance_t1','move_platform','fan_test','filament_jam'))
 SETTING_ACTIONS = frozenset(('sort_desc','sort_asc','sort_name','sort_size',
     'language_en','door_lock','door_unlock'))
 NAV_ACTIONS = frozenset(('back','go_status','cancel_no','question_no','question_yes'))
@@ -66,7 +66,8 @@ class View:
 
     def render(self):
         # Keep Back in the first row, like the existing M300 navigation.
-        window=max(1,self.selected-3) if self.selected else 1
+        pinned = bool(self.options and self.options[0][0] == 'Back')
+        window = max(1, self.selected - 3) if pinned else max(0, self.selected - 4)
         return dict(page='zortrax:'+self.token,title=self.title,
             labels=[str(option[0]) for option in self.options],selected=self.selected,
             window=window,icon=None,notice=None,language='en',generation=self.generation)

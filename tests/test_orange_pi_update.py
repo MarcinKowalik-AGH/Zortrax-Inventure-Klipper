@@ -19,17 +19,19 @@ update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
 
 
 class OrangePiInstallerCLITests(unittest.TestCase):
-    def test_help_lists_leveling_option(self):
+    def test_help_lists_leveling_and_jam_options(self):
         result = subprocess.run([sys.executable, str(ROOT/'install-orange-pi.py'), '--help'],
                                 capture_output=True, text=True, check=True)
         self.assertIn('--configure-leveling', result.stdout)
+        self.assertIn('--configure-jam', result.stdout)
 
     def test_cli_passes_requested_options_to_installer(self):
         for args, expected in (
-                ([], (False, False, False, False)),
-                (['--configure-leveling'], (False, False, False, True)),
-                (['--check', '--configure-leveling'], (True, False, False, True)),
-                (['--upgrade-nozzle-limits', '--configure-nozzles'], (False, True, True, False))):
+                ([], (False, False, False, False, False)),
+                (['--configure-leveling'], (False, False, False, True, False)),
+                (['--check', '--configure-leveling'], (True, False, False, True, False)),
+                (['--upgrade-nozzle-limits', '--configure-nozzles'], (False, True, True, False, False)),
+                (['--configure-jam'], (False, False, False, False, True))):
             with self.subTest(args=args), patch.object(sys, 'argv', ['install-orange-pi.py', *args]), \
                     patch.object(update, 'update') as install:
                 update.main()
@@ -92,7 +94,9 @@ class OrangePiUpdateTests(unittest.TestCase):
         (package/'inventure_factory_core.py').write_bytes(data)
         metadata['factory_core_sha256']=hashlib.sha256(data).hexdigest()
         for name in metadata.get('extra_modules',{}):
-            (package/name).write_bytes((ROOT/'orange_pi'/name).read_bytes())
+            dest = update.core.source_path(package, name)
+            dest.parent.mkdir(exist_ok=True)
+            dest.write_bytes(update.core.source_path(ROOT/'orange_pi', name).read_bytes())
         old=(ROOT/'tests/fixtures/inventure_mcu_t1.py').read_bytes()
         metadata['allowed_existing_sha256'].append(hashlib.sha256(old).hexdigest())
         (package/'THERMAL_HOST_MANIFEST.json').write_text(json.dumps(metadata))
@@ -210,6 +214,62 @@ class OrangePiUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'different Fluidd macro'):
             update.add_leveling_macros(self.live, self.config, {})
         self.assertEqual(self.config.read_bytes(), before)
+
+    def test_jam_install_preserves_included_pause_settings_and_user_footer(self):
+        self.legacy_nozzle_config()
+        self.config.write_text('[inventure_mcu]\n[include operator.cfg]\n#*# SAVE_CONFIG\n')
+        operator = self.config.with_name('operator.cfg')
+        original = '[pause_resume]\nrecover_velocity: 17\n'
+        operator.write_text(original)
+        staged = {}
+        update.add_fluidd_controls(self.live, self.config, staged, jam=True)
+        self.assertEqual(set(staged), {self.config})
+        config = staged[self.config][1].decode()
+        self.assertLess(config.index('[gcode_macro ZORTRAX_JAM_STATUS]'), config.index('#*#'))
+        self.assertNotIn('[pause_resume]', config)
+        self.assertNotIn('[gcode_macro ZORTRAX_LEVEL]', config)
+        self.config.write_text(config)
+        repeated = {}
+        update.add_fluidd_controls(self.live, self.config, repeated, jam=True)
+        self.assertEqual(repeated, {})
+        self.assertEqual(operator.read_text(), original)
+
+    def test_jam_install_adds_pause_and_rejects_command_collision_before_writing(self):
+        self.legacy_nozzle_config()
+        gcodes = self.config.parent.parent/'gcodes'
+        gcodes.mkdir()
+        self.config.write_text('[inventure_mcu]\n')
+        updates = {}
+        update.add_fluidd_controls(self.live, self.config, updates, jam=True)
+        self.assertEqual(updates[self.config][1].count(b'[pause_resume]'), 1)
+        self.assertIn(('[virtual_sdcard]\npath: '+str(gcodes)).encode(), updates[self.config][1])
+        self.config.write_text('[inventure_mcu]\n[virtual_sdcard]\npath: /mnt/existing/prints\n')
+        updates = {}
+        update.add_fluidd_controls(self.live, self.config, updates, jam=True)
+        self.assertEqual(updates[self.config][1].count(b'[virtual_sdcard]'), 1)
+        self.assertIn(b'path: /mnt/existing/prints', updates[self.config][1])
+        self.config.write_text('[inventure_mcu]\n[gcode_macro PAUSE]\ngcode: M118 paused\n')
+        with self.assertRaisesRegex(ValueError, 'rename_existing'):
+            update.add_fluidd_controls(self.live, self.config, {}, jam=True)
+        self.assertNotIn('[pause_resume]', self.config.read_text())
+
+    def test_pinned_native_owner_updates_and_rolls_back_with_adapter(self):
+        data = b''.join(path.read_bytes() for path in sorted((ROOT/'source/parts').glob('part*.bin')))
+        with ZipFile(io.BytesIO(data)) as kit:
+            with ZipFile(io.BytesIO(kit.read('baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip'))) as pinned:
+                original = pinned.read('klipper-inventure/klippy/extras/inventure_operations.py')
+        owner = self.extras/'inventure_operations.py'
+        owner.write_bytes(original)
+        self.active = False
+        with patch('sys.stdout', new=io.StringIO()):
+            check = update.core.install(self.live)
+            self.assertEqual(owner.read_bytes(), original)
+            self.assertIn('inventure_operations.py', check['after_sha256'])
+            installed = update.core.install(self.live, apply=True)
+            self.assertIn(b'def paused_print_move(', owner.read_bytes())
+            self.assertEqual(update.core.install(self.live)['status'], 'ALREADY_INSTALLED')
+            update.core.install(self.live, apply=True, rollback=Path(installed['backup']))
+        self.assertEqual(owner.read_bytes(), original)
 
     def test_migrate_legacy_native_nozzle_limits_in_the_active_include(self):
         heaters=self.legacy_nozzle_config()
@@ -598,7 +658,7 @@ class OrangePiUpdateTests(unittest.TestCase):
         if 'factory_core_sha256' in json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text()):
             self.factory_dest.write_bytes((ROOT/'orange_pi/inventure_factory_core.py').read_bytes())
         for name in json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text()).get('extra_modules',{}):
-            (self.extras/name).write_bytes((ROOT/'orange_pi'/name).read_bytes())
+            (self.extras/name).write_bytes(update.core.source_path(ROOT/'orange_pi', name).read_bytes())
         with patch('sys.stdout',new=io.StringIO()):update.update()
         self.assertEqual(self.dest.read_bytes(),expected)
         self.assertIn(('sudo','systemctl','stop','klipper'),self.calls)

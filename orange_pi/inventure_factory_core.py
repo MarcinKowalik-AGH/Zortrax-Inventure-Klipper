@@ -23,6 +23,8 @@ XY_RELEASE_SPEED = 1.
 UINT32 = 0xffffffff
 PROCEDURES = {
     'AUTO': ('home', 'park', 'heat', 'select_tool', 'load_l1_l4'),
+    'JAM_CASSETTE': ('home', 'park', 'heat', 'select_tool', 'retract', 'r1', 'r2', 'conditional_load', 'clean', 'position_bin'),
+    'JAM_EXTERNAL': ('home', 'park', 'heat', 'select_tool', 'retract', 'reload', 'clean', 'position_bin'),
     'HOME': ('home',),
     'PARK': ('home', 'park'),
     'SELECT': ('home', 'select_tool'),
@@ -679,6 +681,10 @@ class FactoryProgram:
             raise FactoryError('Unknown procedure ' + operation)
         p = self.p
         require_heated_target(p, operation)
+        if operation in ('JAM_CASSETTE', 'JAM_EXTERNAL'):
+            from .inventure_jam_service import run
+            yield from run(self, operation)
+            return
         if operation in ('PARK', 'SWEEP') and not self.stock_sequence:
             _validated(p, operation)
         parked_cassette = self.stock_sequence and operation in ('AUTO', 'UNLOAD')
