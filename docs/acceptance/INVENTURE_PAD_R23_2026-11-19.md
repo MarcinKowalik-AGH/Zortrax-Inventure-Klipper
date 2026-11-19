@@ -118,9 +118,10 @@ SHA256 załącznika `Wklejony tekst(20261119-093934).txt` wynosi
 ## Drugi pełny przebieg
 
 W pliku `klippy(17).log(1).zip` próba `4eed5e30be704a6ca57440e1e7f27b44`
-zakończyła pomiary T0 → T1 → T0 i parkowanie po 35 min 22 s. Ostatni
-status nowej próby to `candidate` z `error=null` i `saved_file=null`.
-Status `saved` w tym pliku dotyczy pierwszej próby.
+zakończyła pomiary T0 → T1 → T0 i parkowanie po 35 min 22 s, o 15,607 s
+szybciej od pierwszej. W logu host zgłosił `candidate`. Późniejszy odczyt
+konsoli potwierdza zapis tej próby o 11:32:34 i status `saved` o 11:32:35.
+Pola pomiarowe są identyczne z odczytem sprzed zapisu.
 [Pełny wynik drugiej próby](INVENTURE_PAD_R23_2026-11-19_PROBA_2.json).
 
 | Wynik [mm] | Próba 1 | Próba 2 | Zmiana (2 − 1) |
@@ -129,6 +130,12 @@ Status `saved` w tym pliku dotyczy pierwszej próby.
 | Offset T1 w Y | −0,432812 | −0,451562 | −0,018750 |
 | O ile niżej jest T1 | 1,630923 | 1,635287 | +0,004364 |
 | Z po ponownym osadzeniu T0 względem pierwszego T0 | +0,019950 | +0,019950 | 0,000000 |
+
+W obu próbach środek T1 wypadł w X = 70,75000 i Y = 68,7953125 mm.
+Dla T0 współrzędna X wyniosła w obu próbach 81,70000 mm, a współrzędna Y
+zmieniła się z 68,36250 na 68,34375 mm. Stąd pochodzi cała różnica offsetu
+Y. Wysokość rozwarcia względem PE12 zmalała w drugiej próbie o 0,00499 mm
+dla T0 (również po powrocie) i o 0,00935 mm dla T1.
 
 W drugiej próbie krawędzie wyznaczono ponownie pionowym TAP. Było 180
 sprawdzeń punktu XY po dwa podejścia, a 24 końcowe przedziały krawędzi miały
@@ -140,3 +147,5 @@ liczników MCU przy 802 krokach/mm, od poziomu przejazdu odpowiedniej dyszy.
 Wszystkie sześć końcowych próbek Z przyjęto w pierwszym podejściu.
 SHA256 drugiego archiwum wynosi
 `1a70e855faff9a6b214c463253f8ee7f25c9744c88db3dcf784f1511327e6cec`.
+SHA256 potwierdzenia zapisu `Wklejony tekst(20261119-103257).txt` wynosi
+`63b54cbe00674a8401a8040167ec6c49449f074de4ab5fe5ce688b3a1f5c8607`.
