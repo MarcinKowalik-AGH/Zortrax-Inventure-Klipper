@@ -152,6 +152,14 @@ class SequenceTests(unittest.TestCase):
             until = board.reactor.now + 3605.
             while board.load_test_context is not None:
                 run = board.platform_level_status()
+                progress = run['contact_progress']
+                if progress is not None and run['phase'] in ('reference', 'measuring'):
+                    self.assertEqual(progress['phase'], run['phase'])
+                    reference = run['phase'] == 'reference'
+                    self.assertEqual(progress['point'], 2 if reference else run['next_point'])
+                    self.assertEqual(progress['required_non_improvements'], 101 if reference else 151)
+                    self.assertGreater(progress['qualified_cycles'], progress['non_improvements'])
+                    self.assertGreater(progress['best_release_steps'], 0)
                 if run['awaiting_operator']:
                     prompts.append(run['phase'])
                     if door_lock:
@@ -199,6 +207,10 @@ class SequenceTests(unittest.TestCase):
                 self.assertLess(board.reactor.now, until)
                 board.reactor.pause(board.reactor.now + .25)
             run = board.platform_level_status()
+            progress = run['contact_progress']
+            self.assertEqual(progress['phase'], 'measuring')
+            self.assertEqual(progress['point'], 2)  # final center, including a later STOP failure
+            self.assertEqual(progress['non_improvements'], progress['required_non_improvements'])
             if fail_final_stop:
                 self.assertEqual(run['phase'], 'failed', run)
                 self.assertIsNone(run['candidate_depth_um'])

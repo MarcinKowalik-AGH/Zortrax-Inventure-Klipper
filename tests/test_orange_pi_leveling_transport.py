@@ -7,8 +7,9 @@ from types import SimpleNamespace
 import unittest
 
 from orange_pi import inventure_leveling_transport as transport
-from orange_pi.inventure_factory_core import defaults
+from orange_pi.inventure_factory_core import FactoryError, defaults
 from test_orange_pi_door_policy import Command
+from test_orange_pi_z_home_core import PlanModel
 import test_orange_pi_z_home_host as z_host
 
 
@@ -196,6 +197,45 @@ class PlatformTransportTests(unittest.TestCase):
         board._door_policy_query = lambda: dict(enabled=True, front_door_closed=False,
                                                 lid_closed=True, reject=None)
         self.assert_start_rejected_without_actuation(board, '(?i)(door|drzwi)')
+
+    def test_front_right_probe_waits_for_all_151_releases_after_the_last_minimum(self):
+        for later_minimum in (False, True):
+            with self.subTest(later_minimum=later_minimum):
+                model = PlanModel(SPEED_PROFILE='OEM')
+                program = transport.PlatformLevelTransport(model.p, model.settings, (81.7, 68.34),
+                    111800, {'initial_tool': 'T0'}, (82.8, 152.5))
+                self.assertIsNone(program.settings['z_max_cycles'])
+                self.assertEqual(program.settings['z_stable_cycles'], 101)
+                model.program = program
+                program.history.append('LEVEL_POINT')
+                model.position = program.z_steps = 109344
+                model.contact_at, model.release_at = 111860, 111856
+                # Construct an edge trace consistent with the reported minimum
+                # of 111851 on cycle 428 and the next 83 observed releases.
+                model.change_after_release = {119: 111855, 239: 111854, 359: 111853, 427: 111852}
+                if later_minimum:
+                    model.change_after_release[539] = 111851
+                search = program._reference(15, 151)
+                response, progress = None, {}
+                with self.assertRaises(StopIteration) as done:
+                    while True:
+                        action = search.send(response)
+                        response = None
+                        if action['kind'] == 'z_contact_edge':
+                            response = model._edge(action)
+                        elif action['kind'] == 'z_progress':
+                            progress[action['qualified_cycles']] = action['non_improvements']
+                self.assertEqual([progress[n] for n in (471, 493, 511, 512)], [43, 65, 83, 84])
+                last = 691 if later_minimum else 579
+                self.assertEqual((model.releases, progress[last]), (last, 151))
+                self.assertEqual(done.exception.value, 111850 if later_minimum else 111851)
+
+    def test_ordinary_oem_z_home_still_stops_at_512_cycles(self):
+        model = PlanModel(SPEED_PROFILE='OEM')
+        model.change_after_release = {n: 2486 - n // 50 for n in range(50, 512, 50)}
+        with self.assertRaisesRegex(FactoryError, 'z_contact_cycle_limit') as error:
+            model.run()
+        self.assertEqual((error.exception.details['cycles'], model.releases), (512, 512))
 
     def test_oem_search_reversing_across_the_mcu_leg_limit(self):
         # A 15 mm search in both directions may request a 30 mm return.

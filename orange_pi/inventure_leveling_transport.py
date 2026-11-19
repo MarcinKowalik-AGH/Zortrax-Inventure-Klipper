@@ -7,6 +7,7 @@ from .inventure_z_home import NOZZLE_CONTACT, Z_BOTTOM, Z_STEPS_PER_MM, ZHomePro
 
 OEM_CENTER = (67.5, 65.5)
 STEPS = Z_STEPS_PER_MM
+CENTER_STABLE_CYCLES = 101
 
 
 def raw_point(oem_xy, center_xy):
@@ -56,6 +57,9 @@ def platform_reference(record, parameters):
 class PlatformLevelTransport(ZHomeProgram):
     def __init__(self, p, settings, center_xy, saved_release_steps, run, initial_bin):
         super().__init__(p, settings)
+        # r0323 counts consecutive releases since the last lower minimum.
+        # Platform probes keep their Z window and the factory run deadline.
+        self.settings.update(z_stable_cycles=CENTER_STABLE_CYCLES, z_max_cycles=None)
         self.center = center_xy
         self.saved_release_steps = saved_release_steps
         self.run = run
@@ -147,7 +151,7 @@ class PlatformLevelTransport(ZHomeProgram):
         if not approach < self.saved_release_steps <= min(self.max_z, approach + 10 * STEPS):
             raise FactoryError('The saved T0 center height is outside the OEM reference window')
         yield from self._z_position(approach)
-        center = yield from self._reference(10, 101)
+        center = yield from self._reference(10, CENTER_STABLE_CYCLES)
         self.reference_datum = datum
         return center, datum
 

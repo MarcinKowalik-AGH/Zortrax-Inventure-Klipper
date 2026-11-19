@@ -2,7 +2,7 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R26.2 with MCU R13** starts five-point platform leveling directly from the OLED or Fluidd. At the waste bin it preheats according to the known selector state, then physically selects T0 before the first contact with the platform. The operator adjusts the three knobs as prompted. The separate **Settings → Door lock** option controls door and lid supervision. [Five-point procedure, temperatures and controls](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md) · [R26.2 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-platform-level-r26.2)
+**Host R26.3 with MCU R13** corrects a premature stop during five-point platform leveling. Start from the OLED or Fluidd. At the waste bin it preheats according to the known selector state, then physically selects T0 before the first contact with the platform. The operator adjusts the three knobs as prompted. The separate **Settings → Door lock** option controls door and lid supervision. [Field diagnosis and R26.3 instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_3.md) · [R26.3 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-platform-level-r26.3)
 
 <a id="aktualizacja-orange-pi"></a>
 
@@ -11,9 +11,9 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the Fluidd leveling and door macros, and restarts Klipper. An installed R13 MCU can run this release.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-platform-level-r26.2 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-platform-level-r26.2" refs/tags/inventure-platform-level-r26.2 &&
-python3 "$HOME/inventure-platform-level-r26.2/install-orange-pi.py" --configure-leveling
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-platform-level-r26.3 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-platform-level-r26.3" refs/tags/inventure-platform-level-r26.3 &&
+python3 "$HOME/inventure-platform-level-r26.3/install-orange-pi.py" --configure-leveling
 ```
 
 If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
@@ -23,7 +23,7 @@ INVENTURE_VERSION
 ZORTRAX_LEVEL_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2`, the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`, and a fresh leveling session `phase: idle`. To start, fit the original tray, check that its five contact pads are clean, and use **Maintenance → Platform leveling** or `ZORTRAX_LEVEL`. This requires the saved full T0/T1 central pad calibration beside the active `printer.cfg`. [Full operator instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md)
+The host should report `RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3`, the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`, and a fresh leveling session `phase: idle`. To start, fit the original tray, check that its five contact pads are clean, and use **Maintenance → Platform leveling** or `ZORTRAX_LEVEL`. This requires the saved full T0/T1 central pad calibration beside the active `printer.cfg`. [Full operator instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
 
 ## Printer procedures
 
@@ -35,7 +35,7 @@ The host should report `RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2`, the MCU `RC8-CONTR
 | Inspect service procedures | `INVENTURE_PROCEDURE ACTION=LIST` | Homing, parking, selecting a nozzle, wiping, purging, loading and unloading. Use `INVENTURE_PROCEDURE ACTION=PARAMS TOOL=T0 PROCEDURE=SELECT` to inspect one operation. |
 | Inspect the shared menu | `INVENTURE_ZORTRAX OP=CATALOG` | Available firmware-backed actions and their status. The OLED and the console use the same procedure handlers. |
 
-The nozzle alignment and five-point leveling tests have separate hardware records. Two full central pad runs at 100 °C were saved on R23 with empty nozzles and a 0.1 mm edge tolerance. Individual cold center measurements on R25 returned T0 at (81.7, 68.3) mm and T1 at (70.8, 68.8) mm. Physical acceptance of the full R26.2 five-point leveling cycle is pending. [Full calibration runs](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) · [Individual cold measurements](docs/acceptance/INVENTURE_PAD_COLD_XY_2026-11-19.md)
+The nozzle alignment and five-point leveling tests have separate hardware records. Two full central pad runs at 100 °C were saved on R23 with empty nozzles and a 0.1 mm edge tolerance. Individual cold center measurements on R25 returned T0 at (81.7, 68.3) mm and T1 at (70.8, 68.8) mm. A five-point field run selected T0 and reached the front-right pad before the host stopped at 512 contact cycles. A complete R26.3 run on the printer remains to be verified. [Full calibration runs](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) · [Individual cold measurements](docs/acceptance/INVENTURE_PAD_COLD_XY_2026-11-19.md)
 
 ## Service reference
 

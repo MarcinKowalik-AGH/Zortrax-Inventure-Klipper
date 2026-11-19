@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.2'
+HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.3'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -4258,6 +4258,14 @@ class InventureMCU:
             self._load_test_emit(context);return dict(f['snapshot'])
         if kind=='z_progress':
             f['z_home_progress']={key:value for key,value in action.items() if key!='kind'}
+            run = f.get('platform_level_run')
+            if run is not None:
+                run['contact_progress'] = dict(
+                    phase=run['phase'], point=2 if run['phase']=='reference' else run['next_point'],
+                    qualified_cycles=action['qualified_cycles'],
+                    non_improvements=action['non_improvements'],
+                    required_non_improvements=f['z_home_settings']['z_stable_cycles'],
+                    best_release_steps=action['best_release_steps'])
             return dict(f['snapshot'])
         if kind=='z_contact_edge':return self._factory_z_edge(context,action)
         if kind=='nozzle_z_refine':

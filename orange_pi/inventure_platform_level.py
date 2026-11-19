@@ -75,7 +75,7 @@ def _ask(transport, run, phase, instructions):
 
 def _measure(transport, run, points, depth_steps):
     for point in points:
-        run.update(phase='measuring', next_point=point)
+        run.update(phase='measuring', next_point=point, contact_progress=None)
         height = yield from transport.probe(point, POINTS[point], depth_steps)
         if type(height) is not int or abs(height) > 15 * STEPS_PER_MM:
             raise ValueError('Invalid PC14 measurement at point %d' % point)
@@ -187,7 +187,7 @@ def notice(board, run):
 
 def _new_run():
     return dict(phase='preparing', run_id=uuid.uuid4().hex, instructions=[],
-                operator_confirmed=False, prompt_id=0, next_point=None,
+                operator_confirmed=False, prompt_id=0, next_point=None, contact_progress=None,
                 instruction_count=0, measurement_count=0, heights_steps={},
                 reference_steps=None, candidate_depth_um=None, deformed=None,
                 error=None, saved_file=None, applied_to_print=False)

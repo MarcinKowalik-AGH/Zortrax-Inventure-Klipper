@@ -152,7 +152,7 @@ class ZReleaseTracker:
             self.non_improvements += 1
         if self.non_improvements == self.stable_cycles:
             return True
-        if self.cycles >= self.max_cycles:
+        if self.max_cycles is not None and self.cycles >= self.max_cycles:
             raise FactoryError('z_contact_cycle_limit', cycles=self.cycles)
         return False
 
