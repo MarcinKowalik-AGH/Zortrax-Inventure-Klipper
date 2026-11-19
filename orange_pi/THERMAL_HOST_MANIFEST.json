@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R27",
+  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R27.1",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "aa5ca50fe1ebd2ba9484cde98e3323d7d03d9229a96f5d49b05d66c8de4d631c",
+  "module_sha256": "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -93,9 +93,10 @@
     "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643",
     "43e3f7fa7e999c62a316916987f595cbef05bb1289566ad5a5f7c32db77cdfd5",
     "76762c5f639d7b32ead9c16ef77a2988560b545b11f8a944c9a5a39d51d17e96",
-    "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc"
+    "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc",
+    "aa5ca50fe1ebd2ba9484cde98e3323d7d03d9229a96f5d49b05d66c8de4d631c"
   ],
-  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R27",
+  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R27.1",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -385,13 +386,14 @@
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f",
+      "sha256": "c214a066aad4eacbf6fdeb1b63a14caa675e8b5fd67d0f3091fed7ae0c80515e",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
         "700a1090dfc9a48b84da275a2261e2338ebc8ec02029bd4481237fc719a05f6d",
         "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f",
-        "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f"
+        "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f",
+        "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f"
       ]
     },
     "inventure_oem_menu.py": {
@@ -484,16 +486,25 @@
       "allowed_existing_sha256": []
     },
     "inventure_filament_jam.py": {
-      "sha256": "de6b167d75e5e39c82f4f7c90398346aca65a91ad2e862d5ce0fc08b89421614"
+      "sha256": "06a31c86f7f14646ab816d13268b0649e8132bf45f3b3742aac8d2bb3391f463",
+      "allowed_existing_sha256": [
+        "de6b167d75e5e39c82f4f7c90398346aca65a91ad2e862d5ce0fc08b89421614"
+      ]
     },
     "inventure_jam_service.py": {
       "sha256": "b24e5e2f99d5799269f5d4b542f752344c258af28e1a4d5cebe4e5fcfa3d8e1c"
     },
     "inventure_jam_monitor.py": {
-      "sha256": "8222949b9606f65d85f653571467b2ea10b924a5510e21ca19d92da7e17d945d"
+      "sha256": "010917cc2cae308df52cd8caf72c52a38cdba41c1505ede8e061708b870d0d68",
+      "allowed_existing_sha256": [
+        "8222949b9606f65d85f653571467b2ea10b924a5510e21ca19d92da7e17d945d"
+      ]
     },
     "inventure_jam_motion.py": {
-      "sha256": "04ab7d3fa848888f20af4772cefbd755b6b050fdadc4c3c070b67fc01a61c1b1"
+      "sha256": "4c353414350a9271a737d3feb84b4d46e542b90a4237ee44210c0c285d9e0407",
+      "allowed_existing_sha256": [
+        "04ab7d3fa848888f20af4772cefbd755b6b050fdadc4c3c070b67fc01a61c1b1"
+      ]
     },
     "inventure_jam_sources.py": {
       "sha256": "18461a6fc0dabd7692587b5f020a5905a67d6d211edc7e0c99e931e44ce7278a"
@@ -904,7 +915,7 @@
     "installer_option": "--configure-jam",
     "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
     "stock_reference": "Inventure 1.6.1 r0323, filament transport sections 11.3 and 11.4",
-    "documentation": "docs/INVENTURE_FILAMENT_JAM_R27.md",
+    "documentation": "docs/INVENTURE_FILAMENT_JAM_R27_1.md",
     "physical_qualification": "pending T0 and T1 printer validation"
   }
 }

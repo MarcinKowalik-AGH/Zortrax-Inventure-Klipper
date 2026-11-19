@@ -55,6 +55,22 @@ class JamUI(MenuFixture, unittest.TestCase):
         self.menu.choose(self.menu.view.token, confirm=True)
         self.assertEqual(self.calls[-1], dict(ACTION='REPORT'))
 
+    def test_idle_exchange_menu_uses_the_same_fluidd_step(self):
+        self.menu.open('filament_jam')
+        self.choose('Replacement steps')
+        self.choose('Unload filament')
+        self.choose('T1 / External spool')
+        self.choose('260 C')
+        calls = []
+        def dispatch(command):
+            calls.append(command)
+            self.board.load_test_context = {'factory': {}, 'tool': 1}
+        self.board.gcode.run_script_from_command = dispatch
+        self.board._load_test_report = lambda ctx: dict(phase='preparing', tool='T1',
+            factory=dict(operation='MANUAL', phase='HOME'))
+        self.menu.choose(self.menu.view.token, confirm=True)
+        self.assertEqual(calls, ['ZORTRAX_JAM_SERVICE_STEP TOOL=T1 SOURCE=EXTERNAL STEP=UNLOAD TARGET=260'])
+
     def test_idle_service_test_explicitly_selects_nozzle_source_and_temperature(self):
         self.menu.open('filament_jam')
         self.choose('Test recovery at idle')
@@ -147,6 +163,19 @@ class JamMacroTests(unittest.TestCase):
                 self.render('SERVICE_TEST', **params)
         self.assertEqual(self.render('SERVICE_TEST', TOOL='T1', SOURCE='EXTERNAL', TARGET=265),
                          'INVENTURE_PROCEDURE ACTION=JAM_EXTERNAL TOOL=T1 TARGET=265.0 SPEED_PROFILE=OEM')
+
+    def test_service_step_routes_each_tool_and_source_to_the_factory_module(self):
+        for tool in ('T0','T1'):
+            for source in ('EXTERNAL','CASSETTE'):
+                for step in ('UNLOAD','LOAD','WIPE'):
+                    command = self.render('SERVICE_STEP', TOOL=tool, SOURCE=source, TARGET=260, STEP=step)
+                    expected = ('CLEAN' if step == 'WIPE' else 'MANUAL' if source == 'EXTERNAL'
+                                else 'AUTO' if step == 'LOAD' else 'UNLOAD')
+                    self.assertIn('ACTION=' + expected + ' TOOL=' + tool, command)
+                    if expected == 'MANUAL':
+                        self.assertIn('MANUAL_DIR=' + step + ' MANUAL_MM=20 FEEDER=0', command)
+        with self.assertRaises(ValueError):
+            self.render('SERVICE_STEP', TOOL='T0', SOURCE='UNKNOWN', TARGET=235, STEP='LOAD')
 
     def test_flow_confirmation_and_retry_are_guarded(self):
         self.assertEqual(self.render('RETRY'), 'ZORTRAX_FILAMENT_JAM ACTION=RETRY RUN_ID=A PROMPT_ID=4')

@@ -136,6 +136,9 @@ class JamMonitor:
             return None
         return 20 * remaining <= tag.nominal_mm
 
+    def inlet_present(self, tool):
+        return bool(self._inputs(tool, self.reactor.monotonic())['a'])
+
     def _inputs(self, tool, now):
         received = self.board.inputs_received
         if (not self.board.connected or received is None or not 0 <= now - received <= .75

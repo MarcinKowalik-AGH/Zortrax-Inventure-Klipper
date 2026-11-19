@@ -104,6 +104,10 @@ class ZortraxMenuService:
             for label, source in [('Use cartridge', 'CASSETTE'), ('Use external spool', 'EXTERNAL')]:
                 choices.append((label, dict(owner, ACTION='SOURCE', TOOL=run['tool'], SOURCE=source)))
         for action, label in [('RETRY', 'Retry recovery'), ('CONFIRM', 'Flow verified / resume'),
+                              ('UNLOAD', 'Unload filament'), ('MORE_OUT', 'Retract next portion'),
+                              ('CLEARED', 'Broken pieces removed'), ('LOAD', 'Load replacement'),
+                              ('MORE_IN', 'Feed next portion'), ('WIPE', 'Wipe nozzle'),
+                              ('FLOW', 'Confirm visible flow'), ('CONTINUE', 'Resume print'),
                               ('CANCEL', 'Stop recovery')]:
             if action in actions:
                 choices.append((label, dict(owner, ACTION=action)))
@@ -138,10 +142,13 @@ class ZortraxMenuService:
             self.last_native_key = None
             return self._running_view()
         options = [('Back', ('close', {}))]
+        if 'EXCHANGE' in run.get('allowed_actions', ()):
+            options.append(('Replace broken filament', ('jam_command', dict(ACTION='EXCHANGE'))))
         if 'REPORT' in run.get('allowed_actions', ()):
             options.append(('Report filament jam', ('jam_report', {})))
         if 'SOURCE' in run.get('allowed_actions', ()):
             if self._native_job()[2] not in ('printing','paused') and 'factory_session' in self.board.commands:
+                options.append(('Replacement steps', ('exchange_steps', {})))
                 options.append(('Test recovery at idle', ('jam_test', {})))
             sources = run.get('sources', {})
             for tool in ('T0', 'T1'):
@@ -770,28 +777,37 @@ class ZortraxMenuService:
             action=args['action'];params={k:v for k,v in args.items() if k!='action'}
             if self.active is not None and action=='print_model':return self._confirm(action,params)
             return self.open(action,**params)
+        if verb == 'exchange_steps':
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for step, label in [('UNLOAD', 'Unload filament'), ('LOAD', 'Load replacement'), ('WIPE', 'Wipe nozzle')]:
+                options.append((label, ('jam_test', dict(STEP=step))))
+            return self._set_view('choice', 'Replacement steps', options)
         if verb == 'jam_test':
             sources = self._jam_status().get('sources', {})
             options = [('Back', ('request', dict(action='filament_jam')))]
             for tool in ('T0', 'T1'):
                 for source, label in [('CASSETTE', 'Cartridge'), ('EXTERNAL', 'External spool')]:
                     if sources.get(tool, 'UNKNOWN') in ('UNKNOWN', source):
-                        options.append((tool + ' / ' + label, ('jam_test_temperature', dict(TOOL=tool, SOURCE=source))))
+                        options.append((tool + ' / ' + label, ('jam_test_temperature', dict(args, TOOL=tool, SOURCE=source))))
             return self._set_view('choice', 'Recovery test', options)
         if verb == 'jam_test_temperature':
-            options = [('Back', ('jam_test', {}))]
+            options = [('Back', ('jam_test', {k:v for k,v in args.items() if k == 'STEP'}))]
             options.extend(('%d C' % target, ('jam_test_confirm', dict(args, TARGET=target)))
                            for target in range(180, 311, 5))
             return self._set_view('choice', 'Service temperature', options)
         if verb == 'jam_test_confirm':
-            return self._set_view('confirm', 'Start recovery test?',
-                [('No / Back', ('jam_test_temperature', dict(TOOL=args['TOOL'], SOURCE=args['SOURCE']))),
+            return self._set_view('confirm', ('Start ' + args['STEP'].lower() + '?') if 'STEP' in args else 'Start recovery test?',
+                [('No / Back', ('jam_test_temperature', {k:v for k,v in args.items() if k != 'TARGET'})),
                  ('Start %s / %s' % (args['TOOL'], args['SOURCE']), ('jam_test_start', args)),
                  ('Heat to %d C' % args['TARGET'], None)])
         if verb == 'jam_test_start':
             self._service_ready()
-            self._call(self.board, 'cmd_procedure', ACTION='JAM_' + args['SOURCE'],
-                       TOOL=args['TOOL'], TARGET=args['TARGET'], SPEED_PROFILE='OEM')
+            if 'STEP' in args:
+                self.gcode.run_script_from_command(
+                    'ZORTRAX_JAM_SERVICE_STEP TOOL={TOOL} SOURCE={SOURCE} STEP={STEP} TARGET={TARGET}'.format(**args))
+            else:
+                self._call(self.board, 'cmd_procedure', ACTION='JAM_' + args['SOURCE'],
+                           TOOL=args['TOOL'], TARGET=args['TARGET'], SPEED_PROFILE='OEM')
             if self.board.load_test_context is None:
                 raise MenuError('Recovery test did not start')
             self.active = dict(backend='service', object=self.board.load_test_context, action='jam_test')

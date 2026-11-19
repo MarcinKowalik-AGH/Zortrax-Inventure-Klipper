@@ -232,7 +232,7 @@ class RecoveryTest(unittest.TestCase):
         self.trigger()
         self.assertEqual(self.motion.log.count(('feed', 1.)), 50)
         self.assertEqual(self.motion.log[-1], 'restore_e')
-        self.assertEqual(self.run.state['allowed_actions'], ['RETRY', 'CANCEL'])
+        self.assertEqual(self.run.state['allowed_actions'], ['RETRY', 'UNLOAD', 'CANCEL'])
         self.assertFalse(self.board.sd.is_active())
         for method in (lambda:self.board.sd.do_resume(), lambda:self.board.gcode.commands['RESUME'](Command())):
             with self.assertRaises(ValueError):

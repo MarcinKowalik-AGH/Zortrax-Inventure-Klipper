@@ -148,6 +148,42 @@ class PrintRun:
 
 
 class NativeRecoveryIntegration(unittest.TestCase):
+    def test_exchange_requires_clear_load_flow_and_explicit_resume(self):
+        for tool in (0, 1):
+            for source in ('EXTERNAL', 'CASSETTE'):
+                with self.subTest(tool=tool, source=source):
+                    run = PrintRun(tool)
+                    run.select(source)
+                    run.issue('EXCHANGE')
+                    run.drain()
+                    for action in ('UNLOAD', 'CLEARED', 'LOAD'):
+                        self.assertIn(action, run.jam.state['allowed_actions'], run.jam.state)
+                        if action == 'CLEARED':
+                            with self.assertRaisesRegex(ValueError, 'Inlet A'):
+                                run.issue(action)
+                            run.board.inputs['raw'][run.name.lower() + '_a'] = 0
+                        elif action == 'LOAD':
+                            run.board.inputs['raw'][run.name.lower() + '_a'] = 1
+                        run.issue(action)
+                        run.drain()
+                    if source == 'EXTERNAL':
+                        run.issue('MORE_IN')
+                        run.drain()
+                    if 'WIPE' in run.jam.state['allowed_actions']:
+                        run.issue('WIPE')
+                        run.drain()
+                    with self.assertRaises(ValueError):
+                        run.issue('CONTINUE')
+                    run.issue('FLOW')
+                    self.assertFalse(run.sd.is_active())
+                    run.issue('CONTINUE')
+                    run.drain()
+                    self.assertTrue(run.sd.is_active(), run.jam.state)
+                    self.assertEqual(tuple(run.head.get_position()[:3]), run.saved[:3])
+                    self.assertAlmostEqual(run.head.get_position()[3] - run.gm.base_position[3], run.saved_e)
+                    if source == 'EXTERNAL':
+                        self.assertEqual(run.wire.calls, [])
+
     def test_cassette_exhausted_native_step_budget_parks_checks_wipes_and_resumes(self):
         for tool in (0, 1):
             with self.subTest(tool=tool):

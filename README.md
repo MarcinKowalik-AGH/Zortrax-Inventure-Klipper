@@ -2,7 +2,7 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R27 with MCU R13** adds filament jam controls to the OLED and Fluidd. The recovery path depends on the active nozzle and whether its filament comes from a cassette or an external spool. The status command reports the printer's recovery state. [R27 operator instructions and hardware prerequisites](docs/INVENTURE_FILAMENT_JAM_R27.md) · [R27 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-filament-jam-r27)
+**Host R27.1 with MCU R13** adds filament jam controls to the OLED and Fluidd. The recovery path depends on the active nozzle and whether its filament comes from a cassette or an external spool. The status command reports the printer's recovery state. [R27.1 operator instructions and hardware prerequisites](docs/INVENTURE_FILAMENT_JAM_R27_1.md) · [R27.1 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-filament-jam-r27.1)
 
 <a id="aktualizacja-orange-pi"></a>
 
@@ -11,9 +11,9 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, adds the filament recovery buttons and native Klipper pause support to the active configuration, and restarts Klipper. Keep the installed R13 MCU.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-filament-jam-r27 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-filament-jam-r27" refs/tags/inventure-filament-jam-r27 &&
-python3 "$HOME/inventure-filament-jam-r27/install-orange-pi.py" --configure-jam
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-filament-jam-r27.1 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-filament-jam-r27.1" refs/tags/inventure-filament-jam-r27.1 &&
+python3 "$HOME/inventure-filament-jam-r27.1/install-orange-pi.py" --configure-jam
 ```
 
 If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
@@ -23,13 +23,13 @@ INVENTURE_VERSION
 ZORTRAX_JAM_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-FILAMENT-JAM-R27` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. On a fresh installation, add `--configure-leveling` to the same installer command to install the leveling and global door policy buttons as well. [Five-point leveling instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
+The host should report `RC8-CONTROL-R7-FILAMENT-JAM-R27.1` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. On a fresh installation, add `--configure-leveling` to the same installer command to install the leveling and global door policy buttons as well. [Five-point leveling instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
 
 ## Printer procedures
 
 | Task | Operator interface | What it measures or controls |
 |---|---|---|
-| Recover filament transport | `ZORTRAX_JAM_STATUS`, `ZORTRAX_JAM_REPORT`, OLED recovery prompts | Cassette and external spool recovery for the selected nozzle. [Requirements and operator actions](docs/INVENTURE_FILAMENT_JAM_R27.md) |
+| Recover filament transport | `ZORTRAX_JAM_STATUS`, `ZORTRAX_JAM_REPORT`, OLED recovery prompts | Cassette and external spool recovery for the selected nozzle. [Requirements and operator actions](docs/INVENTURE_FILAMENT_JAM_R27_1.md) |
 | Level the platform | `ZORTRAX_LEVEL`, `ZORTRAX_LEVEL_NEXT`, `ZORTRAX_LEVEL_STATUS`, `ZORTRAX_LEVEL_SAVE`, `ZORTRAX_LEVEL_CANCEL` | Five tray pads and three adjustments using T0. The saved report contains platform depth and center deviation. |
 | Set the door policy | **Settings → Door lock**, `ZORTRAX_DOOR_LOCK` | One global setting for the front door and lid. Read its current state with `INVENTURE_DOOR_POLICY`. |
 | Align the nozzles | `ZORTRAX_NOZZLE_PAD_CALIBRATE ACTION=STATUS` | The full central pad procedure measures T0, T1 and T0 after reseating. It reports the relative XY offset and Z difference. |

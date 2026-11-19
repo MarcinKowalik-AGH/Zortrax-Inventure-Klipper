@@ -276,7 +276,7 @@ class JamMotion:
         self._move(ctx, xy=(ctx.expected[0], ctx.base_xy[1] + 150.))
         self._move(ctx, xy=self._point(ctx, 0))
 
-    def reload(self, ctx, transport, guard, progress):
+    def reload(self, ctx, transport, guard, progress, *, unload=False):
         """Run the verified cassette load modules on the existing native lease."""
         guard()
         self.validate(ctx)
@@ -284,7 +284,7 @@ class JamMotion:
             raise ValueError('Cassette reload must start above the waste bin')
         program = FactoryProgram(ctx.params)
         program.xy = (ctx.params['center_x'], ctx.params['center_y'])
-        steps = program.load(transport.sample('T%d' % ctx.tool))
+        steps = program.unload() if unload else program.load(transport.sample('T%d' % ctx.tool))
         response = None
         quiet = None
         deadline = self.reactor.monotonic() + ctx.params['procedure_timeout']
@@ -301,6 +301,8 @@ class JamMotion:
                 try:
                     action = steps.send(response)
                 except StopIteration as done:
+                    if unload:
+                        return done.value['sensor_empty_proven']
                     if done.value not in ('L1', 'L4'):
                         raise ValueError('Cassette reload finished without transport confirmation')
                     if tuple(ctx.expected[:2]) != self._point(ctx, 0):
