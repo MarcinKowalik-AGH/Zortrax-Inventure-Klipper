@@ -6,6 +6,7 @@ Na R23 zapisano dwa pełne pomiary T0 → T1 → T0 przy 100°C z pustymi
 dyszami i tolerancją krawędzi 0,1 mm.
 [Wydanie R25](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-pad-xyz-r25) ·
 [instrukcja kalibracji](docs/NOZZLE_PAD_CALIBRATION.md) ·
+[zimne pomiary XY obu dysz](docs/acceptance/INVENTURE_PAD_COLD_XY_2026-11-19.md) ·
 [wynik fizyczny R23](docs/acceptance/INVENTURE_PAD_R23_2026-11-19.md) ·
 [wcześniejszy audyt procedur R10/R14](docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md).
 
