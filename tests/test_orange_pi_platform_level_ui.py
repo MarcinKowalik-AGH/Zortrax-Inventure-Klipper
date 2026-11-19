@@ -140,6 +140,10 @@ class FluiddLevelingMacros(unittest.TestCase):
             self.assertEqual(self.render('ZORTRAX_LEVEL', ACTIVE_TOOL=tool),
                              'ZORTRAX_PLATFORM_LEVEL ACTION=START ACTIVE_TOOL='+tool)
 
+    def test_door_menu_button_is_a_separate_read_only_entry(self):
+        self.assertEqual(self.render('ZORTRAX_DOOR_LOCK'), 'INVENTURE_DOOR_POLICY MENU=1')
+        self.assertFalse(self.messages)
+
     def test_next_and_save_bind_active_run_and_cancel_is_immediate(self):
         self.assertEqual(self.render('ZORTRAX_LEVEL_NEXT', dict(run_id='abc', prompt_id=2, awaiting_operator=True)),
                          'ZORTRAX_PLATFORM_LEVEL ACTION=NEXT RUN_ID=abc PROMPT_ID=2')

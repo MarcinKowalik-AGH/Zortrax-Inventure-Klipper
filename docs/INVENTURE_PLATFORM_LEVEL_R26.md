@@ -57,24 +57,28 @@ Na końcu `średnia = trunc((H0 + H1 + H2 + H3 + H4) / 5)`, a nowa głębokość
 
 W projekcie M300 polecenie `ZORTRAX_LEVEL` obsługuje wspólny przebieg dla panelu i Fluidd, z potwierdzeniami operatora, regulacją śrub i prezentacją wyniku. Jego profil M07 ma cel 260°C i próg gotowości 258°C. Inventure ma własną geometrię pięciu pól i opisaną wyżej sekwencję dla dwóch dysz. [M300 Classic — inwentarz procedur, wpis Autocalibration](https://github.com/MarcinKowalik-AGH/Zortrax-m300-Klipper/blob/d5a040f22dccfe45380f9550080fd224f15f2ff4/docs/en/PROCEDURE_INVENTORY.md)
 
-## Uruchomienie na Orange Pi z MCU R13
+## Uruchomienie R26.1 na Orange Pi z MCU R13
 
 Host czyta zapisany wynik pełnej kalibracji dysz z `inventure_nozzle_pad.json` obok aktywnego `printer.cfg`. Do wyznaczenia trasy używa zmierzonego środka T0. Względem niego narożniki leżą 60 mm w lewo i prawo oraz 52,5 mm do przodu i tyłu. W pierwszym zapisanym przebiegu R23 środek T0 wyniósł (81,7000; 68,3625) mm. Odpowiada to pierwszemu narożnikowi (141,7000; 15,8625) mm w układzie karetki. Aktualny odczyt z dysku ma pierwszeństwo przed tym przykładem.
 
-Na Orange Pi wykonaj polecenia w powłoce przy bezczynnej drukarce.
+W tagu R26 (`620bc96`) instalator odczytywał linię poleceń przed zarejestrowaniem opcji `--configure-leveling`. Kończył się przed zapisem plików i restartem usługi. R26.1 rejestruje wszystkie opcje przed ich odczytem. Na Orange Pi wykonaj polecenia w powłoce przy bezczynnej drukarce. Dotychczasowy katalog R26 może pozostać na dysku.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-platform-level-r26 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-platform-level-r26" refs/tags/inventure-platform-level-r26 &&
-python3 "$HOME/inventure-platform-level-r26/install-orange-pi.py" --configure-leveling
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-platform-level-r26.1 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-platform-level-r26.1" refs/tags/inventure-platform-level-r26.1 &&
+python3 "$HOME/inventure-platform-level-r26.1/install-orange-pi.py" --configure-leveling
 ```
 
-Opcja instalacyjna dodaje pięć makr do czynnej konfiguracji i restartuje usługę Klipper. W konsoli Fluidd sprawdź `INVENTURE_VERSION` oraz `ZORTRAX_LEVEL_STATUS`. Oczekiwane są host `RC8-CONTROL-R7-PLATFORM-LEVEL-R26`, MCU `RC8-CONTROL-R7-PAD-THERMAL-R13` i początkowy stan `idle`. Dotychczasowy MCU R13 obsługuje tę wersję hosta.
+Opcja instalacyjna dodaje pięć makr poziomowania oraz niezależny przycisk ustawień drzwi do czynnej konfiguracji i restartuje usługę Klipper. W konsoli Fluidd sprawdź `INVENTURE_VERSION` oraz `ZORTRAX_LEVEL_STATUS`. Oczekiwane są host `RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1`, MCU `RC8-CONTROL-R7-PAD-THERMAL-R13` i początkowy stan `idle`. Dotychczasowy MCU R13 obsługuje tę wersję hosta.
 
 1. Osadź oryginalną tackę Inventure z pięcioma czystymi metalowymi polami. Sprawdź, która dysza jest fizycznie opuszczona. Uruchom `ZORTRAX_LEVEL` i wskaż T0 lub T1. Równoważne bezpośrednie wywołanie dla opuszczonej T1 to `ZORTRAX_LEVEL ACTIVE_TOOL=T1`. Na panelu drukarki wybierz **Konserwacja → Poziomowanie platformy**.
 2. Zaczekaj na zaparkowanie i komunikat o trzech pokrętłach. Po wykonaniu polecenia wybierz **Gotowe** albo wpisz `ZORTRAX_LEVEL_NEXT`. Przy kolejnych korektach ekran podaje konkretne pokrętło, kierunek i liczbę obrotów. Każda instrukcja ma własne potwierdzenie.
 3. Polecenie `ZORTRAX_LEVEL_STATUS` pokazuje bieżący etap i zebrane pomiary. `ZORTRAX_LEVEL_CANCEL` przerywa procedurę. Po powrocie platformy na dolną krańcówkę, zaparkowaniu i zakończeniu sesji wynik przechodzi do `candidate`. Ekran podaje zarówno głębokość platformy, jak i odchylenie środka.
 4. Dla zaakceptowanego wyniku wybierz **Zapisz wynik** lub wpisz `ZORTRAX_LEVEL_SAVE`. Klipper zapisuje `inventure_platform_level.json` obok `printer.cfg`. Po przekroczeniu ±0,5 mm ekran wskazuje deformację tacki. Poziomowanie śrubami zmienia ustawienie mechaniczne od razu. Zapisany raport nie nadpisuje zweryfikowanych offsetów dysz. Natywny homing wydruku nadal wyznacza własne odniesienie Z.
+
+### Globalne ustawienie drzwi
+
+W **Ustawienia → Blokada drzwiczek** na panelu albo przez osobny przycisk **ZORTRAX_DOOR_LOCK** w Fluidd można odczytać i zmienić stan przed rozpoczęciem procedury. Otworzenie menu pozostawia obecny wybór. W konsoli `INVENTURE_DOOR_POLICY` odczytuje go z MCU. Pole `enabled` oznacza bieżące ustawienie. Przy `false` obie osłony mogą pozostać otwarte od startu przez regulację pokręteł i wznowienie po zapis. Przy `true` MCU nadzoruje osłony podczas pracy, a kreator wyznacza postoje na regulację. Po restarcie MCU R13 przywraca domyślnie `false`. [Zachowanie OEM i opis globalnego ustawienia](OEM_DOOR_POLICY.md)
 
 ### Różnice wykonawcze względem fabrycznej elektroniki
 
@@ -82,6 +86,10 @@ Opcja instalacyjna dodaje pięć makr do czynnej konfiguracji i restartuje usłu
 - Gorące przejazdy między polami wykorzystują sprzętowe zatrzymanie MCU przy styku PC14 lub zmianie sygnału tacki PC13. Limit R13 dla ruchu XY z tymi warunkami to 20 000 impulsów/s, około 31,25 mm/s na jednej osi. Przy przejazdach platformy i pomiarach obowiązują również limity osi Z. Przebieg na R13 może więc trwać dłużej niż na oryginalnym sterowniku.
 - R26 liczy wysokości i korekty w krokach jak r0323. Zapis do pliku następuje na życzenie operatora po zakończonym przebiegu. Poprzedni raport pozostaje dostępny do tego czasu. R26 nie zapisuje do pamięci fabrycznego firmware.
 - Przy włączonej globalnej blokadzie drzwi host parkuje dyszę i przed komunikatem o regulacji potwierdza STOP, wyłączenie napędów i grzania oraz zwolnienie sterowania ryglami. MCU podtrzymuje chłodzenie. Komunikat oznacza, że można otworzyć osłonę i wyregulować pokrętła. Po jej zamknięciu i potwierdzeniu host ponownie bazuje osie. Po korekcie śrub odtwarza tę samą referencję z nowego odczytu PE12 i wraca do właściwej pary pól. Różnicę między odczytami zapisuje w statusie. Przy zmianie większej niż 79 kroków (ok. 0,10 mm) host przerywa porównanie; to próg powtarzalności wznowienia w R26. Otwarcie osłony w trakcie aktywnego ruchu przy włączonej blokadzie przerywa procedurę. R13 odrzuca start pomiaru SERVICE przy wysterowanym ryglu i uniemożliwia jego załączenie w trakcie tej sesji. Dlatego podczas pomiaru MCU nadzoruje czujniki przednich drzwi i pokrywy oraz zatrzymuje urządzenie po otwarciu. Nie ma odczytu mechanicznego położenia rygli. Przy wyłączonej globalnej blokadzie potwierdzenie pokręteł działa bez wymuszania zamknięcia drzwi.
+
+## Walidacja R26.1
+
+Wydanie zawiera 603 testy hosta. Testy wiersza poleceń obejmują `--help`, wywołanie domyślne i wybór opcji `--configure-leveling`. Sprawdzono rzeczywisty instalator na izolowanym modelu usługi Orange Pi, od R25 przez instalację R26.1 po ponowne uruchomienie tej samej komendy. Przy globalnym `OFF` oba pełne przebiegi na symulowanym MCU, początkowo z T0 oraz z T1, kończą się zapisem przy stale otwartych przednich drzwiach i pokrywie. Wynik dla fizycznej drukarki wymaga pierwszej próby.
 
 ## Walidacja R26
 

@@ -29,14 +29,15 @@ class PlatformDevice(z_host.ZDevice):
         self.right_low = False
         self.fail_final_stop = False
         self.doors_closed = True
+        self.door_lock_enabled = True
         self.release_shift = 0
         self.z_rising = False
 
     def door_policy(self, args):
         assert args[0] == 0, 'Platform leveling must preserve the global door policy'
         busy = self.active()
-        return policy(closed_mask=3 if self.doors_closed else 0,
-                      lock_command_mask=3 if busy else 0, motor_busy=int(busy))
+        return policy(enabled=int(self.door_lock_enabled), disable_bit=int(not self.door_lock_enabled),
+                      closed_mask=3 if self.doors_closed else 0, motor_busy=int(busy))
 
     def inputs(self):
         row = super().inputs()
@@ -63,14 +64,14 @@ class PlatformDevice(z_host.ZDevice):
 
     def out(self, args):
         if args[0] == 1 and args[2]:
-            assert self.doors_closed
+            assert self.doors_closed or not self.door_lock_enabled
             self.phase_at_power_on.append((args[1], self.h.platform_level_run['phase']))
         return super().out(args)
 
     def move(self, args):
         if args[0] != 1:
             return super().move(args)
-        assert self.doors_closed
+        assert self.doors_closed or not self.door_lock_enabled
         _, directions, a, b, z, e, _, _, _, mask, _, _, _ = args
         if self.edge and 'terminal' in self.edge:
             self.edge = None
@@ -97,7 +98,8 @@ class PlatformDevice(z_host.ZDevice):
 
     def z_edge(self, args):
         if args[0] == 1:
-            assert self.doors_closed and self.session and self.session['active'] and not self.session['dual']
+            assert self.doors_closed or not self.door_lock_enabled
+            assert self.session and self.session['active'] and not self.session['dual']
             assert self.session['tool'] == 0 and not self.h.platform_level_run['operator_confirmed']
             distances = [math.dist(self.xy, xy) for xy in self.pads]
             nearest = distances.index(min(distances))
@@ -111,7 +113,7 @@ class PlatformDevice(z_host.ZDevice):
 
 
 class SequenceTests(unittest.TestCase):
-    def simulate(self, active, fail_final_stop=False, door_lock=False, both_rear=False):
+    def simulate(self, active, fail_final_stop=False, door_lock=False, both_rear=False, open_throughout=False):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'printer.cfg'
             saved = json.dumps(saved_pad_record())
@@ -122,15 +124,16 @@ class SequenceTests(unittest.TestCase):
             board.printer.get_start_args = lambda: {'config_file': str(config)}
             board.nozzle_z_dual_abi = 1
             board.device = device = PlatformDevice(board)
+            device.door_lock_enabled = door_lock
+            device.doors_closed = not open_throughout
             device.fail_final_stop = fail_final_stop
             device.right_low = both_rear
             board._fresh_inputs = device.inputs
             board.commands.update(control=Wire(device.control), output=Wire(device.out),
                                   motion=Wire(device.move), motion_driver=Wire(device.driver),
                                   factory_session=Wire(device.query_factory), z_edge=Wire(device.z_edge))
-            if door_lock:
-                board.door_policy_global = True
-                board.commands['door_policy'] = Wire(device.door_policy)
+            board.door_policy_global = True
+            board.commands['door_policy'] = Wire(device.door_policy)
             board.cmd_platform_level(Command(ACTION='START', ACTIVE_TOOL=active))
             prompts = []
             previous_rear = None
@@ -146,6 +149,9 @@ class SequenceTests(unittest.TestCase):
                         self.assertEqual(device.door_policy((0, 1))['lock_command_mask'], 0)
                         device.doors_closed = False
                         before = len(device.packets), len(device.edge_starts)
+                        with self.assertRaisesRegex(RuntimeError, 'owns the actuators'):
+                            board.cmd_door_policy(Command(ENABLE=0))
+                        self.assertEqual(device.door_policy((0, 1))['enabled'], 1)
                         with self.assertRaisesRegex(RuntimeError, '(?i)(drzwi|pokryw|door|lid)'):
                             board.cmd_platform_level(Command(ACTION='NEXT', RUN_ID=run['run_id'],
                                                              PROMPT_ID=run['prompt_id']))
@@ -153,6 +159,10 @@ class SequenceTests(unittest.TestCase):
                         self.assertTrue(board.platform_level_status()['awaiting_operator'])
                         self.assertEqual((len(device.packets), len(device.edge_starts)), before)
                         device.doors_closed = True
+                    elif open_throughout:
+                        self.assertFalse(run['door_pause'])
+                        contacts = device.inputs()['raw']
+                        self.assertEqual((contacts['front_door'], contacts['lid']), (0, 0))
                     if run['phase'] == 'adjust':
                         if door_lock:
                             # A PE12 release that shifted by 31 electrical steps after
@@ -228,6 +238,11 @@ class SequenceTests(unittest.TestCase):
 
     def test_terminal_stop_must_succeed_before_save(self):
         self.simulate('T0', fail_final_stop=True)
+
+    def test_disabled_global_door_policy_allows_open_doors_and_lid_throughout(self):
+        for active in ('T0', 'T1'):
+            with self.subTest(initial_tool=active):
+                self.simulate(active, open_throughout=True)
 
     def test_global_lock_manual_access_then_closed_doors_and_measured_datum(self):
         self.simulate('T1', door_lock=True)

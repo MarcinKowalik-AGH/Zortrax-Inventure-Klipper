@@ -37,7 +37,7 @@ def load_config(klipper, config):
         fan.handle_ready()
         assert fan.heaters == [t0, t1]
     for name in ('ZORTRAX_LEVEL', 'ZORTRAX_LEVEL_NEXT', 'ZORTRAX_LEVEL_STATUS',
-                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL'):
+                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK'):
         assert printer.lookup_object('gcode_macro '+name)
     assert 'ZORTRAX_PLATFORM_LEVEL' in printer.lookup_object('gcode').ready_gcode_handlers
     print(json.dumps(dict(status='CONFIG_LOADED', limits_c=[t0.max_temp,t1.max_temp],

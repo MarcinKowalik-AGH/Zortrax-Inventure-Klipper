@@ -53,7 +53,7 @@ jobs:
         run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_PLATFORM_LEVEL_R26
+          name: INVENTURE_PLATFORM_LEVEL_R26_1
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -64,7 +64,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-platform-level-r26-release
+      group: inventure-platform-level-r26-1-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +72,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_PLATFORM_LEVEL_R26
+          name: INVENTURE_PLATFORM_LEVEL_R26_1
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -87,7 +87,7 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R26 · five-point assisted platform leveling" \
+              --title "Inventure R26.1 · Orange Pi installer and global door setting" \
               --notes-file docs/INVENTURE_PLATFORM_LEVEL_R26.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber

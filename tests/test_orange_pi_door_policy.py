@@ -63,6 +63,32 @@ class DoorPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'finish_or_stop'):h.cmd_door_policy(Command(ENABLE=0))
         self.assertTrue(h.door_policy_last['enabled']);self.assertEqual(w.calls,[(1,0)])
 
+    def test_fluidd_menu_reads_current_mcu_setting_and_uses_existing_write_commands(self):
+        for enabled, label in ((0,'wyłączona'),(1,'włączona')):
+            with self.subTest(enabled=enabled):
+                board, wire = self.global_host(policy(enabled=enabled, disable_bit=1-enabled))
+                query = Command(MENU=1)
+                board.cmd_door_policy(query)
+                self.assertEqual(wire.calls, [(0,1)])
+                self.assertIn('action:prompt_text Globalna kontrola drzwi i pokrywy jest '+label+'.', query.lines)
+                button = next(line for line in query.lines if line.endswith('ENABLE='+str(1-enabled)))
+                command, *arguments = button.split('|')[1].split()
+                self.assertEqual(command, 'INVENTURE_DOOR_POLICY')
+                write = Command(**dict(arg.split('=') for arg in arguments))
+                wire.reply = policy(enabled=1-enabled, disable_bit=enabled)
+                board.cmd_door_policy(write)
+                self.assertEqual(wire.calls, [(0,1),(1,1-enabled)])
+                self.assertEqual(write.lines[-1], 'action:prompt_end')
+
+    def test_fluidd_menu_propagates_busy_error_without_confirming_a_change(self):
+        board, wire = self.global_host(policy(motor_busy=1,reject=2))
+        write = Command(MENU=1,ENABLE=0)
+        with self.assertRaisesRegex(RuntimeError, 'finish_or_stop'):
+            board.cmd_door_policy(write)
+        self.assertNotIn('action:prompt_end', write.lines)
+        self.assertEqual(wire.calls, [(1,0)])
+        self.assertTrue(board.door_policy_last['enabled'])
+
     def test_malformed_disable_response_requests_default_restoration(self):
         h,w=self.host(policy(enabled=0,disable_bit=0))
         with self.assertRaisesRegex(RuntimeError,'Invalid MCU'):h.cmd_door_policy(Command(ENABLE=0))

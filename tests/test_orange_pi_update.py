@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -15,6 +16,24 @@ from zipfile import ZipFile
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('orange_pi_update',ROOT/'install-orange-pi.py')
 update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
+
+
+class OrangePiInstallerCLITests(unittest.TestCase):
+    def test_help_lists_leveling_option(self):
+        result = subprocess.run([sys.executable, str(ROOT/'install-orange-pi.py'), '--help'],
+                                capture_output=True, text=True, check=True)
+        self.assertIn('--configure-leveling', result.stdout)
+
+    def test_cli_passes_requested_options_to_installer(self):
+        for args, expected in (
+                ([], (False, False, False, False)),
+                (['--configure-leveling'], (False, False, False, True)),
+                (['--check', '--configure-leveling'], (True, False, False, True)),
+                (['--upgrade-nozzle-limits', '--configure-nozzles'], (False, True, True, False))):
+            with self.subTest(args=args), patch.object(sys, 'argv', ['install-orange-pi.py', *args]), \
+                    patch.object(update, 'update') as install:
+                update.main()
+                install.assert_called_once_with(*expected)
 
 
 class OrangePiUpdateTests(unittest.TestCase):

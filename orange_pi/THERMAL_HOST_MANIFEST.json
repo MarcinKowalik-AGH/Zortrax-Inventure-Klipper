@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26",
+  "release": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643",
+  "module_sha256": "43e3f7fa7e999c62a316916987f595cbef05bb1289566ad5a5f7c32db77cdfd5",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -89,9 +89,10 @@
     "be65cbd899f618358e56502be169a6d4d139ad42d30b6dec055a46a5e0c35828",
     "e3469d14363459d4d8e2421ed8a21b6190081063d0b684c41415d4e0ce8763ef",
     "1b02415053223b10d81c5698b08d3cddaec8bf12fbd59affbd27a1fe911ed948",
-    "7ae8ed878fa1db43c697dc9b7def7f8ee8368516909b67947e03a269b7165cf0"
+    "7ae8ed878fa1db43c697dc9b7def7f8ee8368516909b67947e03a269b7165cf0",
+    "c1f172489d09ba3087feeed1eabe3de37bc678e41bf9b3d69603d338c45b5643"
   ],
-  "host_revision": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26",
+  "host_revision": "RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -821,6 +822,7 @@
       3
     ],
     "final_point": 2,
-    "physical_qualification": "pending first full hardware run"
+    "physical_qualification": "pending first full hardware run",
+    "fluidd_global_door_menu": "ZORTRAX_DOOR_LOCK"
   }
 }

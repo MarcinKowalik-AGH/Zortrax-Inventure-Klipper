@@ -206,7 +206,7 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
 
 
 def add_leveling_macros(target, config, updates):
-    """Install the five Fluidd entry points once, respecting active includes."""
+    """Install the Fluidd leveling and door controls once, respecting active includes."""
     reader = klipper_config_module(target).ConfigFileReader()
     original = config.read_bytes()
     before, staged = updates.get(config, (original, original))
@@ -304,9 +304,9 @@ def main():
                         help='Migrate the legacy 220 C stock R5 nozzle limit to 310 C')
     parser.add_argument('--configure-nozzles',action='store_true',
                         help='Configure both native nozzle heaters to 310 C and include T1 in cooling')
-    args=parser.parse_args()
     parser.add_argument('--configure-leveling',action='store_true',
-                        help='Add the ZORTRAX_LEVEL platform leveling buttons to Fluidd')
+                        help='Add the leveling buttons and the global door menu to Fluidd')
+    args=parser.parse_args()
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,args.configure_leveling)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))

@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26'
+HOST_REVISION = 'RC8-CONTROL-R7-PLATFORM-LEVEL-R26.1'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -1211,6 +1211,9 @@ class InventureMCU:
         return state
 
     def cmd_door_policy(self,gcmd):
+        menu = gcmd.get_int('MENU', 0, minval=0, maxval=1)
+        if menu and not getattr(self, 'door_policy_global', False):
+            raise gcmd.error('Menu blokady drzwiczek wymaga globalnej kontroli drzwi w MCU')
         enabled=None if gcmd.get('ENABLE',None) is None else gcmd.get_int('ENABLE',minval=0,maxval=1)
         try:state=self._door_policy_query(enabled)
         except Exception as exc:
@@ -1222,6 +1225,15 @@ class InventureMCU:
         if state['reject']:raise gcmd.error(state['reject'])
         if enabled == 0:
             gcmd.respond_info('Door lock disabled for both doors. Be careful of moving printer parts.')
+        if menu and enabled is None:
+            label = 'włączona' if state['enabled'] else 'wyłączona'
+            gcmd.respond_info('action:prompt_begin Blokada drzwiczek')
+            gcmd.respond_info('action:prompt_text Globalna kontrola drzwi i pokrywy jest ' + label + '.')
+            gcmd.respond_info('action:prompt_button Wyłącz blokadę|INVENTURE_DOOR_POLICY MENU=1 ENABLE=0')
+            gcmd.respond_info('action:prompt_button Włącz blokadę|INVENTURE_DOOR_POLICY MENU=1 ENABLE=1')
+            gcmd.respond_info('action:prompt_show')
+        elif menu:
+            gcmd.respond_info('action:prompt_end')
 
     def _motor_test_query(self, action=0, motor=0, direction=1):
         wire = self.commands.get('motor_test')
