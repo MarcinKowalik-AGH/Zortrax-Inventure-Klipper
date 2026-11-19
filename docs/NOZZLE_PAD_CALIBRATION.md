@@ -7,6 +7,11 @@ testowanej w projekcie średnica zmierzona suwmiarką wynosi 7 mm.
 Pomiar T0 → T1 → T0 sprawdza też powtarzalność osadzenia dyszy
 po przełączeniu. Wynik opisuje geometrię obu dysz przy 100°C.
 
+Fizyczny pełny pomiar T0 → T1 → T0 został potwierdzony 19.11.2026
+w trybie `FULL / EMPTY / SWEEP+TAP`, dla przedziału krawędzi 0,1 mm.
+[Wyniki i zakres potwierdzenia](acceptance/INVENTURE_PAD_R23_2026-11-19.md).
+Wynik tej próby jest kandydatem; zapis i zastosowanie offsetu są osobnymi etapami.
+
 ## Instalacja
 
 Pełny pomiar przy 100°C z tolerancją ±10°C obsługują host
