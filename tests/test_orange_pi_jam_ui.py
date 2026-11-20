@@ -55,6 +55,33 @@ class JamUI(MenuFixture, unittest.TestCase):
         self.menu.choose(self.menu.view.token, confirm=True)
         self.assertEqual(self.calls[-1], dict(ACTION='REPORT'))
 
+    def test_missing_and_confirmed_break_use_the_same_commands_in_both_interfaces(self):
+        self.run.update(allowed_actions=['REPORT', 'EXCHANGE', 'MISSING', 'BROKEN'])
+        for label, action in (('Broken filament', 'BROKEN'), ('Material missing', 'MISSING')):
+            self.menu.open('filament_jam')
+            self.choose(label)
+            self.assertEqual(self.calls[-1], dict(ACTION=action))
+        self.simulate_jam()
+        self.run.update(reason='EXTRUDER_JAM', stage='R1', allowed_actions=['BROKEN', 'CANCEL'],
+                        prompt_id=3, message='Inspect the guide tube.')
+        self.tick()
+        self.assertTrue(any('Broken filament|ZORTRAX_FILAMENT_JAM ACTION=BROKEN' in m
+                            or ('prompt_button Broken filament|' in m and 'ACTION=BROKEN' in m)
+                            for m in self.output))
+        self.choose('Broken filament')
+        self.assertEqual(self.calls[-1], dict(ACTION='BROKEN', RUN_ID='job1', PROMPT_ID=3))
+
+    def test_original_warning_numbers_require_the_corresponding_evidence(self):
+        title = self.menu._jam_title
+        base = dict(reason='EXTRUDER_JAM', phase='waiting', stage='R1')
+        self.assertEqual(title(dict(base, tool='T0')), '#174 Extruder jam')
+        self.assertEqual(title(dict(base, tool='T1')), 'Extruder jam')
+        self.assertEqual(title(dict(base, tool='T1', pcb_class=1)), '#175 Extruder jam')
+        self.assertEqual(title(dict(base, tool='T1', pcb_class=2)), '#178 Overheating')
+        self.assertEqual(title(dict(base, tool='T0', phase='recovering')), 'Extruder jam')
+        for tool, number in [('T0', 163), ('T1', 164)]:
+            self.assertEqual(title(dict(tool=tool, reason='CARTRIDGE_ERROR')), '#%d Cartridge error' % number)
+
     def test_idle_exchange_menu_uses_the_same_fluidd_step(self):
         self.menu.open('filament_jam')
         self.choose('Replacement steps')
@@ -148,12 +175,21 @@ class JamMacroTests(unittest.TestCase):
         env = Environment(variable_start_string='{', variable_end_string='}')
         self.macros = {s.split()[1]: env.from_string(config.get(s, 'gcode')) for s in config.sections()}
 
-    def render(self, name, **params):
+    def render(self, name, run=None, **params):
         def error(msg):
             raise ValueError(msg)
-        run = dict(active=True, prompt_id=4, run_id='A', allowed_actions=['RETRY', 'CANCEL'])
+        if run is None:
+            run = dict(active=True, prompt_id=4, run_id='A', allowed_actions=['RETRY', 'CANCEL'])
         return self.macros['ZORTRAX_JAM_' + name].render(
             params=params, printer=dict(inventure_mcu=dict(filament_jam=run)), action_raise_error=error).strip()
+
+    def test_missing_and_broken_macros_bind_to_the_current_prompt(self):
+        self.assertEqual(self.render('MISSING'), 'ZORTRAX_FILAMENT_JAM ACTION=MISSING')
+        self.assertEqual(self.render('BROKEN', run={'active': False}), 'ZORTRAX_FILAMENT_JAM ACTION=BROKEN')
+        state = dict(active=True, allowed_actions=['BROKEN'], run_id='B', prompt_id=2)
+        self.assertEqual(self.render('BROKEN', run=state), 'ZORTRAX_FILAMENT_JAM ACTION=BROKEN RUN_ID=B PROMPT_ID=2')
+        with self.assertRaisesRegex(ValueError, 'unavailable'):
+            self.render('BROKEN')
 
     def test_service_uses_an_explicit_material_source_tool_and_temperature(self):
         for params in [{}, dict(TOOL='T0', SOURCE='EXTERNAL', TARGET=360),

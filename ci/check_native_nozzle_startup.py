@@ -51,7 +51,8 @@ def check_loaded(printer, config):
                  'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK',
                  'ZORTRAX_JAM_REPORT', 'ZORTRAX_JAM_STATUS', 'ZORTRAX_JAM_SOURCE',
                  'ZORTRAX_JAM_RETRY', 'ZORTRAX_JAM_CONFIRM_FLOW', 'ZORTRAX_JAM_CANCEL',
-                 'ZORTRAX_JAM_SERVICE_TEST'):
+                 'ZORTRAX_JAM_SERVICE_TEST', 'ZORTRAX_JAM_MISSING', 'ZORTRAX_JAM_BROKEN',
+                 'ZORTRAX_JAM_CLEARED', 'ZORTRAX_JAM_LOAD', 'ZORTRAX_JAM_CONTINUE'):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
     assert 'ZORTRAX_PLATFORM_LEVEL' in gcode.ready_gcode_handlers

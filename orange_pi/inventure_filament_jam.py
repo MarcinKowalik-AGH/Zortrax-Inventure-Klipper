@@ -31,7 +31,8 @@ class FilamentJam:
         self.running = False
         self.ready_once = False
         self.state = dict(run_id=None, prompt_id=0, phase='idle', tool=None, source=None,
-                          reason=None, message='Ready', allowed_actions=[], stage=None)
+                          reason=None, trigger=None, evidence=None, message='Ready',
+                          allowed_actions=[], stage=None)
         self.timer = self.reactor.register_timer(self._tick)
         self.gcode.register_command('ZORTRAX_FILAMENT_JAM', self.cmd, when_not_ready=True)
         self.printer.register_event_handler('klippy:ready', self._ready)
@@ -139,7 +140,7 @@ class FilamentJam:
             if self._print_file(running=True) is None:
                 status['allowed_actions'] = [] if self._paused_print() else ['SOURCE']
             elif self.monitor.active_tool() in self.TOOLS:
-                status['allowed_actions'] = ['REPORT', 'EXCHANGE']
+                status['allowed_actions'] = ['REPORT', 'MISSING', 'BROKEN', 'EXCHANGE']
         status['sources'] = {tool: self.monitor.source(tool) for tool in self.TOOLS}
         status['monitor'] = self.monitor.status()
         status['print_profile'] = self._print_profile()
@@ -149,7 +150,26 @@ class FilamentJam:
     def _change(self, phase, message, actions=(), stage=None):
         self.state.update(phase=phase, message=message, allowed_actions=list(actions),
                           prompt_id=self.state['prompt_id'] + 1, stage=stage)
+        if (self.state['tool'] == 'T1' and self.state['reason'] == 'EXTRUDER_JAM'
+                and phase == 'waiting' and stage in ('R1', 'reload')):
+            self.state['pcb_class'] = self._pcb_class()
         self.gcode.respond_info('Filament recovery | %s | %s' % (self.state['tool'], message))
+
+    def _pcb_class(self):
+        thermal = self.printer.lookup_object('inventure_thermal', None)
+        if thermal is None:
+            return None
+        try:
+            report = thermal.get_status(self.reactor.monotonic())
+            age, level = report['sensor_ages'][7], report['pcb_class']
+            channel = report['channels'][7]
+            if (age is not None and 0 <= age <= thermal.stale and not report['fatal']
+                    and channel['samples'] > 0 and not channel['bad_sensor'] and not channel['fault']
+                    and type(level) is int and 0 <= level <= 4):
+                return level
+        except (IndexError, KeyError, TypeError, ValueError):
+            pass
+        return None
 
     def _shutdown(self, *args):
         self.running = False
@@ -224,7 +244,8 @@ class FilamentJam:
         self.job, self.context = job, None
         self.pause_started = False
         self.state.update(run_id=uuid.uuid4().hex, prompt_id=0, tool=tool, source=event['source'],
-                          reason=event['reason'], diagnostic=event.get('detail'))
+                          reason=event['reason'], diagnostic=event.get('detail'),
+                          trigger=event.get('trigger'), evidence=event.get('evidence'), pcb_class=None)
         self._change('parking', 'Pausing the print and parking over the waste bin.')
         self._schedule(self._park)
 
@@ -267,20 +288,27 @@ class FilamentJam:
 
     def _service_prompt(self):
         reason = self.state['reason']
+        if reason == 'BROKEN_FILAMENT':
+            self._change('waiting', 'Clear the broken piece from the guide tube and refit the tube. '
+                         'Unload the remaining filament if needed.',
+                         ('UNLOAD', 'CLEARED', 'CANCEL'), 'clear_break')
+            return
         if reason == 'REPLACE_FILAMENT':
             self._change('waiting', 'Unload the selected filament before replacement.', ('UNLOAD', 'CANCEL'))
             return
-        if self.state['source'] == 'EXTERNAL':
-            message = 'Check the external spool and insert filament. Select Retry when ready.'
-        elif reason == 'RUNOUT':
-            message = 'Refill the cassette and insert filament. Select Retry when ready.'
-        elif reason in ('CARTRIDGE_ERROR', 'MATERIAL_MISSING'):
-            message = 'Check cassette seating and filament at its inlet. Select Retry when ready.'
-        elif reason == 'MONITOR_ERROR':
-            message = 'Check filament monitor and transport. Select Retry when ready.'
-        else:
-            message = 'Check the cassette and clear its filament path. Select Retry when ready.'
-        self._change('waiting', message, ('RETRY', 'UNLOAD', 'CANCEL'))
+        if reason == 'MONITOR_ERROR':
+            self._change('waiting', 'Check the filament monitor and transport before retrying.',
+                         ('RETRY', 'UNLOAD', 'CANCEL'))
+            return
+        if reason in ('RUNOUT', 'CARTRIDGE_ERROR', 'MATERIAL_MISSING'):
+            message = ('Fit filament from the external spool.' if self.state['source'] == 'EXTERNAL'
+                       else 'Check the cassette and fit replacement material.')
+            self._change('waiting', message + ' Select Load replacement for an empty guide tube.',
+                         ('LOAD', 'RETRY', 'UNLOAD', 'BROKEN', 'CANCEL'))
+            return
+        message = ('Check the external spool.' if self.state['source'] == 'EXTERNAL'
+                   else 'Check the cassette and clear its filament path.')
+        self._change('waiting', message + ' Select Retry when ready.', ('RETRY', 'UNLOAD', 'BROKEN', 'CANCEL'))
 
     def _hold_error(self, run_id, exc):
         # An exception can follow a partial move or an unacknowledged return.
@@ -319,8 +347,9 @@ class FilamentJam:
             if not self._cassette_phase(run_id, 'R1'):
                 self.monitor.stop_recovery()
                 self._move(run_id, self.motion.restore_e)
-                self._change('waiting', 'No continuous filament motion. Check cassette and nozzle, then retry.',
-                             ('RETRY', 'UNLOAD', 'CANCEL'), 'R1')
+                self._change('waiting', 'Transport pulses missing. Inspect the guide tube for a break '
+                             'and check the nozzle. Select Broken filament if a break is visible.',
+                             ('RETRY', 'UNLOAD', 'BROKEN', 'CANCEL'), 'R1')
                 return
             if not self._cassette_phase(run_id, 'R2'):
                 self._change('recovering', 'Reloading the cassette.', ('CANCEL',), 'reload')
@@ -336,7 +365,7 @@ class FilamentJam:
                 if not loaded:
                     self._move(run_id, self.motion.restore_e)
                     self._change('waiting', 'Cassette reload failed. Check the filament path and retry.',
-                                 ('RETRY', 'UNLOAD', 'CANCEL'), 'reload')
+                                 ('RETRY', 'UNLOAD', 'BROKEN', 'CANCEL'), 'reload')
                     return
         except MissingCassetteFilament:
             self.monitor.stop_recovery()
@@ -364,11 +393,16 @@ class FilamentJam:
                 self.monitor.stop_recovery()
             guard()
             if not unload and not outcome:
-                raise ValueError('Cassette transport was not confirmed')
+                self._change('waiting', 'Cassette load did not confirm transport. Check the guide tube, '
+                             'then load again or remove the filament.',
+                             ('LOAD', 'UNLOAD', 'BROKEN', 'CANCEL'), 'reload')
+                return
             already_clean = outcome == 'CLEANED'
         else:
             # An operator advances each portion and can finish early, including
             # when inlet A has cleared but a broken piece is still in the tube.
+            if not unload and not self._external_present(run_id):
+                return
             limit = 100 if unload else 250
             amount = min(20, limit - self.exchange_mm)
             if amount <= 0:
@@ -514,14 +548,19 @@ class FilamentJam:
                 if self.monitor.source(tool) != source:
                     raise ValueError('The configured material source differs from the selection')
                 self.state['source'] = source
+                if source == 'EXTERNAL' and self.state['reason'] == 'MATERIAL_MISSING':
+                    self.state['reason'] = 'RUNOUT'
                 self._service_prompt()
             return
-        if action in ('REPORT', 'EXCHANGE'):
+        if not self.active and action in ('REPORT', 'MISSING', 'BROKEN', 'EXCHANGE'):
             tool = self.monitor.active_tool()
             if tool not in self.TOOLS or str(gcmd.get('TOOL', tool)).upper() != tool:
-                raise ValueError('Report a jam on the active print nozzle')
-            reason = 'REPLACE_FILAMENT' if action == 'EXCHANGE' else 'EXTRUDER_JAM'
-            self._start(dict(tool=tool, source=self.monitor.source(tool), reason=reason))
+                raise ValueError('Report filament problems on the active print nozzle')
+            source = self.monitor.source(tool)
+            reason = {'EXCHANGE': 'REPLACE_FILAMENT', 'REPORT': 'EXTRUDER_JAM',
+                      'BROKEN': 'BROKEN_FILAMENT',
+                      'MISSING': 'RUNOUT' if source == 'EXTERNAL' else 'MATERIAL_MISSING'}[action]
+            self._start(dict(tool=tool, source=source, reason=reason, trigger='operator'))
             return
         if not self.active or action not in self.state['allowed_actions']:
             raise ValueError('Action unavailable at this stage of filament recovery')
@@ -530,16 +569,22 @@ class FilamentJam:
             return
         if self.worker:
             raise ValueError('Recovery is already working')
-        if action in ('UNLOAD', 'LOAD', 'MORE_OUT', 'MORE_IN'):
+        if action == 'BROKEN':
+            self.state['reason'] = 'BROKEN_FILAMENT'
+            self._service_prompt()
+        elif action in ('UNLOAD', 'LOAD', 'MORE_OUT', 'MORE_IN'):
             if action in ('UNLOAD', 'LOAD'):
                 self.exchange_mm = 0
             unload = action in ('UNLOAD', 'MORE_OUT')
             self._change('recovering', 'Unloading filament.' if unload else 'Loading filament.', ('CANCEL',))
             self._schedule(lambda run_id: self._exchange_stroke(run_id, unload))
         elif action == 'CLEARED':
-            if self.monitor.inlet_present(self.state['tool']):
+            present = self.monitor.inlet_present(self.state['tool'])
+            if present and self.state['reason'] != 'BROKEN_FILAMENT':
                 raise ValueError('Inlet A still detects filament. Clear the path before inserting replacement material.')
-            self._change('waiting', 'Insert replacement material and select Load.', ('LOAD', 'CANCEL'))
+            message = ('Filament is at the inlet. Refit the guide tube and select Load.'
+                       if present else 'Insert replacement material and select Load.')
+            self._change('waiting', message, ('LOAD', 'CANCEL'))
         elif action == 'WIPE':
             self._change('recovering', 'Wiping nozzle.', ('CANCEL',))
             self._schedule(self._exchange_wipe)

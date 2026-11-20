@@ -40,6 +40,7 @@ class InventureFilament:
         self.history=collections.deque(maxlen=256);self.trace=collections.deque(maxlen=4096)
         self.reports=[None,None];self.received=[None,None];self.pulse_ages=[99.,99.];self.generation=0;self.rejected=0;self.commands={}
         self.configured_generation=None;self.modes=[None,None];self.selected=None;self.loaded=[None,None]
+        self.print_baselines = None
         self.last_buttons=None;self.jog_until=0.;self.ops=self.tools=self.th=self.gm=self.materials=self.thermal=self.fans=None
         self.timer=self.reactor.register_timer(self._tick)
         for ev,fn in [('klippy:connect',self._connect),('klippy:ready',self._ready),('klippy:shutdown',self._shutdown),('inventure:buttons',self._buttons)]:self.printer.register_event_handler(ev,fn)
@@ -86,7 +87,11 @@ class InventureFilament:
         self.th.move=move
         original_begin=self.ops.begin
         def begin(kind):
-            if kind=='print':self.require_print_ready()
+            if kind=='print':
+                self.require_print_ready()
+                # Capture both channels before the print owner can issue E or
+                # start AUTO, including a support tool selected later.
+                self.print_baselines = tuple(dict(r) for r in self.reports)
             return original_begin(kind)
         self.ops.begin=begin
     def _ready(self):
@@ -194,7 +199,10 @@ class InventureFilament:
                     for i,s in enumerate(self.materials.pair):
                         if jam is not None and jam.monitor.legacy_mode_delegated(i):
                             continue
-                        self._mode(AUTO if active and s.source=='cartridge' else STOP,i,active)
+                        # A stationary second tube can still request a top-up.
+                        # Only the bound print nozzle can raise the print alarm.
+                        monitor = active and (owner.kind != 'print' or i == self.tools.bound_tool)
+                        self._mode(AUTO if active and s.source=='cartridge' else STOP,i,monitor)
                 if self.jog_until and now>=self.jog_until:self._mode(STOP);self.jog_until=0.
             self.commands['query'].send([])
             owner=self.ops.state.owner

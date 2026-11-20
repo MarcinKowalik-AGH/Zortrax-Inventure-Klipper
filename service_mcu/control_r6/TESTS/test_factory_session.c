@@ -23,6 +23,33 @@ static void factory_input(unsigned tool,unsigned a,unsigned b) {
     GPIO_TypeDef *g=tool?GPIOG:GPIOF;pin=tool?10:1;
     if(b)g->IDR|=BIT(pin);else g->IDR&=~BIT(pin);
 }
+
+static void cassette_print_demand(unsigned tool, uint32_t portion, uint32_t duration) {
+    struct ivt_state s = {.configured=1, .cartridge=1, .mode=IVT_AUTO, .monitor=1,
+                          .assigned_budget=portion, .duration=duration};
+    uint32_t now = 1;
+    factory_input(tool, 1, 0);
+    ivt_tick(&s, now, transport_a(tool), transport_b(tool));
+    assert(!s.starts && !s.fault);
+    factory_input(tool, 0, 1);
+    ivt_tick(&s, ++now, transport_a(tool), transport_b(tool));
+    assert(!s.starts && !s.fault);
+    for (unsigned n=1; n<=4; ++n) {
+        factory_input(tool, 1, 1);
+        ivt_tick(&s, ++now, transport_a(tool), transport_b(tool));
+        assert(s.running && s.starts==n && s.budget==(int32_t)portion);
+        ivt_e_step(&s, 1);
+        assert(s.budget==(int32_t)portion-1);
+        ivt_e_step(&s, 0);
+        assert(s.budget==(int32_t)portion);
+        ivt_tick(&s, now+duration-1, 1, 0);
+        assert(s.running && !s.fault);
+        now += duration;
+        ivt_tick(&s, now, transport_a(tool), transport_b(tool));
+        assert(!s.running && s.retry==n && s.fault==(n==4 ? 3 : 0));
+    }
+    factory_input(tool, 0, 0);
+}
 static void factory_motion_tick(void) {
     assert(cm.active && cm.timer_added);sched_del_timer(&cm_timer);
     mock_now=cm_timer.waketime;command_inventure_heartbeat(NULL);factory_adc(1);
@@ -1060,6 +1087,8 @@ static void pad_cold_center(unsigned tool) {
 }
 
 int main(void) {
+    cassette_print_demand(0, 20160, 1000);
+    cassette_print_demand(1, 51840, 1500);
     cold_home_and_hot_start();auto_and_replay();mixed_motion_and_PID();guards_and_STOP();pulse_age_and_status();
     fast_factory_cadence();fast_factory_guards();fast_factory_callback_budget();
     fast_factory_right_cassette();factory_with_open_doors();

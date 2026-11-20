@@ -227,12 +227,25 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(self.motion.log.count(('feed', 1.)), 13)
         self.assertEqual(self.motion.log[-2:], ['clean', 'resume'])
 
+    def test_t1_overheating_warning_needs_current_valid_pcb_measurement(self):
+        report = dict(channels=[{}]*7 + [dict(fault=0, bad_sensor=0, samples=10)],
+                      sensor_ages=[0.]*8, fatal=None, pcb_class=2)
+        thermal = SimpleNamespace(stale=.75, get_status=lambda now: report)
+        lookup = self.board.printer.lookup_object
+        self.board.printer.lookup_object = lambda key, default=None: thermal if key == 'inventure_thermal' else lookup(key, default)
+        self.assertEqual(self.run._pcb_class(), 2)
+        report['sensor_ages'][7] = 1.
+        self.assertIsNone(self.run._pcb_class())
+        report['sensor_ages'][7] = .1
+        report['channels'][7]['bad_sensor'] = 1
+        self.assertIsNone(self.run._pcb_class())
+
     def test_missing_pulses_never_loads_or_resumes(self):
         self.monitor.r1 = False
         self.trigger()
         self.assertEqual(self.motion.log.count(('feed', 1.)), 50)
         self.assertEqual(self.motion.log[-1], 'restore_e')
-        self.assertEqual(self.run.state['allowed_actions'], ['RETRY', 'UNLOAD', 'CANCEL'])
+        self.assertEqual(self.run.state['allowed_actions'], ['RETRY', 'UNLOAD', 'BROKEN', 'CANCEL'])
         self.assertFalse(self.board.sd.is_active())
         for method in (lambda:self.board.sd.do_resume(), lambda:self.board.gcode.commands['RESUME'](Command())):
             with self.assertRaises(ValueError):

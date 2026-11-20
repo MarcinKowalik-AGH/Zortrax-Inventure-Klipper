@@ -7,7 +7,7 @@ import math
 
 from greenlet import getcurrent
 
-from .inventure_factory_core import FactoryProgram, delta32, parameters
+from .inventure_factory_core import FactoryError, FactoryProgram, delta32, parameters
 
 
 @dataclass
@@ -129,10 +129,18 @@ class JamMotion:
     def _profile(self, tool):
         # The factory program uses released-switch coordinates. Request its
         # canonical OEM geometry here, then translate at the native boundary.
-        class Options:
-            def get(self, key, default=None):
-                return {'TOOL': 'T%d' % tool, 'SPEED_PROFILE': 'OEM'}.get(key, default)
-        return parameters(Options(), None, max_target=310.)
+        options = {'TOOL': 'T%d' % tool, 'SPEED_PROFILE': 'OEM'}
+        p = parameters(options, getattr(self.board, 'procedure_profiles', None), max_target=310.)
+        mats = self._get('inventure_materials')
+        if getattr(mats, 'confirmed', False) and getattr(mats, 'pair', None) and not mats.stopped:
+            from .inventure_filament_core import profile
+            stock = profile(mats.pair[tool].material_id)
+            p.update(unload_l1=stock['l1'], unload_l2=stock['l2'])
+            legacy = self._get('inventure_filament')
+            if getattr(legacy, 'enabled', False):
+                p.update(unload_speed1=legacy.delay_speeds[stock['d1']],
+                         unload_speed2=legacy.delay_speeds[stock['d2']])
+        return p
 
     def _raw_xy(self, ctx, x, y):
         # ID0 is fixed at logical OEM (67.5, 150), including in P04/P08.
@@ -335,6 +343,16 @@ class JamMotion:
                     response, quiet = self._feedback_move(ctx, transport, action, check, quiet)
                 else:
                     raise ValueError('Unsupported native reload action ' + kind)
+        except FactoryError as exc:
+            if unload or exc.code not in ('l1_budget_exhausted', 'l2_a_timeout', 'l3_no_transport',
+                                          'l4_starts_missing', 'l4_starts_missing_fallback_completed'):
+                raise
+            check()
+            transport.set_mode('T%d' % ctx.tool, 0)
+            bin_xy = self._point(ctx, 0)
+            if tuple(ctx.expected[:2]) != bin_xy:
+                self._move(ctx, xy=bin_xy)
+            return False
         finally:
             steps.close()
             # The session owner releases the lease on success, error, or STOP.

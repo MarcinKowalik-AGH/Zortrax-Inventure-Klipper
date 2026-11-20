@@ -17,6 +17,7 @@ COMMANDS = {
 }
 SOURCE_NAMES = {'cartridge': 'CASSETTE', 'spool': 'EXTERNAL'}
 UINT32 = 0xffffffff
+INITIAL_E_STEPS = 96000  # r0323 0x0801A350, per channel at print start
 
 
 def _index(tool):
@@ -25,7 +26,7 @@ def _index(tool):
     return int(tool[1])
 
 
-def classify(source, report, previous_forward, nearly_empty=None):
+def classify(source, report, previous_forward, nearly_empty=None, previous_reverse=None):
     """An absent cassette without a verified balance is ambiguous."""
     if source == 'CASSETTE' and report['fault'] not in (0, 2, 3):
         return 'MONITOR_ERROR'
@@ -38,13 +39,28 @@ def classify(source, report, previous_forward, nearly_empty=None):
     fault = report['fault']
     # R13 issues each native E STEP and maintains the signed supply budget.
     # Its ABI does not report planner block boundaries; compare at MCU samples.
-    exhausted = (previous_forward is not None and
-                 delta32(report['forward'], previous_forward) > 0 and report['budget'] < 0)
+    advanced = previous_forward is not None and delta32(report['forward'], previous_forward) > 0
+    retracted = previous_reverse is not None and delta32(report['reverse'], previous_reverse) > 0
+    exhausted = (advanced or retracted) and report['budget'] < 0
     if fault or exhausted:
         if nearly_empty is True:
             return 'RUNOUT'
         return 'CASSETTE_JAM' if fault == 3 else 'EXTRUDER_JAM'
     return None
+
+
+def transport_event(tool, source, reason, row):
+    if reason == 'MONITOR_ERROR':
+        trigger = 'transport_fault'
+    elif not row['a']:
+        trigger = 'inlet_clear'
+    elif row.get('fault') == 3:
+        trigger = 'demand_after_four_portions'
+    else:
+        trigger = 'feed_without_top_up'
+    evidence = {k: row[k] for k in ('a', 'b', 'pulses', 'starts', 'retry',
+                                    'fault', 'forward', 'reverse', 'budget') if k in row}
+    return dict(tool=tool, source=source, reason=reason, trigger=trigger, evidence=evidence)
 
 
 class JamMonitor:
@@ -56,7 +72,8 @@ class JamMonitor:
         self.commands = {}
         self.reports = [None, None]
         self.clock_hz = 0.
-        self.last_forward = None
+        self.allowance_file = None
+        self.allowances = [None, None]
         self.print_tool = None
         self.owned_tool = None
         self.recovery = False
@@ -197,6 +214,30 @@ class JamMonitor:
                    if row['pulses'] or row['last_pulse_clock'] else UINT32)
         self.reports[idx] = dict(row, received=received, pulse_age_ms=age)
 
+    def _print_sample(self, tool, row, *, before_auto=False):
+        # R13 loads the portion allowance when a profile is installed. Stock
+        # grants 100 mm initially and replaces it only when a feeder portion
+        # starts. Keep each channel's balance across native tool switches.
+        idx = _index(tool)
+        job = self._obj('virtual_sdcard').current_file
+        if self.allowance_file is not job:
+            self.allowance_file = job
+            baselines = getattr(self._p13(), 'print_baselines', ())
+            self.allowances = ([dict(r, budget=INITIAL_E_STEPS) for r in baselines]
+                               if baselines else [None, None])
+        prev = self.allowances[idx]
+        if prev is None:
+            balance = INITIAL_E_STEPS if before_auto else row['budget']
+        elif delta32(row['starts'], prev['starts']):
+            # MCU balance includes every issued E step after the last start.
+            balance = row['budget']
+        else:
+            balance = (prev['budget'] - delta32(row['forward'], prev['forward'])
+                       + delta32(row['reverse'], prev['reverse']))
+        sampled = dict(row, budget=balance)
+        self.allowances[idx] = sampled
+        return sampled, prev
+
     def _start(self, tool, recover):
         self._ensure_native(tool)
         idx = _index(tool)
@@ -226,12 +267,7 @@ class JamMonitor:
         epoch = self.epoch
         self.owned_tool, self.borrowed, self.recovery = tool, legacy, recover
         try:
-            cmds['profile'].send_wait_ack([idx, 1, duration, budget])
-            if epoch != self.epoch:
-                raise ValueError('Native transport session changed')
-            if legacy:
-                legacy.modes[idx] = (0, 0)
-            else:
+            if not legacy:
                 cmds['select'].send_wait_ack([idx])
                 if epoch != self.epoch:
                     raise ValueError('Native transport session changed')
@@ -240,7 +276,20 @@ class JamMonitor:
                     raise ValueError('Native transport session changed')
                 self.lease_time = self.reactor.monotonic()
                 self.reactor.update_timer(self.timer, self.lease_time + .1)
+                if (not recover and self.allowance_file is self._obj('virtual_sdcard').current_file
+                        and self.allowances[idx] is not None):
+                    # Reconcile the final portion on this channel before a
+                    # reinstalled R13 profile overwrites its wire budget.
+                    self._print_sample(tool, self.sample(tool))
+            cmds['profile'].send_wait_ack([idx, 1, duration, budget])
+            if epoch != self.epoch:
+                raise ValueError('Native transport session changed')
+            if legacy:
+                legacy.modes[idx] = (0, 0)
             self.lease_error = None
+            # The feeder is stopped here. Capture C before either print AUTO
+            # or a manual repair can start its first portion.
+            self._print_sample(tool, self.sample(tool), before_auto=True)
         except Exception:
             self.stop_recovery()
             raise
@@ -268,15 +317,15 @@ class JamMonitor:
         self.epoch += 1
         self.owned_tool = self.borrowed = self.print_tool = None
         self.recovery = False
-        self.last_forward = None
         self.reports = [None, None]
+        self.allowance_file = None
+        self.allowances = [None, None]
 
     def _tool_changed(self, *args):
         # P04 drains the old tool before activating the new shared E queue.
         if self.owned_tool:
             self.stop_recovery()
         self.print_tool = None
-        self.last_forward = None
 
     def stop_recovery(self):
         self.epoch += 1
@@ -294,7 +343,7 @@ class JamMonitor:
 
     def reset(self):
         self.stop_recovery()
-        self.last_forward = self.print_tool = self.lease_error = None
+        self.print_tool = self.lease_error = None
         self.latched = False
 
     def begin_recovery(self, tool):
@@ -323,11 +372,12 @@ class JamMonitor:
             self.stop_recovery()
             self._start(tool, False)
             row = self.set_mode(tool, 1, monitor=1)
+        if self.source(tool) == 'CASSETTE':
+            row, _ = self._print_sample(tool, row)
         if not row['a'] or row.get('fault') or row.get('budget', 0) < 0:
             self.stop_recovery()
             raise ValueError('Filament transport is not ready to resume the print')
         self.print_tool = tool
-        self.last_forward = row.get('forward')
 
     def complete_resume(self, tool):
         if self.print_tool == tool:
@@ -416,7 +466,7 @@ class JamMonitor:
             return
         if self._print_state(self.reactor.monotonic()):
             reason = classify('CASSETTE', row, None, self._nearly_empty(channel))
-            jam._start(dict(tool='T%d' % channel, source='CASSETTE', reason=reason))
+            jam._start(transport_event('T%d' % channel, 'CASSETTE', reason, row))
             self.latched = jam.active
 
     def _legacy_sample(self, tool, now):
@@ -442,7 +492,7 @@ class JamMonitor:
         if not tool:
             if self.owned_tool:
                 self.stop_recovery()
-            self.print_tool = self.last_forward = None
+            self.print_tool = None
             return None
         source = self.source(tool)
         if source == 'UNKNOWN':
@@ -456,15 +506,12 @@ class JamMonitor:
         try:
             if self.lease_error:
                 raise ValueError(self.lease_error)
-            if self.print_tool != tool:
-                self.last_forward = None
-                self.print_tool = tool
+            self.print_tool = tool
             if source == 'EXTERNAL':
                 row = self._inputs(tool, eventtime)
             elif self._p13():
                 row = self._legacy_sample(tool, eventtime)
                 if row is None:
-                    self.last_forward = None
                     return None
             elif self.owned_tool == tool:
                 row = self.sample(tool)
@@ -472,12 +519,16 @@ class JamMonitor:
                 self.stop_recovery()
                 self._start(tool, False)
                 row = self.set_mode(tool, 1, monitor=1)
-            reason = classify(source, row, self.last_forward,
-                              self._nearly_empty(_index(tool)) if source == 'CASSETTE' else None)
-            self.last_forward = row.get('forward')
+            previous = None
+            balance = None
+            if source == 'CASSETTE':
+                row, previous = self._print_sample(tool, row)
+                balance = self._nearly_empty(_index(tool))
+            reason = classify(source, row, previous['forward'] if previous else None, balance,
+                              previous_reverse=previous['reverse'] if previous else None)
             if not reason:
                 return None
-            event = dict(tool=tool, source=source, reason=reason)
+            event = transport_event(tool, source, reason, row)
         except Exception as exc:
             event = dict(tool=tool, source=source, reason='MONITOR_ERROR', detail=str(exc))
         self.latched = True

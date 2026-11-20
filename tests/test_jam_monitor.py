@@ -59,6 +59,8 @@ class JamMonitorTest(unittest.TestCase):
         self.assertEqual(classify('CASSETTE', row(fault=3), 100), 'CASSETTE_JAM')
         self.assertEqual(classify('CASSETTE', row(forward=1, budget=-1), 0xffffffff), 'EXTRUDER_JAM')
         self.assertEqual(classify('CASSETTE', row(fault=2), None, True), 'RUNOUT')
+        self.assertEqual(classify('CASSETTE', row(budget=-1, reverse=3), 100, previous_reverse=2),
+                         'EXTRUDER_JAM')
         with self.assertRaisesRegex(ValueError, 'counter'):
             classify('CASSETTE', row(forward=10), 410)
 
@@ -68,10 +70,60 @@ class JamMonitorTest(unittest.TestCase):
         self.monitor.set_source('T0', 'CASSETTE')
         self.monitor.set_source('T1', 'EXTERNAL')
         self.tools.bound_tool = 1
-        self.assertEqual(self.monitor.poll(5.), dict(tool='T1', source='EXTERNAL', reason='RUNOUT'))
+        self.assertEqual(self.monitor.poll(5.), dict(tool='T1', source='EXTERNAL', reason='RUNOUT',
+                         trigger='inlet_clear', evidence={'a': 0, 'b': 1}))
         self.assertIsNone(self.monitor.poll(5.1))
         self.assertEqual(self.monitor.commands, {})
         self.assertIsNone(self.monitor.owned_tool)
+
+    def test_stock_allowance_on_tool_change_initial_feed_first_portion_and_retraction(self):
+        m = self.monitor
+        for tool, portion in [('T0', 20160), ('T1', 51840)]:
+            with self.subTest(tool=tool):
+                baseline = row(starts=0xffffffff, forward=500, reverse=15, budget=portion)
+                first, _ = m._print_sample(tool, baseline, before_auto=True)
+                self.assertEqual(first['budget'], 96000)
+                moved, _ = m._print_sample(tool, dict(baseline, forward=96500))
+                self.assertEqual(moved['budget'], 0)
+                portion_start = row(starts=0, forward=96509, reverse=15, budget=portion-9)
+                measured, _ = m._print_sample(tool, portion_start)
+                self.assertEqual(measured['budget'], portion-9)
+                at_limit = dict(portion_start, forward=96500+portion+3, reverse=18)
+                measured, prev = m._print_sample(tool, at_limit)
+                self.assertEqual(measured['budget'], 0)
+                self.assertIsNone(classify('CASSETTE', measured, prev['forward']))
+                measured, prev = m._print_sample(tool, dict(at_limit, forward=at_limit['forward']+1))
+                self.assertEqual(measured['budget'], -1)
+                self.assertEqual(classify('CASSETTE', measured, prev['forward']), 'EXTRUDER_JAM')
+        # An inactive tool's allowance survives selection and a re-sent R13 profile.
+        resumed, _ = m._print_sample('T0', dict(m.allowances[0], budget=20160), before_auto=True)
+        self.assertEqual(resumed['budget'], -1)
+        self.sd.current_file = object()
+        new, _ = m._print_sample('T0', row(budget=20160), before_auto=True)
+        self.assertEqual(new['budget'], 96000)
+
+    def test_p13_print_baseline_counts_first_move_on_initially_inactive_tool(self):
+        baseline = row(forward=10, reverse=3, starts=5)
+        self.objs['inventure_filament'] = types.SimpleNamespace(
+            enabled=True, print_baselines=(row(), baseline))
+        sample, prev = self.monitor._print_sample('T1', dict(baseline, forward=96011))
+        self.assertEqual(sample['budget'], -1)
+        self.assertEqual(classify('CASSETTE', sample, prev['forward']), 'EXTRUDER_JAM')
+
+    def test_manual_repair_before_first_print_poll_keeps_the_replenished_budget(self):
+        m = self.monitor
+        m.set_source('T0', 'CASSETTE')
+        self.board._control_query = lambda: dict(mode='NATIVE', armed=1, fault=0, latched=0)
+        m.commands = {name: mock.Mock() for name in ('select', 'lease', 'profile', 'mode')}
+        counters = row(starts=0, forward=0, reverse=0, budget=20160)
+        m.commands['profile'].send_wait_ack.side_effect = lambda args: counters.update(budget=args[3])
+        with mock.patch.object(m, 'sample', side_effect=lambda tool: dict(counters)):
+            m._start('T0', True)
+            self.assertEqual(m.allowances[0]['budget'], 96000)
+            counters.update(starts=3, forward=500, budget=20100)
+            m.stop_recovery()
+            m._start('T0', False)
+        self.assertEqual(m.allowances[0]['budget'], 20100)
 
     def test_source_never_deduced_from_present_or_stale_inputs(self):
         self.assertEqual(self.monitor.source('T0'), 'UNKNOWN')

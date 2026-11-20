@@ -9,13 +9,13 @@ from orange_pi.inventure_filament_jam import FilamentJam
 
 
 class TransportWire:
-    """Minimal R13 wire model. Sensor counters advance only on planner E moves."""
+    """R13 reports with driven E steps, feeder starts and simulated movement edges."""
     def __init__(self, tool):
         self.tool = tool
         self.calls = []
         self.tick = 0
         self.mode = self.pulses = self.starts = self.forward = self.reverse = 0
-        self.budget = 100
+        self.assigned_budget = self.budget = 100
         self.reader = None
         self.have_transport = True
         self.r2_starts = True
@@ -40,10 +40,13 @@ class TransportWire:
     def send(self, name, args):
         self.calls.append((name, args))
         if name == 'profile':
-            self.budget = args[-1]
+            self.mode = 0
+            self.assigned_budget = self.budget = args[-1]
         elif name == 'mode':
             assert args[0] == self.tool
             self.mode = args[1]
+            if self.mode in (2, 3):
+                self.start_portion()
         elif name == 'select':
             assert args == [self.tool]
         elif name == 'query':
@@ -55,9 +58,14 @@ class TransportWire:
                              forward=self.forward, reverse=self.reverse,
                              fault=0, budget=self.budget))
 
+    def start_portion(self):
+        self.starts += 1
+        self.budget = self.assigned_budget
+
     def move_e(self, distance):
         if distance < 0:
             self.reverse += round(-960 * distance)
+            self.budget += round(-960 * distance)
             return
         self.forward += round(960 * distance)
         self.budget -= round(960 * distance)
@@ -65,7 +73,7 @@ class TransportWire:
             if self.mode == 2:
                 self.pulses += 1
             elif self.mode == 1 and (self.r2_starts or distance != 1.):
-                self.starts += 1
+                self.start_portion()
 
 
 class PrintRun:
@@ -191,13 +199,20 @@ class NativeRecoveryIntegration(unittest.TestCase):
                 run.select('CASSETTE')
                 run.poll()
                 self.assertFalse(run.jam.active)
-                run.wire.budget = -1
+                run.wire.forward += 96000
+                run.wire.budget -= 96000
+                run.poll()
+                self.assertFalse(run.jam.active)
                 run.wire.forward += 1
+                run.wire.budget -= 1
                 run.poll()
                 self.assertEqual(run.jam.state['phase'], 'completed', run.jam.state)
                 self.assertEqual(run.jam.state['reason'], 'EXTRUDER_JAM')
+                self.assertEqual(run.jam.state['trigger'], 'feed_without_top_up')
+                self.assertEqual(run.jam.state['evidence']['budget'], -1)
+                self.assertEqual(run.jam.state['evidence']['a'], 1)
                 self.assertEqual(run.wire.pulses, 10)
-                self.assertEqual(run.wire.starts, 3)
+                self.assertEqual(run.wire.starts, 4)  # forced R1, then three automatic R2 starts
                 self.assertEqual(tuple(run.head.get_position()[:3]), run.saved[:3])
                 self.assertAlmostEqual(run.head.get_position()[3] - run.gm.base_position[3], run.saved_e)
                 self.assertTrue(run.sd.is_active())
@@ -207,6 +222,75 @@ class NativeRecoveryIntegration(unittest.TestCase):
                 run.sd.active = False
                 run.poll()
                 self.assertEqual(run.wire.mode, 0)
+
+    def test_operator_break_with_material_still_at_inlet_for_both_sources_and_tools(self):
+        for tool in (0, 1):
+            for source in ('CASSETTE', 'EXTERNAL'):
+                with self.subTest(tool=tool, source=source):
+                    run = PrintRun(tool)
+                    run.select(source)
+                    run.issue('BROKEN')
+                    run.drain()
+                    self.assertEqual(run.jam.state['stage'], 'clear_break')
+                    self.assertFalse(run.sd.is_active())
+                    self.assertEqual(run.wire.calls, [])
+                    self.assertNotIn('CONTINUE', run.jam.state['allowed_actions'])
+                    run.issue('CLEARED')  # downstream piece removed, upstream still at A
+                    run.issue('LOAD')
+                    run.drain()
+                    if 'WIPE' in run.jam.state['allowed_actions']:
+                        run.issue('WIPE')
+                        run.drain()
+                    run.issue('FLOW')
+                    self.assertFalse(run.sd.is_active())
+                    run.issue('CONTINUE')
+                    run.drain()
+                    self.assertTrue(run.sd.is_active(), run.jam.state)
+                    self.assertEqual(tuple(run.head.get_position()[:3]), run.saved[:3])
+                    self.assertAlmostEqual(run.head.get_position()[3]-run.gm.base_position[3], run.saved_e)
+                    if source == 'EXTERNAL':
+                        self.assertEqual(run.wire.calls, [])
+
+    def test_missing_report_parks_without_starting_either_feeder(self):
+        for tool in (0, 1):
+            for source in ('CASSETTE', 'EXTERNAL'):
+                with self.subTest(tool=tool, source=source):
+                    run = PrintRun(tool)
+                    run.select(source)
+                    run.issue('MISSING')
+                    run.drain()
+                    self.assertEqual(run.jam.state['reason'], 'RUNOUT' if source=='EXTERNAL' else 'MATERIAL_MISSING')
+                    self.assertFalse(run.sd.is_active())
+                    self.assertEqual(run.wire.calls, [])
+                    self.assertIn('LOAD', run.jam.state['allowed_actions'])
+                    if source == 'EXTERNAL':
+                        run.board.inputs['raw'][run.name.lower()+'_a'] = 0
+                        before = run.head.get_position()[3]
+                        run.issue('LOAD')
+                        run.drain()
+                        self.assertEqual(run.jam.state['reason'], 'RUNOUT')
+                        self.assertEqual(run.head.get_position()[3], before)
+                        self.assertIn('LOAD', run.jam.state['allowed_actions'])
+
+    def test_unconfirmed_cassette_reload_can_be_retried_over_the_bin(self):
+        run = PrintRun(1)
+        run.select('CASSETTE')
+        run.issue('BROKEN')
+        run.drain()
+        run.issue('CLEARED')
+        run.wire.have_transport = False
+        run.issue('LOAD')
+        run.drain()
+        self.assertEqual(run.jam.state['stage'], 'reload', run.jam.state)
+        self.assertIn('LOAD', run.jam.state['allowed_actions'])
+        self.assertNotIn('CONTINUE', run.jam.state['allowed_actions'])
+        self.assertEqual(tuple(run.head.get_position()[:2]), run.jam.motion._point(run.jam.context, 0))
+        self.assertEqual(run.wire.mode, 0)
+        self.assertFalse(run.sd.is_active())
+        run.wire.have_transport = True
+        run.issue('LOAD')
+        run.drain()
+        self.assertTrue(set(run.jam.state['allowed_actions']) & {'FLOW', 'WIPE'}, run.jam.state)
 
     def test_external_runout_needs_reload_and_current_visible_flow_confirmation(self):
         run = PrintRun(1)

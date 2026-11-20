@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R27.1",
-  "host_module_sha256": "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b",
+  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R28",
+  "host_module_sha256": "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 670,
-  "previous_host_commit": "803bc74627090a9a5e614547dad7005332d54229",
+  "verified_public_host_tests": 680,
+  "previous_host_commit": "6b531b2e9e5482452cc500dbe97f55f40bf0230b",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R27.1",
+  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R28",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -760,10 +760,10 @@
       110
     ],
     "package_filename": "INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip",
-    "release_tag": "inventure-filament-jam-r27.1",
-    "host_package_filename": "INVENTURE_ORANGE_PI_FILAMENT_JAM_R27_1.zip",
+    "release_tag": "inventure-filament-jam-r28",
+    "host_package_filename": "INVENTURE_ORANGE_PI_FILAMENT_JAM_R28.zip",
     "ivb_sha256": "7bb8a9334d2aade7eb38f4d949d73f2e10870cde4b12e3c8803ba7cdff0b8f35",
-    "audit_report": "docs/INVENTURE_FILAMENT_JAM_R27_1.md",
+    "audit_report": "docs/INVENTURE_FILAMENT_JAM_R28.md",
     "release_notes": "docs/INVENTURE_PAD_XYZ_R25.md",
     "application_sha256": "946243f946bf2eeea1641b0ee5234065bbbf91f5c11ef1c78a4c383e9225f475",
     "ivb_bytes": 103488,
@@ -927,8 +927,8 @@
     "frontend_config": "config/INVENTURE_FILAMENT_JAM.cfg",
     "installer_option": "--configure-jam",
     "mcu_release": "RC8-CONTROL-R7-PAD-THERMAL-R13",
-    "stock_reference": "Inventure 1.6.1 r0323, filament transport sections 11.3 and 11.4",
-    "documentation": "docs/INVENTURE_FILAMENT_JAM_R27_1.md",
-    "physical_qualification": "pending T0 and T1 printer validation"
+    "stock_reference": "Inventure 1.6.1 r0323, transport sections 4.3, 5 and 11",
+    "documentation": "docs/INVENTURE_FILAMENT_JAM_R28.md",
+    "physical_qualification": "T0 inlet and loaded guide-tube response observed, identical T1 mechanism confirmed by owner, interrupted-print recovery pending"
   }
 }

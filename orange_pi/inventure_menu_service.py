@@ -87,11 +87,19 @@ class ZortraxMenuService:
     def _jam_title(run):
         tool = run.get('tool')
         reason = run.get('reason')
-        if tool in ('T0', 'T1') and reason in ('CASSETTE_JAM', 'RUNOUT'):
-            code, label = (176, 'Cartridge jam') if reason == 'CASSETTE_JAM' else (161, 'Material empty')
+        warnings = {'CASSETTE_JAM': (176, 'Cartridge jam'), 'RUNOUT': (161, 'Material empty'),
+                    'CARTRIDGE_ERROR': (163, 'Cartridge error')}
+        if tool in ('T0', 'T1') and reason in warnings:
+            code, label = warnings[reason]
             return '#%d %s' % (code + (tool == 'T1'), label)
+        if (reason == 'EXTRUDER_JAM' and run.get('phase') == 'waiting'
+                and run.get('stage') in ('R1', 'reload')):
+            if tool == 'T0':
+                return '#174 Extruder jam'
+            if tool == 'T1' and run.get('pcb_class') is not None:
+                return '#178 Overheating' if run['pcb_class'] > 1 else '#175 Extruder jam'
         return {'EXTRUDER_JAM': 'Extruder jam', 'MATERIAL_MISSING': 'Material missing',
-                'CARTRIDGE_ERROR': 'Cartridge error', 'MONITOR_ERROR': 'Transport monitor'}.get(
+                'BROKEN_FILAMENT': 'Broken filament', 'MONITOR_ERROR': 'Transport monitor'}.get(
                     reason, 'Filament recovery')
 
     @staticmethod
@@ -105,7 +113,8 @@ class ZortraxMenuService:
                 choices.append((label, dict(owner, ACTION='SOURCE', TOOL=run['tool'], SOURCE=source)))
         for action, label in [('RETRY', 'Retry recovery'), ('CONFIRM', 'Flow verified / resume'),
                               ('UNLOAD', 'Unload filament'), ('MORE_OUT', 'Retract next portion'),
-                              ('CLEARED', 'Broken pieces removed'), ('LOAD', 'Load replacement'),
+                              ('BROKEN', 'Broken filament'), ('CLEARED', 'Broken pieces removed'),
+                              ('LOAD', 'Load replacement'),
                               ('MORE_IN', 'Feed next portion'), ('WIPE', 'Wipe nozzle'),
                               ('FLOW', 'Confirm visible flow'), ('CONTINUE', 'Resume print'),
                               ('CANCEL', 'Stop recovery')]:
@@ -143,9 +152,13 @@ class ZortraxMenuService:
             return self._running_view()
         options = [('Back', ('close', {}))]
         if 'EXCHANGE' in run.get('allowed_actions', ()):
-            options.append(('Replace broken filament', ('jam_command', dict(ACTION='EXCHANGE'))))
+            options.append(('Replace filament', ('jam_command', dict(ACTION='EXCHANGE'))))
         if 'REPORT' in run.get('allowed_actions', ()):
             options.append(('Report filament jam', ('jam_report', {})))
+        if 'MISSING' in run.get('allowed_actions', ()):
+            options.append(('Material missing', ('jam_command', dict(ACTION='MISSING'))))
+        if 'BROKEN' in run.get('allowed_actions', ()):
+            options.append(('Broken filament', ('jam_command', dict(ACTION='BROKEN'))))
         if 'SOURCE' in run.get('allowed_actions', ()):
             if self._native_job()[2] not in ('printing','paused') and 'factory_session' in self.board.commands:
                 options.append(('Replacement steps', ('exchange_steps', {})))
