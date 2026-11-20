@@ -198,9 +198,10 @@ nie ma zidentyfikowanego osobnego czujnika wypływu z dyszy.
 
 Wejście A to PD10/T0 albo PD15/T1; jego reakcję na wsunięcie i wyjęcie
 filamentu potwierdzono fizycznie. B to PF1/T0 albo PG10/T1, używane przez
-fabryczny automat jako warunek doładowania. Fizycznego przypisania B do
-konkretnego przycisku/mechanizmu nadal nie należy uznawać za potwierdzone.
+fabryczny automat jako warunek doładowania.
 AUTO nie zastępuje B stałym wymuszeniem pracy kasety.
+
+On 20 November the operator identified the guide tube as the actuator for T0_B. It presses the sensor when the extruder pulls filament faster than the left cassette supplies it. [Left cassette field record](acceptance/INVENTURE_T0_CASSETTE_OPTICS_2026-11-20.md)
 
 ## Parametry procesu
 

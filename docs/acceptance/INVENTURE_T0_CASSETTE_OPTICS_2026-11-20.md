@@ -14,6 +14,8 @@ The 12:37:59 baseline already contained the active first element, which explains
 
 ## How the firmware uses the three inputs
 
+The operator identified what actuates B on the left assembly. When the extruder pulls filament faster than the cassette supplies it, the filament comes under tension and the guide tube presses the B mechanism. PF1 goes high. Simply advancing the free filament tip past A does not create this pressure.
+
 Stock Inventure 1.6.1 r0323 checks A for filament at the inlet. With cassette AUTO enabled and the feeder idle and fault-free, A and B both high request a timed top-up. Long loading runs the feeder forward in L2 and checks A. In L3 the feeder runs forward with E, and the firmware counts new accepted PB12 edges. After a gap longer than 2 seconds it starts counting the series again. The inlet readings alone cannot locate the filament tip at the extruder.
 
 The T0 record at `0x08029A64` was checked directly in `ZORTRAX_INVENTURE_KOMPLET_2026-10-02_CZESC_1_z_2.zip`. Its A callback at `0x08013C20` reads GPIO D with mask `0x0400`, and its B callback at `0x08013C50` reads GPIO F with mask `0x0002`. The accepted-edge counter and auxiliary feeder-start counter have separate addresses. [Stock record and firmware hash](../evidence/CASSETTE_R0323_START.json) · [Stock transport audit, sections 3, 6 and 11](https://drive.google.com/file/d/1mFJuBj8Dn8Mzxa0tJ5MFTogomOmaANOt/view)
@@ -29,13 +31,31 @@ The 240,000 E steps correspond to 250 mm of commanded extrusion at 960 steps/mm.
 
 The host replay started the counter at 7. With no new edges it reproduced the L1 and L3 step totals above and the same error. With fresh edges it reached L4. On the R13 register model, actuating PD10 and PF1 left the PB12 count at 7. One falling and one rising edge on PB12, separated by more than 20 ms, raised it to 9.
 
-## Next physical check on R27
+## Cold forward feed from the spool outlet at 13:26
 
-Refit the left sensor in its working position, engage the filament in the cassette feed path and leave the guide tube disconnected at the cold extruder with its outlet free. Mark an accessible section of filament so movement can be seen. With the printer idle, run this short feeder-only test in Fluidd.
+The operator unloaded the path, cut the filament at the spool outlet and then reported that it entered the inlet. A ten-second forward run of the left cassette feeder completed in seven MCU windows. The extruder received no E move in this operation.
+
+| Fluidd report | T0_A (PD10) | T0_B (PF1) | PB12 accepted edges, total |
+| --- | ---: | ---: | ---: |
+| 13:26:30, before | 0 | 0 | 300 |
+| 13:26:40, after | 1 | 0 | 300 |
+
+The change on A confirms arrival at the left inlet. B was low in both snapshots, as expected with no pull from the extruder. The PB12 delta for this run was zero. The distance travelled past A was not measured. [Feeder test and output fields](../FEEDER_RUN_2026-11-09.md)
+
+## Loaded-path B check proposed by the operator
+
+Connect the guide tube as for printing. Start the ordinary T0 cassette load and wait for successful completion. The example uses the same 235 °C target as the preceding runs.
 
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
-INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=1 DURATION=10
+INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM TARGET=235
 ```
 
-Read `pulse_delta.t0_pb12` in the automatic `V9_FEEDER_RUN` report at `phase=done`. Record the mark movement and the counter together. A positive delta with visible travel confirms transport feedback under these test conditions. If the mark stays still, check that the feeder engages the filament. If filament travels and the delta stays zero, trace the PB12 sensing path and its wiring. This check uses only the cassette drive and does not heat either nozzle. [Feeder test and output fields](../FEEDER_RUN_2026-11-09.md)
+With the filament still gripped by the extruder, a short reverse pulse on the cassette takes up slack while E remains stationary. On an idle printer, run the following separately after loading.
+
+```gcode
+INVENTURE_CONTROL MODE=SERVICE
+INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=0 DURATION=2
+```
+
+Look for `filament_before.t0_b=0` and `filament_after.t0_b=1` with `t0_a=1` in both snapshots. That transition confirms tube actuation under load. End the check once B is high. R27 runs the cassette for the requested time and samples A/B before and after. It has no B-triggered stop or B edge history in `FEEDER_RUN`. A short activation can fall between snapshots. The suggested 50 mm has no calibrated reverse-time equivalent on this loaded path. This last check is pending a printer result.

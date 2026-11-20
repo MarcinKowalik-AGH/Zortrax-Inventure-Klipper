@@ -74,7 +74,7 @@ się warunku w określonym aktywnym stanie prowadzi po liczniku `>3` do fault 3.
 | Sygnał | Lewy T0 | Prawy T1 | Rola potwierdzona w kodzie |
 |---|---|---|---|
 | A | PD10, `0x08013C20` | PD15, `0x08013C38` | Warunek obecności/gotowości; fizyczna reakcja na filament potwierdzona |
-| B | PF1, `0x08013C50` | PG10, `0x08013C68` | Warunek żądania doładowania; przycisk/mechanizm fizyczny nieprzypisany |
+| B | PF1, `0x08013C50` | PG10, `0x08013C68` | Top-up request. On T0 the guide tube presses this input when the extruder pulls against the cassette. [T0 field update, 20 November](acceptance/INVENTURE_T0_CASSETTE_OPTICS_2026-11-20.md) |
 | Impulsy | PB12 | PD14 | Oddzielne wejścia nadzoru transportu |
 | RUN | PC5 | PG11 | Włączenie pomocniczego napędu |
 | DIR | PA8 | PB7 | Kierunek pomocniczego napędu |
@@ -198,7 +198,7 @@ To test transportu, bez grzania i ruchu głowicy. Potrzebna jest obserwacja,
 czy materiał faktycznie wychodzi z wolnego końca rurki. Brak impulsów
 nie zostaje automatycznie zamieniony w diagnozę uszkodzenia czujnika.
 
-## Stan potwierdzeń fizycznych
+## Stan potwierdzeń fizycznych na 9 listopada 2026
 
 - Lewy T0_A/PD10: pusty 0 → wsunięty 1 → wyjęty 0, PASS.
 - Prawy T1_A/PD15: pusty 0 → wsunięty 1 → wyjęty 0, PASS.
