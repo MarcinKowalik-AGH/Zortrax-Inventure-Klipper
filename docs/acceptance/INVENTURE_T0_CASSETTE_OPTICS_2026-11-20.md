@@ -42,20 +42,27 @@ The operator unloaded the path, cut the filament at the spool outlet and then re
 
 The change on A confirms arrival at the left inlet. B was low in both snapshots, as expected with no pull from the extruder. The PB12 delta for this run was zero. The distance travelled past A was not measured. [Feeder test and output fields](../FEEDER_RUN_2026-11-09.md)
 
-## Loaded-path B check proposed by the operator
+## Loaded T0 cassette reverse test at 13:45
 
-Connect the guide tube as for printing. Start the ordinary T0 cassette load and wait for successful completion. The example uses the same 235 °C target as the preceding runs.
+At 13:43:03 the standard T0 cassette load completed L1 through L4 at a target of 235 °C. The PB12 count rose from 300 to 306 by entry into L4 and reached 426 by completion. The host reported `factory_load_completed` and `cleaning_done=true`. No operator flow confirmation was recorded for this load. The same console log also shows the short load completing at L1 at 12:56:14 and 12:57:48.
 
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_PROCEDURE ACTION=AUTO TOOL=T0 SPEED_PROFILE=OEM TARGET=235
 ```
 
-With the filament still gripped by the extruder, a short reverse pulse on the cassette takes up slack while E remains stationary. On an idle printer, run the following separately after loading.
+After loading, the operator ran the left cassette feeder in reverse for two seconds. This command issued no E move.
 
 ```gcode
 INVENTURE_CONTROL MODE=SERVICE
 INVENTURE_FEEDER_RUN CHANNEL=0 DIRECTION=0 DURATION=2
 ```
 
-Look for `filament_before.t0_b=0` and `filament_after.t0_b=1` with `t0_a=1` in both snapshots. That transition confirms tube actuation under load. End the check once B is high. R27 runs the cassette for the requested time and samples A/B before and after. It has no B-triggered stop or B edge history in `FEEDER_RUN`. A short activation can fall between snapshots. The suggested 50 mm has no calibrated reverse-time equivalent on this loaded path. This last check is pending a printer result.
+| Fluidd report | T0_A (PD10) | T0_B (PF1) | PB12 accepted edges, total |
+| --- | ---: | ---: | ---: |
+| 13:45:25, before | 1 | 0 | 426 |
+| 13:45:27, after | 1 | 1 | 428 |
+
+The loaded-path check passed on T0. The guide-tube switch activated as the cassette pulled back, while the inlet switch stayed high. The two extra PB12 edges give a count only. The reverse distance in millimetres was not measured. R27 samples A and B at the start and end of this command, so a shorter activation could fall between the two readings.
+
+During a monitored print from a cassette, stock r0323 checks how much net E feed has been used since the last timed feeder start. If the remaining allowance is negative at the end of an E motion block, it sets fault 2. A break in the tube could therefore raise a transport alarm while A still detects filament. This run establishes the response of the loaded T0 path. A run with an actual break is still open. [Stock transport audit, sections 4.3, 5 and 11.1](https://drive.google.com/file/d/1mFJuBj8Dn8Mzxa0tJ5MFTogomOmaANOt/view)
