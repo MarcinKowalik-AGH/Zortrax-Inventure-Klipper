@@ -16,6 +16,8 @@ If that worktree already exists at the tag, rerun the installer. After Klipper i
 
 ## Exercise a nozzle on an idle printer
 
+When the filament tip is still inside the cassette and the guide tube is empty, use the ordinary **Load from cartridge** action. The idle jam test exercises recovery on an already loaded path. For a T0 load that ends at `l3_no_transport`, see the [left cassette measurements and cold transport check](acceptance/INVENTURE_T0_CASSETTE_OPTICS_2026-11-20.md).
+
 Use a clear tray and an installed waste bin. Start with a known working filament path. The test homes the axes, parks over the bin, heats the requested nozzle, then mechanically selects it before retraction. Set the service temperature appropriate for the filament actually in that path. The example uses 235 °C. Run one test to completion before starting the next.
 
 ```gcode
