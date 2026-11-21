@@ -92,7 +92,7 @@ class LevelingUiTests(MenuFixture, unittest.TestCase):
         instruction = next(msg for msg in output if msg.startswith('// action:prompt_text'))
         for expected in ('Loosen the front knob', '0.50', 'clockwise'):
             self.assertIn(expected, instruction)
-        self.assertIn('// action:prompt_button Continue|ZORTRAX_PLATFORM_LEVEL ACTION=NEXT RUN_ID=external PROMPT_ID=8|primary', output)
+        self.assertIn('// action:prompt_button Continue|INVENTURE_PLATFORM_LEVEL ACTION=NEXT RUN_ID=external PROMPT_ID=8|primary', output)
         self.choose('Adjusted / next')
         self.tick()
         self.assertEqual(output[-1], '// action:prompt_end')
@@ -143,20 +143,20 @@ class FluiddLevelingMacros(unittest.TestCase):
     def test_start_selects_T0_automatically_even_with_legacy_tool_parameter(self):
         for params in ({}, {'ACTIVE_TOOL': 'T0'}, {'ACTIVE_TOOL': 'T1'}):
             with self.subTest(params=params):
-                self.assertEqual(self.render('ZORTRAX_LEVEL', **params),
-                                 'ZORTRAX_PLATFORM_LEVEL ACTION=START')
+                self.assertEqual(self.render('INVENTURE_LEVEL', **params),
+                                 'INVENTURE_PLATFORM_LEVEL ACTION=START')
                 self.assertFalse(self.messages)
 
     def test_door_menu_button_is_a_separate_read_only_entry(self):
-        self.assertEqual(self.render('ZORTRAX_DOOR_LOCK'), 'INVENTURE_DOOR_POLICY MENU=1')
+        self.assertEqual(self.render('INVENTURE_DOOR_LOCK'), 'INVENTURE_DOOR_POLICY MENU=1')
         self.assertFalse(self.messages)
 
     def test_next_and_save_bind_active_run_and_cancel_is_immediate(self):
-        self.assertEqual(self.render('ZORTRAX_LEVEL_NEXT', dict(run_id='abc', prompt_id=2, awaiting_operator=True)),
-                         'ZORTRAX_PLATFORM_LEVEL ACTION=NEXT RUN_ID=abc PROMPT_ID=2')
-        self.assertEqual(self.render('ZORTRAX_LEVEL_SAVE', dict(run_id='abc', phase='candidate')),
-                         'ZORTRAX_PLATFORM_LEVEL ACTION=SAVE RUN_ID=abc')
+        self.assertEqual(self.render('INVENTURE_LEVEL_NEXT', dict(run_id='abc', prompt_id=2, awaiting_operator=True)),
+                         'INVENTURE_PLATFORM_LEVEL ACTION=NEXT RUN_ID=abc PROMPT_ID=2')
+        self.assertEqual(self.render('INVENTURE_LEVEL_SAVE', dict(run_id='abc', phase='candidate')),
+                         'INVENTURE_PLATFORM_LEVEL ACTION=SAVE RUN_ID=abc')
         with self.assertRaises(ValueError):
-            self.render('ZORTRAX_LEVEL_SAVE', dict(phase='measuring'))
-        self.assertEqual(self.render('ZORTRAX_LEVEL_CANCEL'), 'ZORTRAX_PLATFORM_LEVEL ACTION=CANCEL')
-        self.assertEqual(self.render('ZORTRAX_LEVEL_STATUS'), 'ZORTRAX_PLATFORM_LEVEL ACTION=STATUS')
+            self.render('INVENTURE_LEVEL_SAVE', dict(phase='measuring'))
+        self.assertEqual(self.render('INVENTURE_LEVEL_STOP'), 'INVENTURE_PLATFORM_LEVEL ACTION=CANCEL')
+        self.assertEqual(self.render('INVENTURE_LEVEL_PROGRESS'), 'INVENTURE_PLATFORM_LEVEL ACTION=STATUS')

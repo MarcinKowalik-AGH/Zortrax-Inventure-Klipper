@@ -1,0 +1,261 @@
+diff --git a/host/inventure_oem_menu.py b/host/inventure_oem_menu.py
+index b6b59c9..a044557 100644
+--- a/host/inventure_oem_menu.py
++++ b/host/inventure_oem_menu.py
+@@ -104 +104 @@ class OEMMenu:
+-    def __init__(self, language='pl'):
++    def __init__(self, language='pl', root_back_to_status=True):
+@@ -107 +107,2 @@ class OEMMenu:
+-        self.page='root';self.stack=[];self.selected=0;self.window=0
++        self.root_back_to_status=bool(root_back_to_status)
++        self.page='root';self.stack=[];self.selected=0;self.window=1 if self.root_back_to_status else 0
+@@ -119 +120 @@ class OEMMenu:
+-        if self.page=='root':return list(nodes)
++        if self.page=='root' and not self.root_back_to_status:return list(nodes)
+@@ -124,0 +126,3 @@ class OEMMenu:
++        # In a fast root menu, do not redraw a 50x50 bitmap for every UP/DOWN.
++        # This is the largest source of 250000-baud navigation latency.
++        # Keep the OEM category icon on a submenu page instead.
+@@ -126 +130,2 @@ class OEMMenu:
+-        if items and items[selected].icon:icon=items[selected].icon
++        if self.page!='root' and items and items[selected].icon:
++            icon=items[selected].icon
+@@ -137,10 +142,18 @@ class OEMMenu:
+-        if prev!=self.selected:self.notice=None;self.generation+=1
+-        # OEM main menu has 5 branches: maintain a 4-row viewport without
+-        # hiding the selected first row. Subs use pinned Back plus 3 rows.
+-        if self.page=='root' and len(self.items())>4:
+-            if self.selected<self.window:self.window=self.selected
+-            elif self.selected>self.window+3:self.window=self.selected-3
+-        if self.page!='root' and len(self.items())>4:
+-            if self.selected==0:self.window=1
+-            elif self.selected<self.window:self.window=self.selected
+-            elif self.selected>self.window+2:self.window=self.selected-2
++        if prev!=self.selected:
++            self.notice=None;self.generation+=1
++        # Five physical 12-pixel rows, top Back pinned when present.
++        # Never wrap; move the cursor in its existing window first.
++        entries=self.items()
++        has_back=bool(entries and entries[0].action=='back')
++        visible=4 if has_back else 5
++        if len(entries)>(visible+int(has_back)):
++            if has_back:
++                self.window=max(1,self.window)
++                if self.selected and self.selected<self.window:
++                    self.window=self.selected
++                elif self.selected>self.window+visible-1:
++                    self.window=self.selected-visible+1
++            else:
++                if self.selected<self.window:self.window=self.selected
++                elif self.selected>self.window+visible-1:
++                    self.window=self.selected-visible+1
+@@ -148,0 +162,5 @@ class OEMMenu:
++    def home(self):
++        self.page='root';self.stack=[];self.selected=0
++        self.window=1 if self.root_back_to_status else 0
++        self.notice=None;self.last_action=None;self.generation+=1
++
+@@ -159 +177,3 @@ class OEMMenu:
+-        if node.action=='back':self.back();return 'back'
++        if node.action=='back':
++            if self.back():return 'back'
++            return 'exit_to_status'
+@@ -180 +200,2 @@ class OEMMenu:
+-                'generation':self.generation, 'ui_only':True,
++                'generation':self.generation, 'root_back_to_status':self.root_back_to_status,
++                'ui_only':True,
+diff --git a/host/inventure_oled.py b/host/inventure_oled.py
+index bf2e2d8..9e64b02 100644
+--- a/host/inventure_oled.py
++++ b/host/inventure_oled.py
+@@ -21,0 +22,5 @@ class InventureOLED:
++        self.oem_start_screen=config.get('oem_start_screen','klipper').strip().lower()
++        if self.oem_start_screen not in ('klipper','menu'):
++            raise config.error('oem_start_screen must be klipper or menu')
++        self.oem_display_mode=('status' if self.oem_start_screen=='klipper' else 'menu')
++        self._oem_render_cache=None
+@@ -85,0 +91 @@ class InventureOLED:
++        self._oem_render_cache=None
+@@ -143,0 +150,6 @@ class InventureOLED:
++                    # M300-derived ACK-driven pump: do not wait for the next
++                    # 20 ms fallback timer on every 32-byte ABI2 operation.
++                    # Still strictly one outstanding operation, no DMA/RLE
++                    # claims and no MCU/bootloader modifications.
++                    if self.stream.enabled and not self.shutdown_latched:
++                        self._send_one(now)
+@@ -177,0 +190,21 @@ class InventureOLED:
++    def _send_one(self,now):
++        # Transport's pending-token gate preserves the single-inflight ABI2
++        # safety contract. Duplicate/out-of-order ACK cannot advance it.
++        try:operation=self.stream.step(now)
++        except TimeoutError:
++            self._lose(now,self.stream.failure);return
++        if self.stream.failure and self.recovery_state not in ('backoff','fault'):
++            self._lose(now,self.stream.failure);return
++        if not operation:return
++        kind,token,args=operation;gen=self.stream.generation
++        detail={'generation':gen,'token':token,'operation':kind,
++                'phase':self.stream.phase,'queued_at':round(now,6)}
++        if kind=='write':
++            dc,blob=args
++            detail.update(dc=dc,length=len(blob),first8_hex=blob[:8].hex())
++        elif kind=='control':
++            detail.update(reset=args[0],gate=args[1])
++        self._oled_last_tx=detail
++        try:self.commands[kind].send([gen>>32,gen&0xffffffff,token,*args])
++        except Exception as exc:self._lose(now,'OLED command unavailable: '+str(exc))
++
+@@ -198,17 +231 @@ class InventureOLED:
+-        try:operation=self.stream.step(now)
+-        except TimeoutError:
+-            self._lose(now,self.stream.failure);operation=None
+-        if self.stream.failure and self.recovery_state not in ('backoff','fault'):
+-            self._lose(now,self.stream.failure)
+-        if operation:
+-            kind,token,args=operation;gen=self.stream.generation
+-            detail={'generation':gen,'token':token,'operation':kind,
+-                    'phase':self.stream.phase,'queued_at':round(now,6)}
+-            if kind=='write':
+-                dc,blob=args
+-                detail.update(dc=dc,length=len(blob),first8_hex=blob[:8].hex())
+-            elif kind=='control':
+-                detail.update(reset=args[0],gate=args[1])
+-            self._oled_last_tx=detail
+-            try:self.commands[kind].send([gen>>32,gen&0xffffffff,token,*args])
+-            except Exception as exc:self._lose(now,'OLED command unavailable: '+str(exc))
++        self._send_one(now)
+@@ -270 +287,2 @@ class InventureOLED:
+-        frame=Frame()
++        # The RC7.2 static OEM screen was recomposed every .25s even when
++        # unchanged; that wasted Orange Pi reactor time. Cache by UI generation.
+@@ -273 +291,22 @@ class InventureOLED:
+-        if cal_status.get('state') in ('preparing_t0','measuring_t0','preparing_t1','measuring_t1'):
++        measuring=cal_status.get('state') in (
++            'preparing_t0','measuring_t0','preparing_t1','measuring_t1')
++        snapshot=None
++        menu_view=None
++        klipper_status=None
++        if self.oem_menu is not None and not measuring and not self.message:
++            if self.oem_display_mode=='status':
++                klipper_status=self.board.get_status(now)
++                boot=klipper_status.get('p4_boot',{})
++                snapshot=('status',klipper_status.get('connected'),
++                          klipper_status.get('fault'),
++                          klipper_status.get('mcu_release'),boot.get('baud'))
++            else:
++                menu_view=self.oem_menu.view()
++                snapshot=('menu',menu_view['page'],menu_view['generation'],
++                          menu_view['selected'],menu_view['window'],
++                          menu_view.get('icon'),menu_view.get('notice'))
++            if snapshot==self._oem_render_cache:
++                self._user_refresh_pending=False
++                return
++        frame=Frame()
++        if measuring:
+@@ -279,0 +319,4 @@ class InventureOLED:
++        elif klipper_status is not None:
++            frame.klipper_status(klipper_status)
++        elif menu_view is not None:
++            frame.oem_menu(menu_view)
+@@ -286,0 +330 @@ class InventureOLED:
++        self._oem_render_cache=snapshot
+@@ -300 +344,5 @@ class InventureOLED:
+-            self.oem_menu.select()
++            if self.oem_display_mode=='status':
++                self.oem_menu.home()
++                self.oem_display_mode='menu'
++            elif self.oem_menu.select()=='exit_to_status':
++                self.oem_display_mode='status'
+@@ -334 +382,3 @@ class InventureOLED:
+-                        self.oem_menu.back()
++                        if self.oem_display_mode=='menu':
++                            if not self.oem_menu.back():
++                                self.oem_display_mode='status'
+@@ -344,2 +394,3 @@ class InventureOLED:
+-            self.oem_menu.move(direction)
+-            self.render_at=0.;self._user_refresh_pending=True
++            if self.oem_display_mode=='menu':
++                self.oem_menu.move(direction)
++                self.render_at=0.;self._user_refresh_pending=True
+@@ -372,0 +424,2 @@ class InventureOLED:
++        details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
++        details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
+diff --git a/host/inventure_oled_render.py b/host/inventure_oled_render.py
+index 2eaba07..08c336c 100644
+--- a/host/inventure_oled_render.py
++++ b/host/inventure_oled_render.py
+@@ -108 +108 @@ class Frame:
+-        """V9 4-row pinned-Back menu with original OEM glyphs and 50x50 icons.
++        """Native r0323 five-row layout (y=0,12,24,36,48), entire display.
+@@ -110,2 +110,4 @@ class Frame:
+-        It is strictly a renderer; action dispatch belongs to separate safe
+-        navigation module, preserving the sole OLED/SPI ownership in P07.
++        Like the M300 Klipper UI: no fixed Zortrax title or underline. Back is
++        a normal selectable row, pinned during scrolling. A static category
++        icon is rendered on submenu pages; the root doesn't redraw a 50x50
++        sprite on every navigation detent. Action dispatch stays host-owned.
+@@ -115,8 +117,10 @@ class Frame:
+-        self.oem_text(4,1,'ZORTRAX INVENTURE',atlas,right=253)
+-        for x in range(4,198):self.pixel(x,12,5)
+-        labels=list(view['labels']);sel=max(0,min(view['selected'],len(labels)-1))
+-        count=len(labels)
+-        if count<=4:visible=list(range(count))
+-        elif labels[0] in ('Back','Powrót'):
+-            first=max(1,min(int(view.get('window',1)),max(1,count-3)))
+-            visible=[0]+list(range(first,min(first+3,count)))
++        labels=list(view['labels'])
++        if not labels:return self
++        sel=max(0,min(view['selected'],len(labels)-1))
++        has_back=labels[0] in ('Back','Powrót')
++        visible_count=4 if has_back else 5
++        if len(labels)<=5:
++            visible=list(range(len(labels)))
++        elif has_back:
++            first=max(1,min(int(view.get('window',1)),max(1,len(labels)-visible_count)))
++            visible=[0]+list(range(first,min(first+visible_count,len(labels))))
+@@ -124,2 +128,3 @@ class Frame:
+-            first=max(0,min(int(view.get('window',0)),max(0,count-4)))
+-            visible=list(range(first,min(first+4,count)))
++            first=max(0,min(int(view.get('window',0)),max(0,len(labels)-visible_count)))
++            visible=list(range(first,min(first+visible_count,len(labels))))
++        right=193 if view.get('icon') else 253
+@@ -127,2 +132,2 @@ class Frame:
+-            y=14+row*12
+-            self.oem_text(19,y,labels[index],atlas,right=193)
++            y=row*12
++            self.oem_text(19,y,labels[index],atlas,right=right)
+@@ -129,0 +135,2 @@ class Frame:
++                # Nine-pixel stock marker; Back points left, all other rows
++                # point right. Marker never overlaps text or the next row.
+@@ -131,3 +138,3 @@ class Frame:
+-                    self.pixel(8+4-abs(dy),y+5+dy,15)
+-        if view.get('icon'):self.oem_icon(view['icon'],atlas)
+-        # Non-interactive footer marker for unqualified commands.
++                    yy=y+5+dy
++                    xx=(8+abs(dy)) if index==0 and has_back else (12-abs(dy))
++                    self.pixel(xx,yy,15)
+@@ -135 +142,23 @@ class Frame:
+-            self.oem_text(4,51,view['notice'],atlas,right=194)
++            # Preserve all five selectable rows: notice is in icon column.
++            self.oem_text(203,14,'INFO',atlas,right=255)
++            self.oem_text(203,30,'NO ACT',atlas,right=255)
++        elif view.get('icon'):
++            self.oem_icon(view['icon'],atlas)
++        return self
++
++    def klipper_status(self, status, assets=None):
++        """M300-like Klipper home (EN); OK opens the full-height OEM menu.
++
++        Do not mislabel unqualified native board ADC samples as actual
++        extruder/bed temperatures; the test-only printer uses kinematics none.
++        """
++        atlas=assets or get_oem_assets()
++        self.raw[:]=b'\x00'*RAW_LEN
++        self.oem_text(4,0,'KLIPPER',atlas,right=252)
++        healthy=bool(status.get('connected') and not status.get('fault'))
++        self.oem_text(4,12,'MCU: Ready' if healthy else 'MCU: Check status',atlas,right=252)
++        rel=str(status.get('mcu_release') or 'unknown')
++        self.oem_text(4,24,rel.replace('P01-P17-',''),atlas,right=252)
++        baud=status.get('p4_boot',{}).get('baud')
++        self.oem_text(4,36,'P4: '+str(baud if baud is not None else '---'),atlas,right=252)
++        self.oem_text(4,48,'OK: Open menu',atlas,right=252)

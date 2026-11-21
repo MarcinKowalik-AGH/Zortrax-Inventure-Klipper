@@ -48,6 +48,8 @@ class ZortraxMenuService:
         self.view=None;self.active=None;self.last=None;self.messages=[];self.stopped=False
         self.fan_session=None
         self.executing=False;self.last_buttons=0;self.last_sequence=None;self.last_native_key=None
+        self.menu_dialog_requested = False
+        self.menu_dialog_token = None
         self.platform_dialog = None
         self.jam_dialog = None
         self.last_pause_view=None
@@ -64,6 +66,8 @@ class ZortraxMenuService:
     def _ready(self):
         self.reactor.update_timer(self.timer,self.reactor.monotonic()+.25)
     def _shutdown(self,*args):
+        self._close_menu_dialog()
+        self.menu_dialog_requested = False
         self.stopped=True;self.view=None;self.active=None;self.last_native_key=None;self.fan_session=None
         self.reactor.update_timer(self.timer,self.reactor.NEVER)
     def _obj(self,name):return self.printer.lookup_object(name,None)
@@ -137,7 +141,7 @@ class ZortraxMenuService:
         emit('// action:prompt_begin %s - %s' % (self._jam_title(run), run['tool']))
         emit('// action:prompt_text ' + ' '.join(run['message'].split()))
         for label, params in self._jam_choices(run):
-            cmd = 'ZORTRAX_FILAMENT_JAM ' + ' '.join('%s=%s' % item for item in params.items())
+            cmd = 'INVENTURE_FILAMENT_JAM ' + ' '.join('%s=%s' % item for item in params.items())
             emit('// action:prompt_button ' + label + '|' + cmd)
         emit('// action:prompt_show')
 
@@ -171,6 +175,34 @@ class ZortraxMenuService:
             options.extend((line, None) for line in textwrap.wrap(run['message'], 25))
         return self._set_view('choice', 'Filament recovery', options)
 
+    def _close_menu_dialog(self):
+        if self.menu_dialog_token is not None:
+            self.gcode.respond_raw('// action:prompt_end')
+            self.menu_dialog_token = None
+
+    def _sync_menu_dialog(self):
+        if not self.menu_dialog_requested:
+            return
+        view = self.view
+        if (self.active is not None or view is None or view.used or
+                self.reactor.monotonic() >= view.deadline or view.kind not in ('confirm', 'choice', 'fan')):
+            self._close_menu_dialog()
+            self.menu_dialog_requested = False
+            return
+        if view.token == self.menu_dialog_token:
+            return
+        self._close_menu_dialog()
+        self.menu_dialog_token = view.token
+        emit = self.gcode.respond_raw
+        emit('// action:prompt_begin '+view.title)
+        for index, (label, action) in enumerate(view.options):
+            if action is None:
+                emit('// action:prompt_text '+label)
+            else:
+                emit('// action:prompt_button %s|INVENTURE_ZORTRAX OP=CHOOSE TOKEN=%s INDEX=%d'
+                     % (label, view.token, index))
+        emit('// action:prompt_show')
+
     def _platform_status(self):
         read = getattr(self.board, 'platform_level_status', None)
         return read() if callable(read) else {}
@@ -187,7 +219,7 @@ class ZortraxMenuService:
         self.platform_dialog = key
         if key is None:
             return
-        command = 'ZORTRAX_PLATFORM_LEVEL'
+        command = 'INVENTURE_PLATFORM_LEVEL'
         owner = ' RUN_ID=' + run['run_id']
         emit('// action:prompt_begin Platform leveling')
         if phase == 'candidate':
@@ -274,6 +306,13 @@ class ZortraxMenuService:
         elif action in ('door_lock','door_unlock'):
             title = 'Enable door lock?' if action=='door_lock' else 'Disable door lock?'
             reviews = ['Global: front door + lid']
+        elif action in ('platform_up', 'platform_down'):
+            distance = float((params or {}).get('DISTANCE', self.platform_step))
+            speed = float((params or {}).get('SPEED', self.platform_speed))
+            if not (.1 <= distance <= 5. and .1 <= speed <= 5.):
+                raise MenuError('Platform DISTANCE and SPEED must be 0.1..5 mm and mm/s')
+            title = 'Move platform '+action.split('_')[1]+'?'
+            reviews = ['%g mm at %g mm/s' % (distance, speed)]
         elif action=='alignment':
             if self._xy_available():
                 reviews=['Clean, level tray','Filament in T0 and T1','Tool heights checked']
@@ -309,10 +348,9 @@ class ZortraxMenuService:
             okay=key in self.board.commands
             return dict(available=okay,backend=key,reason=None if okay else key+' MCU ABI is unavailable')
         if action.startswith('platform_'):
-            motion=self._obj('inventure_motion');th=self._obj('toolhead')
-            okay=bool(motion is not None and getattr(motion,'enabled',False) and th is not None
-                and callable(getattr(self._obj('inventure_operations'),'procedure',None)))
-            return dict(available=okay,backend='native_platform',reason=None if okay else 'Native homed Z/contact profile is not enabled; service bottom reference is not print Z')
+            from .inventure_fluidd import platform_available
+            okay = platform_available(self.board)
+            return dict(available=okay,backend='native_platform',reason=None if okay else 'Native homed Z is required')
         if action in ('select_t0','select_t1') and self._enabled('inventure_tools'):
             return dict(available=True,backend='inventure_tools',reason=None)
         okay='factory_session' in self.board.commands
@@ -567,16 +605,9 @@ class ZortraxMenuService:
             if action=='fan_on':self.fan_session=dict(run=self.board.fan_manual_last['run'],channel=params.get('channel',0))
             if action=='fan_cancel':self.fan_session=None
         elif action.startswith('platform_'):
-            motion=self._obj('inventure_motion');th=self._obj('toolhead')
-            if motion is None or not getattr(motion,'enabled',False) or 'z' not in th.get_status(self.reactor.monotonic()).get('homed_axes',''):
-                raise MenuError('Platform movement requires qualified native homed Z')
-            if getattr(self._obj('inventure_operations'),'state',None) is None:raise MenuError('Native operation owner unavailable')
-            ops=self._obj('inventure_operations');ops.require_motion();ops.require_position('z')
-            # Use the existing finite native service scope and toolhead checks.
-            # XYZ/E parser state is untouched; there is no held raw Z loop.
-            with ops.procedure('calibration'):
-                pos=list(th.get_position());pos[2]+= -self.platform_step if action=='platform_up' else self.platform_step
-                th.move(pos,self.platform_speed);th.wait_moves()
+            from .inventure_fluidd import move_platform
+            move_platform(self.board, action.split('_')[1],
+                          float(params.get('DISTANCE', self.platform_step)), float(params.get('SPEED', self.platform_speed)))
         elif action in ('pause','resume','cancel_yes'):
             obj=self._obj('inventure_cycle')
             state=self._native_job()
@@ -834,7 +865,7 @@ class ZortraxMenuService:
             self._service_ready()
             if 'STEP' in args:
                 self.gcode.run_script_from_command(
-                    'ZORTRAX_JAM_SERVICE_STEP TOOL={TOOL} SOURCE={SOURCE} STEP={STEP} TARGET={TARGET}'.format(**args))
+                    'INVENTURE_JAM_SERVICE_STEP TOOL={TOOL} SOURCE={SOURCE} STEP={STEP} TARGET={TARGET}'.format(**args))
             else:
                 self._call(self.board, 'cmd_procedure', ACTION='JAM_' + args['SOURCE'],
                            TOOL=args['TOOL'], TARGET=args['TARGET'], SPEED_PROFILE='OEM')
@@ -948,12 +979,15 @@ class ZortraxMenuService:
         choice=view.options[index][1]
         if choice is None:return
         view.claim(token,self.reactor.monotonic(),self._binding())
+        self._close_menu_dialog()
         self.executing=True
         try:return self._dispatch_choice(*choice)
         except Exception as exc:
             self.last=dict(result='failed',reason=str(exc))
             self._info('Operation unavailable',str(exc));raise
-        finally:self.executing=False
+        finally:
+            self.executing=False
+            self._sync_menu_dialog()
 
     def observe_buttons(self,mask,sequence):
         if self.last_sequence is not None:
@@ -1039,6 +1073,7 @@ class ZortraxMenuService:
                 try:self._cancel_active()
                 except Exception as cancel_error:reason+='; cancellation: '+str(cancel_error)
                 self._info('Procedure interrupted',reason)
+        self._sync_menu_dialog()
         return self.reactor.monotonic()+.25
     def get_status(self,now):
         return dict(api=1,view=None if self.view is None else self.view.status(),
@@ -1053,23 +1088,43 @@ class ZortraxMenuService:
             if op=='OPEN':
                 from .inventure_factory_core import defaults
                 allowed={k.upper() for k in defaults()}|{'T0_TEMP','T1_TEMP','MODE','X_MODE','T0_PROFILE'}
+                if gcmd.get('ACTION') in ('platform_up', 'platform_down'):
+                    allowed.update(('DISTANCE', 'SPEED'))
                 if gcmd.get('ACTION') == 'leveling':
                     allowed.add('ACTIVE_TOOL')
                 query=getattr(gcmd,'get_command_parameters',None)
                 values=query() if query is not None else getattr(gcmd,'values',{})
-                params={k:v for k,v in values.items() if k not in ('OP','ACTION')}
+                show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
+                if show and gcmd.get('ACTION') not in {
+                        'fan_test','platform_up','platform_down','select_t0','select_t1',
+                        'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
+                    raise MenuError('This procedure supplies its own operator interface')
+                params={k:v for k,v in values.items() if k not in ('OP','ACTION','PROMPT')}
                 if not set(params)<=allowed:raise MenuError('Unknown procedure parameter: '+', '.join(sorted(set(params)-allowed)))
                 self.open(gcmd.get('ACTION'),**params)
+                if not show:
+                    self._close_menu_dialog()
+                self.menu_dialog_requested = bool(show)
             elif op=='CHOOSE':self.choose(gcmd.get('TOKEN',''),gcmd.get_int('INDEX'))
             elif op=='CONFIRM':self.choose(gcmd.get('TOKEN',''),confirm=True)
+            elif op=='FAN_END':
+                self._close_menu_dialog()
+                self.menu_dialog_requested = False
+                if self.fan_session is not None:
+                    self._end_fan()
+                else:
+                    self._call(self.board, 'cmd_fan_manual_cancel')
+                    if self.view is not None and self.view.kind == 'fan':
+                        self.view = None
             elif op=='BACK':self.panel_back()
             elif op=='CANCEL':
                 if self.view is None:raise MenuError('No current cancellation token')
                 self.view.claim(gcmd.get('TOKEN',''),self.reactor.monotonic(),self._binding())
                 if self.fan_session is not None:self._end_fan()
                 else:self._cancel_active()
-            elif op not in ('STATUS','CATALOG'):raise MenuError('Use OP=OPEN, CHOOSE, CONFIRM, BACK, CANCEL, STATUS or CATALOG')
+            elif op not in ('STATUS','CATALOG'):raise MenuError('Use OP=OPEN, CHOOSE, CONFIRM, BACK, CANCEL, FAN_END, STATUS or CATALOG')
         except (ValueError,TypeError,OSError) as exc:raise gcmd.error(str(exc))
+        self._sync_menu_dialog()
         status=self.get_status(self.reactor.monotonic())
         if op!='CATALOG':status.pop('capabilities',None)
         raw=json.dumps(status,sort_keys=True,default=str)

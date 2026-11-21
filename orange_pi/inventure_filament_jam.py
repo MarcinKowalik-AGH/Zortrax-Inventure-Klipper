@@ -34,6 +34,7 @@ class FilamentJam:
                           reason=None, trigger=None, evidence=None, message='Ready',
                           allowed_actions=[], stage=None)
         self.timer = self.reactor.register_timer(self._tick)
+        self.gcode.register_command('INVENTURE_FILAMENT_JAM', self.cmd, when_not_ready=True)
         self.gcode.register_command('ZORTRAX_FILAMENT_JAM', self.cmd, when_not_ready=True)
         self.printer.register_event_handler('klippy:ready', self._ready)
         for event in ('klippy:shutdown', 'klippy:disconnect'):

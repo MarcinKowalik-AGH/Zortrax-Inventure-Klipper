@@ -10,6 +10,11 @@ on:
       - 'host/inventure_cycle_core.py'
       - 'service_mcu/control_r6/**'
       - 'install-orange-pi.py'
+      - 'setup-fluidd.py'
+      - 'config/*.cfg'
+      - 'config/fluidd_macro_history.sha256'
+      - 'fluidd/*.cfg'
+      - 'tests/test_orange_pi_fluidd_dashboard.py'
       - 'tests/test_orange_pi_update.py'
       - 'tests/test_orange_pi_door_policy.py'
       - 'tests/test_orange_pi_xy_seek.py'
@@ -55,9 +60,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6'
-      - run: python -m unittest discover -s tests -p 'test_orange_pi*.py' -v
-      - run: python -m unittest discover -s tests -p 'test_jam*.py' -v
-      - run: python -m unittest discover -s tests -p 'test_filament_jam.py' -v
+      - run: python -m unittest discover -s tests -v
       - run: python ci/check_native_nozzle_startup.py
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json

@@ -450,11 +450,13 @@ class MenuServiceTests(unittest.TestCase,MenuFixture):
         def procedure(kind):
             self.assertEqual(kind,'calibration');moves.append('begin');yield object();moves.append('end')
         ops.procedure=procedure;ops.require_motion=lambda:None;ops.require_position=lambda axes:self.assertEqual(axes,'z')
-        head=types.SimpleNamespace(get_position=lambda:position,get_status=lambda now:{'homed_axes':'xyz'},
+        head=types.SimpleNamespace(get_position=lambda:position,get_status=lambda now:{'homed_axes':'xyz','axis_minimum':[0,0,0],'axis_maximum':[150,150,140]},
             move=lambda pos,speed:moves.append((pos,speed)),wait_moves=lambda:moves.append('wait'))
         h.printer.objects.update(inventure_motion=types.SimpleNamespace(enabled=True),toolhead=head)
+        h.commands['sensor_inputs'].reply['raw'] = 1 << h.INPUT_NAMES.index('nozzle_contact')
+        h.printer.objects['gcode_move']=types.SimpleNamespace(reset_last_position=lambda:moves.append('sync'))
         self.execute(s,'platform_up')
-        self.assertEqual(moves,['begin',([20.,30.,14.,4.],1.),'wait','end'])
+        self.assertEqual(moves,['begin','wait',([20.,30.,14.,4.],1.),'wait','sync','end'])
         self.assertEqual(position,[20.,30.,15.,4.]);self.assertEqual(h.device.packets,[])
 
     def test_paused_native_job_opens_contextual_menu_without_resuming(self):

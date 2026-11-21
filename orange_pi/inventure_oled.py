@@ -10,7 +10,7 @@ import math
 import secrets
 from .inventure_oled_render import Frame, KlipperStatus
 from . import inventure_oled_render as panel_render
-from .inventure_oem_menu import OEMMenu
+from .inventure_oem_menu import MENU, OEMMenu
 from .inventure_oled_uifast_transport import FastOledStream, OledStream
 
 # Klipper's native serialqueue background priority: motion/heater deadlines
@@ -53,6 +53,8 @@ class InventureOLED:
         self.sleep_notice=config.getfloat('sleep_notice',10.,minval=1.,maxval=60.)
         if not (math.isfinite(self.sleep_timeout) and math.isfinite(self.sleep_notice)):
             raise config.error('OLED sleep timers must be finite')
+        self.configured_sleep = self.sleep_timeout
+        self.configured_notice = self.sleep_notice
         self.sleep_phase='awake'
         self.last_activity=0.
         self.notice_at=None
@@ -96,6 +98,7 @@ class InventureOLED:
         self.printer.register_event_handler('klippy:disconnect',self._disconnect)
         self.printer.register_event_handler('gcode:request_restart',self._restart)
         self.printer.register_event_handler('inventure:menu_buttons',self._buttons)
+        self.gcode.register_command('INVENTURE_DISPLAY_CONTROL', self.cmd_display_control)
         self.gcode.register_command('INVENTURE_OLED_REINIT',self.cmd_reinit)
         self.gcode.register_command('INVENTURE_OLED_TEXT',self.cmd_text)
         self.gcode.register_command('INVENTURE_OLED_WAKE',self.cmd_wake)
@@ -151,6 +154,8 @@ class InventureOLED:
     def _ready(self):
         if self.shutdown_latched:return
         self.connected=True;now=self.reactor.monotonic()
+        if getattr(self.board, 'zortrax', None) is not None:
+            self._apply_display_settings()
         self.last_activity=now
         self._observe_external_activity()
         # On a fresh host Ready, choose the configured Klipper status page
@@ -902,6 +907,52 @@ class InventureOLED:
         self._wake()
     def cmd_wake(self,gcmd):
         self._display_activity(self.reactor.monotonic())
+    def _apply_display_settings(self):
+        values = self.board.zortrax.settings.value
+        enabled = values.get('sleep_enabled', bool(self.configured_sleep))
+        self.sleep_timeout = values.get('idle_s', self.configured_sleep or 300.) if enabled else 0.
+        self.sleep_notice = values.get('notice_s', self.configured_notice)
+        self.stream.awake_level = values.get('oled_level', 16) - 1
+
+    def cmd_display_control(self, gcmd):
+        menu = self.board.zortrax
+        page = gcmd.get('PAGE', None)
+        updates = {}
+        if page is not None:
+            page = page.lower()
+            if page not in ('root', 'settings', 'information', 'language', 'sorting'):
+                raise gcmd.error('Unknown Inventure menu page')
+            if self.oem_menu is None or menu.active is not None or menu.fan_session is not None or menu.view is not None and menu.view.kind == 'confirm':
+                raise gcmd.error('Finish the active menu prompt before changing pages')
+            if page != 'root' and page not in MENU:
+                raise gcmd.error('This page is unavailable')
+            menu.view = None
+            self.oem_menu.home()
+            if page != self.oem_menu.root_page:
+                self.oem_menu.stack.append((self.oem_menu.page, 0, self.oem_menu.window))
+                self.oem_menu.page = page
+                self.oem_menu.generation += 1
+            self.oem_display_mode = 'menu'
+            self.message = None
+        if gcmd.get('LEVEL', None) is not None:
+            updates['oled_level'] = gcmd.get_int('LEVEL', minval=1, maxval=16)
+        if gcmd.get('ENABLED', None) is not None:
+            updates['sleep_enabled'] = bool(gcmd.get_int('ENABLED', minval=0, maxval=1))
+        for option, key, high in (('IDLE', 'idle_s', 86400), ('NOTICE', 'notice_s', 3600)):
+            if gcmd.get(option, None) is not None:
+                updates[key] = gcmd.get_int(option, minval=1, maxval=high)
+        if updates:
+            menu.settings.set(**updates)
+            self._apply_display_settings()
+            self._observe_external_activity()
+        if updates or page or gcmd.get_int('WAKE', 0, minval=0, maxval=1):
+            self._display_activity(self.reactor.monotonic())
+            self.render_at = 0.
+            self._user_refresh_pending = True
+            self._wake()
+        gcmd.respond_info('Inventure OLED | brightness %d/16 | sleep %s | idle %g s | notice %g s' % (
+            self.stream.awake_level + 1, 'on' if self.sleep_timeout else 'off', self.sleep_timeout, self.sleep_notice))
+
     def cmd_menu_status(self,gcmd):
         details=self.oem_menu.status() if self.oem_menu is not None else {'oem_menu':False}
         zortrax=getattr(getattr(self,'board',None),'zortrax',None)

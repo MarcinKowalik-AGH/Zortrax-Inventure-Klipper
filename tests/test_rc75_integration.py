@@ -1,4 +1,5 @@
 """Verify source-to-artifact integration and reversible live-host installation."""
+import hashlib
 import importlib.util
 import io
 import json
@@ -54,8 +55,18 @@ class Integration(unittest.TestCase):
 
     def test_prepared_build_and_readable_sources_match(self):
         prepare(self.kit)
-        for path in (ROOT/'host').glob('*.py'):
-            self.assertEqual(path.read_bytes(),(self.kit/'host'/path.name).read_bytes())
+        # The cassette/recovery overlays are installed after reconstructing the historical kit.
+        from orange_pi.install_thermal_test import HOST_OVERLAYS
+        manifest=json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text())
+        with zipfile.ZipFile(io.BytesIO(archive_bytes())) as base:
+            for path in (ROOT/'host').glob('*.py'):
+                prepared=(self.kit/'host'/path.name).read_bytes()
+                if path.name in HOST_OVERLAYS:
+                    self.assertEqual(prepared,base.read('host/'+path.name))
+                    self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                                     manifest['extra_modules'][path.name]['sha256'])
+                else:
+                    self.assertEqual(path.read_bytes(),prepared)
         for path in (ROOT/'mcu').iterdir():
             if path.is_file():self.assertEqual(path.read_bytes(),(self.kit/'mcu'/path.name).read_bytes())
         hashes=json.loads((self.kit/'baseline/expected_hashes.json').read_text())

@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -227,7 +228,7 @@ def add_leveling_macros(target, config, updates):
     add_fluidd_controls(target, config, updates, leveling=True)
 
 
-def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, filament=False):
+def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, filament=False, dashboard=False):
     """Stage the selected controls in the active Klipper configuration and its includes."""
     config = config.resolve()
     sources = {}
@@ -256,6 +257,14 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
     level_config = ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg'
     jam_config = ROOT/'config/INVENTURE_FILAMENT_JAM.cfg'
     material_config = ROOT/'config/INVENTURE_MATERIAL.cfg'
+    display_config = ROOT/'config/INVENTURE_DASHBOARD.cfg'
+    klipper_config = ROOT/'config/INVENTURE_KLIPPER.cfg'
+    home_config = ROOT/'config/INVENTURE_HOME.cfg'
+    pad_config = ROOT/'config/INVENTURE_NOZZLE_PAD.cfg'
+    xy_config = ROOT/'config/INVENTURE_NOZZLE_XY.cfg'
+    diagnostics = ROOT/'fluidd/inventure_01_diagnostyka.cfg'
+    if dashboard:
+        leveling = jam = filament = True
     selected = {material_config} if filament else set()
     if leveling:
         selected.add(level_config)
@@ -279,20 +288,50 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
             add_native_section('virtual_sdcard', '[virtual_sdcard]\npath: '+str(gcodes),
                                {'M20', 'M21', 'M23', 'M24', 'M25', 'M26', 'M27', 'M28', 'M29',
                                 'M30', 'SDCARD_RESET_FILE', 'SDCARD_PRINT_FILE'})
+    active = read_active()
+    if dashboard:
+        selected.update((display_config, klipper_config, home_config, pad_config, xy_config, diagnostics))
+
+    def available(name):
+        if name in ('BED_MESH', 'PID_BED', 'CANCEL_PRINT'):
+            return active.has_section({'BED_MESH': 'bed_mesh', 'PID_BED': 'heater_bed',
+                                       'CANCEL_PRINT': 'pause_resume'}[name])
+        if name == 'START_PRINT':
+            return all(active.getboolean('inventure_preflight', option, fallback=False)
+                       for option in ('enabled', 'p14_integration_qualified', 'start_qualified'))
+        if name in ('PID_HOTEND', 'PID_STATUS', 'PID_SAVE'):
+            return any(active.get(section, 'heater_pin', fallback='') in
+                       ('inventure_r5:HEATER_T0', 'inventure_r5:HEATER_T1')
+                       for section in active.sections())
+        if name.startswith('INVENTURE_HOME_'):
+            return active.has_section('inventure_native_z') and not (
+                name == 'INVENTURE_HOME_XY' and active.has_section('inventure_motion'))
+        if name.startswith('INVENTURE_PLATFORM_') and name.endswith(('_UP', '_DOWN')):
+            return active.has_section('inventure_native_z') or active.getboolean('inventure_motion', 'enabled', fallback=False)
+        if name in ('INVENTURE_MAIN_MENU','INVENTURE_SETTINGS','INVENTURE_INFORMATION','INVENTURE_LANGUAGE','INVENTURE_MODELS_SORT'):
+            return active.getboolean('inventure_oled', 'oem_menu', fallback=False)
+        if name.startswith(('INVENTURE_DISPLAY_', 'INVENTURE_OLED_')) or name in (
+                'INVENTURE_SCREEN', 'INVENTURE_SLEEP_MODE', 'OLED_TIMERS'):
+            return active.has_section('inventure_oled')
+        return True
+
     templates = {}
     required = {}
-    for path in [level_config, ROOT/'config/INVENTURE_NOZZLE_PAD.cfg',
-                 *([jam_config] if jam else []), *([material_config] if filament else []), *sorted((ROOT/'fluidd').glob('*.cfg'))]:
+    for path in (level_config, jam_config, material_config, home_config, pad_config, xy_config,
+                 display_config, klipper_config, *sorted((ROOT/'fluidd').glob('*.cfg'))):
         for name, _, body in macro_sections(path.read_text()):
             templates[name] = body
-            if path in selected:
+            dependency = re.search(r"'(inventure_[a-z_]+)' in printer.configfile.settings", body)
+            if (dashboard and path == diagnostics and dependency and name != 'INVENTURE_CAL_LEVELING'
+                    and not active.has_section(dependency.group(1))):
+                continue
+            if path in selected and available(name):
                 required[name] = (path, body)
 
     # Compare whole published sections. Extra options, comments or changed
     # Jinja belong to the operator. Leave overrides split across files intact.
     history = (ROOT/'config/fluidd_macro_history.sha256').read_text().splitlines()
-    known = (dict(line.split() for line in history if line and not line.startswith('#'))
-             if leveling else {})
+    known = dict(line.split() for line in history if line and not line.startswith('#'))
     present = {section.casefold() for section in active.sections()}
     occurrences = defaultdict(list)
     for path, data in sources.items():
@@ -306,9 +345,14 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
         path, start, body = matches[0]
         digest = sha256(body.replace('\r\n', '\n').encode('utf-8')).hexdigest()
         target_name = known.get(digest)
-        if target_name is None or (target_name != name and 'gcode_macro ' + target_name.casefold() in present):
+        if target_name not in templates or not available(target_name):
             continue
-        replacement = templates[target_name]
+        key = 'gcode_macro ' + target_name.casefold()
+        if target_name != name and key in present:
+            replacement = ''  # retire only an exact published duplicate
+        else:
+            replacement = templates[target_name]
+            present.add(key)
         if '\r\n' in body:
             replacement = replacement.replace('\n', '\r\n')
         by_file[path].append((start, len(body), replacement))
@@ -321,15 +365,13 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
 
     active = read_active()
     present = {s.casefold(): s for s in active.sections()}
-    for name, (path, section) in required.items():
+    for name, (_, section) in required.items():
         key = 'gcode_macro ' + name
         existing = present.get(key.casefold())
-        if existing:
-            wanted = reader.build_fileconfig(section, str(path))
-            if active.get(existing, 'gcode').strip() != wanted.get(key, 'gcode').strip():
-                raise ValueError('A different Fluidd macro already uses ['+existing+']')
-        else:
+        if not existing:
             sources[config] = append_config_section(sources[config], section.encode('utf-8'))
+        # Existing custom macros (including slicer start/end) keep their implementation.
+        # Exact stock versions have already been updated in their original files.
 
     for path, staged in sources.items():
         if staged != originals[path]:
@@ -350,7 +392,7 @@ def atomic_config_write(path, data):
 
 
 def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
-           configure_leveling=False, configure_jam=False, configure_filament=False):
+           configure_leveling=False, configure_jam=False, configure_filament=False, configure_fluidd=False):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
@@ -358,9 +400,10 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
     plan=core.install(target)
     config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
                     if upgrade_nozzle_limits or configure_nozzles else {})
-    if configure_leveling or configure_jam or configure_filament:
+    if configure_leveling or configure_jam or configure_filament or configure_fluidd:
         add_fluidd_controls(target, config, config_updates,
-                           leveling=configure_leveling, jam=configure_jam, filament=configure_filament)
+                           leveling=configure_leveling, jam=configure_jam, filament=configure_filament,
+                           dashboard=configure_fluidd)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     check_print_job()
@@ -401,6 +444,9 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
                     config_backups={str(path):str(backup) for path,backup in config_backups.items()})
     print(json.dumps(dict(identity,status=status,backup=result.get('backup')),
                      indent=2))
+    if configure_fluidd:
+        subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--wait', '60',
+                        '--config-directory', str(config.parent)], check=True)
     print('In Klipper console: INVENTURE_VERSION')
 
 
@@ -417,9 +463,11 @@ def main():
                         help='Add Inventure filament recovery controls and Klipper pause support')
     parser.add_argument('--configure-filament', action='store_true',
                         help='Add cassette settings, load, unload and manual feed controls to Fluidd')
+    parser.add_argument('--configure-fluidd', action='store_true',
+                        help='Install the Inventure dashboard and group its buttons in the active Fluidd instance')
     args=parser.parse_args()
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,
-               args.configure_leveling,args.configure_jam,args.configure_filament)
+               args.configure_leveling,args.configure_jam,args.configure_filament,args.configure_fluidd)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

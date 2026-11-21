@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-FILAMENT-PROFILES-R29'
+HOST_REVISION = 'RC8-CONTROL-R7-FLUIDD-R30'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -388,10 +388,14 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
         self.gcode.register_command('INVENTURE_LOAD_TEST',self.cmd_load_test,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_NATIVE_PID', self.cmd_native_pid)
+        self.gcode.register_command('INVENTURE_NATIVE_IDLE', self.cmd_native_idle)
+        self.gcode.register_command('INVENTURE_NATIVE_END', self.cmd_native_end)
         self.gcode.register_command('INVENTURE_MATERIAL', self.material_service.command)
         self.gcode.register_command('INVENTURE_PROCEDURE',self.cmd_procedure,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_Z_TEST',self.cmd_nozzle_z_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_XY_TEST',self.cmd_nozzle_xy_test,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_PLATFORM_LEVEL', self.cmd_platform_level, when_not_ready=True)
         self.gcode.register_command('ZORTRAX_PLATFORM_LEVEL', self.cmd_platform_level, when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_PAD_CALIBRATE',self.cmd_nozzle_pad_calibrate,when_not_ready=True)
         self.gcode.register_command('INVENTURE_XY_REPEAT',self.cmd_xy_repeat,when_not_ready=True)
@@ -1864,6 +1868,28 @@ class InventureMCU:
         if state['reject']: raise gcmd.error(state['reject'])
         gcmd.respond_info('V9_CONTROL '+json.dumps(state,sort_keys=True))
         if state['mode']!='OFF': self._control_schedule()
+
+    def cmd_native_idle(self, gcmd):
+        from .inventure_fluidd import require_idle
+        try:
+            require_idle(self)
+        except ValueError as exc:
+            raise gcmd.error(str(exc)) from exc
+
+    def cmd_native_end(self, gcmd):
+        sd = self.printer.lookup_object('virtual_sdcard', None)
+        if sd is None or not sd.is_cmd_from_sd():
+            self.cmd_native_idle(gcmd)
+        self.gcode.run_script_from_command('M400\nTURN_OFF_HEATERS')
+        if self.printer.lookup_object('fan', None) is not None:
+            self.gcode.run_script_from_command('M107')
+
+    def cmd_native_pid(self, gcmd):
+        from .inventure_fluidd import calibrate_nozzle_pid
+        try:
+            calibrate_nozzle_pid(self, gcmd)
+        except ValueError as exc:
+            raise gcmd.error(str(exc)) from exc
 
     def cmd_control_status(self,gcmd):
         try: state=self._control_query()

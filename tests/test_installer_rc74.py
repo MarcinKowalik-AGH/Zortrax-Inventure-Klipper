@@ -1,16 +1,32 @@
-import hashlib,importlib.util,os,sys,tempfile,unittest
+import hashlib,importlib.util,io,os,subprocess,sys,tempfile,unittest,zipfile
+from unittest.mock import patch
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('rc74install',ROOT/'install_rc74_oled.py')
 mod=importlib.util.module_from_spec(spec);sys.modules[spec.name]=mod;spec.loader.exec_module(mod)
-CLEAN=(ROOT/'TESTS/baseline_host' if (ROOT/'TESTS/baseline_host').is_dir() else ROOT/'tests/baseline_host')
 SAMPLE='''[mcu]\nserial: /dev/ttyS1\nbaud: 250000\n\n[printer]\nkinematics: none\nmax_velocity: 1\nmax_accel: 1\n\n[inventure_oled]\nspi_speed: 2000000\nchunk_interval: 0.020\nrefresh_interval: 0.5\nack_timeout: 1.0\noem_menu: True\noem_language: pl\n\n[inventure_mcu]\nallow_actuators: False\n'''
 class InstallerTests(unittest.TestCase):
+ @classmethod
+ def setUpClass(cls):
+  cls.kit=tempfile.TemporaryDirectory()
+  cls.addClassCleanup(cls.kit.cleanup)
+  root=Path(cls.kit.name)
+  payload=root/'host'
+  payload.mkdir()
+  source=b''.join(p.read_bytes() for p in sorted((ROOT/'source/parts').glob('part*.bin')))
+  assert hashlib.sha256(source).hexdigest()==(ROOT/'source/SHA256SUMS').read_text().split()[0]
+  with zipfile.ZipFile(io.BytesIO(source)) as archive:
+   cls.original={name:archive.read('host/'+name) for name in mod.FILES}
+  for name,data in cls.original.items():(payload/name).write_bytes(data)
+  subprocess.run(['git','apply','--unidiff-zero',str(ROOT/'tests/fixtures/rc74_oled.patch')],cwd=root,check=True)
+  override=patch.object(mod,'PAYLOAD',payload)
+  override.start()
+  cls.addClassCleanup(override.stop)
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
   self.root=Path(self.temp.name);self.host=self.root/'klipper';extras=self.host/'klippy/extras';extras.mkdir(parents=True)
   (self.host/'klippy/klippy.py').write_text('')
-  for p in mod.FILES:(extras/p).write_bytes((CLEAN/p).read_bytes())
+  for p in mod.FILES:(extras/p).write_bytes(self.original[p])
   self.cfg=self.root/'printer.cfg';self.cfg.write_text(SAMPLE)
  def test_precise_preflight_and_rollback(self):
   items,orig,patched=mod.make_plan(self.host,self.cfg)
@@ -28,7 +44,7 @@ class InstallerTests(unittest.TestCase):
   self.assertTrue(all(i['action']=='same' for i in items2))
   mod.rollback(self.host,self.cfg,backups[0])
   self.assertEqual(self.cfg.read_text(),SAMPLE)
-  for p in mod.FILES:self.assertEqual((self.host/'klippy/extras'/p).read_bytes(),(CLEAN/p).read_bytes())
+  for p in mod.FILES:self.assertEqual((self.host/'klippy/extras'/p).read_bytes(),self.original[p])
  def test_unknown_modified_file_rejected_without_any_write(self):
   p=self.host/'klippy/extras/inventure_oled.py';p.write_text('untrusted')
   with self.assertRaisesRegex(ValueError,'unknown existing SHA'):mod.make_plan(self.host,self.cfg)

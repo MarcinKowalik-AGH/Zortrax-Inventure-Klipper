@@ -172,7 +172,7 @@ def notice(board, run):
         if run['deformed']:
             message += 'The center of the tray is out of tolerance. Replace the tray and repeat leveling.'
         else:
-            message += 'Save with ZORTRAX_PLATFORM_LEVEL ACTION=SAVE RUN_ID=' + run['run_id']
+            message += 'Save with INVENTURE_PLATFORM_LEVEL ACTION=SAVE RUN_ID=' + run['run_id']
     elif phase in ('failed', 'cancelled'):
         message = ('Leveling stopped. ' + str(run.get('error') or 'Cancelled by the operator.'))
     else:
@@ -181,7 +181,7 @@ def notice(board, run):
         if run.get('door_pause'):
             message += (' Heater power and motors are off. Leave the nozzle selector in place. '
                         'Close the door and lid after adjusting the knobs.')
-        message += ' Select Next (ZORTRAX_PLATFORM_LEVEL ACTION=NEXT).'
+        message += ' Select Next (INVENTURE_PLATFORM_LEVEL ACTION=NEXT).'
     board.gcode.respond_info('Platform leveling T0 | ' + message)
 
 

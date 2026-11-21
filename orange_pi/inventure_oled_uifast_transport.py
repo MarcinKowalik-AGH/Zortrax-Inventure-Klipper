@@ -176,11 +176,28 @@ class OledStream:
         self.retry_at=None;self.retry_count=0;self.retransmits=0
         self.pending_op=None
         self.display_mode='unknown';self.requested_mode='awake';self._mode_target=None
+        self.awake_level=15
+        self.display_level=15
+        self._level_target=15
 
     def set_display_mode(self,mode):
         if mode not in ('awake','dim','off'):
             raise ValueError('Invalid OLED display mode')
         self.requested_mode=mode
+
+    def needs_mode_update(self):
+        return self.display_mode != self.requested_mode or (
+            self.requested_mode == 'awake' and self.display_level != self.awake_level)
+
+    def begin_mode_update(self, fast=False):
+        self._mode_target = self.requested_mode
+        self._level_target = self.awake_level
+        return iter(mode_operations(self.display_mode, self._mode_target, fast, self._level_target))
+
+    def finish_mode_update(self):
+        self.display_mode = self._mode_target
+        self.display_level = self._level_target
+        self._mode_target = None
 
     @property
     def ready(self):
@@ -204,6 +221,7 @@ class OledStream:
         self.windows=((0,63,0,63),);self.last_windows=None
         self.urgent_refresh=False
         self.display_mode='unknown';self._mode_target=None
+        self.display_level=15
         self.operations=iter(init_operations(self.target))
         self.pending=None;self.pending_op=None;self.retry_at=None;self.retry_count=0
         self.ready_after=now;self.next_frame=now
@@ -213,6 +231,7 @@ class OledStream:
         self.operations=None;self.pending=None;self.pending_op=None;self.retry_at=None
         self.previous=None;self.target=None
         self.display_mode='unknown';self._mode_target=None
+        self.display_level=15
         self.urgent_refresh=False
         if reason:self.failure=str(reason)
 
@@ -246,9 +265,8 @@ class OledStream:
             return None
         if now<self.ready_after:return None
         if self.operations is None:
-            if self.display_mode!=self.requested_mode:
-                self._mode_target=self.requested_mode
-                self.operations=iter(mode_operations(self.display_mode,self._mode_target))
+            if self.needs_mode_update():
+                self.operations=self.begin_mode_update()
             elif self.requested_mode=='off':return None
         if self.operations is None:
             if self.previous==self.latest:
@@ -272,7 +290,7 @@ class OledStream:
         try:kind,args,delay=next(self.operations)
         except StopIteration:
             if self._mode_target is not None:
-                self.display_mode=self._mode_target;self._mode_target=None
+                self.finish_mode_update()
                 self.operations=None;return None
             self.display_mode='awake' if self.generation_frames==0 else self.display_mode
             self.operations=None;self.previous=self.target;self.phase='ready'
@@ -296,12 +314,12 @@ class OledStream:
         self.sent+=1;return self.pending_op
 
 
-def mode_operations(previous,requested,fast=False):
+def mode_operations(previous,requested,fast=False,awake_level=15):
     emit=fast_command if fast else command
     if requested=='off':
         yield from emit(0xae)
     else:
-        yield from emit(0xc7,bytes([1 if requested=='dim' else 15]))
+        yield from emit(0xc7,bytes([min(1, awake_level) if requested=='dim' else awake_level]))
         if previous=='off':yield from emit(0xaf)
 
 
@@ -520,7 +538,7 @@ class FastOledStream(OledStream):
     def _commit(self,now):
         self.operations=None;self.exhausted=False
         if self._mode_target is not None:
-            self.display_mode=self._mode_target;self._mode_target=None
+            self.finish_mode_update()
             return
         self.previous=self.target;self.phase='ready'
         self.generation_frames+=1;self.ever_ready=True;self.completed_frames+=1
@@ -554,9 +572,8 @@ class FastOledStream(OledStream):
             if not self.inflight:self._commit(now)
             return None
         if self.operations is None:
-            if self.display_mode!=self.requested_mode:
-                self._mode_target=self.requested_mode
-                self.operations=iter(mode_operations(self.display_mode,self._mode_target,True))
+            if self.needs_mode_update():
+                self.operations=self.begin_mode_update(fast=True)
             elif self.requested_mode=='off':return None
             elif self.previous==self.latest:
                 self.urgent_refresh=False;return None
@@ -608,7 +625,7 @@ class FastOledStream(OledStream):
             deadline=self.inflight[0][1]
             return min(deadline,self.budget_at) if self._held is not None and self.budget_at>now else deadline
         if self.ready_after>now:return self.ready_after
-        if self.operations is not None or self.display_mode!=self.requested_mode:
+        if self.operations is not None or self.needs_mode_update():
             return max(now+.0001,self.budget_at) if self.active_work else now+.0001
         if self.requested_mode!='off' and self.previous!=self.latest:
             return max(now+.0001,self.next_interactive if self.urgent_refresh else self.next_frame)

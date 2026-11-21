@@ -220,7 +220,7 @@ def wait_for_operator(board, context, action):
         action['until'] = min(now + WAIT_SECONDS, f['total_deadline'])
         f['material_until'] = action['until']
         f['material_prompt'] = action['prompt']
-        board.gcode.respond_info('T%d at waste bin. ZORTRAX_FEED_MORE, ZORTRAX_RETRACT_MORE or ZORTRAX_FILAMENT_FINISH (%.0f s).' %
+        board.gcode.respond_info('T%d at waste bin. INVENTURE_FEED_MORE, INVENTURE_RETRACT_MORE or INVENTURE_FILAMENT_FINISH (%.0f s).' %
                                  (context['tool'], action['until'] - now))
     if f.get('material_reply') is not None:
         return f.pop('material_reply')

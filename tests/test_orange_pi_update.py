@@ -25,6 +25,7 @@ class OrangePiInstallerCLITests(unittest.TestCase):
         self.assertIn('--configure-leveling', result.stdout)
         self.assertIn('--configure-jam', result.stdout)
         self.assertIn('--configure-filament', result.stdout)
+        self.assertIn('--configure-fluidd', result.stdout)
 
     def test_cli_passes_requested_options_to_installer(self):
         for args, expected in (
@@ -38,7 +39,7 @@ class OrangePiInstallerCLITests(unittest.TestCase):
             with self.subTest(args=args), patch.object(sys, 'argv', ['install-orange-pi.py', *args]), \
                     patch.object(update, 'update') as install:
                 update.main()
-                install.assert_called_once_with(*expected)
+                install.assert_called_once_with(*expected, False)
 
 
 class OrangePiUpdateTests(unittest.TestCase):
@@ -136,7 +137,7 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.config.write_text('[inventure_mcu]\n[include heaters.cfg]\n'
                                '[include buttons.cfg]\n#*# SAVE_CONFIG\n')
         template = (ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg').read_text()
-        start = template.index('[gcode_macro ZORTRAX_LEVEL_STATUS]')
+        start = template.index('[gcode_macro INVENTURE_LEVEL_PROGRESS]')
         end = template.index('[gcode_macro ', start+1)
         buttons = self.config.with_name('buttons.cfg')
         buttons.write_text(template[start:end])
@@ -147,10 +148,10 @@ class OrangePiUpdateTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
             path.write_bytes(after)
         installed = self.config.read_text()
-        self.assertNotIn('[gcode_macro ZORTRAX_LEVEL_STATUS]', installed)
-        self.assertIn('[gcode_macro ZORTRAX_LEVEL]', installed)
+        self.assertNotIn('[gcode_macro INVENTURE_LEVEL_PROGRESS]', installed)
+        self.assertIn('[gcode_macro INVENTURE_LEVEL]', installed)
         self.assertIn('heater_generic inventure_t1', installed)
-        self.assertLess(installed.index('[gcode_macro ZORTRAX_LEVEL_CANCEL]'),
+        self.assertLess(installed.index('[gcode_macro INVENTURE_LEVEL_STOP]'),
                         installed.index('#*# SAVE_CONFIG'))
         repeated = {}
         update.add_leveling_macros(self.live, self.config, repeated)
@@ -188,7 +189,7 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.assertEqual(inactive.read_text(), version)
         self.assertIn(edited, enabled.read_text())
         self.assertIn('# My note\n', enabled.read_text())
-        self.assertIn('gcode_macro INV_D_VERSIONS', enabled.read_text())
+        self.assertIn('gcode_macro INVENTURE_DIAG_VERSIONS', enabled.read_text())
         self.assertNotIn('INV_D_WERSJE', enabled.read_text())
         self.assertIn('Measure T0 and T1 XYZ offsets', enabled.read_text())
         self.assertNotIn('INV_R_HOME_X', enabled.read_text())
@@ -206,7 +207,8 @@ class OrangePiUpdateTests(unittest.TestCase):
         plan = {}
         update.add_leveling_macros(self.live, self.config, plan)
         staged = plan[self.config][1].decode()
-        self.assertIn(old + custom, staged)
+        self.assertIn(custom, staged)
+        self.assertIn('[gcode_macro INVENTURE_DIAG_VERSIONS]', staged)
         self.assertEqual(staged.count('[gcode_macro INV_D_VERSIONS]'), 1)
 
     def test_level_buttons_preserve_existing_custom_command(self):
@@ -214,8 +216,10 @@ class OrangePiUpdateTests(unittest.TestCase):
         self.config.write_text('[inventure_mcu]\n[gcode_macro zortrax_level]\n'
                                'gcode:\n    M118 custom\n')
         before = self.config.read_bytes()
-        with self.assertRaisesRegex(ValueError, 'different Fluidd macro'):
-            update.add_leveling_macros(self.live, self.config, {})
+        updates = {}
+        update.add_leveling_macros(self.live, self.config, updates)
+        self.assertIn(b'[gcode_macro zortrax_level]', updates[self.config][1])
+        self.assertIn(b'[gcode_macro INVENTURE_LEVEL]', updates[self.config][1])
         self.assertEqual(self.config.read_bytes(), before)
 
     def test_jam_install_preserves_included_pause_settings_and_user_footer(self):
@@ -228,9 +232,9 @@ class OrangePiUpdateTests(unittest.TestCase):
         update.add_fluidd_controls(self.live, self.config, staged, jam=True)
         self.assertEqual(set(staged), {self.config})
         config = staged[self.config][1].decode()
-        self.assertLess(config.index('[gcode_macro ZORTRAX_JAM_STATUS]'), config.index('#*#'))
+        self.assertLess(config.index('[gcode_macro INVENTURE_JAM_STATUS]'), config.index('#*#'))
         self.assertNotIn('[pause_resume]', config)
-        self.assertNotIn('[gcode_macro ZORTRAX_LEVEL]', config)
+        self.assertNotIn('[gcode_macro INVENTURE_LEVEL]', config)
         self.config.write_text(config)
         repeated = {}
         update.add_fluidd_controls(self.live, self.config, repeated, jam=True)

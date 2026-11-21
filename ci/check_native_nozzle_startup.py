@@ -47,43 +47,59 @@ def check_loaded(printer, config):
     for _, fan in printer.lookup_objects('heater_fan'):
         fan.handle_ready()
         assert fan.heaters == [t0, t1]
-    for name in ('ZORTRAX_LEVEL', 'ZORTRAX_LEVEL_NEXT', 'ZORTRAX_LEVEL_STATUS',
-                 'ZORTRAX_LEVEL_SAVE', 'ZORTRAX_LEVEL_CANCEL', 'ZORTRAX_DOOR_LOCK',
-                 'ZORTRAX_JAM_REPORT', 'ZORTRAX_JAM_STATUS', 'ZORTRAX_JAM_SOURCE',
-                 'ZORTRAX_JAM_RETRY', 'ZORTRAX_JAM_CONFIRM_FLOW', 'ZORTRAX_JAM_CANCEL',
-                 'ZORTRAX_JAM_SERVICE_TEST', 'ZORTRAX_JAM_MISSING', 'ZORTRAX_JAM_BROKEN',
-                 'ZORTRAX_JAM_CLEARED', 'ZORTRAX_JAM_LOAD', 'ZORTRAX_JAM_CONTINUE',
-                 'ZORTRAX_FILAMENT_SAVE', 'ZORTRAX_FILAMENT_STATUS', 'ZORTRAX_LOAD', 'ZORTRAX_UNLOAD',
-                 'ZORTRAX_FEED_MORE', 'ZORTRAX_RETRACT_MORE', 'ZORTRAX_FILAMENT_FINISH', 'ZORTRAX_FILAMENT_JOG'):
+    for name in ('INVENTURE_LEVEL', 'INVENTURE_LEVEL_NEXT', 'INVENTURE_LEVEL_PROGRESS',
+                 'INVENTURE_LEVEL_SAVE', 'INVENTURE_LEVEL_STOP', 'INVENTURE_DOOR_LOCK',
+                 'INVENTURE_JAM_REPORT', 'INVENTURE_JAM_STATUS', 'INVENTURE_JAM_SOURCE',
+                 'INVENTURE_JAM_RETRY', 'INVENTURE_JAM_CONFIRM_FLOW', 'INVENTURE_JAM_CANCEL',
+                 'INVENTURE_JAM_SERVICE_TEST', 'INVENTURE_JAM_MISSING', 'INVENTURE_JAM_BROKEN',
+                 'INVENTURE_JAM_CLEARED', 'INVENTURE_JAM_LOAD', 'INVENTURE_JAM_CONTINUE',
+                 'INVENTURE_FILAMENT_SAVE', 'INVENTURE_CASSETTE_STATUS', 'INVENTURE_LOAD', 'INVENTURE_UNLOAD',
+                 'INVENTURE_FEED_MORE', 'INVENTURE_RETRACT_MORE', 'INVENTURE_FILAMENT_FINISH', 'INVENTURE_CASSETTE_JOG'):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
+    for name in ('CANCEL_PRINT', 'END_PRINT', 'PID_HOTEND', 'PID_SAVE', 'PID_STATUS',
+                 'OLED_TIMERS', 'INVENTURE_MAIN_MENU', 'INVENTURE_OLED_BRIGHTNESS',
+                 'INVENTURE_HOME_ALL', 'INVENTURE_NOZZLE_SELECT', 'INVENTURE_PLATFORM_UP'):
+        assert printer.lookup_object('gcode_macro '+name)
+    for name in ('BED_MESH', 'PID_BED', 'START_PRINT'):
+        assert printer.lookup_object('gcode_macro '+name, None) is None
+    # Klipper defers rename_existing to connect. Exercise that hook without connecting an MCU.
+    cancel = printer.lookup_object('gcode_macro CANCEL_PRINT')
+    native_cancel = gcode.ready_gcode_handlers['CANCEL_PRINT']
+    cancel.handle_connect()
+    pause = printer.lookup_object('pause_resume')
+    pause.is_paused = True
+    alias = '_INVENTURE_CANCEL_BASE'
+    gcode.ready_gcode_handlers[alias](gcode.create_gcode_command(alias, alias, {}))
+    assert not pause.is_paused
+    assert gcode.ready_gcode_handlers['CANCEL_PRINT'] != native_cancel
     assert 'INVENTURE_MATERIAL' in gcode.ready_gcode_handlers
     # Render the Fluidd buttons with Klipper's own Jinja environment. This also
     # checks the single-use identity passed from the open prompt to a button.
     prompt = dict(session=9542, prompt=3, tool='T1')
     context = dict(printer={'inventure_mcu': {'material_service': prompt}})
     for macro, arguments, expected in (
-            ('ZORTRAX_FILAMENT_SAVE', dict(TOOL='T1', LOAD_SPEED='1.4', UNLOAD_TEMP='235'),
+            ('INVENTURE_FILAMENT_SAVE', dict(TOOL='T1', LOAD_SPEED='1.4', UNLOAD_TEMP='235'),
              'ACTION=SAVE TOOL=T1 LOAD_SPEED=1.4 UNLOAD_TEMP=235'),
-            ('ZORTRAX_LOAD', dict(TOOL='T0'), 'ACTION=LOAD TOOL=T0 INTERACTIVE=1'),
-            ('ZORTRAX_UNLOAD', dict(TOOL='T1', TEMP='250'), 'ACTION=UNLOAD TOOL=T1 INTERACTIVE=1 TEMP=250'),
-            ('ZORTRAX_FEED_MORE', {}, 'ACTION=MORE DIR=LOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=5'),
-            ('ZORTRAX_RETRACT_MORE', dict(MM='2'), 'ACTION=MORE DIR=UNLOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=2'),
-            ('ZORTRAX_FILAMENT_FINISH', {}, 'ACTION=FINISH TOOL=T1 SESSION=9542 PROMPT=3'),
-            ('ZORTRAX_FILAMENT_JOG', dict(TOOL='T0'), 'ACTION=JOG TOOL=T0 DIR=LOAD MM=5'),
-            ('ZORTRAX_FILAMENT_STATUS', {}, 'ACTION=STATUS')):
+            ('INVENTURE_LOAD', dict(TOOL='T0'), 'ACTION=LOAD TOOL=T0 INTERACTIVE=1'),
+            ('INVENTURE_UNLOAD', dict(TOOL='T1', TEMP='250'), 'ACTION=UNLOAD TOOL=T1 INTERACTIVE=1 TEMP=250'),
+            ('INVENTURE_FEED_MORE', {}, 'ACTION=MORE DIR=LOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=5'),
+            ('INVENTURE_RETRACT_MORE', dict(MM='2'), 'ACTION=MORE DIR=UNLOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=2'),
+            ('INVENTURE_FILAMENT_FINISH', {}, 'ACTION=FINISH TOOL=T1 SESSION=9542 PROMPT=3'),
+            ('INVENTURE_CASSETTE_JOG', dict(TOOL='T0'), 'ACTION=JOG TOOL=T0 DIR=LOAD MM=5'),
+            ('INVENTURE_CASSETTE_STATUS', {}, 'ACTION=STATUS')):
         template = printer.lookup_object('gcode_macro '+macro).template
         rendered = template.render(dict(context, params=arguments))
         assert rendered.split() == ('INVENTURE_MATERIAL '+expected).split(), (macro, rendered)
-    assert 'ZORTRAX_PLATFORM_LEVEL' in gcode.ready_gcode_handlers
-    assert 'ZORTRAX_FILAMENT_JAM' in gcode.ready_gcode_handlers
+    assert 'INVENTURE_PLATFORM_LEVEL' in gcode.ready_gcode_handlers
+    assert 'INVENTURE_FILAMENT_JAM' in gcode.ready_gcode_handlers
     assert printer.lookup_object('pause_resume') is not None
     if config.parent.name == 'config':
         virtual_sd = printer.lookup_object('virtual_sdcard')
         assert virtual_sd.sdcard_dirname == str(config.parent.parent/'gcodes')
     from extras.inventure_fluidd import register_legacy_commands
     register_legacy_commands(printer, gcode)
-    enabled = printer.lookup_object('gcode_macro INV_D_VERSIONS', None)
+    enabled = printer.lookup_object('gcode_macro INVENTURE_DIAG_VERSIONS', None)
     if enabled is None:
         assert 'INV_D_WERSJE' not in gcode.ready_gcode_handlers
     else:
@@ -96,6 +112,18 @@ def check_loaded(printer, config):
         gcode.ready_gcode_handlers['INV_D_WERSJE'](alias)
         assert calls[0]['params'] == {'SAMPLE': '1'} and calls[0]['rawparams'] == 'SAMPLE=1'
         assert 'INV_R_WYBIERZ_T1' not in gcode.ready_gcode_handlers
+    sys.path.insert(0, str(ROOT))
+    group_spec = importlib.util.spec_from_file_location('dashboard_setup', ROOT/'setup-fluidd.py')
+    groups = importlib.util.module_from_spec(group_spec)
+    group_spec.loader.exec_module(groups)
+    names = {section.split(None, 1)[1] for section, _ in printer.lookup_objects('gcode_macro')
+             if section.startswith('gcode_macro ')}
+    settings, assignments = groups.merge_groups({}, names)
+    assert not names.intersection(('INVENTURE_HOME_XYZ', 'ZORTRAX_NOZZLE_PAD_CALIBRATE'))
+    counts = {group: sum(value == group for value in assignments.values()) for group in groups.GROUPS}
+    visible = sum(row['visible'] for row in settings['stored'])
+    assert counts['Klipper'] == 6
+    print('Dashboard macros:', counts, 'visible:', visible)
     print(json.dumps(dict(status='CONFIG_LOADED', limits_c=[t0.max_temp,t1.max_temp],
                          adc_readers=len(board.adcs), fan_heaters=['extruder','inventure_t1'])))
 
@@ -158,15 +186,35 @@ def check():
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True)
-            updater.add_fluidd_controls(klipper,field,updates,leveling=True,jam=True,filament=True)
+            updater.add_fluidd_controls(klipper,field,updates,dashboard=True)
             assert updates
             for path,(before,after) in updates.items():
                 assert path.read_bytes() == before
                 updater.atomic_config_write(path,after)
             assert updater.nozzle_limit_updates(klipper,field,True) == {}
+            second = {}
+            updater.add_fluidd_controls(klipper,field,second,dashboard=True)
+            assert second == {}
             result = run(field)
             assert result.returncode == 0, result.stdout+result.stderr
             print(mode+': '+result.stdout.strip())
+
+        # Check optional installation routes independently from the stock field hardware.
+        tmpcfg = root/'optional.cfg'
+        prefix = '[inventure_mcu]\n[pause_resume]\n[bed_mesh]\n[heater_bed]\n'
+        owner = '[gcode_macro END_PRINT]\ngcode: M118 site-specific shutdown\n'
+        for authorized in (False, True):
+            tmpcfg.write_text(prefix + owner + '[inventure_preflight]\nenabled: true\n'
+                              'p14_integration_qualified: true\nstart_qualified: '+str(authorized)+'\n')
+            changes = {}
+            updater.add_fluidd_controls(klipper,tmpcfg,changes,dashboard=True)
+            content = changes[tmpcfg][1].decode()
+            assert owner in content and content.count('[gcode_macro END_PRINT]') == 1
+            assert '[gcode_macro PID_BED]' in content and '[gcode_macro BED_MESH]' in content
+            assert ('[gcode_macro START_PRINT]' in content) == authorized
+            assert '[gcode_macro INVENTURE_OLED_TIMERS]' not in content
+            assert '[gcode_macro INVENTURE_TEST_' not in content
+        print('Optional controls follow configured heaters, mesh and qualified P15. Site END_PRINT retained.')
 
 
 if __name__ == '__main__':

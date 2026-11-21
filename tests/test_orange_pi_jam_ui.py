@@ -65,7 +65,7 @@ class JamUI(MenuFixture, unittest.TestCase):
         self.run.update(reason='EXTRUDER_JAM', stage='R1', allowed_actions=['BROKEN', 'CANCEL'],
                         prompt_id=3, message='Inspect the guide tube.')
         self.tick()
-        self.assertTrue(any('Broken filament|ZORTRAX_FILAMENT_JAM ACTION=BROKEN' in m
+        self.assertTrue(any('Broken filament|INVENTURE_FILAMENT_JAM ACTION=BROKEN' in m
                             or ('prompt_button Broken filament|' in m and 'ACTION=BROKEN' in m)
                             for m in self.output))
         self.choose('Broken filament')
@@ -96,7 +96,7 @@ class JamUI(MenuFixture, unittest.TestCase):
         self.board._load_test_report = lambda ctx: dict(phase='preparing', tool='T1',
             factory=dict(operation='MANUAL', phase='HOME'))
         self.menu.choose(self.menu.view.token, confirm=True)
-        self.assertEqual(calls, ['ZORTRAX_JAM_SERVICE_STEP TOOL=T1 SOURCE=EXTERNAL STEP=UNLOAD TARGET=260'])
+        self.assertEqual(calls, ['INVENTURE_JAM_SERVICE_STEP TOOL=T1 SOURCE=EXTERNAL STEP=UNLOAD TARGET=260'])
 
     def test_idle_service_test_explicitly_selects_nozzle_source_and_temperature(self):
         self.menu.open('filament_jam')
@@ -180,14 +180,14 @@ class JamMacroTests(unittest.TestCase):
             raise ValueError(msg)
         if run is None:
             run = dict(active=True, prompt_id=4, run_id='A', allowed_actions=['RETRY', 'CANCEL'])
-        return self.macros['ZORTRAX_JAM_' + name].render(
+        return self.macros['INVENTURE_JAM_' + name].render(
             params=params, printer=dict(inventure_mcu=dict(filament_jam=run)), action_raise_error=error).strip()
 
     def test_missing_and_broken_macros_bind_to_the_current_prompt(self):
-        self.assertEqual(self.render('MISSING'), 'ZORTRAX_FILAMENT_JAM ACTION=MISSING')
-        self.assertEqual(self.render('BROKEN', run={'active': False}), 'ZORTRAX_FILAMENT_JAM ACTION=BROKEN')
+        self.assertEqual(self.render('MISSING'), 'INVENTURE_FILAMENT_JAM ACTION=MISSING')
+        self.assertEqual(self.render('BROKEN', run={'active': False}), 'INVENTURE_FILAMENT_JAM ACTION=BROKEN')
         state = dict(active=True, allowed_actions=['BROKEN'], run_id='B', prompt_id=2)
-        self.assertEqual(self.render('BROKEN', run=state), 'ZORTRAX_FILAMENT_JAM ACTION=BROKEN RUN_ID=B PROMPT_ID=2')
+        self.assertEqual(self.render('BROKEN', run=state), 'INVENTURE_FILAMENT_JAM ACTION=BROKEN RUN_ID=B PROMPT_ID=2')
         with self.assertRaisesRegex(ValueError, 'unavailable'):
             self.render('BROKEN')
 
@@ -214,7 +214,7 @@ class JamMacroTests(unittest.TestCase):
             self.render('SERVICE_STEP', TOOL='T0', SOURCE='UNKNOWN', TARGET=235, STEP='LOAD')
 
     def test_flow_confirmation_and_retry_are_guarded(self):
-        self.assertEqual(self.render('RETRY'), 'ZORTRAX_FILAMENT_JAM ACTION=RETRY RUN_ID=A PROMPT_ID=4')
+        self.assertEqual(self.render('RETRY'), 'INVENTURE_FILAMENT_JAM ACTION=RETRY RUN_ID=A PROMPT_ID=4')
         with self.assertRaises(ValueError):
             self.render('CONFIRM_FLOW')
         with self.assertRaises(ValueError):

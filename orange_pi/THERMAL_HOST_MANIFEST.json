@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-FILAMENT-PROFILES-R29",
+  "release": "RC8-CONTROL-R7-FLUIDD-R30",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "1af0e523fb713bf354f42209c6b9f044da796163e1114c493bdff5898a27b5fa",
+  "module_sha256": "f10081a5e71048d1aea7b89e2ede8e034511426e4d2643c387d3280a7769aebd",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -96,11 +96,12 @@
     "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc",
     "aa5ca50fe1ebd2ba9484cde98e3323d7d03d9229a96f5d49b05d66c8de4d631c",
     "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b",
-    "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f"
+    "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f",
+    "1af0e523fb713bf354f42209c6b9f044da796163e1114c493bdff5898a27b5fa"
   ],
   "host_revision": "RC8-CONTROL-R7-FILAMENT-PROFILES-R29",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
-  "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
+  "oled_module_sha256": "7f8a15d5be99804c0f3e1dfbfc174e2be13a77d899cb42d785c5e702687472f3",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
   "serialhdl_allowed_sha256": [
     "0d1990c4539c7d90b4664b5aea811dc4847457e683fc49e28ea7651bd98b0121",
@@ -122,7 +123,8 @@
     "90596a112ee911e53db52735a68976c2b1634f7b629a75d01fc1a6a5a7d32646",
     "651d9e365c58c19c275ede1dc999b972cd3eb8edf19709e8de870e82bf6203c4",
     "2be3f4b39635f077f40b91ed541d93c25a26b9f9c7d851e0114c1090bbf95c35",
-    "0671b3a81fb59e78dfbc72e8770f7da51183751f600a8c415fde062578856a51"
+    "0671b3a81fb59e78dfbc72e8770f7da51183751f600a8c415fde062578856a51",
+    "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da"
   ],
   "door_policy": {
     "mcu_release": "RC8-CONTROL-R7-T1-TIMING",
@@ -382,14 +384,15 @@
   "zortrax_menu_api": 1,
   "extra_modules": {
     "inventure_menu_core.py": {
-      "sha256": "f89dbcc9767715bfec59b936f747bc5139bc03401953775a8917c939a447aebd",
+      "sha256": "19a7e6980fd30d76da7bf5f99ad9574237a974a45fcd2ae13672e8d20ceda0b1",
       "allowed_existing_sha256": [
         "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f",
-        "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf"
+        "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf",
+        "f89dbcc9767715bfec59b936f747bc5139bc03401953775a8917c939a447aebd"
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "61a8615df91fb20a376a20591cfb11003c71f6770eeb16a869326e576aac75ab",
+      "sha256": "7a15d77f49f5f24bf68792afd67fcfd8f568d63f1077178015caaaf4ae6f3f9f",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
@@ -398,7 +401,8 @@
         "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f",
         "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f",
         "c214a066aad4eacbf6fdeb1b63a14caa675e8b5fd67d0f3091fed7ae0c80515e",
-        "d531808a26fb5d79cc3cdfa9749be4159bc75f45bdd7f9a043580157d1ca13e9"
+        "d531808a26fb5d79cc3cdfa9749be4159bc75f45bdd7f9a043580157d1ca13e9",
+        "61a8615df91fb20a376a20591cfb11003c71f6770eeb16a869326e576aac75ab"
       ]
     },
     "inventure_oem_menu.py": {
@@ -411,8 +415,10 @@
       ]
     },
     "inventure_oled_uifast_transport.py": {
-      "sha256": "40c9e9182baaba159d0d5c26699c036393db03bad947cf017e2fc243c0167a19",
-      "allowed_existing_sha256": []
+      "sha256": "1144659fb8fd7bd4a0e5ec075908317bd96864e10460af79089dcde1e18e8dde",
+      "allowed_existing_sha256": [
+        "40c9e9182baaba159d0d5c26699c036393db03bad947cf017e2fc243c0167a19"
+      ]
     },
     "inventure_z_home.py": {
       "sha256": "8189a3432ade5db937cfe63cce8fc0cdfc5e1c04b8dc6124a940e43769292041",
@@ -480,21 +486,25 @@
       ]
     },
     "inventure_platform_level.py": {
-      "sha256": "65d4681c2e8c0552305d1597943f10c413cf14da464378bac0f199b319858be7",
+      "sha256": "0f7da232d05d1fe214d8fd6c200323eeb5fd3344d8d6dccfd6c72197d6264ba5",
       "allowed_existing_sha256": [
         "b16a0b3792ac50966d2b4029a5f1ca09256a883636703c771aaa95ccdc32cf82",
-        "36bd76f511dccdcca08c60416462ed69fef367eb660881be7933574db796d483"
+        "36bd76f511dccdcca08c60416462ed69fef367eb660881be7933574db796d483",
+        "65d4681c2e8c0552305d1597943f10c413cf14da464378bac0f199b319858be7"
       ]
     },
     "inventure_fluidd.py": {
-      "sha256": "463b08e04d4b397381d726f7082a200bed133dd30ef7891c53d563dc2206216a",
-      "allowed_existing_sha256": []
+      "sha256": "1dcc919d7319e1fc0a0783377e53a7e72951de195f6461a17f4961d85a6f66d8",
+      "allowed_existing_sha256": [
+        "463b08e04d4b397381d726f7082a200bed133dd30ef7891c53d563dc2206216a"
+      ]
     },
     "inventure_filament_jam.py": {
-      "sha256": "ab6d29cb172fd35a0a01e629ff85bab2c46a8fa78ad9f3a2b26046141e50cf42",
+      "sha256": "ebfe04020d7663445d10135f503f9e2bd531d948462a4cf654467a144aa7f707",
       "allowed_existing_sha256": [
         "de6b167d75e5e39c82f4f7c90398346aca65a91ad2e862d5ce0fc08b89421614",
-        "06a31c86f7f14646ab816d13268b0649e8132bf45f3b3742aac8d2bb3391f463"
+        "06a31c86f7f14646ab816d13268b0649e8132bf45f3b3742aac8d2bb3391f463",
+        "ab6d29cb172fd35a0a01e629ff85bab2c46a8fa78ad9f3a2b26046141e50cf42"
       ]
     },
     "inventure_jam_service.py": {
@@ -543,8 +553,10 @@
       ]
     },
     "inventure_material_service.py": {
-      "sha256": "b9e6119b91e63f667602ae8d29e554ff40ae3175c847e9045164730d47f02e94",
-      "allowed_existing_sha256": []
+      "sha256": "88b412d1df940ba2bad37d5184ba60e94a0a195cbb1645868e814c8356d9c776",
+      "allowed_existing_sha256": [
+        "b9e6119b91e63f667602ae8d29e554ff40ae3175c847e9045164730d47f02e94"
+      ]
     }
   },
   "axis_timer_motion": {

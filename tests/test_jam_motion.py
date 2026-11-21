@@ -21,7 +21,9 @@ def pinned():
     global TEMP
     TEMP = tempfile.TemporaryDirectory()
     extras = prepare_runtime(Path(TEMP.name)) / 'klippy/extras'
-    sys.modules['orange_pi'].__path__.append(str(extras))
+    # Keep the pinned extras available even when other test modules alter sys.path.
+    package = sys.modules['orange_pi']
+    package.__path__ = [*package.__path__, str(extras)]
     ops_path = extras / 'inventure_operations.py'
     code = patch.render(ops_path.read_bytes())
     assert hashlib.sha256(code).hexdigest() == patch.PATCHED_SHA256
