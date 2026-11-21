@@ -12,12 +12,16 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent
+# Embedded startup and Moonraker checks import this script by absolute path.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def load_module(name, path):
