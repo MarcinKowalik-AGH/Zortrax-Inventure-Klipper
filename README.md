@@ -2,21 +2,21 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R35 and MCU R14** use the Inventure r0323 thermal maps, graphics and fault symbols. Klipper separates native heater tuning, chamber, sensor conversion and OLED preferences into active configuration files. Fluidd shows Extruder 0, Extruder 1, Chamber and the Inventure OLED. [R35 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-native-ui-r35) · [Configuration, display and validation](docs/INVENTURE_NATIVE_UI_R35.md) · [Macro groups](docs/INVENTURE_FLUIDD_R30.md)
+**Host R36 and MCU R14** use a dedicated OLED configuration. Fluidd shows Extruder 0, Extruder 1, Chamber and the Inventure OLED. A read-only gallery adds the project animations from M300 to the original Inventure screens. [R36 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-display-r36) · [Display configuration and artwork](docs/INVENTURE_DISPLAY_R36.md) · [Inventure thermal maps and settings](docs/INVENTURE_NATIVE_UI_R35.md)
 
 <a id="aktualizacja-orange-pi"></a>
 
 ## Update an existing Orange Pi installation
 
-With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. Install the R14 application with InventureBoot 1.7 for local panel fault messages and brightness synchronization.
+With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. A controller already running MCU R14 requires only the Orange Pi update.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-native-ui-r35 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-native-ui-r35" refs/tags/inventure-native-ui-r35 &&
-python3 "$HOME/inventure-native-ui-r35/install-orange-pi.py" --configure-fluidd --organize-config
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-display-r36 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-display-r36" refs/tags/inventure-display-r36 &&
+python3 "$HOME/inventure-display-r36/install-orange-pi.py" --configure-fluidd --organize-config
 ```
 
-If the R35 worktree already exists at that tag, run its final installer command. Once Klipper is ready, enter the following in the **Fluidd console**.
+If the R36 worktree already exists at that tag, run its final installer command. Once Klipper is ready, enter the following in the **Fluidd console**.
 
 ```gcode
 INVENTURE_VERSION
@@ -24,7 +24,7 @@ INVENTURE_MAIN_MENU
 INVENTURE_OLED_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-NATIVE-UI-R35` and the MCU `RC8-CONTROL-R7-DISPLAY-R14`. Refresh the existing Fluidd page after the installer reports the active `fluidd_root`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
+The host should report `RC8-CONTROL-R7-DISPLAY-R36` and the MCU `RC8-CONTROL-R7-DISPLAY-R14`. Refresh the existing Fluidd page after the installer reports the active `fluidd_root`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
 
 ## Printer procedures
 

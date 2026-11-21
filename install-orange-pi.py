@@ -351,6 +351,8 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
 
         add_native_section('pause_resume', '[pause_resume]',
                            {'PAUSE', 'RESUME', 'CLEAR_PAUSE', 'CANCEL_PRINT'})
+        if dashboard and not active.has_section('display'):
+            add_native_section('display_status', '[display_status]', set())
         gcodes = config.parent.parent/'gcodes'
         if config.parent.name == 'config' and gcodes.is_dir():
             add_native_section('virtual_sdcard', '[virtual_sdcard]\npath: '+str(gcodes),
@@ -378,7 +380,7 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
                 name == 'INVENTURE_HOME_XY' and active.has_section('inventure_motion'))
         if name.startswith('INVENTURE_PLATFORM_') and name.endswith(('_UP', '_DOWN')):
             return active.has_section('inventure_native_z') or active.getboolean('inventure_motion', 'enabled', fallback=False)
-        if name in ('INVENTURE_MAIN_MENU','INVENTURE_SETTINGS','INVENTURE_INFORMATION','INVENTURE_LANGUAGE','INVENTURE_MODELS_SORT'):
+        if name in ('INVENTURE_MAIN_MENU','INVENTURE_SETTINGS','INVENTURE_INFORMATION','INVENTURE_LANGUAGE','INVENTURE_MODELS_SORT','INVENTURE_OLED_ICONS'):
             return active.getboolean('inventure_oled', 'oem_menu', fallback=False)
         if name.startswith(('INVENTURE_DISPLAY_', 'INVENTURE_OLED_')) or name in (
                 'INVENTURE_SCREEN', 'INVENTURE_SLEEP_MODE', 'OLED_TIMERS'):
@@ -525,6 +527,18 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
                            organize_config, moonraker_config)
 
 
+def plan_klipper_docs(target, updates):
+    """Moonraker registers <running klipper_path>/docs as a read-only root."""
+    directory = target / 'docs'
+    if directory.is_dir() and directory.resolve() != Path('/'):
+        return None
+    if directory.exists() or directory.is_symlink():
+        raise ValueError('The active Klipper docs path must point to a directory: '+str(directory))
+    guide = directory / 'Inventure_Display.md'
+    updates[guide] = (None, (ROOT/'docs/Inventure_Display.md').read_bytes())
+    return guide
+
+
 def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_leveling,
                 configure_jam, configure_filament, configure_fluidd, source, root,
                 organize_config=False, moonraker_config=None):
@@ -542,6 +556,12 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     moon_paths = set()
+    docs_guide = None
+    restart_docs = False
+    if configure_fluidd or organize_config:
+        docs_guide = plan_klipper_docs(target, config_updates)
+        restart_docs = bool(docs_guide and configure_fluidd)
+        identity['moonraker_docs_root'] = str(target/'docs')
     expected_sections = None
     if organize_config:
         from inventure_config_layout import organize_klipper, organize_moonraker
@@ -549,6 +569,7 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         chosen = moonraker_config or running_moonraker_config(config)
         if chosen:
             chosen = Path(chosen).expanduser().resolve()
+            restart_docs = bool(docs_guide)
             moon_updates = {}
             managed_web = root
             if managed_web is None:
@@ -582,6 +603,7 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
     service('stop')
     result=None
     config_backups={}
+    created_docs_dir = False
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     try:
         # Recheck module hashes after the service is stopped. The core owns
@@ -590,7 +612,15 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         # Install new include targets before publishing any references to them.
         for path, (before, after) in sorted(config_updates.items(), key=lambda item: item[1][0] is not None):
             if before is None:
-                path.parent.mkdir(parents=True, exist_ok=True)
+                if path == docs_guide:
+                    try:
+                        path.parent.mkdir()
+                        created_docs_dir = True
+                    except FileExistsError:
+                        if path.parent.is_symlink() or not path.parent.is_dir():
+                            raise ValueError('The Klipper docs path changed during installation')
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_config_write(path, after, create=True)
                 config_backups[path] = None
                 continue
@@ -600,7 +630,7 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
             shutil.copy2(path, backup)
             atomic_config_write(path, after)
             config_backups[path] = backup
-        if moon_paths:
+        if moon_paths or restart_docs:
             service('restart', 'moonraker')
             subprocess.run(['systemctl','is-active','--quiet','moonraker'],check=True,timeout=10)
             identity['moonraker_readback'] = 'systemd_active'
@@ -628,8 +658,10 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
                     atomic_config_write(path, backup.read_bytes())
             if result and result.get('status')=='INSTALLED':
                 core.install(target,apply=True,rollback=Path(result['backup']))
+        if created_docs_dir and not any(docs_guide.parent.iterdir()):
+            docs_guide.parent.rmdir()
         service('start')
-        if moon_paths.intersection(config_backups):
+        if moon_paths.intersection(config_backups) or restart_docs and docs_guide in config_backups:
             service('restart', 'moonraker')
         raise
     status='HOST_RESTARTED' if result['status']=='ALREADY_INSTALLED' else 'HOST_UPDATED'

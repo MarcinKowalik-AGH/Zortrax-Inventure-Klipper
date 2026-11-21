@@ -119,7 +119,23 @@ async def check(klipper):
         await send('cancel_wait', 31, {'client': 'bridge'})
         replies = dict([await receive(), await receive()])
         assert replies == {30: {'changed': False}, 31: {'cancelled': True}}, replies
-        print(json.dumps(dict(events=len(timings), cancelled=True, bitmaps='identical', physical_hardware=False,
+        gallery = dict(labels=['Back', 'Heat Nozzle', 'Previous', 'Next'], selected=3,
+                       icon='project:heat_nozzle', animated=True)
+        for index in range(4):
+            wire = menu_wire(gallery, index=index)
+            await send('wait', 40+index, dict(client='bridge', epoch=frame['epoch'],
+                       navigation_revision=frame['navigation_revision']))
+            def advance(now):
+                if not preview.waiters or now < preview.next_animation or now < preview.encode_after:
+                    loop.register_callback(advance, max(now+.005, preview.next_animation, preview.encode_after))
+                    return
+                owner._render_wire = wire
+                preview.observe(now, 'gallery', wire)
+            loop.register_async_callback(advance)
+            req_id, reply = await receive()
+            frame = reply['frame']
+            assert req_id == 40+index and reply['changed'] and frame['image_base64'] == encode_frame(wire)
+        print(json.dumps(dict(events=len(timings), gallery_frames=4, cancelled=True, bitmaps='identical', physical_hardware=False,
                               host_event_to_websocket_p95_ms=round(sorted(timings)[18], 3))))
     finally:
         ws.close()

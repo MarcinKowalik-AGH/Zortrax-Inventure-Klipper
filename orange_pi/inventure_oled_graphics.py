@@ -80,6 +80,14 @@ def _activity_catalog():
     return _sprite_catalog()['symbols']
 
 
+@lru_cache(maxsize=1)
+def project_symbols():
+    symbols = {}
+    for filename in ('inventure_project_activity_sprites.json', 'inventure_project_menu_sprites.json'):
+        symbols.update(json.loads(Path(__file__).with_name(filename).read_bytes())['symbols'])
+    return symbols
+
+
 # These are the Inventure symbols used for each host workflow. r0323 supplies
 # an animation for waiting/progress, and static glyphs for settings and faults.
 ACTIVITY_SYMBOLS = {
@@ -111,9 +119,18 @@ def sleep_wire():
     return bytes(wire)
 
 
+def _symbol(icon):
+    if icon.startswith('project:'):
+        return project_symbols().get(icon[8:])
+    if icon.startswith('activity:'):
+        name = icon[9:]
+        return _activity_catalog().get(ACTIVITY_SYMBOLS.get(name, name))
+    return None
+
+
 @lru_cache(maxsize=32)
-def _activity_rows(name, index):
-    packed = _unpack(_activity_catalog()[name]['frames'][index], name)
+def _activity_rows(icon, index):
+    packed = _unpack(_symbol(icon)['frames'][index], icon)
     # Repack each row at x=203, preserving its grayscale and blank edge nibbles.
     rows = []
     for start in range(0, len(packed), 25):
@@ -125,8 +142,7 @@ def _activity_rows(name, index):
 def activity_index(view, now):
     if not view.get('animated'):
         return 0
-    name = (view.get('icon') or '').removeprefix('activity:')
-    record = _activity_catalog().get(ACTIVITY_SYMBOLS.get(name, name))
+    record = _symbol(view.get('icon') or '')
     if not record or len(record['frames']) <= 1 or not record['frame_ms']:
         return 0
     return int(now * 1000 / record['frame_ms']) % len(record['frames'])
@@ -140,7 +156,7 @@ def _background(atlas, labels, icon, notice, index):
     # The OEM layout reserves this black strip exclusively for the sprite.
     # Unused outer nibbles and transparent pixels therefore remain black.
     result = bytearray(wire)
-    rows = (_activity_rows(ACTIVITY_SYMBOLS.get(icon[9:], icon[9:]), index) if icon.startswith('activity:')
+    rows = (_activity_rows(icon, index) if _symbol(icon)
             else _icon_rows(atlas.icons[icon]))
     for y, row in enumerate(rows, 13):
         start = y * STRIDE + 101
@@ -154,7 +170,7 @@ def menu_wire(view, atlas=None, index=0):
     if not labels:
         return bytes(8192)
     icon = view.get('icon')
-    if icon and not icon.startswith('activity:'):
+    if icon and not _symbol(icon):
         pixels = atlas.icons.get(icon)
         if not isinstance(pixels, bytes) or len(pixels) != 2500:
             return native.Frame().oem_menu(view, atlas).wire_bytes()

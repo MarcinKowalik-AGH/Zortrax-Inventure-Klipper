@@ -1,5 +1,8 @@
 import base64
 import importlib
+import json
+from hashlib import sha256
+from pathlib import Path
 import unittest
 import zlib
 from unittest.mock import patch
@@ -14,6 +17,42 @@ transport = importlib.import_module(adapter.__package__ + '.inventure_oled_uifas
 
 
 class Graphics(unittest.TestCase):
+    def test_project_gallery_matches_the_shaded_m300_masters_on_every_frame(self):
+        root = Path(__file__).resolve().parents[1]
+        art = root/'docs/assets/oled'
+        masters = json.loads((art/'project_activity_frames.json').read_bytes())
+        self.assertEqual(masters['style'], 'OEM_NATIVE_TONES_V1')
+        groups = [('activity', 24, 'c64d5aa3dd4425b2c435c8bd97dd411a022dbd8cef93fe84490efdc0924703df'),
+                  ('menu', 5, 'baf8e39497f52a8d9f0957d4a2898bd27d103c545d14617cd1433b49b7cedf3a')]
+        self.assertEqual(len(graphics.project_symbols()), 29)
+        for group, count, digest in groups:
+            file = root/'orange_pi'/('inventure_project_%s_sprites.json' % group)
+            self.assertEqual(sha256(file.read_bytes()).hexdigest(), digest)
+            symbols = json.loads(file.read_bytes())['symbols']
+            self.assertEqual(len(symbols), count)
+            tones = set()
+            for name, record in symbols.items():
+                self.assertEqual((record['width'], record['height'], record['frame_ms']), (50, 50, 500))
+                self.assertEqual(len({f['sha256'] for f in record['frames']}), 4)
+                view = dict(labels=['Back'], selected=0, icon='project:' + name, animated=True)
+                for i, frame in enumerate(record['frames']):
+                    self.assertEqual(graphics.activity_index(view, .5*i), i)
+                    src = graphics._unpack(frame, name)
+                    if group == 'activity':
+                        self.assertEqual(src, bytes.fromhex(masters['symbols'][name]['frames'][i]))
+                    else:
+                        self.assertTrue((art/'menu'/('%s_%d.svg' % (name, i))).is_file())
+                    wire = graphics.menu_wire(view, index=i)
+                    for y in range(50):
+                        offset = (13+y)*128 + 101
+                        self.assertEqual(wire[offset] >> 4, 0)
+                        self.assertEqual(wire[offset+25] & 15, 0)
+                        row = bytes((a << 4 & 255) | (b >> 4) for a,b in
+                                    zip(wire[offset:offset+25], wire[offset+1:offset+26]))
+                        self.assertEqual(row, src[y*25:y*25+25])
+                    tones.update(v for b in src for v in (b >> 4, b & 15))
+            self.assertEqual(tones, set(masters['palette']) if group == 'activity' else {0, 15})
+
     def test_oem_pages_and_cursor_match_the_reference_pixel_for_pixel(self):
         menu = menus.OEMMenu('en', operational=True)
         for page in menus.MENU:
@@ -97,6 +136,23 @@ class Graphics(unittest.TestCase):
         self.assertTrue(all(w[3] < 203 // 4 for w in windows))
         self.assertEqual(transport.diff_regions(second, second), ())
         self.assertEqual(transport.optimized_frame_operations(second, second, ()), ())
+
+    def test_animation_updates_only_the_icon_region_in_panel_ram(self):
+        view = dict(labels=['Back', 'Heat Nozzle', 'Previous', 'Next'], selected=3,
+                    icon='project:heat_nozzle', animated=True)
+        previous = graphics.menu_wire(view)
+        panel = Panel(previous)
+        for index in (1,2,3,0):
+            wire = graphics.menu_wire(view, index=index)
+            windows = transport.diff_regions(previous, wire)
+            self.assertTrue(windows)
+            for top, bottom, left, right in windows:
+                self.assertTrue(13 <= top <= bottom <= 62)
+                self.assertTrue(203 // 4 <= left <= right <= 252 // 4)
+            for kind, args, _ in transport.optimized_frame_operations(previous, wire, windows):
+                panel.apply((kind, 0, args))
+            self.assertEqual(panel.ram, wire)
+            previous = wire
 
     def test_physical_key_metrics_require_a_changed_frame_and_its_ack(self):
         printer, screen = oled()

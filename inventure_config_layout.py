@@ -141,7 +141,7 @@ def organize_klipper(module, main, updates):
                     h.split()[-1] == name.split()[-1] and active.get(h, 'heater_pin', fallback='') in heater_pins
                     for h in active.sections()):
                 group = 'heater_monitors.cfg'
-            elif name == 'inventure_oled':
+            elif name in ('inventure_oled', 'display_status'):
                 group = 'display.cfg'
             elif source == main and name in SERVICES:
                 group = 'services.cfg'
@@ -203,16 +203,23 @@ def organize_klipper(module, main, updates):
                    if not active.has_option('inventure_oled', key)}
         if missing:
             defaults = ''.join(key+': '+value+'\n' for key, value in missing.items())
-            if grouped.get(display):
-                group = grouped[display]
-                group[-1] = group[-1].rstrip('\r\n')+'\n'+defaults
+            group = grouped[display]
+            oled_block = next((i for i, body in enumerate(group)
+                              if HEADER.match(body)[1] == 'inventure_oled'), None)
+            if oled_block is not None:
+                group[oled_block] = group[oled_block].rstrip('\r\n')+'\n'+defaults
             else:
                 # A display section in an external or already split file keeps its
                 # device options in place; the local include supplies only defaults.
-                grouped[display].append('[inventure_oled]\n'+defaults)
-                if display not in included:
+                if not group and not already_included(display):
                     append_main_include(display)
+                group.append('[inventure_oled]\n'+defaults)
             additions['inventure_oled'].update(missing)
+        add_status = not any(active.has_section(name) for name in ('display_status', 'display'))
+        if add_status:
+            if not grouped[display] and not already_included(display):
+                append_main_include(display)
+            grouped[display].append('[display_status]')
     for path, parts in grouped.items():
         content = own(path) or MANAGED
         stage(updates, path, (content.rstrip()+'\n\n'+'\n\n'.join(p.rstrip('\r\n') for p in parts)+'\n').encode())
@@ -227,6 +234,8 @@ def organize_klipper(module, main, updates):
         if final_paths.count(path) != 1:
             raise ValueError('Multiple or missing includes for '+str(path))
     original = {name: dict(active.items(name)) for name in active.sections()}
+    if active.has_section('inventure_oled') and add_status:
+        original['display_status'] = {}
     result = {name: dict(after.items(name)) for name in after.sections()}
     for section, keys in additions.items():
         for key in keys:
@@ -252,13 +261,25 @@ def migrate_display_defaults(path, updates):
         return
     if data.count(signature) == 1:
         data = data.replace(signature, b'brightness: 16\ntimer_policy: inventure\n')
-    sections = list(HEADER.finditer(data.decode()))
-    if len(sections) > 1 and all(h[1] == 'inventure_oled' for h in sections):
-        text = data.decode()
-        for h in reversed(sections[1:]):
-            text = text[:h.start()] + text[h.end():]
-        data = text.encode()
-    stage(updates, path, data)
+    text = data.decode()
+    for name, start, end, body in reversed(list(blocks(text))):
+        if name == 'inventure_oled':
+            # Both spellings select the same launcher in the running driver.
+            body = re.sub(r'^(menu_profile[ \t]*[:=][ \t]*)m300(?=[ \t]*(?:[#;]|\r?$))',
+                          r'\1inventure', body, flags=re.I | re.M)
+            text = text[:start] + body + text[end:]
+    sections = list(blocks(text))
+    duplicates = [(start, end, body) for name, start, end, body in sections if name == 'inventure_oled']
+    if len(duplicates) > 1 and not any(name.startswith('include ') for name, *_ in sections):
+        # Keep preferences inside the physical OLED section even if the
+        # independent display_status section lies between R34 defaults.
+        first_end = duplicates[0][1]
+        options = []
+        for start, end, body in reversed(duplicates[1:]):
+            options.append(body[HEADER.match(body).end():])
+            text = text[:start] + text[end:]
+        text = text[:first_end] + ''.join(reversed(options)) + text[first_end:]
+    stage(updates, path, text.encode())
 
 
 def organize_heater_profiles(module, main, folder, updates):

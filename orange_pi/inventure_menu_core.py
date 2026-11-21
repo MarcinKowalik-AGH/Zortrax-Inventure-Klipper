@@ -19,7 +19,7 @@ SUPPORT_MATERIALS = ((7,'Z-SUPPORT'),(13,'Z-SUPPORT Plus'),
     (17,'Z-SUPPORT Premium'),(23,'BASF Ultrafuse BVOH'),(127,'External Support'))
 
 READ_ACTIONS = frozenset(('version','printer_info','help','job_info','thermal_info',
-    'settings_info','oled_info','mcu_info','uart_info','fans_info','adc_info','rfid_info',
+    'settings_info','oled_info','oled_icons','mcu_info','uart_info','fans_info','adc_info','rfid_info',
     'save_print','motion_disabled','homing_disabled','heating_disabled'))
 NATIVE_ACTIONS = {'leveling':'inventure_leveling', 'alignment':'inventure_alignment',
     'pause':'inventure_cycle','resume':'inventure_cycle','cancel_yes':'inventure_cycle',

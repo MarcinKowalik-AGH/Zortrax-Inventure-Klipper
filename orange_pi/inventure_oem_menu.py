@@ -204,7 +204,8 @@ class OEMMenu:
             nodes = nodes + [Item('OLED brightness', action='oled_brightness'),
                              Item('OLED timers', action='oled_timers'),
                              Item('OLED sleep mode', action='oled_sleep_mode'),
-                             Item('Sleep lighting', action='oled_sleep_light')]
+                             Item('Sleep lighting', action='oled_sleep_light'),
+                             Item('OLED icons', action='oled_icons')]
         if self.bench:
             if not self.operational or self.page=='service_tests':
                 nodes=[_BENCH_BRANCHES.get(node.action,node) for node in nodes]

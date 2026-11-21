@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -31,6 +32,49 @@ class ConfigLayoutTests(unittest.TestCase):
         changes = {}
         layout.organize_klipper(self.parser, self.main, changes)
         return changes
+
+    def test_display_config_and_explicit_fluidd_status_are_idempotent(self):
+        for header in ('', '[display_status]\n', '[display]\nlcd_type: st7920\n'):
+            with self.subTest(header=header), tempfile.TemporaryDirectory() as tmp:
+                main = Path(tmp)/'printer.cfg'
+                other = Path(tmp)/'panel.cfg'
+                main.write_text('[inventure_mcu]\n[include panel.cfg]\n')
+                other.write_text('[inventure_oled]\nbrightness: 9\n'+header)
+                changes = {}
+                layout.organize_klipper(self.parser, main, changes)
+                for path, (_, data) in changes.items():
+                    path.parent.mkdir(exist_ok=True)
+                    path.write_bytes(data)
+                display = (main.parent/'inventure/display.cfg').read_text()
+                self.assertEqual(display.count('[inventure_oled]'), 1)
+                self.assertEqual(display.count('[display_status]'), int(not header.startswith('[display]')))
+                effective = layout.active_klipper(self.parser, main, {})[0]
+                self.assertEqual(effective.getint('inventure_oled', 'brightness'), 9)
+                self.assertEqual(effective.get('inventure_oled', 'timer_policy'), 'inventure')
+                self.assertTrue(effective.has_section('display') or effective.has_section('display_status'))
+                if effective.has_section('display_status'):
+                    self.assertEqual(effective.items('display_status'), [])
+                again = {}
+                layout.organize_klipper(self.parser, main, again)
+                self.assertEqual(again, {})
+
+    def test_docs_plan_accepts_site_docs_and_preserves_conflicting_paths(self):
+        custom = self.directory/'site-docs'
+        custom.mkdir()
+        docs = self.directory/'docs'
+        docs.symlink_to(custom, target_is_directory=True)
+        changes = {}
+        self.assertIsNone(update.plan_klipper_docs(self.directory, changes))
+        self.assertEqual(changes, {})
+        docs.unlink()
+        docs.symlink_to('/')
+        with self.assertRaises(ValueError):
+            update.plan_klipper_docs(self.directory, changes)
+        docs.unlink()
+        docs.write_text('site file')
+        with self.assertRaises(ValueError):
+            update.plan_klipper_docs(self.directory, changes)
+        self.assertEqual(docs.read_text(), 'site file')
 
     def test_oem_thresholds_and_linear_channels_match_controller_at_every_raw_code(self):
         from bisect import bisect_left
@@ -75,7 +119,7 @@ class ConfigLayoutTests(unittest.TestCase):
         folder = self.directory / 'inventure'
         folder.mkdir()
         display = folder / 'display.cfg'
-        display.write_text(layout.MANAGED + '[inventure_oled]\nspi_speed: 2000000\n'
+        display.write_text(layout.MANAGED + '[inventure_oled]\nspi_speed: 2000000\nmenu_profile = m300  # launcher\n'
                            'dim_minutes: 5\nsleep_minutes: 15\nbrightness: 16\ntimer_policy: minutes\n')
         (folder/'heaters.cfg').write_text(layout.MANAGED + '[extruder]\nheater_pin: inventure_r5:HEATER_T0\nsensor_type: Inventure R5 ADC\nsensor_channel: 0\n')
         self.main.write_text('[inventure_mcu]\n[include inventure/display.cfg]\n[extruder]\n'
@@ -87,6 +131,7 @@ class ConfigLayoutTests(unittest.TestCase):
         self.assertEqual(self.plan(), {})
         opts = layout.active_klipper(self.parser, self.main, {})[0]
         self.assertEqual(opts.get('inventure_oled', 'timer_policy'), 'inventure')
+        self.assertIn('menu_profile = inventure  # launcher', display.read_text())
         self.assertEqual(opts.getint('inventure_oled', 'spi_speed'), 2000000)
         self.assertEqual(opts.getfloat('inventure_mcu', 't0_pid_kp'), 29.37)
         self.assertIn('# tuned on this machine', (folder/'heater_control.cfg').read_text())
@@ -171,6 +216,34 @@ class ConfigLayoutTests(unittest.TestCase):
         for path, data in originals.items():
             self.assertEqual(path.read_bytes(), data)
         self.assertEqual(list((self.directory/'inventure').glob('*.cfg')), [])
+        self.assertFalse((self.runtime/'docs').exists())
+
+    def test_docs_repair_restarts_moonraker_when_the_config_is_already_organized(self):
+        self.main.write_text('[inventure_mcu]\n[inventure_oled]\n')
+        for path, (_, data) in self.plan().items():
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(data)
+        moon = self.directory/'moonraker.conf'
+        moon.write_text('[server]\n')
+        docs = self.runtime/'docs'
+        self.addCleanup(shutil.rmtree, docs, ignore_errors=True)
+        with patch.object(update.core, 'running_klipper_target', return_value=self.runtime), \
+                patch.object(update.core, 'running_printer_config', return_value=self.main), \
+                patch.object(update.core, 'install', return_value={'host_revision':'test','status':'ALREADY_INSTALLED'}), \
+                patch.object(update, 'service') as services, patch.object(update, 'check_print_job'), \
+                patch.object(update.subprocess, 'run'), patch.object(update.os, 'geteuid', return_value=0):
+            def install(check):
+                update.update_host(check, False, False, False, False, False, False, None,
+                                   self.directory/'site', True, moon)
+            install(True)
+            self.assertFalse(docs.exists())
+            services.assert_not_called()
+            install(False)
+            services.assert_any_call('restart', 'moonraker')
+            self.assertTrue((docs/'Inventure_Display.md').is_file())
+            services.reset_mock()
+            install(False)
+            self.assertFalse(any(call.args == ('restart','moonraker') for call in services.mock_calls))
 
 
 class DisplayParityTests(unittest.TestCase):

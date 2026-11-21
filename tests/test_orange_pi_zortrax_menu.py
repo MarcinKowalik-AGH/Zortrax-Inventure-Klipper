@@ -42,6 +42,31 @@ class MenuFixture:
 
 
 class MenuCoreTests(unittest.TestCase):
+    def test_oled_gallery_uses_the_same_read_only_view_from_panel_and_gcode(self):
+        board, svc = MenuFixture().host()
+        hardware = board.load_test_context
+        nav = menu_module.OEMMenu('en', operational=True)
+        nav.page = 'settings'
+        action = next(item.action for item in nav.items() if item.label == 'OLED icons')
+        self.assertEqual(action, 'oled_icons')
+        self.assertTrue(svc.capability(action)['available'])
+        board.gcode.run_script_from_command('INVENTURE_ZORTRAX OP=OPEN ACTION=oled_icons PROMPT=1 NAME=heat_nozzle')
+        self.assertEqual(svc.view_status()['icon'], 'project:heat_nozzle')
+        self.assertTrue(svc.view_status()['animated'])
+        svc.choose(svc.view.token, 3)
+        self.assertEqual(svc.view_status()['icon'], 'project:heat_bed')
+        svc.open(action, NAME='bed_mesh')
+        svc.choose(svc.view.token, 2)
+        self.assertEqual(svc.view_status()['icon'], 'project:homing-all')
+        svc.choose(svc.view.token, 3)
+        self.assertEqual(svc.view_status()['icon'], 'project:bed_mesh')
+        with self.assertRaisesRegex(core.MenuError, 'Unknown OLED icon'):
+            svc.open(action, NAME='unknown')
+        svc.choose(svc.view.token, 0)
+        self.assertIsNone(svc.view)
+        self.assertIsNone(svc.active)
+        self.assertIs(board.load_test_context, hardware)
+
     def test_complete_original_and_paused_menu_vocabulary_has_a_route(self):
         actions={n.action for page in menu_module.MENU.values() for n in page[2]
             if n.action and not n.action.startswith('bench_')}

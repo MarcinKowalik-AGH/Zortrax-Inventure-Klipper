@@ -456,6 +456,22 @@ class ZortraxMenuService:
                 ('Timed dim (minutes)', ('request', {'action': 'oled_dim'})),
                 ('Timed off (minutes)', ('request', {'action': 'oled_sleep'}))])
         if action=='job_info':return self._job_view()
+        if action == 'oled_icons':
+            from .inventure_oled_graphics import project_symbols
+            names = tuple(project_symbols())
+            name = params.get('NAME', names[0]).lower()
+            if name not in names:
+                raise MenuError('Unknown OLED icon. Available names: ' + ', '.join(names))
+            index = names.index(name)
+            label = name.replace('_', ' ').replace('-', ' ').title()
+            choices = [('Back', ('close', {})), (label, None)]
+            for step, button in ((-1, 'Previous'), (1, 'Next')):
+                other = names[(index + step) % len(names)]
+                choices.append((button, ('request', {'action': 'oled_icons', 'NAME': other})))
+            view = self._set_view('choice', 'OLED icons (%d/%d)' % (index + 1, len(names)),
+                                  choices, icon='project:' + name, animated=True)
+            view.selected = 3
+            return view
         if action=='filament_jam':return self._jam_menu()
         if action in READ_ACTIONS:return self._read(action)
         if action=='sd_browser':return self._browse()
@@ -1214,11 +1230,13 @@ class ZortraxMenuService:
                     allowed.update(('DISTANCE', 'SPEED'))
                 if gcmd.get('ACTION') == 'leveling':
                     allowed.add('ACTIVE_TOOL')
+                if gcmd.get('ACTION') == 'oled_icons':
+                    allowed.add('NAME')
                 query=getattr(gcmd,'get_command_parameters',None)
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
                 if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | {
-                        'fan_test','platform_up','platform_down','select_t0','select_t1',
+                        'oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1',
                         'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
                     raise MenuError('This procedure supplies its own operator interface')
                 params={k:v for k,v in values.items() if k not in ('OP','ACTION','PROMPT')}

@@ -8,7 +8,7 @@ runs:
       run: |
         git clone --quiet --depth 1 --branch v0.9.3 https://github.com/Arksine/moonraker.git "$RUNNER_TEMP/moonraker"
         test "$(git -C "$RUNNER_TEMP/moonraker" rev-parse HEAD)" = 71f9e677b81afcc6b99dd5002f595025c38edc7b
-        python -m pip install 'tornado==6.4.1' 'distro==1.9.0' 'importlib_metadata==8.2.0'
+        python -m pip install 'tornado==6.4.1' 'distro==1.9.0' 'importlib_metadata==8.2.0' 'inotify-simple==1.3.5'
         python -c "import sys; from pathlib import Path; from ci.check_native_nozzle_startup import prepare_runtime; prepare_runtime(Path(sys.argv[1]))" "$RUNNER_TEMP/rpc"
         PYTHONPATH="$RUNNER_TEMP/moonraker" python ci/check_moonraker_config.py
         PYTHONPATH="$RUNNER_TEMP/moonraker" python ci/check_oled_moonraker.py --klipper "$RUNNER_TEMP/rpc/klipper-inventure"

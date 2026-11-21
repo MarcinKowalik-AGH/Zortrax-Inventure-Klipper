@@ -74,6 +74,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
                     'inventure_oled_uifast_transport.py','inventure_z_home.py',
                     'inventure_chamber.py','inventure_oled_preview.py','inventure_oled_graphics.py','inventure_activity_sprites.json',
+                    'inventure_project_activity_sprites.json','inventure_project_menu_sprites.json',
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
                     'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py',
                     'inventure_filament_jam.py','inventure_jam_motion.py','inventure_jam_monitor.py',
@@ -83,7 +84,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
     names.extend(extra_modules);optional.update(extra_modules)
     def dest_path(name):return target/'klippy/serialhdl.py' if name=='serialhdl.py' else extras/name
     def validate_payload(name, data):
-        if name == 'inventure_activity_sprites.json':
+        if name.endswith('.json'):
             json.loads(data)
         else:
             compile(data, str(dest_path(name)), 'exec')

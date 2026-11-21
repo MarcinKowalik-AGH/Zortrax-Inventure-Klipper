@@ -74,6 +74,12 @@ def check_loaded(printer, config):
     native = printer.lookup_object('inventure_oled').native_status
     display = printer.lookup_object('display_status')
     now = printer.get_reactor().monotonic()
+    assert 'display_status' in printer.lookup_object('configfile').get_status(now)['config']
+    native_gcode = printer.lookup_object('gcode')
+    native_gcode.ready_gcode_handlers['M117'](native_gcode.create_gcode_command('M117', 'M117 Display test', {}))
+    native_gcode.ready_gcode_handlers['M73'](native_gcode.create_gcode_command('M73', 'M73 P25', {'P':'25'}))
+    assert display.get_status(now) == {'message': 'Display test', 'progress': .25}
+    display.progress = None
     for message in ('Ready', 'The selected nozzle is ready for the next calibration point.'):
         display.message = None if message == 'Ready' else message
         wire = native.render(now, board)
@@ -94,7 +100,7 @@ def check_loaded(printer, config):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
     for name in ('CANCEL_PRINT', 'END_PRINT', 'PID_HOTEND', 'PID_SAVE', 'PID_STATUS',
-                 'OLED_TIMERS', 'INVENTURE_MAIN_MENU', 'INVENTURE_OLED_BRIGHTNESS',
+                 'OLED_TIMERS', 'INVENTURE_MAIN_MENU', 'INVENTURE_OLED_BRIGHTNESS', 'INVENTURE_OLED_ICONS',
                  'INVENTURE_HOME_ALL', 'INVENTURE_NOZZLE_SELECT', 'INVENTURE_PLATFORM_UP'):
         assert printer.lookup_object('gcode_macro '+name)
     for name in ('BED_MESH', 'PID_BED', 'START_PRINT'):
