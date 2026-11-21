@@ -92,6 +92,13 @@ def check_loaded(printer, config):
     label, result = messages[0].split(' ', 1)
     assert label == 'INVENTURE_VERSION'
     assert json.loads(result)['host_revision'] == board.get_status(now)['host_revision'] == expected_revision == installer_revision
+    if printer.lookup_object('inventure_native_z', None) is not None:
+        name = 'INVENTURE_HOME_Z_STATUS'
+        status_command = native_gcode.create_gcode_command(name, name, {})
+        status_command.respond_info = messages.append
+        native_gcode.base_gcode_handlers[name](status_command)
+        assert json.loads(messages[-1].split(' ', 1)[1]) == {
+            'running': False, 'last_result': None, 'retained_refinement': None}
     native_gcode.ready_gcode_handlers['M117'](native_gcode.create_gcode_command('M117', 'M117 Display test', {}))
     native_gcode.ready_gcode_handlers['M73'](native_gcode.create_gcode_command('M73', 'M73 P25', {'P':'25'}))
     assert display.get_status(now) == {'message': 'Display test', 'progress': .25}

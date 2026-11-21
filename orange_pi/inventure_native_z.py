@@ -69,11 +69,15 @@ class InventureNativeZ:
         self.refine = None
         self.guard_owner = None
         self.last_result = None
+        self.refine_identity = None
+        self.retained_refinement = None
+        self.retained_request = None
         self.z_enable = None
         self.interrupted = False
         self.printer.register_event_handler('klippy:mcu_identify', self._identify)
         self.printer.register_event_handler('klippy:connect', self._connect)
         self.printer.register_event_handler('klippy:shutdown', self._shutdown)
+        self.printer.register_event_handler('klippy:notify_mcu_error', self._connect_error)
         self.printer.register_event_handler('inventure:native_motion_lost', self._native_motion_lost)
         self.printer.register_event_handler('homing:home_rails_begin', self._home_rails_begin)
         self.board.mcu.register_config_callback(self._build_config)
@@ -87,6 +91,80 @@ class InventureNativeZ:
         gcode.register_command(
             'INVENTURE_HOME_REQUEST', self.cmd_request_home,
             desc='Home the requested axes from Fluidd or the Inventure OLED')
+        gcode.register_command(
+            'INVENTURE_HOME_Z_STATUS', self.cmd_home_status, when_not_ready=True,
+            desc='Read the native Z reference result and retained MCU probe counters')
+
+    def cmd_home_status(self, gcmd):
+        if self.printer.get_state_message()[1] in ('shutdown', 'error') and not self.running:
+            try:
+                self._read_retained_refinement()
+            except Exception as exc:
+                raise gcmd.error('MCU Z readback unavailable: %s' % exc) from exc
+            gcmd.respond_info('Requested the retained MCU Z result')
+        else:
+            gcmd.respond_info('V9_NATIVE_Z_STATUS ' + json.dumps(
+                self.get_status(self.reactor.monotonic()), sort_keys=True))
+
+    def _connect_error(self, message, details):
+        mcu_name = self.board.mcu.get_name()
+        cause = details.get('error', '')
+        if (cause == "Can not update MCU '%s' config as it is shutdown" % mcu_name
+                or cause.startswith("MCU '%s' error during config: " % mcu_name)):
+            self._log_shutdown_refinement()
+
+    def _log_shutdown_refinement(self):
+        try:
+            self._read_retained_refinement()
+        except Exception as exc:
+            logging.warning('MCU Z readback unavailable: %s', exc)
+
+    def _read_retained_refinement(self):
+        mcu = self.board.mcu
+        if (mcu._serial.get_serialqueue() is None or mcu.is_fileoutput()
+                or int(mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI', 0)) != 1):
+            raise FactoryError('Native Z readback requires a connected MCU with refinement ABI 1')
+        command = mcu.lookup_command(REFINE_COMMAND)
+        # A shutdown interrupts the normal synchronous poll and disables ACK waits.
+        # A host reconnect can also encounter shutdown before config callbacks run.
+        # Install the receiver on the existing link and send only the read-only action.
+        mcu._serial.register_response(self._retained_reply, REFINE_RESPONSE.split()[0])
+        command.send([0, 0, 0, 0, 0, 0, 0])
+        request = self.retained_request = object()
+        def check_reply(eventtime):
+            if self.retained_request is request:
+                self.retained_request = None
+                self.printer.lookup_object('gcode').respond_info(
+                    'No terminal MCU Z record received within two seconds')
+        self.reactor.register_callback(check_reply, self.reactor.monotonic() + 2.)
+
+    def _retained_reply(self, params):
+        self.reactor.register_async_callback(lambda eventtime: self._report_retained(params))
+
+    def _report_retained(self, row):
+        if self.retained_request is None or row['active'] or row['reject']:
+            return
+        if not row['owner'] and not row['token'] and row['status'] == 0:
+            self.retained_refinement = None
+            message = 'V9_NATIVE_Z_RETAINED no native probe record on this MCU'
+        else:
+            status = row['status']
+            if (not 0 < status < len(REFINE_STATUS) or not row['owner'] or not row['token']
+                    or row['net_steps'] != row['up_steps'] - row['down_steps']):
+                return
+            result = {key: row[key] for key in (
+                'owner', 'token', 'net_steps', 'best_steps', 'cycles', 'non_improvements',
+                'up_steps', 'down_steps')}
+            result['status'] = REFINE_STATUS[status]
+            result['matches_failed_run'] = None if self.refine_identity is None else (
+                self.refine_identity == (row['owner'], row['token'])
+                and bool(self.last_result and self.last_result.get('terminal') == 'failed'))
+            self.retained_refinement = result
+            if result['matches_failed_run']:
+                self.last_result = dict(self.last_result, mcu_refinement=result)
+            message = 'V9_NATIVE_Z_RETAINED ' + json.dumps(result, sort_keys=True)
+        self.retained_request = None
+        self.printer.lookup_object('gcode').respond_info(message)
 
     def _build_config(self):
         constants = self.board.mcu.get_constants()
@@ -320,6 +398,7 @@ class InventureNativeZ:
         interval = round(1_000_000. / (self.fine_speed * Z_STEPS_PER_MM))
         args = [self.guard_owner, token, span, interval, math.ceil(self.reference_target - 10.),
                 math.ceil(self.reference_target + 8.)]
+        self.refine_identity = (self.guard_owner, token)
         limits = dict(owner=(1, 0xffffffff), token=(1, 0xffffffff), active=(0, 1),
                       status=(0, len(REFINE_STATUS) - 1), reject=(0, 4),
                       net_steps=(-span, span), best_steps=(-span, span),
@@ -345,6 +424,7 @@ class InventureNativeZ:
             if not row['active'] or now >= next_report:
                 report(dict(stage='PC14 refinement', engine='STM32',
                             cycles=row['cycles'], non_improvements=row['non_improvements'],
+                            up_steps=row['up_steps'], down_steps=row['down_steps'], span_steps=span,
                             required_non_improvements=Z_STABLE_CYCLES))
                 next_report = now + PROGRESS_INTERVAL_S
             if not row['active']:
@@ -486,7 +566,8 @@ class InventureNativeZ:
         self.toolhead.wait_moves()
 
     def _discard_z_position(self):
-        self.last_result = None
+        if not self.last_result or self.last_result.get('terminal') != 'failed':
+            self.last_result = None
         self.kin.clear_homing_state('z')
 
     def _wait_for_home_temperature(self, heater, target):
@@ -675,6 +756,8 @@ class InventureNativeZ:
         guard_attempted = False
         self.deadline = now + 600.
         self.last_result = None
+        self.refine_identity = None
+        self.retained_refinement = None
         self.timeout_reason = None
         self.watchdog_timer = self.reactor.register_timer(self._watchdog)
 
@@ -726,6 +809,8 @@ class InventureNativeZ:
                                     terminal='failed', reason=reason)
             logging.warning('Inventure native Z failed: %s (UART buffers: %s)', reason,
                             getattr(self.board, 'uart_buffer_stats', {}))
+            if self.printer.is_shutdown() and self.refine_identity is not None:
+                self._log_shutdown_refinement()
             raise gcmd.error(reason) from exc
         finally:
             self.reactor.unregister_timer(self.watchdog_timer)
@@ -739,7 +824,8 @@ class InventureNativeZ:
         gcmd.respond_info('V9_NATIVE_Z ' + json.dumps(self.last_result, sort_keys=True))
 
     def get_status(self, eventtime):
-        return dict(running=self.running or self.sequence_running, last_result=self.last_result)
+        return dict(running=self.running or self.sequence_running, last_result=self.last_result,
+                    retained_refinement=self.retained_refinement)
 
 
 def load_config(config):

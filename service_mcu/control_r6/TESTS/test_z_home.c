@@ -636,6 +636,30 @@ static void native_refine_faults(void)
     assert(!inventure_is_armed() && control_latched && !native_z_refine_held && !zh.active);
 }
 
+static void native_missing_first_contact_readback(void)
+{
+    mock_probe_adc[0]=1276; // About 205 C with a 200 C native target.
+    native_refine_reset(1);
+    contact(0);
+    refine(1,OWNER,TOKEN,8020,4000,190,208);
+    assert(zh.active && native_z_refine_held);
+    expect_failure=1;
+    if (!setjmp(failure)) {
+        while (zh.active)
+            step_timer();
+        assert(!"native missing contact must shut down");
+    }
+    expect_failure=0;
+    assert(fault==8 && !inventure_is_armed() && !native_z_refine_held);
+    assert(!zh.high && !zh.timer_added && !control_heater_duty[0]);
+    refine(0,0,0,0,0,0,0); // R14 allows this read after shutdown.
+    assert(!z_home_reply.reject && !z_home_reply.active && z_home_reply.status==ZH_NO_CONTACT);
+    assert(z_home_reply.owner==OWNER && z_home_reply.token==TOKEN);
+    assert(z_home_reply.up_steps==8020 && !z_home_reply.down_steps && !z_home_reply.cycles);
+    assert(!scheduled_count && !inventure_is_armed());
+    mock_probe_adc[0]=1427;
+}
+
 static void nozzle_test(unsigned action,unsigned owner,unsigned token,unsigned span,
                         unsigned interval,unsigned repeats)
 {
@@ -1038,6 +1062,7 @@ int main(void)
     puts("PASS native Z tray guard: token ownership, PB8 interlock, latched PC13 fault and global STOP");
     native_refine_run();
     native_refine_faults();
+    native_missing_first_contact_readback();
     puts("PASS native Z refine: exact 101 misses, saved DIR, exclusive queue gate, handoff and fault stops");
     nozzle_test_both_tools(0,201,TOKEN);
     nozzle_test_both_tools(1,101,UINT32_MAX);

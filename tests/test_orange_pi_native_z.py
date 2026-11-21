@@ -870,9 +870,65 @@ class NativeHomeSequenceTests(unittest.TestCase):
             menu.choose(menu.view.token, confirm=True)
         self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'], ['Z','Y','X'])
         self.assertIn('no contact', menu.last['reason'])
-        self.assertIsNone(self.adapter.last_result)
+        self.assertEqual(self.adapter.last_result['terminal'], 'failed')
+        self.assertIn('no contact', self.adapter.last_result['reason'])
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
         self.assertNotIn('z', self.model.axes)
         self.assertEqual(self.model.heater_target, 0.)
+
+    def test_shutdown_readback_uses_only_ownerless_status_and_matches_the_failed_run(self):
+        self.use_mcu_reference()
+        self.operator_menu()
+        gcode = Command()
+        board = self.model.mcu
+        raw = board._serial = mock.Mock()
+        board.get_constants = lambda: {'INVENTURE_NATIVE_Z_REFINE_ABI': '1'}
+        board.get_name = lambda: 'mcu'
+        board.is_fileoutput = lambda: False
+        cmd = mock.Mock()
+        board.lookup_command = mock.Mock(return_value=cmd)
+        self.model.register_callback = mock.Mock()
+        self.model.register_async_callback = lambda cb: cb(0.)
+        self.model.get_state_message = lambda: ('MCU shutdown', 'shutdown')
+        self.model.lookup_object('gcode').respond_info = gcode.respond_info
+        original_query = self.model._thermal_query_send
+        def poll(command, data, **kwargs):
+            if command is self.model.refine and data[0] == 0:
+                self.model.invoke_shutdown('Inventure V9 local safety fault')
+                raise ValueError('No communication with MCU')
+            return original_query(command, data, **kwargs)
+        self.model._thermal_query_send = poll
+        with self.assertRaisesRegex(ValueError, 'No communication'):
+            self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        cmd.send.assert_called_once_with([0]*7)
+        self.assertEqual(raw.register_response.call_args.args[1], 'inventure_native_z_refine_state')
+        callback = raw.register_response.call_args.args[0]
+        owner, token = self.adapter.refine_identity
+        row = dict(owner=owner, token=token, status=2, active=0, reject=0, net_steps=8020,
+                   best_steps=0, cycles=0, non_improvements=0, up_steps=8020, down_steps=0)
+        callback(row)
+        self.assertEqual(self.adapter.last_result['mcu_refinement']['status'], 'no contact')
+        self.assertTrue(self.adapter.retained_refinement['matches_failed_run'])
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+        self.assertIn('V9_NATIVE_Z_RETAINED', gcode.message)
+
+        # A freshly connected host has no run identity. Report the retained
+        # counters independently even if Klipper could not configure the MCU.
+        self.model.get_state_message = lambda: ('Cannot configure MCU', 'error')
+        self.adapter.last_result = self.adapter.refine_identity = None
+        self.adapter._connect_error('MCU error during connect', {
+            'error': "Can not update MCU 'mcu' config as it is shutdown"})
+        raw.register_response.call_args.args[0](row)
+        self.assertIsNone(self.adapter.retained_refinement['matches_failed_run'])
+        self.assertIsNone(self.adapter.last_result)
+        self.adapter.cmd_home_status(gcode)
+        raw.register_response.call_args.args[0](dict(row, owner=0, token=0, status=0))
+        self.assertIsNone(self.adapter.retained_refinement)
+        self.assertIn('no native probe record', gcode.message)
+        self.adapter.cmd_home_status(gcode)
+        self.model.register_callback.call_args.args[0](self.model.time + 2.)
+        self.assertIn('within two seconds', gcode.message)
+        self.assertEqual(cmd.send.call_args_list, [mock.call([0]*7)] * 4)
 
     def test_bare_home_all_from_fluidd_or_oled_then_confirm(self):
         for mode in ('OFF', 'SERVICE', 'NATIVE'):
