@@ -515,7 +515,7 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         subprocess.run(['systemctl','is-active','--quiet','klipper'],check=True,timeout=10)
         if configure_fluidd:
             from fluidd_web import activate
-            subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--wait', '60',
+            subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--english', '--wait', '60',
                             '--config-directory', str(config.parent)], check=True)
             identity.update(fluidd_root=str(root), previous_fluidd_site=activate(source, root))
     except BaseException:

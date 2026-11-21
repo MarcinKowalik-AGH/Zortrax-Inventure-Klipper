@@ -173,6 +173,9 @@ def check():
     with tempfile.TemporaryDirectory(prefix='inventure-nozzle-startup-') as directory:
         root = Path(directory)
         klipper = prepare_runtime(root)
+        subprocess.run([sys.executable, str(ROOT/'ci/check_oled_navigation.py'),
+                        '--klipper', str(klipper), '--output', str(root/'oled-navigation.json')],
+                       check=True)
 
         def run(config):
             return subprocess.run([sys.executable,__file__,'--klipper',str(klipper),

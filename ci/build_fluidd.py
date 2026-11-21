@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the Inventure panel against the pinned upstream Fluidd source."""
 import argparse
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = 'b2edab5bc690f5265a5aa1e56ae3f67669053fd4'
 WEB = ROOT/'fluidd/inventure-ui'
-TAG = 'inventure-thermal-oled-r31'
+TAG = json.loads((ROOT/'orange_pi/RELEASE.json').read_text())['fluidd_dashboard']['web_build_tag']
 
 
 def package(checkout, archive):
@@ -43,7 +44,12 @@ if __name__ == '__main__':
         raise SystemExit('Unexpected Fluidd source commit: '+actual)
     if not args.built:
         subprocess.run(['git','apply',str(WEB/'fluidd-1.37.7.patch')],cwd=checkout,check=True)
-        shutil.copy2(WEB/'InventureOledPreview.vue', checkout/'src/components/widgets/status')
-        for task in (['install','--frozen-lockfile'], ['run','build']):
+        shutil.copy2(WEB/'InventureOledPreview.vue', checkout/'src/components/widgets/thermals')
+        for name in ('InventureSegmentedSlider.vue', 'InventurePlatformStatus.vue'):
+            shutil.copy2(WEB/name, checkout/'src/components/common')
+        for source in sorted((WEB/'util').glob('*.ts')):
+            shutil.copy2(source, checkout/'src/util'/source.name)
+        specs = ['src/util/'+source.name for source in sorted((WEB/'util').glob('*.spec.ts'))]
+        for task in (['install','--frozen-lockfile'], ['exec','vitest','run',*specs], ['run','type-check'], ['run','build']):
             subprocess.run(['corepack','pnpm@12.11.2',*task],cwd=checkout,check=True)
     package(checkout,args.archive)

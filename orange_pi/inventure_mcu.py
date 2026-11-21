@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-THERMAL-OLED-R31'
+HOST_REVISION = 'RC8-CONTROL-R7-THERMAL-OLED-R32'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -1570,6 +1570,12 @@ class InventureMCU:
             self.rfid_rx[i].extend(data)
             self.printer.send_event('inventure:rfid_rx',i,data)
         self.reactor.register_async_callback(deliver)
+    def oled_link_live(self, now):
+        # Called by the OLED reactor tick. Avoid building the full diagnostics report.
+        received = self.status_received
+        return bool(self.connected and received is not None
+                    and 0. <= now - received <= .75 and not self.status.get('fault'))
+
     def get_status(self, eventtime):
         return dict(self.status, temperatures=list(self.temperatures),
                     platform_level=self.platform_level_status(),

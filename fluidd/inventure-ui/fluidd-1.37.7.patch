@@ -1,31 +1,303 @@
-diff --git a/src/components/widgets/status/PrinterStatusCard.vue b/src/components/widgets/status/PrinterStatusCard.vue
-index 4f36019..849ddd8 100644
---- a/src/components/widgets/status/PrinterStatusCard.vue
-+++ b/src/components/widgets/status/PrinterStatusCard.vue
-@@ -65,6 +65,7 @@
-         />
-       </v-tab-item>
-     </v-tabs-items>
-+    <inventure-oled-preview />
+diff --git a/components.d.ts b/components.d.ts
+index 61dc457..feba36e 100644
+--- a/components.d.ts
++++ b/components.d.ts
+@@ -62,6 +62,7 @@ declare module 'vue' {
+     BedScrewsAdjustDialog: typeof import('./src/components/common/BedScrewsAdjustDialog.vue')['default']
+     CollapsableCard: typeof import('./src/components/common/CollapsableCard.vue')['default']
+     FlashMessage: typeof import('./src/components/common/FlashMessage.vue')['default']
++    InventureSegmentedSlider: typeof import('./src/components/common/InventureSegmentedSlider.vue')['default']
+     KeyboardShortcutsDialog: typeof import('./src/components/common/KeyboardShortcutsDialog.vue')['default']
+     KlippyStatusCard: typeof import('./src/components/common/KlippyStatusCard.vue')['default']
+     Login: typeof import('./src/components/common/Login.vue')['default']
+diff --git a/src/App.vue b/src/App.vue
+index de67b82..12377e4 100644
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -93,6 +93,7 @@
+ import { Component, Mixins, Watch } from 'vue-property-decorator'
+ import { EventBus } from '@/eventBus'
+ import StateMixin from '@/mixins/state'
++import { inventurePanelRecovery } from '@/util/inventure-panel-recovery'
+ import FilesMixin from '@/mixins/files'
+ import BrowserMixin from '@/mixins/browser'
+ import type { LinkPropertyHref, MetaPropertyName } from 'vue-meta'
+@@ -130,6 +131,23 @@ export default class App extends Mixins(StateMixin, FilesMixin, BrowserMixin) {
+   toolsdrawer: boolean | null = null
+   navdrawer: boolean | null = null
+   dragState = false
++
++  @Watch('socketReady')
++  restoreReconnectedPanel (ready: boolean, previous: boolean) {
++    if (!ready) this.clearDragOverlay()
++    inventurePanelRecovery.observe('socket', this.$typedState.config.socketUrl, ready, previous)
++  }
++
++  @Watch('klippyReady')
++  restoreKlippyPanel (ready: boolean, previous: boolean) {
++    if (!ready) this.clearDragOverlay()
++    inventurePanelRecovery.observe('klippy', this.$typedState.config.socketUrl, ready, previous)
++  }
++
++  clearDragOverlay () {
++    this.dragState = false
++  }
++
+   customBackgroundImageStyle: Record<string, string> = {}
+
+   flashMessageState: FlashMessage = {
+@@ -338,6 +356,8 @@ export default class App extends Mixins(StateMixin, FilesMixin, BrowserMixin) {
+   }
+
+   mounted () {
++    window.addEventListener('dragend', this.clearDragOverlay)
++    window.addEventListener('blur', this.clearDragOverlay)
+     window.addEventListener('dragover', this.handleDragOver)
+     window.addEventListener('dragenter', this.handleDragOver)
+     window.addEventListener('dragleave', this.handleDragLeave)
+@@ -371,6 +391,8 @@ export default class App extends Mixins(StateMixin, FilesMixin, BrowserMixin) {
+   }
+
+   beforeDestroy () {
++    window.removeEventListener('dragend', this.clearDragOverlay)
++    window.removeEventListener('blur', this.clearDragOverlay)
+     window.removeEventListener('dragover', this.handleDragOver)
+     window.removeEventListener('dragenter', this.handleDragOver)
+     window.removeEventListener('dragleave', this.handleDragLeave)
+@@ -406,8 +428,8 @@ export default class App extends Mixins(StateMixin, FilesMixin, BrowserMixin) {
+       event.preventDefault()
+
+       if (
+-        event.target instanceof HTMLElement &&
+-        event.target.className.includes('fluidd')
++        event.relatedTarget === null ||
++        (event.target instanceof Element && event.target.classList.contains('fluidd'))
+       ) {
+         this.dragState = false
+       }
+diff --git a/src/api/socketActions.ts b/src/api/socketActions.ts
+index bf644a9..2ef0f5c 100644
+--- a/src/api/socketActions.ts
++++ b/src/api/socketActions.ts
+@@ -17,6 +17,10 @@ const baseEmit = async <
+ }
+
+ export const SocketActions = {
++  printerObjectsQuery (objects: Record<string, string[] | null>, options?: RequestOptions) {
++    return baseEmit('printer.objects.query', { ...options, params: { objects } })
++  },
++
+   machineServicesRestart (service: string, options?: RequestOptions) {
+     return baseEmit(
+       'machine.services.restart', {
+diff --git a/src/components/common/ActionCommandPromptDialog.vue b/src/components/common/ActionCommandPromptDialog.vue
+index dbea2df..8e6309d 100644
+--- a/src/components/common/ActionCommandPromptDialog.vue
++++ b/src/components/common/ActionCommandPromptDialog.vue
+@@ -6,8 +6,19 @@
+     :no-actions="dialog.footerButtons.length === 0"
+   >
+     <v-card-text>
++      <inventure-platform-status v-if="dialog.title === 'Platform leveling'" />
++      <div v-if="oledEditor" class="mb-2">
++        <inventure-segmented-slider
++          :label="dialog.title"
++          :value="oledDraft"
++          :max="oledEditor.max"
++          :unit="oledEditor.option === 'LEVEL' ? '' : 'min'"
++          @input="oledDraft = $event"
++        />
++        <app-btn small @click="saveOledEditor">Save</app-btn>
++      </div>
+       <v-row
+-        v-for="item in dialog.items"
++        v-for="item in visibleItems"
+         :key="`item::${item.id}`"
+       >
+         <v-col v-if="item.type === 'text'">
+@@ -55,12 +66,47 @@
+ </template>
+
+ <script lang="ts">
+-import { Component, Mixins } from 'vue-property-decorator'
++import { Component, Mixins, Watch } from 'vue-property-decorator'
+ import StateMixin from '@/mixins/state'
+ import type { PromptDialog, PromptDialogButton } from '@/store/console/types'
+
+-@Component({})
++import InventurePlatformStatus from './InventurePlatformStatus.vue'
++import InventureSegmentedSlider from './InventureSegmentedSlider.vue'
++
++@Component({ components: { InventurePlatformStatus, InventureSegmentedSlider } })
+ export default class ActionCommandPromptDialog extends Mixins(StateMixin) {
++  oledDraft = 1
++
++  get oledEditor () {
++    for (const item of this.dialog.items) {
++      if (item.type !== 'text') continue
++      const match = /^INVENTURE_OLED_EDITOR (LEVEL|DIM|SLEEP) ([0-9]{1,2}) ([0-9a-f]{32})$/.exec(item.text)
++      if (!match) continue
++      const max = match[1] === 'LEVEL' ? 16 : 60
++      const value = Number(match[2])
++      if (value >= 1 && value <= max) return { option: match[1], value, max, token: match[3] }
++    }
++    return null
++  }
++
++  get visibleItems () {
++    return this.oledEditor
++      ? this.dialog.items.filter(item => item.type === 'button' && item.text === 'Back')
++      : this.dialog.items
++  }
++
++  @Watch('oledEditor', { immediate: true })
++  loadOledEditor () {
++    if (this.oledEditor) this.oledDraft = this.oledEditor.value
++  }
++
++  saveOledEditor () {
++    if (this.oledEditor && Number.isInteger(this.oledDraft) &&
++      this.oledDraft >= 1 && this.oledDraft <= this.oledEditor.max) {
++      this.sendGcode('INVENTURE_ZORTRAX OP=OLED_SAVE TOKEN=' + this.oledEditor.token + ' VALUE=' + this.oledDraft)
++    }
++  }
++
+   get dialog (): PromptDialog {
+     return this.$typedState.console.promptDialog
+   }
+@@ -71,6 +117,7 @@ export default class ActionCommandPromptDialog extends Mixins(StateMixin) {
+
+   set open (value: boolean) {
+     if (!value) {
++      this.$store.commit('console/setPromptDialogOpen', false)
+       this.sendGcode('RESPOND TYPE=command MSG="action:prompt_end"')
+     }
+   }
+diff --git a/src/components/layout/AppBar.vue b/src/components/layout/AppBar.vue
+index 62b8c75..083c305 100644
+--- a/src/components/layout/AppBar.vue
++++ b/src/components/layout/AppBar.vue
+@@ -35,6 +35,17 @@
+     <!-- <v-spacer /> -->
+
+     <div class="toolbar-supplemental">
++      <app-btn
++        icon
++        text
++        data-inventure-panel-reload
++        :title="$t('app.general.btn.socket_refresh')"
++        :aria-label="$t('app.general.btn.socket_refresh')"
++        @click="reloadPanel"
++      >
++        <v-icon>$refresh</v-icon>
++      </app-btn>
++
+       <div v-if="socketReady && klippyReady && showSaveConfigAndRestartForPendingChanges">
+         <app-save-config-and-restart-btn
+           :loading="hasWait($waits.onSaveConfig)"
+@@ -262,6 +273,10 @@ import type { AppUser } from '@/store/auth/types'
+   }
+ })
+ export default class AppBar extends Mixins(StateMixin, ServicesMixin, FilesMixin, BrowserMixin) {
++  reloadPanel () {
++    window.location.reload()
++  }
++
+   menu = false
+   userPasswordDialogOpen = false
+   pendingChangesDialogOpen = false
+diff --git a/src/components/ui/AppNavItem.vue b/src/components/ui/AppNavItem.vue
+index 273c6a0..bccb3ad 100644
+--- a/src/components/ui/AppNavItem.vue
++++ b/src/components/ui/AppNavItem.vue
+@@ -10,6 +10,7 @@
+         link
+         color="secondary"
+         v-bind="attrs"
++        @click.native.capture="handleNavigationClick"
+         v-on="on"
+       >
+         <v-list-item-icon>
+@@ -37,6 +38,7 @@ import { Component, Mixins, Prop } from 'vue-property-decorator'
+ import StateMixin from '@/mixins/state'
+ import BrowserMixin from '@/mixins/browser'
+ import { eventTargetIsContentEditable, keyboardEventToKeyboardShortcut } from '@/util/event-helpers'
++import { navigateInventureSidebar } from '@/util/inventure-sidebar'
+ import { Globals } from '@/globals'
+ import isKeyOf from '@/util/is-key-of'
+
+@@ -64,6 +66,17 @@ export default class AppNavItem extends Mixins(StateMixin, BrowserMixin) {
+     return this.$typedState.config.uiSettings.general.enableKeyboardShortcuts
+   }
+
++  handleNavigationClick (event: MouseEvent) {
++    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
++    // Vue Router's native listener skips a click already handled here.
++    event.preventDefault()
++    this.openView()
++  }
++
++  openView () {
++    navigateInventureSidebar(this.$router, this.to)
++  }
++
+   handleKeyDown (event: KeyboardEvent) {
+     if (
+       !this.enableKeyboardShortcuts ||
+@@ -81,7 +94,7 @@ export default class AppNavItem extends Mixins(StateMixin, BrowserMixin) {
+     ) {
+       event.preventDefault()
+
+-      this.$router.push({ name: this.to })
++      this.openView()
+     }
+   }
+
+diff --git a/src/components/widgets/thermals/TemperatureCard.vue b/src/components/widgets/thermals/TemperatureCard.vue
+index 84cd036..64526e4 100644
+--- a/src/components/widgets/thermals/TemperatureCard.vue
++++ b/src/components/widgets/thermals/TemperatureCard.vue
+@@ -6,6 +6,7 @@
+     :lazy="false"
+     draggable
+     layout-path="dashboard.temperature-card"
++    @collapsed="cardCollapsed = $event"
+   >
+     <template #menu>
+       <app-btn-collapse-group :collapsed="narrow">
+@@ -107,6 +108,7 @@
+         :narrow="narrow"
+       />
+     </template>
++    <inventure-oled-preview :panel-visible="!cardCollapsed" />
    </collapsable-card>
  </template>
 
-@@ -73,6 +74,7 @@ import { Component, Mixins, Watch } from 'vue-property-decorator'
- import { SocketActions } from '@/api/socketActions'
+@@ -115,6 +117,7 @@ import { Component, Mixins, Prop, Ref } from 'vue-property-decorator'
  import StateMixin from '@/mixins/state'
- import AfcMixin from '@/mixins/afc'
+ import BrowserMixin from '@/mixins/browser'
+
 +import InventureOledPreview from './InventureOledPreview.vue'
- import StatusControls from './StatusControls.vue'
- import StatusTab from './StatusTab.vue'
- import ReprintTab from './ReprintTab.vue'
-@@ -81,6 +83,7 @@ import getFilePaths from '@/util/get-file-paths'
+ import ThermalChart from '@/components/widgets/thermals/ThermalChart.vue'
+ import TemperatureTargets from '@/components/widgets/thermals/TemperatureTargets.vue'
+ import TemperaturePresetsMenu from './TemperaturePresetsMenu.vue'
+@@ -124,6 +127,7 @@ import { encodeGcodeParamValue } from '@/util/gcode-helpers'
 
  @Component({
    components: {
 +    InventureOledPreview,
-     StatusControls,
-     StatusTab,
-     ReprintTab
+     ThermalChart,
+     TemperatureTargets,
+     TemperaturePresetsMenu
+@@ -133,6 +137,8 @@ export default class TemperatureCard extends Mixins(StateMixin, BrowserMixin) {
+   @Prop({ type: Boolean })
+   readonly narrow?: boolean
+
++  cardCollapsed = false
++
+   @Ref('thermalchart')
+   readonly thermalChartElement!: ThermalChart
+
 diff --git a/src/components/widgets/thermals/TemperatureTargets.vue b/src/components/widgets/thermals/TemperatureTargets.vue
 index 0b00d7e..62cd031 100644
 --- a/src/components/widgets/thermals/TemperatureTargets.vue
@@ -91,6 +363,299 @@ index bd1b3aa..dd432a5 100644
                    </span>
                    <span style="float:right;margin-left:20px;font-size:${fontSize}px;color:${fontColor};font-weight:900">
                      ${temperature.toFixed(2)}<small>°C</small>`
+diff --git a/src/components/widgets/toolhead/ToolheadControlBars.vue b/src/components/widgets/toolhead/ToolheadControlBars.vue
+index 711e725..ddf4301 100644
+--- a/src/components/widgets/toolhead/ToolheadControlBars.vue
++++ b/src/components/widgets/toolhead/ToolheadControlBars.vue
+@@ -30,7 +30,7 @@
+           :loading="hasWait($waits.onHomeXY)"
+           :color="!xyHomed ? 'primary' : undefined"
+           class="px-2"
+-          @click="sendGcode('G28 X Y', $waits.onHomeXY)"
++          @click="homeAxes('XY', $waits.onHomeXY)"
+         >
+           <v-icon
+             small
+diff --git a/src/components/widgets/toolhead/ToolheadControlBarsAxis.vue b/src/components/widgets/toolhead/ToolheadControlBarsAxis.vue
+index 2a7a570..0c5b7cd 100644
+--- a/src/components/widgets/toolhead/ToolheadControlBarsAxis.vue
++++ b/src/components/widgets/toolhead/ToolheadControlBarsAxis.vue
+@@ -86,7 +86,7 @@ export default class ToolheadControlBarsAxis extends Mixins(StateMixin, Toolhead
+   }
+
+   home () {
+-    this.sendGcode(`G28 ${this.axis}`, this.wait)
++    this.homeAxes(this.axis, this.wait)
+   }
+ }
+ </script>
+diff --git a/src/components/widgets/toolhead/ToolheadControlCircle.vue b/src/components/widgets/toolhead/ToolheadControlCircle.vue
+index ab57038..9100625 100644
+--- a/src/components/widgets/toolhead/ToolheadControlCircle.vue
++++ b/src/components/widgets/toolhead/ToolheadControlCircle.vue
+@@ -439,7 +439,7 @@
+             <a
+               class="cc-btn large"
+               :class="xHomeClasses"
+-              @click="sendGcode('G28 X', $waits.onHomeX)"
++              @click="homeAxes('X', $waits.onHomeX)"
+             >
+               <path
+                 d="M63.219 8.5H14.495A5.995 5.995 0 0 0 8.5 14.495v48.724c0 5.851 7.555 8.259 10.892 3.454a188.5 188.5 0 0 1 47.28-47.28c4.805-3.337 2.397-10.892-3.454-10.892Z"
+@@ -453,7 +453,7 @@
+             <a
+               class="cc-btn large"
+               :class="yHomeClasses"
+-              @click="sendGcode('G28 Y', $waits.onHomeX)"
++              @click="homeAxes('Y', $waits.onHomeX)"
+             >
+               <path
+                 d="M338.5 63.219V14.495a5.995 5.995 0 0 0-5.995-5.995h-48.724c-5.851 0-8.259 7.555-3.454 10.892a188.5 188.5 0 0 1 47.28 47.28c3.337 4.805 10.892 2.397 10.892-3.454Z"
+@@ -470,7 +470,7 @@
+             <a
+               class="cc-btn large"
+               :class="zHomeClasses"
+-              @click="sendGcode('G28 Z', $waits.onHomeZ)"
++              @click="homeAxes('Z', $waits.onHomeZ)"
+             >
+               <path
+                 d="M283.781 338.5h48.724a5.995 5.995 0 0 0 5.995-5.995v-48.724c0-5.851-7.555-8.259-10.892-3.454a188.5 188.5 0 0 1-47.28 47.28c-4.805 3.337-2.397 10.892 3.454 10.892Z"
+@@ -488,7 +488,7 @@
+               v-if="enableXYHoming"
+               class="cc-btn large"
+               :class="xyHomeClasses"
+-              @click="sendGcode('G28 X Y', $waits.onHomeXY)"
++              @click="homeAxes('XY', $waits.onHomeXY)"
+             >
+               <path
+                 d="M8.5 283.781v48.724a5.995 5.995 0 0 0 5.995 5.995h48.724c5.851 0 8.259-7.555 3.454-10.892a188.5 188.5 0 0 1-47.28-47.28c-3.337-4.805-10.892-2.397-10.892 3.454Z"
+diff --git a/src/components/widgets/toolhead/ToolheadControlCross.vue b/src/components/widgets/toolhead/ToolheadControlCross.vue
+index 1027a75..4f47965 100644
+--- a/src/components/widgets/toolhead/ToolheadControlCross.vue
++++ b/src/components/widgets/toolhead/ToolheadControlCross.vue
+@@ -71,7 +71,7 @@
+           :disabled="!klippyReady || printerPrinting"
+           :tooltip="$t('app.tool.tooltip.home_xy')"
+           icon="$home"
+-          @click="sendGcode('G28 X Y', $waits.onHomeXY)"
++          @click="homeAxes('XY', $waits.onHomeXY)"
+         />
+       </v-col>
+       <v-col
+@@ -97,7 +97,7 @@
+           :disabled="!klippyReady || printerPrinting"
+           :tooltip="$t('app.tool.tooltip.home_z')"
+           icon="$home"
+-          @click="sendGcode('G28 Z', $waits.onHomeZ)"
++          @click="homeAxes('Z', $waits.onHomeZ)"
+         />
+       </v-col>
+       <v-col
+@@ -110,7 +110,7 @@
+           :disabled="!klippyReady || printerPrinting"
+           icon="$home"
+           small-icon
+-          @click="sendGcode('G28 X', $waits.onHomeX)"
++          @click="homeAxes('X', $waits.onHomeX)"
+         >
+           {{ $t('app.tool.btn.home_x') }}
+         </app-btn-toolhead-move>
+@@ -153,7 +153,7 @@
+           :disabled="!klippyReady || printerPrinting"
+           icon="$home"
+           small-icon
+-          @click="sendGcode('G28 Y', $waits.onHomeY)"
++          @click="homeAxes('Y', $waits.onHomeY)"
+         >
+           {{ $t('app.tool.btn.home_y') }}
+         </app-btn-toolhead-move>
+diff --git a/src/mixins/state.ts b/src/mixins/state.ts
+index 6a1732c..68fc511 100644
+--- a/src/mixins/state.ts
++++ b/src/mixins/state.ts
+@@ -1,5 +1,6 @@
+ import Vue from 'vue'
+ import { SocketActions } from '@/api/socketActions'
++import { homeCommand, type HomeAxes } from '@/util/inventure-platform'
+ import { Component } from 'vue-property-decorator'
+ import type { Macro } from '@/store/macros/types'
+ import type { PrinterStatus } from '@/store/printer/types'
+@@ -195,6 +196,10 @@ RESTORE_GCODE_STATE NAME=_ui_retract`
+   }
+
+   homeAll () {
+-    this.sendGcode('G28', this.$waits.onHomeAll)
++    this.homeAxes('ALL', this.$waits.onHomeAll)
++  }
++
++  homeAxes (axes: HomeAxes, wait: string) {
++    this.sendGcode(homeCommand(this.$typedGetters['printer/getPrinterSettings'], axes), wait)
+   }
+ }
+diff --git a/src/plugins/i18n.ts b/src/plugins/i18n.ts
+index 795c193..69eb2ff 100644
+--- a/src/plugins/i18n.ts
++++ b/src/plugins/i18n.ts
+@@ -1,7 +1,6 @@
+ import Vue from 'vue'
+ import VueI18n, { type Locale } from 'vue-i18n'
+ import { consola } from 'consola'
+-import { SupportedLocales } from '@/globals'
+ import messages from '@/locales/en.yaml'
+ import { I18nLocales } from '@/dynamicImports'
+
+@@ -22,20 +21,6 @@ export const getAllLocales = (): Intl.LocalesArgument => {
+  * Loads the starting locale for the user.
+  */
+ export const getStartingLocale = () => {
+-  for (const navigatorLocale of getNavigatorLocales()) {
+-    const code = navigatorLocale.replace('_', '-')
+-    const [language] = code.split('-')
+-
+-    const supported = (
+-      SupportedLocales.find(locale => locale.code.toLowerCase() === code.toLowerCase()) ??
+-      SupportedLocales.find(locale => locale.code.toLowerCase() === language.toLowerCase())
+-    )
+-
+-    if (supported) {
+-      return supported.code
+-    }
+-  }
+-
+   return import.meta.env.VUE_APP_I18N_LOCALE || 'en'
+ }
+
+diff --git a/src/plugins/socketClient.ts b/src/plugins/socketClient.ts
+index bee5003..81a01a5 100644
+--- a/src/plugins/socketClient.ts
++++ b/src/plugins/socketClient.ts
+@@ -6,8 +6,9 @@ import type { SocketError } from '@/util/is-socket-error'
+
+ const LOG_PREFIX = '[WEBSOCKET]'
+
+-const ALLOWED_RETRIES = 3
+-const EXPONENTIAL_BACKOFF = 1.4
++const MAX_RETRY_MS = 30_000
++const QUIET_SOCKET_MS = 30_000
++const PROBE_TIMEOUT_MS = 10_000
+
+ const FAST_NOTIFY_KEYS = [
+   'motion_report'
+@@ -44,12 +45,16 @@ export class WebSocketClient {
+   private retryCount = 0
+   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null
+
++  private watchdog: ReturnType<typeof setTimeout> | null = null
++  private lastMessageAt = 0
++
+   constructor (options: SocketPluginOptions) {
+     this.store = options.store
+   }
+
+   close () {
+     this.cancelReconnect()
++    this.stopWatchdog()
+     if (this.connection) {
+       this.clearCacheAndRequests()
+       this.connection.onopen = null
+@@ -57,11 +62,12 @@ export class WebSocketClient {
+       this.connection.onerror = null
+       this.connection.onclose = null
+       this.connection.close()
++      this.connection = null
+     }
+   }
+
+   connect () {
+-    this.cancelReconnect()
++    this.close()
+     this.retryCount = 0
+     this.openSocket()
+   }
+@@ -78,9 +84,12 @@ export class WebSocketClient {
+       }
+
+       this.store.typedDispatch('socket/onSetStatus', 'connecting')
+-      this.connection = new WebSocket(url)
++      const socket = new WebSocket(url)
++      this.connection = socket
+
+-      this.connection.onopen = () => {
++      socket.onopen = () => {
++        this.lastMessageAt = Date.now()
++        this.watchSocket(socket)
+         this.retryCount = 0
+         this.store.typedDispatch('socket/onSetStatus', 'identifying')
+       }
+@@ -94,7 +103,8 @@ export class WebSocketClient {
+         consola.error(`${LOG_PREFIX} Connection error:`, event)
+       }
+
+-      this.connection.onmessage = async (message) => {
++      socket.onmessage = async (message) => {
++        this.lastMessageAt = Date.now()
+         // Parse the data packet.
+         const socketResponse = JSON.parse(message.data) as SocketResponse
+
+@@ -190,22 +200,47 @@ export class WebSocketClient {
+     // If the socket is already marked disconnected, there is nothing left to do.
+     if (this.store.state.socket.status === 'disconnected') return
+
+-    // retryCount counts failed opens in a chain; ws.onopen zeroes it on any
+-    // successful open, so we just increment here and give up at the cap.
+-    this.retryCount += 1
+-
+-    if (this.retryCount > ALLOWED_RETRIES) {
+-      this.store.typedDispatch('socket/onSetStatus', 'disconnected')
+-      this.clearCacheAndRequests()
+-      this.connection = null
+-      return
+-    }
++    this.stopWatchdog()
++    this.clearCacheAndRequests()
++    this.connection = null
++    const delay = Math.min(MAX_RETRY_MS, 1000 * 1.4 ** Math.min(++this.retryCount, 11))
+
+     this.store.typedDispatch('socket/onSetStatus', 'connecting')
+     this.reconnectTimeout = setTimeout(() => {
+       this.reconnectTimeout = null
+       this.openSocket()
+-    }, EXPONENTIAL_BACKOFF ** this.retryCount * 1000)
++    }, delay)
++  }
++
++  private stopWatchdog () {
++    if (this.watchdog !== null) {
++      clearTimeout(this.watchdog)
++      this.watchdog = null
++    }
++  }
++
++  private watchSocket (socket: WebSocket) {
++    this.stopWatchdog()
++    this.watchdog = setTimeout(() => {
++      if (socket !== this.connection) return
++      if (this.store.state.socket.status !== 'ready' || Date.now() - this.lastMessageAt < QUIET_SOCKET_MS) {
++        this.watchSocket(socket)
++        return
++      }
++
++      // Ordinary throttled tabs may be quiet. Confirm with a read-only RPC.
++      this.watchdog = setTimeout(() => {
++        if (socket !== this.connection) return
++        this.close()
++        this.handleClose()
++      }, PROBE_TIMEOUT_MS)
++      this.emit('server.info', { suppressError: true }).then(() => {
++        if (socket === this.connection) this.watchSocket(socket)
++      }, () => {
++        // Any RPC response demonstrates a live connection, including an error.
++        if (socket === this.connection && socket.readyState === WebSocket.OPEN) this.watchSocket(socket)
++      })
++    }, QUIET_SOCKET_MS)
+   }
+
+   private cancelReconnect () {
 diff --git a/src/store/printer/getters.ts b/src/store/printer/getters.ts
 index 3db4847..d78748e 100644
 --- a/src/store/printer/getters.ts
@@ -144,21 +709,83 @@ index 3db4847..d78748e 100644
        ...sensors
      ]
    },
+diff --git a/src/store/socket/actions.ts b/src/store/socket/actions.ts
+index 781ca11..2a5c75d 100644
+--- a/src/store/socket/actions.ts
++++ b/src/store/socket/actions.ts
+@@ -1,3 +1,4 @@
++import { inventurePanelRecovery } from '@/util/inventure-panel-recovery'
+ import type { ActionTree } from 'vuex'
+ import { consola } from 'consola'
+ import type { SocketState, SocketStatus } from './types'
+@@ -160,6 +161,7 @@ export const actions = {
+
+     switch (next) {
+       case 'connecting':
++        commit('console/setResetPromptDialog', '', { root: true })
+         commit('setAcceptNotifications', false)
+         commit('setConnectionId', null)
+
+@@ -342,7 +344,9 @@ export const actions = {
+   /**
+    * This is fired when, for example - the service is stopped.
+    */
+-  async notifyKlippyDisconnected ({ dispatch }) {
++  async notifyKlippyDisconnected ({ commit, dispatch, rootState }) {
++    inventurePanelRecovery.klippyNotification(rootState.config.socketUrl, false)
++    commit('console/setResetPromptDialog', '', { root: true })
+     await dispatch('resetKlippy', undefined, { root: true })
+
+     SocketActions.serverInfo()
+@@ -351,12 +355,15 @@ export const actions = {
+   /**
+    * This is fired when, for example - an estop is emitted.
+    */
+-  async notifyKlippyShutdown () {
++  async notifyKlippyShutdown ({ commit }) {
++    commit('console/setResetPromptDialog', '', { root: true })
+     SocketActions.serverInfo()
+   },
+
+-  async notifyKlippyReady () {
++  async notifyKlippyReady ({ rootState }) {
++    inventurePanelRecovery.klippyNotification(rootState.config.socketUrl, true)
+     consola.debug('Klippy Ready')
++    SocketActions.serverInfo()
+   },
+
+   async notifyFilelistChanged ({ dispatch }, payload: Moonraker.NotificationPayload<'notify_filelist_changed'>) {
 diff --git a/src/typings/klipper.d.ts b/src/typings/klipper.d.ts
-index 75ad05d..0b85f46 100644
+index 75ad05d..c9a3e1d 100644
 --- a/src/typings/klipper.d.ts
 +++ b/src/typings/klipper.d.ts
-@@ -145,6 +145,10 @@ declare namespace Klipper {
+@@ -145,6 +145,11 @@ declare namespace Klipper {
 
        z_calibration: KalicoZCalibrationState;
 
-+      inventure_oled_preview: { display: string; image_base64: string };
++      inventure_oled_preview: { display: string; image_base64: string; online: boolean; sequence: number;
++        epoch: string; navigation_revision: number; navigation_api: string; source: string; format: string; width: number; height: number };
 +      'inventure_chamber chamber': { temperature: number | null; left: number | null; right: number | null;
 +        power: number; target: number | null; zone_targets: number[]; split_targets: boolean; sensors_valid: boolean; zone_objects: string[] };
 +
        // These keys are for external modules
 
        beacon: BeaconState;
+diff --git a/src/typings/moonraker.klippy_apis.d.ts b/src/typings/moonraker.klippy_apis.d.ts
+index c688f14..ab44ba8 100644
+--- a/src/typings/moonraker.klippy_apis.d.ts
++++ b/src/typings/moonraker.klippy_apis.d.ts
+@@ -59,6 +59,10 @@ declare namespace Moonraker {
+       params: undefined,
+       result: KlippyApis.ObjectsListResponse
+     },
++    'printer.objects.query': {
++      params: { objects: Record<string, string[] | null> },
++      result: KlippyApis.ObjectsSubscribeResponse & { eventtime: number }
++    },
+     'printer.objects.subscribe': {
+       params: {
+         objects: Record<string, string[] | null>
 diff --git a/src/util/get-klipper-type.ts b/src/util/get-klipper-type.ts
 index 159d0ec..0089919 100644
 --- a/src/util/get-klipper-type.ts
@@ -171,3 +798,45 @@ index 159d0ec..0089919 100644
      'heater_generic',
      'extruder'
    ]
+diff --git a/src/views/Tune.vue b/src/views/Tune.vue
+index 7edad45..73f1552 100644
+--- a/src/views/Tune.vue
++++ b/src/views/Tune.vue
+@@ -3,6 +3,9 @@
+     v-if="klippyReady"
+     :dense="$vuetify.breakpoint.smAndDown"
+   >
++    <v-col v-if="hasInventurePlatform" cols="12" md="8">
++      <inventure-platform-status />
++    </v-col>
+     <v-col
+       v-if="supportsBedMesh"
+       cols="12"
+@@ -43,6 +46,8 @@
+ import { Component, Mixins } from 'vue-property-decorator'
+ import StateMixin from '@/mixins/state'
+
++import InventurePlatformStatus from '@/components/common/InventurePlatformStatus.vue'
++import { platformStatus } from '@/util/inventure-platform'
+ import BedMeshCard from '@/components/widgets/bedmesh/BedMeshCard.vue'
+ import BedMeshControls from '@/components/widgets/bedmesh/BedMeshControls.vue'
+ import EndStopsCard from '@/components/widgets/endstops/EndStopsCard.vue'
+@@ -51,6 +56,7 @@ import BeaconCard from '@/components/widgets/beacon/BeaconCard.vue'
+
+ @Component({
+   components: {
++    InventurePlatformStatus,
+     BedMeshCard,
+     BedMeshControls,
+     EndStopsCard,
+@@ -59,6 +65,10 @@ import BeaconCard from '@/components/widgets/beacon/BeaconCard.vue'
+   }
+ })
+ export default class Tune extends Mixins(StateMixin) {
++  get hasInventurePlatform (): boolean {
++    return !!platformStatus(this.$typedState.printer.printer)
++  }
++
+   get supportsBedMesh (): boolean {
+     return this.$typedGetters['mesh/getSupportsBedMesh']
+   }

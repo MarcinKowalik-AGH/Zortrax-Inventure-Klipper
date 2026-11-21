@@ -64,7 +64,7 @@ def package(build, output, web):
     audit_source = root/pad['audit_report']
     audit_copy = output/audit_source.name
     shutil.copyfile(audit_source, audit_copy)
-    web_zip = output/'INVENTURE_FLUIDD_WEB_R31.zip'
+    web_zip = output/release['fluidd_dashboard']['web_package']
     shutil.copyfile(web, web_zip)
     with ZipFile(web_zip) as archive:
         assert archive.testzip() is None

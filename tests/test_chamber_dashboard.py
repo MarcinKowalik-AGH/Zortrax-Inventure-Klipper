@@ -102,10 +102,12 @@ class ChamberTests(unittest.TestCase):
 
 
 class OledTests(unittest.TestCase):
-    def test_acknowledged_image_pixels_offline_and_wake(self):
+    def test_host_image_before_ack_pixels_cache_sleep_and_wake(self):
         wire = bytes(range(256))*32
         owner = MagicMock()
-        owner.stream = SimpleNamespace(ready=True, previous=wire, latest=bytes(8192), display_mode='awake')
+        owner.stream = SimpleNamespace(ready=True, previous=bytes(8192))
+        owner._render_wire = wire
+        owner.sleep_phase = 'awake'
         owner._base_live.return_value = owner._wire_live.return_value = True
         preview = OledPreview(owner)
         def get():
@@ -121,12 +123,72 @@ class OledTests(unittest.TestCase):
                 raw += zlib.decompress(chunk)
             p += size+12
         self.assertEqual(raw,b''.join(b'\0'+wire[j:j+128] for j in range(0,8192,128)))
-        owner.stream.display_mode='off'
+        owner.sleep_phase='off'
         self.assertEqual(get(),'')
-        owner.stream.display_mode='awake'
+        owner.sleep_phase='awake'
         self.assertEqual(get(),first)
         owner._wire_live.return_value = False
-        self.assertEqual(preview.get_status(2),{'display':'offline','image_base64':''})
+        offline = preview.get_status(2)
+        self.assertEqual((offline['display'], offline['image_base64']), ('offline', ''))
+        self.assertEqual(offline['source'], 'host-rendered')
+        self.assertFalse(offline['online'])
+
+    def test_menu_events_coalesce_animation_and_fence_restarts(self):
+        preview = OledPreview(MagicMock())
+        pixels = bytes(8192)
+        preview.observe(1., 'menu', pixels)
+        preview.observe(1.01, 'menu', pixels)
+        self.assertEqual(preview.revision, 1)
+        changed = bytes([1]) * len(pixels)
+        preview.observe(1.02, 'menu', changed)
+        self.assertEqual(preview.revision, 1)
+        preview.observe(1.03, 'selection', changed)
+        self.assertEqual(preview.revision, 2)
+        preview.observe(1.2, 'selection', pixels)
+        self.assertEqual(preview.revision, 3)
+        epoch = preview.epoch
+        preview.reset()
+        self.assertNotEqual(preview.epoch, epoch)
+        self.assertEqual(preview.revision, 0)
+
+    def test_queries_share_png_throttle_and_navigation_remains_immediate(self):
+        owner = MagicMock()
+        owner.stream.ready = True
+        owner.sleep_phase = 'awake'
+        preview = OledPreview(owner)
+        owner._render_wire = bytes(8192)
+        preview.observe(1., ('menu', 0), owner._render_wire)
+        first = preview.get_status(1.)
+        owner._render_wire = bytes([1]) * 8192
+        preview.observe(1.02, ('menu', 0), owner._render_wire)
+        self.assertEqual(preview.get_status(1.02), first)
+        preview.observe(1.03, ('menu', 1), owner._render_wire)
+        self.assertNotEqual(preview.get_status(1.03)['image_base64'], first['image_base64'])
+        owner._render_wire = bytes([2]) * 8192
+        preview.observe(1.2, ('menu', 1), owner._render_wire)
+        self.assertEqual(preview.get_status(1.2)['sequence'], 3)
+
+    def test_pending_limit_and_cancellation_are_connection_scoped(self):
+        owner = MagicMock()
+        preview = OledPreview(owner)
+        request = MagicMock()
+        request.get_str.side_effect = lambda name, default=None: {'client':'one', 'epoch':preview.epoch}[name]
+        request.get_int.return_value = preview.revision
+        request.error.side_effect = ValueError
+        completion, client = MagicMock(), object()
+        completion.test.return_value = False
+        preview.waiters['one'] = (completion, client)
+        with self.assertRaises(ValueError):
+            preview.wait(request)
+        preview.cancel(request)
+        completion.complete.assert_not_called()
+        request.get_client_connection.return_value = client
+        preview.cancel(request)
+        completion.complete.assert_called_once_with(False)
+        preview.waiters = {str(i): (MagicMock(), client) for i in range(preview.max_waiters)}
+        with self.assertRaises(ValueError):
+            preview.wait(request)
+
 
 
 class WebInstallTests(unittest.TestCase):

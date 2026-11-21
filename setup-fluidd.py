@@ -129,6 +129,20 @@ def read_groups(base):
         return {}
 
 
+def install_english(base):
+    key = 'uiSettings.general.locale'
+    endpoint = '/server/database/item?namespace=fluidd&key=' + key
+    try:
+        if request(base, endpoint)['value'] == 'en':
+            return
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+    request(base, '/server/database/item', dict(namespace='fluidd', key=key, value='en'))
+    if request(base, endpoint)['value'] != 'en':
+        raise ValueError('Moonraker did not confirm the English Fluidd locale')
+
+
 def live_names(base, wait):
     deadline = time.monotonic() + wait
     while True:
@@ -183,12 +197,15 @@ def setup(base, directory, apply=False, wait=0, rollback=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--english', action='store_true', help='Set this Fluidd instance to English')
     parser.add_argument('--moonraker', default=BASE)
     parser.add_argument('--config-directory', type=Path, default=Path.home()/'printer_data/config')
     parser.add_argument('--wait', type=int, default=0)
     parser.add_argument('--rollback', type=Path)
     args = parser.parse_args()
     try:
+        if args.english and args.apply and args.rollback is None:
+            install_english(args.moonraker)
         print(json.dumps(setup(args.moonraker, args.config_directory, args.apply, args.wait, args.rollback), indent=2))
     except (OSError, ValueError, KeyError) as exc:
         raise SystemExit('Fluidd groups: ' + str(exc))

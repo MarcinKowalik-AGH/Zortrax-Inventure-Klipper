@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-THERMAL-OLED-R31",
+  "release": "RC8-CONTROL-R7-THERMAL-OLED-R32",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "1fd1e679c2a74e9fa648a6a7234a236ba36857584a3af7840878983b4178f740",
+  "module_sha256": "a2823d40af9159c52af7009924411d056c4971fc77a27ae563e9347035bcd8db",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -98,11 +98,12 @@
     "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b",
     "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f",
     "1af0e523fb713bf354f42209c6b9f044da796163e1114c493bdff5898a27b5fa",
-    "f10081a5e71048d1aea7b89e2ede8e034511426e4d2643c387d3280a7769aebd"
+    "f10081a5e71048d1aea7b89e2ede8e034511426e4d2643c387d3280a7769aebd",
+    "1fd1e679c2a74e9fa648a6a7234a236ba36857584a3af7840878983b4178f740"
   ],
-  "host_revision": "RC8-CONTROL-R7-FILAMENT-PROFILES-R29",
+  "host_revision": "RC8-CONTROL-R7-THERMAL-OLED-R32",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
-  "oled_module_sha256": "a77dab6ccd1bb0c6c562c45f302cad28994621581bef3f313549684bc0d52592",
+  "oled_module_sha256": "b4325547321f820d9878e1ffa7e8dc152facdb6bb3c0bf7e9bed55baf15e1c34",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
   "serialhdl_allowed_sha256": [
     "0d1990c4539c7d90b4664b5aea811dc4847457e683fc49e28ea7651bd98b0121",
@@ -126,7 +127,8 @@
     "2be3f4b39635f077f40b91ed541d93c25a26b9f9c7d851e0114c1090bbf95c35",
     "0671b3a81fb59e78dfbc72e8770f7da51183751f600a8c415fde062578856a51",
     "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
-    "7f8a15d5be99804c0f3e1dfbfc174e2be13a77d899cb42d785c5e702687472f3"
+    "7f8a15d5be99804c0f3e1dfbfc174e2be13a77d899cb42d785c5e702687472f3",
+    "a77dab6ccd1bb0c6c562c45f302cad28994621581bef3f313549684bc0d52592"
   ],
   "door_policy": {
     "mcu_release": "RC8-CONTROL-R7-T1-TIMING",
@@ -386,15 +388,16 @@
   "zortrax_menu_api": 1,
   "extra_modules": {
     "inventure_menu_core.py": {
-      "sha256": "19a7e6980fd30d76da7bf5f99ad9574237a974a45fcd2ae13672e8d20ceda0b1",
+      "sha256": "1a23e5bd894aba0b7f91d9e4f41805c7330731fe112a8b904c6d5aaff55bb47e",
       "allowed_existing_sha256": [
         "a89b1c123aaa6816fb49e2a0335f45b47c38ca43827a570daea7bf1e6c837d1f",
         "067567b1cffe3202b46015284dfe2b2fa76909b6cd46f9920101494b236befaf",
-        "f89dbcc9767715bfec59b936f747bc5139bc03401953775a8917c939a447aebd"
+        "f89dbcc9767715bfec59b936f747bc5139bc03401953775a8917c939a447aebd",
+        "19a7e6980fd30d76da7bf5f99ad9574237a974a45fcd2ae13672e8d20ceda0b1"
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "7a15d77f49f5f24bf68792afd67fcfd8f568d63f1077178015caaaf4ae6f3f9f",
+      "sha256": "5c9173ef3869b481c265db890bd4500d198fe4c40b0a532f11b5ab6d2d6e7289",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
@@ -404,16 +407,18 @@
         "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f",
         "c214a066aad4eacbf6fdeb1b63a14caa675e8b5fd67d0f3091fed7ae0c80515e",
         "d531808a26fb5d79cc3cdfa9749be4159bc75f45bdd7f9a043580157d1ca13e9",
-        "61a8615df91fb20a376a20591cfb11003c71f6770eeb16a869326e576aac75ab"
+        "61a8615df91fb20a376a20591cfb11003c71f6770eeb16a869326e576aac75ab",
+        "7a15d77f49f5f24bf68792afd67fcfd8f568d63f1077178015caaaf4ae6f3f9f"
       ]
     },
     "inventure_oem_menu.py": {
-      "sha256": "293d0fc229f6f2627bb05c2b9c533eb42fb8133923cafe302aa8c6449a598368",
+      "sha256": "103039d3cafd7fda0b1fb8dd2773840bae9252270a14b3eee0969161cec19d4a",
       "allowed_existing_sha256": [
         "5917dd4e9cf326501f8ab32e4b5bb60e47faf057743f7cb1dd2b05b34ce40795",
         "643304a8c3ca8d7a39e8fb717dc5f891cc3f8fb300c8353735f76ad5b1e72aad",
         "05ec16593c52a238e608087b019b423d5e7ecb06084eb48d2275bca1843d9d54",
-        "1fe298aca80c4a60acf279bd68ed62762fd32fea3f25ee493c40a5cd3dacb971"
+        "1fe298aca80c4a60acf279bd68ed62762fd32fea3f25ee493c40a5cd3dacb971",
+        "293d0fc229f6f2627bb05c2b9c533eb42fb8133923cafe302aa8c6449a598368"
       ]
     },
     "inventure_oled_uifast_transport.py": {
@@ -565,8 +570,10 @@
       "allowed_existing_sha256": []
     },
     "inventure_oled_preview.py": {
-      "sha256": "b6c7e0e9a8d797026115cdf1875432aeb9be57fbaf4f09739e408ede60639890",
-      "allowed_existing_sha256": []
+      "sha256": "6dd09ee10068a8313d6b41f8ea161ae2bcffa3fea6d34e9976ab4603a4c8db5d",
+      "allowed_existing_sha256": [
+        "b6c7e0e9a8d797026115cdf1875432aeb9be57fbaf4f09739e408ede60639890"
+      ]
     }
   },
   "axis_timer_motion": {

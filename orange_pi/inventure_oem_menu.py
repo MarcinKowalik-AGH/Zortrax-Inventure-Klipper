@@ -185,6 +185,11 @@ class OEMMenu:
 
     def items(self):
         nodes=MENU[self.page][2]
+        if self.operational and self.page == 'settings':
+            nodes = nodes + [Item('OLED brightness', action='oled_brightness'),
+                             Item('OLED dim time', action='oled_dim'),
+                             Item('OLED sleep time', action='oled_sleep'),
+                             Item('OLED sleep mode', action='oled_sleep_mode')]
         if self.bench:
             if not self.operational or self.page=='service_tests':
                 nodes=[_BENCH_BRANCHES.get(node.action,node) for node in nodes]

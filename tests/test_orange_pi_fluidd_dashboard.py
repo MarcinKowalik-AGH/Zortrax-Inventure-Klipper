@@ -26,6 +26,16 @@ spec.loader.exec_module(setup)
 
 
 class FluiddSettingsTests(unittest.TestCase):
+    def test_install_english_writes_only_locale_and_is_idempotent(self):
+        endpoint = '/server/database/item?namespace=fluidd&key=uiSettings.general.locale'
+        with patch.object(setup, 'request', side_effect=[{'value':'pl'}, {}, {'value':'en'}]) as request:
+            setup.install_english('printer')
+            self.assertEqual(request.call_args_list[0].args, ('printer', endpoint))
+            self.assertEqual(request.call_args_list[1].args[2], dict(namespace='fluidd', key='uiSettings.general.locale', value='en'))
+        with patch.object(setup, 'request', return_value={'value':'en'}) as request:
+            setup.install_english('printer')
+            request.assert_called_once_with('printer', endpoint)
+
     def test_names_only_from_loaded_gcode_macro_sections(self):
         result = setup.configured_names({'settings': {'extruder': {}, 'gcode_macro PID_STATUS': {}},
                                         'config': {'include *.cfg': {}, 'gcode_macro inventure_load': {}}})
@@ -111,6 +121,71 @@ class FluiddSettingsTests(unittest.TestCase):
 
 
 class DashboardRouteTests(unittest.TestCase):
+    def test_operator_menu_and_oled_settings_use_current_one_shot_view(self):
+        from test_orange_pi_zortrax_menu import MenuFixture, menu_module, service_module
+        from test_orange_pi_oled_fast import oled
+        _, panel = oled()
+        board, menu = MenuFixture().host()
+        board.printer.objects['inventure_oled'] = panel
+        panel.board.zortrax = menu
+        panel.oem_menu = menu_module.OEMMenu('en')
+        panel.oem_menu.operational = True
+        panel.oem_menu.page = 'root'
+        lines = []
+        board.gcode.register_output_handler(lines.append)
+        menu.open_operator_page()
+        token = menu.view.token
+        labels = menu.view.render()['labels']
+        self.assertIn('Material', labels)
+        menu.choose(token, index=labels.index('Settings'))
+        with self.assertRaises(ValueError):
+            menu.choose(token, index=0)
+        menu.choose(menu.view.token, index=menu.view.render()['labels'].index('OLED brightness'))
+        token = menu.view.token
+        self.assertIn('// action:prompt_text INVENTURE_OLED_EDITOR LEVEL 16 '+token, lines)
+        cmd = service_module.Command(menu, TOKEN=token, VALUE=7)
+        menu.save_display_value(cmd)
+        self.assertEqual(panel.stream.awake_level, 6)
+        self.assertEqual(menu.settings.value['oled_level'], 7)
+        with self.assertRaises(ValueError):
+            menu.save_display_value(cmd)
+        self.assertEqual(board.device.packets, [])
+
+    def test_minute_timers_work_when_busy_and_preserve_legacy_seconds(self):
+        from test_orange_pi_zortrax_menu import MenuFixture, service_module
+        from test_orange_pi_oled_fast import oled
+        _, panel = oled()
+        _, menu = MenuFixture().host()
+        panel.board.zortrax = menu
+        def set_values(**values):
+            panel.cmd_display_control(service_module.Command(menu, **values))
+        set_values(DIM=15, SLEEP=5)
+        self.assertEqual(panel.dim_timeout, 300)
+        set_values(SLEEP=20)
+        self.assertEqual(panel.dim_timeout, 900)
+        panel.last_activity = 0.
+        panel._display_working = MagicMock(return_value=True)
+        panel._service_display(901.)
+        self.assertEqual(panel.sleep_phase, 'dim')
+        panel._service_display(1190.)
+        self.assertEqual((panel.sleep_phase, panel.notice_level), ('notice', 4))
+        panel._render(1190.)
+        bright = panel._render_wire
+        panel._service_display(1199.)
+        self.assertEqual((panel.sleep_phase, panel.notice_level), ('notice', 1))
+        panel._render(1199.)
+        self.assertLess(sum(panel._render_wire), sum(bright))
+        panel._service_display(1201.)
+        self.assertEqual(panel.sleep_phase, 'off')
+        panel._display_activity(1202.)
+        self.assertTrue(panel.wake_wait)
+        self.assertEqual(panel.sleep_phase, 'awake')
+        with self.assertRaises(ValueError):
+            set_values(DIM=2, NOTICE=6)
+        set_values(IDLE=123, NOTICE=6)
+        self.assertFalse(panel.minute_timers)
+        self.assertEqual((panel.sleep_timeout, panel.sleep_notice), (123, 6))
+
     def test_fluidd_and_oled_consume_the_same_prompt_and_close_it_once(self):
         from test_orange_pi_zortrax_menu import MenuFixture
         board, menu = MenuFixture().host()

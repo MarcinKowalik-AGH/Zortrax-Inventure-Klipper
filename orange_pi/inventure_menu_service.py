@@ -185,7 +185,7 @@ class ZortraxMenuService:
             return
         view = self.view
         if (self.active is not None or view is None or view.used or
-                self.reactor.monotonic() >= view.deadline or view.kind not in ('confirm', 'choice', 'fan')):
+                self.reactor.monotonic() >= view.deadline or view.kind not in ('confirm', 'choice', 'fan', 'info', 'files', 'preview')):
             self._close_menu_dialog()
             self.menu_dialog_requested = False
             return
@@ -194,8 +194,15 @@ class ZortraxMenuService:
         self._close_menu_dialog()
         self.menu_dialog_token = view.token
         emit = self.gcode.respond_raw
-        emit('// action:prompt_begin '+view.title)
+        # File names and device labels are text fields in Fluidd's prompt protocol.
+        def prompt_label(value):
+            return ' '.join(value.splitlines()).replace('|', '¦')
+        emit('// action:prompt_begin '+prompt_label(view.title))
+        if 'oled_setting' in view.data:
+            emit('// action:prompt_text INVENTURE_OLED_EDITOR %s %d %s' %
+                 (view.data['oled_setting'], view.data['value'], view.token))
         for index, (label, action) in enumerate(view.options):
+            label = prompt_label(label)
             if action is None:
                 emit('// action:prompt_text '+label)
             else:
@@ -356,6 +363,56 @@ class ZortraxMenuService:
         okay='factory_session' in self.board.commands
         return dict(available=okay,backend='R7_service',reason=None if okay else 'Requires MCU RC8-CONTROL-R7-FACTORY')
 
+    def open_operator_page(self):
+        oled = self._obj('inventure_oled')
+        navigation = oled.oem_menu
+        page = navigation.view()
+        options = [(node.label, ('operator_item', {'index': i}))
+                   for i, node in enumerate(navigation.items())]
+        view = self._set_view('choice', page['title'], options)
+        view.selected = navigation.selected
+        self.menu_dialog_requested = True
+        self._sync_menu_dialog()
+        return view
+
+    def _choose_operator_item(self, index):
+        oled = self._obj('inventure_oled')
+        navigation = oled.oem_menu
+        navigation.selected = index
+        selected = navigation.select()
+        if selected in ('submenu', 'back'):
+            return self.open_operator_page()
+        self.view = None
+        if selected == 'exit_to_status':
+            oled.oem_display_mode = 'status'
+            self._wake()
+            return
+        if selected in ('inert', 'language'):
+            navigation.notice = None
+            return self.open(navigation.last_action)
+        return self._info('Menu', 'Use the physical panel for this entry')
+
+    def _display_editor(self, action, draft=None):
+        oled = self._obj('inventure_oled')
+        values = self.settings.value
+        if action == 'oled_sleep_mode':
+            current = bool(values.get('sleep_enabled', oled.configured_sleep))
+            return self._set_view('choice', 'OLED sleep mode', [
+                ('Back', ('close', {})), ('Currently ' + ('on' if current else 'off'), None),
+                ('Enable', ('display_save', {'ENABLED': 1})),
+                ('Disable', ('display_save', {'ENABLED': 0}))])
+        settings = {'oled_brightness': ('OLED brightness', 'LEVEL', 'oled_level', 16, 16, ''),
+                    'oled_dim': ('OLED dim time', 'DIM', 'dim_min', 5, 60, ' min'),
+                    'oled_sleep': ('OLED sleep time', 'SLEEP', 'sleep_min', 10, 60, ' min')}
+        title, option, key, default, high, unit = settings[action]
+        value = values.get(key, default) if draft is None else draft
+        return self._set_view('choice', title, [('Back', ('close', {})),
+            ('%d%s' % (value, unit), None),
+            ('Decrease', ('display_edit', {'action': action, 'draft': max(1, value-1)})),
+            ('Increase', ('display_edit', {'action': action, 'draft': min(high, value+1)})),
+            ('Save', ('display_save', {option: value}))],
+            data={'oled_setting': option, 'value': value, 'max': high})
+
     def open(self,action,**params):
         if self.stopped:raise MenuError('Menu lifecycle ended; reconnect first')
         if not isinstance(action,str) or not action:raise MenuError('Specify a stable menu ACTION identifier')
@@ -365,6 +422,12 @@ class ZortraxMenuService:
             return self._info('Fan test active','End the fan-test session before starting another menu operation')
         if action in ('go_status','back','cancel_no','question_no'):self.view=None;return
         if action=='question_yes':return self._info('Confirmation','No bound question is active; open the intended operation')
+        if action in ('oled_brightness', 'oled_dim', 'oled_sleep', 'oled_sleep_mode'):
+            return self._display_editor(action)
+        if action == 'oled_timers':
+            return self._set_view('choice', 'OLED timers', [('Back', ('close', {})),
+                ('Dim time', ('request', {'action': 'oled_dim'})),
+                ('Sleep time', ('request', {'action': 'oled_sleep'}))])
         if action=='job_info':return self._job_view()
         if action=='filament_jam':return self._jam_menu()
         if action in READ_ACTIONS:return self._read(action)
@@ -826,6 +889,14 @@ class ZortraxMenuService:
         self._info('Operation cancelled','Current owner stopped; no recovery movement requested')
 
     def _dispatch_choice(self,verb,args):
+        if verb == 'operator_item':
+            return self._choose_operator_item(args['index'])
+        if verb == 'display_edit':
+            return self._display_editor(**args)
+        if verb == 'display_save':
+            oled = self._obj('inventure_oled')
+            self._call(oled, 'cmd_display_control', **args)
+            return self._info('OLED settings', 'Saved')
         if verb=='close':
             if self.active is not None:self.last_native_key=None;return self._running_view()
             if self.fan_session is not None:return self._fan_page(self.fan_session['channel'])
@@ -967,6 +1038,15 @@ class ZortraxMenuService:
         else:raise MenuError('Unknown procedure control')
         self.last_native_key=None;return self._running_view()
 
+    def save_display_value(self, gcmd):
+        view = self.view
+        if self.executing or view is None or 'oled_setting' not in view.data:
+            raise MenuError('Open the OLED setting again')
+        value = gcmd.get_int('VALUE', minval=1, maxval=view.data['max'])
+        view.claim(gcmd.get('TOKEN', ''), self.reactor.monotonic(), self._binding())
+        self._close_menu_dialog()
+        self._dispatch_choice('display_save', {view.data['oled_setting']: value})
+
     def choose(self,token,index=None,confirm=False):
         if self.executing:raise MenuError('A menu command is already executing')
         view=self.view
@@ -1096,6 +1176,7 @@ class ZortraxMenuService:
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
                 if show and gcmd.get('ACTION') not in {
+                        'oled_brightness','oled_dim','oled_sleep','oled_sleep_mode','oled_timers',
                         'fan_test','platform_up','platform_down','select_t0','select_t1',
                         'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
                     raise MenuError('This procedure supplies its own operator interface')
@@ -1105,6 +1186,7 @@ class ZortraxMenuService:
                 if not show:
                     self._close_menu_dialog()
                 self.menu_dialog_requested = bool(show)
+            elif op=='OLED_SAVE':self.save_display_value(gcmd)
             elif op=='CHOOSE':self.choose(gcmd.get('TOKEN',''),gcmd.get_int('INDEX'))
             elif op=='CONFIRM':self.choose(gcmd.get('TOKEN',''),confirm=True)
             elif op=='FAN_END':
