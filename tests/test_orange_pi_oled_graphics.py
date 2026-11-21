@@ -31,8 +31,8 @@ class Graphics(unittest.TestCase):
     def test_all_activity_frames_preserve_the_source_nibbles(self):
         atlas = native.get_oem_assets()
         for name, record in graphics._activity_catalog().items():
-            self.assertEqual((record['width'], record['height'], record['frame_ms']), (50, 50, 500))
-            self.assertEqual(len(record['frames']), 4)
+            self.assertEqual((record['width'], record['height']), (50, 50))
+            self.assertEqual(len(record['frames']), {'progress': 9, 'wait': 4}.get(name, 1))
             for index, spec in enumerate(record['frames']):
                 packed = zlib.decompress(base64.b64decode(spec['zlib_b64']))
                 # Independent oracle blits each source nibble using the original column-major renderer.
@@ -46,7 +46,12 @@ class Graphics(unittest.TestCase):
                         frame.pixel(203 + x, 13 + y, value & 15 if x % 2 else value >> 4)
                 view = dict(labels=['Back'], selected=0, icon='activity:' + name)
                 self.assertEqual(graphics.menu_wire(view, index=index), frame.wire_bytes())
-        self.assertEqual(graphics.activity_index({'animated': True}, 2.52), 1)
+        self.assertEqual(graphics.activity_index({'animated': True, 'icon': 'activity:heat_nozzle'}, 2.52), 5)
+        self.assertEqual(graphics.activity_index({'animated': True, 'icon': 'activity:cooling'}, 2.52), 1)
+        self.assertEqual(graphics.activity_index({'animated': True, 'icon': 'activity:settings'}, 2.52), 0)
+        for name in ('material', 'maintenance', 'settings', 'information', 'filecheck'):
+            p = graphics._unpack(graphics._activity_catalog()[name]['frames'][0], name)
+            self.assertEqual(bytes(n for b in p for n in (b >> 4, b & 15)), atlas.icons[name])
         self.assertEqual(graphics.activity_index({}, 2.52), 0)
 
     def test_status_footer_preserves_top_rows_and_retains_long_messages(self):

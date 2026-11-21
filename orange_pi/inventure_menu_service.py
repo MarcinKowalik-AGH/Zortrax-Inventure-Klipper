@@ -10,7 +10,7 @@ import textwrap
 from pathlib import Path
 
 from .inventure_oem_menu import action_icon
-from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, MODEL_MATERIALS,
+from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, DISPLAY_ACTIONS, MODEL_MATERIALS,
     NATIVE_ACTIONS, READ_ACTIONS, SERVICE_ACTIONS, SUPPORT_MATERIALS,
     MenuError, SettingsStore, View, source_identity)
 
@@ -306,8 +306,11 @@ class ZortraxMenuService:
             if hasattr(oled,'_display_activity'):oled._display_activity(self.reactor.monotonic())
             if hasattr(oled,'_wake'):oled._wake()
     def _info(self,title,reason,**data):
+        result = data.get('result')
+        failed = isinstance(result, dict) and (result.get('error') or result.get('phase') == 'failed')
+        icon = 'activity:error' if failed or title == 'Operation unavailable' else None
         lines=[str(reason)[i:i+24] for i in range(0,len(str(reason)),24)] or ['']
-        return self._set_view('info',title,[('Back',('close',{}))]+[(x,None) for x in lines],data=dict(data,reason=str(reason)))
+        return self._set_view('info',title,[('Back',('close',{}))]+[(x,None) for x in lines],data=dict(data,reason=str(reason)),icon=icon)
     def _confirm(self,action,params=None,title=None):
         reviews=[]
         if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
@@ -340,6 +343,12 @@ class ZortraxMenuService:
     def capability(self,action):
         if action not in ALL_ACTIONS and not action.startswith(('fan_','platform_','spool_')):
             return dict(available=False,backend=None,reason='Unknown menu action')
+        if action in DISPLAY_ACTIONS:
+            available = self._obj('inventure_oled') is not None
+            if action == 'oled_sleep_light':
+                available = available and 'oled_sleep_light' in getattr(self.board,'commands',{})
+            return dict(available=available, backend='display' if available else None,
+                        reason=None if available else 'Inventure display capability unavailable')
         if action in READ_ACTIONS or action in CHOICE_ACTIONS or action.startswith(('sort_','language_')) or action in ('back','go_status','cancel_no','question_no'):
             return dict(available=True,backend='host_view',reason=None)
         if action=='alignment' and self._xy_available():
@@ -403,6 +412,10 @@ class ZortraxMenuService:
     def _display_editor(self, action, draft=None):
         oled = self._obj('inventure_oled')
         values = self.settings.value
+        if action == 'oled_sleep_light':
+            return self._set_view('choice', 'Sleep lighting', [('Back', ('close', {}))] +
+                [(label, ('display_save', {'SLEEP_LIGHT': value})) for value, label in
+                 (('manual','Keep current light'),('dynamic','Dynamic (magenta)'),('white','White'),('off','Off'))])
         if action == 'oled_sleep_mode':
             current = bool(values.get('sleep_enabled', oled.configured_sleep))
             return self._set_view('choice', 'OLED sleep mode', [
@@ -411,14 +424,17 @@ class ZortraxMenuService:
                 ('Disable', ('display_save', {'ENABLED': 0}))])
         dim, sleep = oled.timer_preferences(values)
         settings = {'oled_brightness': ('OLED brightness', 'LEVEL', 'oled_level', oled.configured_brightness, 16, ''),
+                    'oled_idle': ('Idle timeout', 'IDLE', 'idle_s', oled.configured_sleep or 300, 86400, ' s'),
+                    'oled_notice': ('Wake notice', 'NOTICE', 'notice_s', oled.configured_notice, 3600, ' s'),
                     'oled_dim': ('OLED dim time', 'DIM', 'dim_min', dim, 60, ' min'),
                     'oled_sleep': ('OLED sleep time', 'SLEEP', 'sleep_min', sleep, 60, ' min')}
         title, option, key, default, high, unit = settings[action]
-        value = values.get(key, default) if draft is None else draft
+        value = int(values.get(key, default) if draft is None else draft)
+        step = 10 if action == 'oled_idle' else 1
         return self._set_view('choice', title, [('Back', ('close', {})),
             ('%d%s' % (value, unit), None),
-            ('Decrease', ('display_edit', {'action': action, 'draft': max(1, value-1)})),
-            ('Increase', ('display_edit', {'action': action, 'draft': min(high, value+1)})),
+            ('Decrease', ('display_edit', {'action': action, 'draft': max(1, value-step)})),
+            ('Increase', ('display_edit', {'action': action, 'draft': min(high, value+step)})),
             ('Save', ('display_save', {option: value}))],
             data={'oled_setting': option, 'value': value, 'max': high}, icon='activity:oled_brightness')
 
@@ -431,12 +447,14 @@ class ZortraxMenuService:
             return self._info('Fan test active','End the fan-test session before starting another menu operation')
         if action in ('go_status','back','cancel_no','question_no'):self.view=None;return
         if action=='question_yes':return self._info('Confirmation','No bound question is active; open the intended operation')
-        if action in ('oled_brightness', 'oled_dim', 'oled_sleep', 'oled_sleep_mode'):
+        if action in DISPLAY_ACTIONS and action != 'oled_timers':
             return self._display_editor(action)
         if action == 'oled_timers':
             return self._set_view('choice', 'OLED timers', [('Back', ('close', {})),
-                ('Dim time', ('request', {'action': 'oled_dim'})),
-                ('Sleep time', ('request', {'action': 'oled_sleep'}))])
+                ('Idle timeout (Inventure)', ('request', {'action': 'oled_idle'})),
+                ('Wake notice (Inventure)', ('request', {'action': 'oled_notice'})),
+                ('Timed dim (minutes)', ('request', {'action': 'oled_dim'})),
+                ('Timed off (minutes)', ('request', {'action': 'oled_sleep'}))])
         if action=='job_info':return self._job_view()
         if action=='filament_jam':return self._jam_menu()
         if action in READ_ACTIONS:return self._read(action)
@@ -1199,8 +1217,7 @@ class ZortraxMenuService:
                 query=getattr(gcmd,'get_command_parameters',None)
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
-                if show and gcmd.get('ACTION') not in {
-                        'oled_brightness','oled_dim','oled_sleep','oled_sleep_mode','oled_timers',
+                if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | {
                         'fan_test','platform_up','platform_down','select_t0','select_t1',
                         'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
                     raise MenuError('This procedure supplies its own operator interface')

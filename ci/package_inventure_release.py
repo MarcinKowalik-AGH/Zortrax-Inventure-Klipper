@@ -22,6 +22,8 @@ def package(build, output, web):
     assert report['mcu_release'] == pad['mcu_release']
     assert report['nozzle_pad_sweep_timeout_abi'] == pad['sweep_timeout_abi'] == 1
     assert dictionary['config']['INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI'] == 1
+    assert report['local_oled_diagnostic_abi'] == dictionary['config']['INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI'] == 1
+    assert 'inventure_local_oled_pref level=%c' in dictionary['commands']
     assert report['heartbeat_timeout_s'] == 5
     assert report['factory_guard_diagnostic_abi'] == 1
     assert dictionary['config']['INVENTURE_HEARTBEAT_TIMEOUT_MS'] == 5000
@@ -40,7 +42,7 @@ def package(build, output, web):
     mcu_zip = output/pad['package_filename']
     names = ('INVENTUR.IVB', 'THERMAL_TEST_VERIFY.json', 'klipper.dict')
     files = {name: (build/name).read_bytes() for name in names}
-    files['README_PL.md'] = (root/pad['release_notes']).read_bytes()
+    files['README.md'] = (root/pad['release_notes']).read_bytes()
     files['SHA256SUMS'] = ''.join(
         f'{sha256(data).hexdigest()}  {name}\n' for name, data in files.items()).encode('ascii')
     with ZipFile(mcu_zip, 'w') as archive:

@@ -69,7 +69,39 @@ class ConfigLayoutTests(unittest.TestCase):
         self.assertEqual(self.plan(), {})
         opts = layout.active_klipper(self.parser, self.main, {})[0]['inventure_oled']
         self.assertEqual(opts.getint('sleep_timeout'), 123)
-        self.assertEqual(opts.getint('sleep_minutes'), 15)
+        self.assertEqual(opts.get('timer_policy'), 'inventure')
+
+    def test_r34_split_tree_migrates_once_with_custom_pid_and_native_sleep(self):
+        folder = self.directory / 'inventure'
+        folder.mkdir()
+        display = folder / 'display.cfg'
+        display.write_text(layout.MANAGED + '[inventure_oled]\nspi_speed: 2000000\n'
+                           'dim_minutes: 5\nsleep_minutes: 15\nbrightness: 16\ntimer_policy: minutes\n')
+        (folder/'heaters.cfg').write_text(layout.MANAGED + '[extruder]\nheater_pin: inventure_r5:HEATER_T0\nsensor_type: Inventure R5 ADC\nsensor_channel: 0\n')
+        self.main.write_text('[inventure_mcu]\n[include inventure/display.cfg]\n[extruder]\n'
+                             'control: pid\npid_Kp: 29.37  # tuned on this machine\npid_Ki: 1.2\npid_Kd: 123\n'
+                             '[include inventure/heaters.cfg]\n')
+        for path, (_, data) in self.plan().items():
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(data)
+        self.assertEqual(self.plan(), {})
+        opts = layout.active_klipper(self.parser, self.main, {})[0]
+        self.assertEqual(opts.get('inventure_oled', 'timer_policy'), 'inventure')
+        self.assertEqual(opts.getint('inventure_oled', 'spi_speed'), 2000000)
+        self.assertEqual(opts.getfloat('inventure_mcu', 't0_pid_kp'), 29.37)
+        self.assertIn('# tuned on this machine', (folder/'heater_control.cfg').read_text())
+        self.assertFalse(opts.has_option('extruder', 'pid_kp'))
+        display.write_text(display.read_text().replace('timer_policy: inventure','timer_policy: minutes'))
+        self.assertEqual(self.plan(), {})
+
+    def test_raw_table_matches_the_r0323_flash_bytes_at_080296b6(self):
+        import hashlib
+        import struct
+        curve = (layout.ROOT/'config/inventure_temperature_sensors.cfg').read_text()
+        rows = [struct.pack('<Hh',int(a),int(t)) for a,t in re.findall(r'^    (\d+), (-?\d+)$', curve, re.M)]
+        self.assertEqual(len(rows), 205)
+        self.assertEqual(hashlib.sha256(b''.join(rows)).hexdigest(),
+                         'dbe1775fa947a9b697230e4045b9c8012d1778c3abef8f875f06ed5a1384dc9e')
 
     def test_conflicting_custom_map_and_external_symlink_do_not_write(self):
         self.main.write_text('[inventure_mcu]\n')
@@ -147,7 +179,8 @@ class DisplayParityTests(unittest.TestCase):
         _, menu = MenuFixture().host()
         panel.board.zortrax = menu
         panel._apply_display_settings()
-        self.assertEqual((panel.dim_timeout, panel.sleep_timeout, panel.sleep_notice), (300, 900, 10))
+        self.assertFalse(panel.minute_timers)
+        self.assertEqual((panel.sleep_timeout, panel.sleep_notice), (300, 10))
         menu.settings.set(dim_min=7, timer_policy='minutes')
         panel._apply_display_settings()
         self.assertEqual((panel.dim_timeout, panel.sleep_timeout), (420, 600))
@@ -159,9 +192,52 @@ class DisplayParityTests(unittest.TestCase):
         panel._apply_display_settings()
         self.assertEqual((panel.dim_timeout, panel.sleep_timeout, panel.stream.awake_level), (480, 960, 8))
 
+    def test_mcu_preference_is_retried_if_not_acknowledged_and_stops_after_readback(self):
+        from types import SimpleNamespace
+        import importlib
+        board_cls = importlib.import_module(service_module.__package__ + '.inventure_mcu').InventureMCU
+        board = board_cls.__new__(board_cls)
+        clock = [1.]
+        command = Mock()
+        board.connected = True
+        board.reactor = SimpleNamespace(monotonic=lambda: clock[0])
+        board.commands = {'oled_preference': command}
+        board.local_brightness = None
+        board.local_brightness_retry = 0.
+        board.local_oled_diag = {}
+        board.set_local_oled_brightness(7)
+        ack = dict(state=10, boot_revision=17, baud=750000, reason=0, last_incident=2,
+                   guard_input=0, board_fault=0, display_fault=0, brightness=16)
+        board._deliver_local_oled(ack, 1.)
+        self.assertEqual(command.send.call_count, 1)
+        clock[0] += 2.
+        board._deliver_local_oled(ack, 3.)
+        self.assertEqual(command.send.call_count, 2)
+        clock[0] += 2.
+        board._deliver_local_oled(dict(ack,brightness=7), 5.)
+        self.assertEqual(command.send.call_count, 2)
+        self.assertEqual(board.local_oled_diag['last_incident_name'], 'host_display_timeout')
+        self.assertEqual(board.local_oled_state['baud'], 750000)
+
+    def test_sleep_lighting_uses_the_inventure_controller_only_on_transition(self):
+        _, panel = oled()
+        cmd = Mock()
+        panel.board.commands = {'oled_sleep_light': cmd}
+        panel._display_phase('dim')
+        cmd.send.assert_not_called()
+        panel.sleep_light = 'dynamic'
+        panel._display_phase('notice')
+        panel._display_phase('off')
+        panel._display_phase('awake')
+        self.assertEqual([c.args[0] for c in cmd.send.call_args_list], [[1],[0]])
+        panel.sleep_light = 'manual'
+        panel._display_phase('notice')
+        self.assertEqual(cmd.send.call_count, 2)
+
     def test_dark_ok_wakes_once_and_its_release_cannot_select(self):
         _, panel = oled()
         panel._select = Mock()
+        panel.configured_policy = 'minutes'
         panel._apply_display_settings()
         panel.last_activity = 0.
         panel._service_display(900.)
@@ -181,6 +257,7 @@ class DisplayParityTests(unittest.TestCase):
         _, panel = oled()
         panel._apply_display_settings()
         panel.last_activity = 0.
+        panel._active_work = lambda now: True
         panel._service_display(500.)
         panel._select = Mock()
         self.assertEqual(panel.sleep_phase, 'dim')

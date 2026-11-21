@@ -47,6 +47,10 @@ class McuLocalServices(unittest.TestCase):
             allowed={entry['sha256'],entry['new_sha256'],*entry.get('allowed_existing',[])}
             self.assertLessEqual(set(accepted)|{current},allowed,name)
 
+    def test_r14_display_faults_handover_brightness_and_native_glyphs(self):
+        self.run_c('test_rc8_panel', '-DTEST_LOCAL_UI_R14',
+                   '-I', ROOT/'service_mcu/control_r6/SOURCE_MCU')
+
     def test_matching_full_host_installs_and_rolls_back_rc72_sources(self):
         root=Path(self.tmp.name)/'host-upgrade'
         with zipfile.ZipFile(self.kit/'baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip') as z:

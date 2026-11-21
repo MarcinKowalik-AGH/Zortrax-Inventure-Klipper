@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-CONFIG-R34'
+HOST_REVISION = 'RC8-CONTROL-R7-NATIVE-UI-R35'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -191,11 +191,37 @@ HEAT_TEST_NAMES = ('T0', 'T1', 'PC9', 'PC8')
 HEAT_TEST_PINS = ('PA0', 'PE5', 'PC9', 'PC8')
 
 
+# Native heater settings are supplied before Klipper constructs its controller.
+# An explicit heater option (including a PID saved by Klipper) always wins.
+HEATER_ZONES = {'inventure_r5:HEATER_T0': 't0', 'inventure_r5:HEATER_T1': 't1',
+                'inventure_r5:HEATER_PC9': 'chamber_l', 'inventure_r5:HEATER_PC8': 'chamber_r'}
+HEATER_TUNING = ('control', 'pid_kp', 'pid_ki', 'pid_kd', 'max_delta')
+OLED_DIAG = 'inventure_local_oled_diag state=%c boot_revision=%c baud=%u reason=%c last_incident=%c board_fault=%c guard_input=%c display_fault=%c brightness=%c'
+OLED_REASONS = ('boot', 'released', 'host_display_timeout', 'shutdown', 'spi_dma_transfer', 'local_panel_spi')
+
+
+def apply_heater_defaults(config, defaults):
+    if not defaults:
+        return
+    pin = config.get('heater_pin', None, note_valid=False)
+    profile = defaults.get(pin)
+    if not profile:
+        return
+    name = config.get_name()
+    control = config.get('control', profile['control'])
+    for key, value in profile.items():
+        if key != 'control' and control != profile['control']:
+            continue
+        if not config.fileconfig.has_option(name, key):
+            config.fileconfig.set(name, key, value)
+
+
 class R5SharedSensor:
     """Use the board's existing eight ADC readers; never allocate a second ADC."""
     def __init__(self,config,board):
         self.printer=config.get_printer();self.board=board
         self.channel=config.getint('sensor_channel',minval=0,maxval=7)
+        apply_heater_defaults(config, getattr(board, 'heater_profiles', {}))
         if config.get('control', None) == 'pid':
             # A tune replaces watermark control in SAVE_CONFIG. Klipper keeps
             # its old hysteresis option, which PID itself does not consume.
@@ -304,6 +330,9 @@ class InventureMCU:
         self.p4_abi = False
         self.mcu_release = 'unknown'
         self.local_oled_state = {}
+        self.local_oled_diag = {}
+        self.local_brightness = None
+        self.local_brightness_retry = 0.
         self.local_cooling_state = {}
         self.local_cooling_received = None
         self.local_oled_received = None
@@ -356,6 +385,17 @@ class InventureMCU:
                 raise config.error('Inventure thermistor thresholds differ from the r0323 MCU map')
             self.lut = table
             self.temperature_map_source = 'printer_config'
+        self.heater_profiles = {}
+        for pin, zone in HEATER_ZONES.items():
+            profile = {key: config.get(zone + '_' + key, None) for key in HEATER_TUNING}
+            profile = {key: value for key, value in profile.items() if value is not None}
+            if profile:
+                control = profile.get('control')
+                allowed = ({'control','pid_kp','pid_ki','pid_kd'} if control == 'pid'
+                           else {'control','max_delta'} if control == 'watermark' else set())
+                if not set(profile) <= allowed:
+                    raise config.error('Invalid Inventure heater profile for ' + zone)
+                self.heater_profiles[pin] = profile
         self.thresholds = [row[0] for row in self.lut]
         if self.diag_adc:
             pins = self.printer.lookup_object('pins')
@@ -628,6 +668,13 @@ class InventureMCU:
             if not self.mcu.check_valid_response(fmt):
                 raise self.printer.config_error('RC6 local OLED response ABI mismatch')
             self.mcu.register_serial_response(self._local_oled_response,fmt)
+        if int(self.mcu.get_constants().get('INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI', 0)) == 1:
+            if not self.mcu.check_valid_response(OLED_DIAG):
+                raise self.printer.config_error('Inventure local OLED diagnostic ABI mismatch')
+            self.commands['local_oled_query'] = self.mcu.lookup_command('inventure_local_oled_diag_query')
+            self.commands['oled_sleep_light'] = self.mcu.lookup_command('inventure_oled_sleep_light mode=%c')
+            self.commands['oled_preference'] = self.mcu.lookup_command('inventure_local_oled_pref level=%c')
+            self.mcu.register_serial_response(self._local_oled_response, OLED_DIAG)
         self.p4_abi = (int(self.mcu.get_constants().get('INVENTURE_P4_BOOT_JOURNAL_ABI',0))==1)
         if self.p4_abi:
             self.commands['p4_baud']=self.mcu.lookup_command('inventure_p4_baud_query')
@@ -688,6 +735,9 @@ class InventureMCU:
         from .inventure_fluidd import register_legacy_commands
         register_legacy_commands(self.printer, self.gcode)
         self.connected = True
+        self.local_brightness_retry = 0.
+        if self.local_brightness is not None:
+            self.set_local_oled_brightness(self.local_brightness)
         if self.p4_abi:
             self.commands['p4_baud'].send([])
         if 'local_oled_query' in self.commands:
@@ -723,13 +773,34 @@ class InventureMCU:
                 self.commands['local_oled_query'].send([])
             self.next_local_query=eventtime+2.0
         return eventtime + 0.25
+    def _record_oled_diag(self, sample):
+        self.local_oled_diag = {k:v for k,v in sample.items() if not k.startswith('#')}
+        for key in ('reason', 'last_incident'):
+            code = sample[key]
+            label = OLED_REASONS[code] if code < len(OLED_REASONS) else 'unknown'
+            self.local_oled_diag[key + '_name'] = 'none' if key == 'last_incident' and code == 0 else label
+
+    def set_local_oled_brightness(self, level):
+        if self.local_brightness != level:
+            self.local_brightness_retry = 0.
+        self.local_brightness = level
+        now = self.reactor.monotonic()
+        if (self.connected and 'oled_preference' in self.commands and now >= self.local_brightness_retry
+                and self.local_oled_diag.get('brightness') != level):
+            self.commands['oled_preference'].send([level])
+            self.local_brightness_retry = now + 2.
+
     def _local_oled_response(self,params):
         received = self.reactor.monotonic()
         sample = {k:v for k,v in params.items() if not k.startswith('#')}
         self.reactor.register_async_callback(
             lambda now:self._deliver_local_oled(sample,received))
     def _deliver_local_oled(self,sample,received):
-        self.local_oled_state=dict(sample)
+        if 'last_incident' in sample:
+            self._record_oled_diag(sample)
+            if self.local_brightness is not None:
+                self.set_local_oled_brightness(self.local_brightness)
+        self.local_oled_state={key:sample[key] for key in ('state','boot_revision','baud') if key in sample}
         self.local_oled_received=received
 
     def _cooling_response(self,params):
@@ -1620,6 +1691,7 @@ class InventureMCU:
                     uart_buffer_stats=dict(self.uart_buffer_stats),
                     p4_boot=dict(self.p4_boot), p4_journal_abi=self.p4_abi,
                     mcu_release=self.mcu_release, local_oled=dict(self.local_oled_state),
+                    local_oled_diag=dict(getattr(self, 'local_oled_diag', {})),
                     local_cooling=dict(self.local_cooling_state),
                     local_oled_age=(None if self.local_oled_received is None else
                                     max(0.,eventtime-self.local_oled_received)),
@@ -1787,6 +1859,7 @@ class InventureMCU:
             'boot_identification':('P4-PERSIST marker recognized' if revision in (1,2,3,15,17)
                                    else 'unrecognized'),
             'local_oled':dict(self.local_oled_state),
+            'local_oled_diag':dict(getattr(self, 'local_oled_diag', {})),
             'connected':self.connected,
         },sort_keys=True))
     def setup_pin(self,pin_type,pin_params):

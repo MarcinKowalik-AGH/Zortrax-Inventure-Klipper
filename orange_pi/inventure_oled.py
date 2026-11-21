@@ -40,10 +40,12 @@ class InventureOLED:
         self.fast=False;self._fast_tx={}
         self._fast_state={};self._next_fast_query=0.
         self.oem_ui_enabled=config.getboolean('oem_menu',False)
-        self.menu_profile=config.get('menu_profile','m300').strip().lower()
-        if self.menu_profile not in ('m300','zortrax'):
-            raise config.error('menu_profile must be m300 or zortrax')
-        root_page='launcher' if self.menu_profile=='m300' else 'root'
+        self.menu_profile=config.get('menu_profile','inventure').strip().lower()
+        if self.menu_profile == 'm300':  # Previously published name of the Klipper launcher.
+            self.menu_profile = 'inventure'
+        if self.menu_profile not in ('inventure','zortrax'):
+            raise config.error('menu_profile must be inventure or zortrax')
+        root_page='launcher' if self.menu_profile=='inventure' else 'root'
         self.oem_menu=OEMMenu(config.get('oem_language','en'),root_page=root_page,bench=True,
             operational=True) if self.oem_ui_enabled else None
         self.native_status=KlipperStatus(config) if self.oem_menu is not None else None
@@ -64,8 +66,11 @@ class InventureOLED:
         self.configured_dim_min = config.getint('dim_minutes', 5, minval=1, maxval=60)
         self.configured_sleep_min = config.getint('sleep_minutes', 15, minval=1, maxval=60)
         self.configured_brightness = config.getint('brightness', 16, minval=1, maxval=16)
-        legacy_timeout = config.get('sleep_timeout', None) is not None
-        self.configured_policy = config.get('timer_policy', 'inventure' if legacy_timeout else 'minutes')
+        self.configured_light = config.get('sleep_light', 'manual').lower()
+        if self.configured_light not in ('manual', 'dynamic', 'white', 'off'):
+            raise config.error('sleep_light must be manual, dynamic, white or off')
+        self.sleep_light = self.configured_light
+        self.configured_policy = config.get('timer_policy', 'inventure')
         if self.configured_policy not in ('minutes', 'inventure'):
             raise config.error('OLED timer_policy must be minutes or inventure')
         self.minute_timers = False
@@ -440,6 +445,12 @@ class InventureOLED:
         if self.sleep_phase==phase:return
         if self.sleep_phase in ('notice','off'):
             self._oem_render_cache=None
+        if self.sleep_light != 'manual':
+            command = getattr(self.board, 'commands', {}).get('oled_sleep_light')
+            if command is not None and self.connected and not self.shutdown_latched:
+                entering = phase in ('notice','off')
+                if entering != (self.sleep_phase in ('notice','off')):
+                    command.send([{'dynamic':1, 'white':2, 'off':3}[self.sleep_light] if entering else 0])
         self.sleep_phase=phase
         if phase == 'off':
             self.preview.observe(self.reactor.monotonic(), ('off',), None)
@@ -1013,6 +1024,7 @@ class InventureOLED:
     def _apply_display_settings(self):
         menu = getattr(self.board, 'zortrax', None)
         values = menu.settings.value if menu is not None else {}
+        self.sleep_light = values.get('sleep_light', self.configured_light)
         enabled = values.get('sleep_enabled', bool(self.configured_sleep))
         self.sleep_timeout = values.get('idle_s', self.configured_sleep or 300.) if enabled else 0.
         policy = 'inventure' if 'idle_s' in values or 'notice_s' in values else self.configured_policy
@@ -1022,7 +1034,11 @@ class InventureOLED:
             self.dim_timeout = min(dim, sleep) * 60
             self.sleep_timeout = sleep * 60 if enabled else 0.
         self.sleep_notice = values.get('notice_s', self.configured_notice)
-        self.stream.awake_level = values.get('oled_level', self.configured_brightness) - 1
+        level = values.get('oled_level', self.configured_brightness)
+        self.stream.awake_level = level - 1
+        sync = getattr(self.board, 'set_local_oled_brightness', None)
+        if sync is not None:
+            sync(level)
 
     def cmd_display_control(self, gcmd):
         menu = self.board.zortrax
@@ -1046,6 +1062,15 @@ class InventureOLED:
             self.message = None
         if page and gcmd.get_int('PROMPT', 0, minval=0, maxval=1):
             menu.open_operator_page()
+        light = gcmd.get('SLEEP_LIGHT', None)
+        if light is not None:
+            light = light.lower()
+            if light not in ('manual','dynamic','white','off'):
+                raise gcmd.error('SLEEP_LIGHT must be MANUAL, DYNAMIC, WHITE or OFF')
+            if light != 'manual' and 'oled_sleep_light' not in getattr(self.board, 'commands', {}):
+                raise gcmd.error('Sleep lighting requires Inventure display MCU R14')
+            self._display_activity(self.reactor.monotonic())  # restore the previous light before selecting another
+            updates['sleep_light'] = light
         if gcmd.get('LEVEL', None) is not None:
             updates['oled_level'] = gcmd.get_int('LEVEL', minval=1, maxval=16)
         if gcmd.get('ENABLED', None) is not None:
@@ -1091,7 +1116,7 @@ class InventureOLED:
                 'backend':zortrax.active['backend'],'action':zortrax.active['action']}
             details['procedure_view']=None if zortrax.view is None else zortrax.view.status()
         details['display_mode']=self.oem_display_mode if self.oem_menu is not None else 'legacy'
-        details['layout']='M300_FULL_HEIGHT_FIVE_ROWS_NO_HEADER'
+        details['layout']='INVENTURE_256X64_FIVE_ROWS'
         details['menu_profile']=self.menu_profile
         details['screen_requested']=self.oem_start_screen
         details['rendered_screen']=self._rendered_screen
@@ -1123,7 +1148,7 @@ class InventureOLED:
                 'display_sleep':{'phase':self.sleep_phase,'panel_mode':self.stream.display_mode,
                     'timeout_s':self.sleep_timeout,'notice_s':self.sleep_notice,
                     'dim_after_s':self.dim_timeout if self.minute_timers else None,
-                    'brightness_level':self.stream.awake_level+1,'storage':'orange_pi',
+                    'sleep_light':self.sleep_light,'brightness_level':self.stream.awake_level+1,'storage':'orange_pi',
                     'timer_policy':'minutes' if self.minute_timers else 'inventure',
                     'notice_acknowledged_at':self.notice_at,'wake_pending':self.wake_wait,
                     'work_status_error':self.display_work_error},

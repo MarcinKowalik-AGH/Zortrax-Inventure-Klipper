@@ -23,7 +23,10 @@ DECL_CONSTANT("INVENTURE_OLED_SPI_BURST_ABI", 1);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_ABI", 1);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_RECOVERY_ABI", 1);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_BUFFER_BYTES",128);
-DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-PAD-THERMAL-R13");
+DECL_CONSTANT("INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI", 1);
+extern uint8_t inventure_board_fault(void);
+extern uint8_t inventure_board_guard_input(void);
+DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-DISPLAY-R14");
 
 static const uint8_t input_pins[16] = {
     GPIO('B',11), GPIO('C',15), GPIO('E',12), GPIO('C',14),
@@ -109,6 +112,8 @@ static void oled_raw_blank(void) {
     oled_fast_cancel();
 #endif
 }
+static uint8_t sleep_light_active, sleep_light_saved;
+static void oled_restore_light(void);
 #include "inventure_oled_local.inc"
 void inventure_panel_shutdown(void) {
     local_oled_cancel();
@@ -116,14 +121,14 @@ void inventure_panel_shutdown(void) {
 #ifdef DMA1_Stream4
     oled_fast_alarm_active=0; // Klipper already reset the timer list.
 #endif
-    local_oled_request(3);
+    local_oled_request(LOCAL_SHUTDOWN);
 }
 DECL_SHUTDOWN(inventure_panel_shutdown);
 void inventure_oled_watchdog(void) {
     irqstatus_t flag=irq_save();
     if(oled_active && (int32_t)(timer_read_time()-oled_deadline)>=0) {
         oled_fault=1;oled_raw_blank();
-        local_oled_request(2);
+        local_oled_request(LOCAL_EXPIRED);
     }
     irq_restore(flag);
 }
@@ -261,7 +266,7 @@ oled_fast_fail(void)
     oled_fast_errors++;
     oled_fault = 2;
     oled_raw_blank();
-    local_oled_request(2);
+    local_oled_request(LOCAL_TRANSFER);
 }
 
 void
@@ -519,7 +524,7 @@ void command_inventure_oled_stop(uint32_t *args) {
     (void)args;irqstatus_t flag=irq_save();
     local_oled_cancel();
     if(!oled_latched)oled_fault=2;
-    oled_raw_blank();local_oled_request(oled_latched?3:1);irq_restore(flag);
+    oled_raw_blank();local_oled_request(oled_latched ? LOCAL_SHUTDOWN : LOCAL_RELEASE);irq_restore(flag);
 }
 DECL_COMMAND_FLAGS(command_inventure_oled_stop,HF_IN_SHUTDOWN,"inventure_oled_stop");
 void command_inventure_oled_query(uint32_t *args) {
@@ -546,10 +551,34 @@ static void rgb_raw(unsigned mask) {
         GPIOE->MODER=(GPIOE->MODER & ~(3u<<(n*2))) | (1u<<(n*2));
     }
 }
-void inventure_fault_led(void) {rgb_raw(1);}
+static void oled_restore_light(void) {
+    if (sleep_light_active) {
+        sleep_light_active=0;
+        if (!oled_latched && !inventure_board_fault()) rgb_raw(sleep_light_saved);
+    }
+}
+void command_inventure_oled_sleep_light(uint32_t *args) {
+    unsigned mode=args[0];
+    irqstatus_t flags=irq_save();
+    if (!mode) oled_restore_light();
+    else if (mode<=3 && oled_active && !oled_latched && !inventure_board_fault()) {
+        if (!sleep_light_active) {
+            unsigned latch=GPIOE->ODR;
+            sleep_light_saved=((latch>>3)&1u) | (((latch>>2)&1u)<<1) | (((latch>>4)&1u)<<2);
+            sleep_light_active=1;
+        }
+        rgb_raw(mode==1 ? 5 : mode==2 ? 7 : 0);
+    }
+    irq_restore(flags);
+}
+DECL_COMMAND(command_inventure_oled_sleep_light,"inventure_oled_sleep_light mode=%c");
+void inventure_fault_led(void) {sleep_light_active=0;rgb_raw(1);}
 void command_inventure_rgb(uint32_t *args) {
     if(args[0]>7) shutdown("Inventure invalid RGB mask");
-    rgb_raw(args[0]);
+    irqstatus_t flags=irq_save();
+    sleep_light_active=0;
+    if (!oled_latched && !inventure_board_fault()) rgb_raw(args[0]);
+    irq_restore(flags);
 }
 // Not allowed in shutdown: a host cannot clear the local red fault indication.
 DECL_COMMAND(command_inventure_rgb,"inventure_rgb mask=%c");

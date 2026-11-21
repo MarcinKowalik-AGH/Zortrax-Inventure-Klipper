@@ -36,7 +36,9 @@ SERVICE_ACTIONS = {
 }
 CHOICE_ACTIONS = frozenset(('sd_browser','spool_catalog_model','spool_catalog_support',
     'heat','maintenance_t0','maintenance_t1','move_platform','fan_test','filament_jam'))
-SETTING_ACTIONS = frozenset(('sort_desc','sort_asc','sort_name','sort_size',
+DISPLAY_ACTIONS = frozenset(('oled_brightness','oled_timers','oled_idle','oled_notice',
+    'oled_dim','oled_sleep','oled_sleep_mode','oled_sleep_light'))
+SETTING_ACTIONS = DISPLAY_ACTIONS | frozenset(('sort_desc','sort_asc','sort_name','sort_size',
     'language_en','door_lock','door_unlock'))
 NAV_ACTIONS = frozenset(('back','go_status','cancel_no','question_no','question_yes'))
 ALL_ACTIONS = READ_ACTIONS | set(NATIVE_ACTIONS) | set(SERVICE_ACTIONS) | CHOICE_ACTIONS | SETTING_ACTIONS | NAV_ACTIONS
@@ -106,13 +108,15 @@ class SettingsStore:
     @classmethod
     def _validate(cls,value):
         if (not set(cls.DEFAULTS) <= set(value) or set(value) - set(cls.DEFAULTS) - {
-                'oled_level', 'sleep_enabled', 'idle_s', 'notice_s', 'timer_policy', 'dim_min', 'sleep_min'} or value['sorting'] not in ('asc','desc','name','size') or value['language'] not in ('en','pl')):
+                'oled_level', 'sleep_light', 'sleep_enabled', 'idle_s', 'notice_s', 'timer_policy', 'dim_min', 'sleep_min'} or value['sorting'] not in ('asc','desc','name','size') or value['language'] not in ('en','pl')):
             raise MenuError('Invalid menu presentation settings')
 
         for key, low, high in (('oled_level', 1, 16), ('idle_s', 1, 86400), ('notice_s', 1, 3600),
                                ('dim_min', 1, 60), ('sleep_min', 1, 60)):
             if key in value and (type(value[key]) is not int or not low <= value[key] <= high):
                 raise MenuError('Invalid OLED setting ' + key)
+        if value.get('sleep_light', 'manual') not in ('manual','dynamic','white','off'):
+            raise MenuError('Unknown Inventure sleep lighting mode')
         if value.get('timer_policy', 'inventure') not in ('inventure', 'minutes'):
             raise MenuError('Unknown OLED timer policy')
         if 'sleep_enabled' in value and type(value['sleep_enabled']) is not bool:

@@ -169,7 +169,7 @@ _BENCH_BRANCHES = {
 }
 
 
-# Prepared M300 artwork for the same operations on Inventure.
+# The renderer resolves each operation to an audited Inventure symbol.
 _ACTION_ICONS = {
     'heat': 'heat_nozzle', 'heat_t0': 'heat_nozzle', 'heat_t1': 'heat_nozzle',
     'thermal_info': 'heat_nozzle', 'clean_t0': 'clean_nozzle', 'clean_t1': 'clean_nozzle',
@@ -202,9 +202,9 @@ class OEMMenu:
         nodes=MENU[self.page][2]
         if self.operational and self.page == 'settings':
             nodes = nodes + [Item('OLED brightness', action='oled_brightness'),
-                             Item('OLED dim time', action='oled_dim'),
-                             Item('OLED sleep time', action='oled_sleep'),
-                             Item('OLED sleep mode', action='oled_sleep_mode')]
+                             Item('OLED timers', action='oled_timers'),
+                             Item('OLED sleep mode', action='oled_sleep_mode'),
+                             Item('Sleep lighting', action='oled_sleep_light')]
         if self.bench:
             if not self.operational or self.page=='service_tests':
                 nodes=[_BENCH_BRANCHES.get(node.action,node) for node in nodes]
@@ -296,7 +296,7 @@ class OEMMenu:
                 'stack_depth':len(self.stack),'language':self.language,
                 'notice':self.notice,'last_action':self.last_action,
                 'generation':self.generation, 'root_back_to_status':self.root_back_to_status,
-                'root_page':self.root_page,'navigation_profile':'M300_LAUNCHER',
+                'root_page':self.root_page,'navigation_profile':'INVENTURE_LAUNCHER' if self.root_page=='launcher' else 'INVENTURE_OEM',
                 'ui_only':not self.bench,
                 'thermal_bench_menu':self.bench,
                 'actuators_enabled_by_menu':False,'procedure_router':self.operational}

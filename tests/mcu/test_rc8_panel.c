@@ -68,6 +68,11 @@ void spi_transfer(struct spi_config c,uint8_t receive,uint8_t len,uint8_t *data)
 
 void sched_wake_task(struct task_wake *t){t->wake=1;}
 uint8_t sched_check_wake(struct task_wake *t){uint8_t v=t->wake;t->wake=0;return v;}
+#ifdef TEST_LOCAL_UI_R14
+static uint8_t test_board_fault, test_guard_input;
+uint8_t inventure_board_fault(void) { return test_board_fault; }
+uint8_t inventure_board_guard_input(void) { return test_guard_input; }
+#endif
 #include "inventure_panel.c"
 
 static uint8_t captured[8192],expected[8192],ram_write;
@@ -110,8 +115,25 @@ static void ref_text(unsigned x,int y,const char *text) {
 static void reference(unsigned reason) {
     memset(expected,0,sizeof(expected));ref_text(4,2,"ZORTRAX INVENTURE");
     for(unsigned x=4;x<252;x++)ref_pixel(x,12,5);
+#ifdef TEST_LOCAL_UI_R14
+    if (reason >= 2) {
+        int stopped = reason==3;
+        ref_text(4,18,stopped ? "MCU stopped" : "OLED connection");
+        ref_text(4,34,stopped ? (test_board_fault==6 ? "Door or lid open" : "Klipper shutdown") :
+                 (reason==2 ? "Host display timeout" : "SPI / DMA transfer failed"));
+        ref_text(4,50,stopped ? "Cooling: automatic" : "Waiting for Klipper...");
+        const uint8_t (*icon)[7] = stopped ? local_error_rows : local_warning_rows;
+        for (unsigned y=0; y<50; y++)
+            for (unsigned x=0; x<50; x++)
+                if (icon[y][x/8] & (0x80u>>(x%8))) ref_pixel(202+x,14+y,15);
+        return;
+    }
+    ref_text(4,18,"Waiting for Klipper...");
+    ref_text(4,34,reason ? "Host released display" : "MCU: RC8.0  BOOT: 1.4 r2");
+#else
     ref_text(4,18,reason==3?"MCU stopped":"Waiting for Klipper...");
     ref_text(4,34,reason==3?"Cooling: automatic":reason?"Connection lost / released":"MCU: RC8.0  BOOT: 1.4 r2");
+#endif
 #if CONFIG_SERIAL_BAUD == 1500000
     ref_text(4,50,"P4: 1500000 8N1");
 #else
@@ -135,16 +157,36 @@ int main(void) {
     uint32_t config[]={2000000};command_inventure_oled_config(config);
     assert(local_state==LOCAL_READY && oled_reset_value);
     begin(1,1);
+#ifdef TEST_LOCAL_UI_R14
+    GPIOE->ODR=(1u<<3) | (1u<<2); /* red and green on entry */
+    uint32_t dynamic[]={1};
+    command_inventure_oled_sleep_light(dynamic);
+    assert(sleep_light_active && sleep_light_saved==3 && GPIOE->BSRR==(1u<<4));
+#endif
     uint32_t control[]={100,1,2,1,1};command_inventure_oled_control(control);
     assert(!last_result && oled_reset_value);
     mock_now+=3u*CONFIG_CLOCK_FREQ;inventure_oled_watchdog();
     assert(!oled_active && local_start_pending && !oled_latched);
     finish_local(2);
+#ifdef TEST_LOCAL_UI_R14
+    assert(!sleep_light_active && GPIOE->BSRR==(1u<<(4+16))); /* previous blue off */
+#endif
     uint32_t old[]={100,1,3,1,1,0};command_inventure_oled_write(old);
     assert(last_result==1); // expired generation cannot overwrite local status
     begin(2,4);control[1]=2;control[2]=5;command_inventure_oled_control(control);
     assert(!last_result);
     uint32_t unused[]={0};command_inventure_oled_stop(unused);finish_local(1);
+#ifdef TEST_LOCAL_UI_R14
+    assert(local_last_incident==LOCAL_EXPIRED);
+    uint32_t bright[]={7}, invalid[]={0};
+    command_inventure_local_oled_pref(bright);
+    command_inventure_local_oled_pref(invalid);
+    assert(local_brightness==7 && local_reason==LOCAL_RELEASE);
+    local_oled_request(LOCAL_TRANSFER);
+    finish_local(LOCAL_TRANSFER);
+    assert(local_last_incident==LOCAL_TRANSFER);
+    test_board_fault=6;
+#endif
     begin(3,6);inventure_panel_shutdown();
     assert(oled_latched && !oled_active && local_start_pending);
     finish_local(3);
@@ -166,6 +208,13 @@ int main(void) {
     uint32_t before=mock_now;inventure_local_oled_task();
     assert(local_state==LOCAL_FAILED && !oled_reset_value && oled_latched);
     assert((uint32_t)(mock_now-before)<CONFIG_CLOCK_FREQ/500u);
+#ifdef TEST_LOCAL_UI_R14
+    assert(local_last_incident==LOCAL_PANEL_SPI);
+    test_board_fault=1;
+    test_guard_input=1; assert(!strcmp(local_fault_text(),"#138 Extruder cable"));
+    test_guard_input=2; assert(!strcmp(local_fault_text(),"Host heartbeat expired"));
+    command_inventure_local_oled_diag_query(unused);
+#endif
     assert(!irq_depth);
     puts("PASS RC8: 128-byte row renderer vs full-frame oracle, lease/release/shutdown recovery, stale host fencing, mid-byte epoch abort, bounded SPI timeout");
     return 0;

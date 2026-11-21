@@ -16,7 +16,7 @@ on:
       - 'install-orange-pi.py'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_CONFIG_R34.md'
+      - 'docs/INVENTURE_NATIVE_UI_R35.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -61,16 +61,16 @@ jobs:
         with:
           node-version: '24.22.3'
       - name: Build the Fluidd dashboard
-        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R34.zip"
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R35.zip"
       - name: Test the compiled dashboard in Chrome
         run: |
           python -m pip install 'playwright==1.56.0'
           python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R34.zip"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R35.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_CONFIG_R34
+          name: INVENTURE_NATIVE_UI_R35
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -81,7 +81,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-config-r34-release
+      group: inventure-native-ui-r35-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +89,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_CONFIG_R34
+          name: INVENTURE_NATIVE_UI_R35
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -104,8 +104,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R34 · Organized configuration, thermal maps and OLED preferences" \
-              --notes-file docs/INVENTURE_CONFIG_R34.md
+              --title "Inventure R35 / MCU R14 · Native thermal profiles, panel graphics and fault handling" \
+              --notes-file docs/INVENTURE_NATIVE_UI_R35.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

@@ -284,8 +284,19 @@ static void force_safe(void) {
     }
 }
 
+static uint8_t guard_input_at_trip;
+uint8_t inventure_board_fault(void) { return fault; }
+uint8_t inventure_board_guard_input(void) { return guard_input_at_trip; }
+
 static void trip(uint8_t reason) {
-    if (!fault) fault=reason;
+    if (!fault) {
+        fault=reason;
+        if (reason==1) {
+            if (GPIOD->IDR & BIT(11)) guard_input_at_trip=1;
+            else if (!heartbeat_live || iv9_due(timer_read_time(),heartbeat_deadline))
+                guard_input_at_trip=2;
+        }
+    }
     force_safe();
     shutdown("Inventure V9 local safety fault");
 }

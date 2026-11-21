@@ -80,6 +80,16 @@ def _activity_catalog():
     return _sprite_catalog()['symbols']
 
 
+# These are the Inventure symbols used for each host workflow. r0323 supplies
+# an animation for waiting/progress, and static glyphs for settings and faults.
+ACTIVITY_SYMBOLS = {
+    'heat_nozzle': 'progress', 'cooling': 'wait', 'clean_nozzle': 'progress',
+    'filament_jam': 'error', 'filament_runout': 'warning', 'oled_brightness': 'settings',
+    'link_status': 'information', 'sd_read': 'filecheck',
+    'fan_upper': 'maintenance', 'fan_lower': 'maintenance',
+}
+
+
 def _unpack(frame, name):
     packed = zlib.decompress(base64.b64decode(frame['zlib_b64'], validate=True))
     if len(packed) != 1250 or sha256(packed).hexdigest() != frame['sha256']:
@@ -89,13 +99,12 @@ def _unpack(frame, name):
 
 @lru_cache(maxsize=1)
 def sleep_wire():
-    # The M300 sleep screen centers the text on the left and a 50x50 moon at
-    # (202,7). Its even X origin allows copying the original packed bytes.
-    message = 'Entering sleep mode'
+    atlas = native.get_oem_assets()
     frame = native.Frame()
-    frame.text((192 - (6 * len(message) - 1)) // 2, 24, message)
+    frame.oem_text(4, 13, 'Sleep Mode', atlas, right=198)
+    frame.oem_text(4, 33, 'Press the button to wake up.', atlas, right=198)
     wire = bytearray(frame.wire_bytes())
-    packed = _unpack(_sprite_catalog()['sleep_moon']['frames'][0], 'sleep_moon')
+    packed = _unpack(_activity_catalog()['sleep']['frames'][0], 'sleep')
     for y in range(50):
         offset = (y + 7) * STRIDE + 101
         wire[offset:offset + 25] = packed[y * 25:(y + 1) * 25]
@@ -114,7 +123,13 @@ def _activity_rows(name, index):
 
 
 def activity_index(view, now):
-    return int(now * 2) % 4 if view.get('animated') else 0
+    if not view.get('animated'):
+        return 0
+    name = (view.get('icon') or '').removeprefix('activity:')
+    record = _activity_catalog().get(ACTIVITY_SYMBOLS.get(name, name))
+    if not record or len(record['frames']) <= 1 or not record['frame_ms']:
+        return 0
+    return int(now * 1000 / record['frame_ms']) % len(record['frames'])
 
 
 @lru_cache(maxsize=24)
@@ -125,7 +140,7 @@ def _background(atlas, labels, icon, notice, index):
     # The OEM layout reserves this black strip exclusively for the sprite.
     # Unused outer nibbles and transparent pixels therefore remain black.
     result = bytearray(wire)
-    rows = (_activity_rows(icon[9:], index) if icon.startswith('activity:')
+    rows = (_activity_rows(ACTIVITY_SYMBOLS.get(icon[9:], icon[9:]), index) if icon.startswith('activity:')
             else _icon_rows(atlas.icons[icon]))
     for y, row in enumerate(rows, 13):
         start = y * STRIDE + 101

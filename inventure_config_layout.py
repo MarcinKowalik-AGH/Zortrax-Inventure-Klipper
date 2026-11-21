@@ -12,7 +12,10 @@ HEADER = re.compile(r'^\[([^\]\n]+)\][ \t]*(?:[#;][^\n]*)?\r?$', re.M)
 FOOTER = re.compile(r'^#\*#', re.M)
 MANAGED = '# Inventure configuration layout v1\n'
 MAP_KEYS = ('nozzle_reference_mv', 'nozzle_mv_per_c', 'thermistor_thresholds')
-DISPLAY_DEFAULTS = {'dim_minutes': '5', 'sleep_minutes': '15', 'brightness': '16'}
+DISPLAY_DEFAULTS = {'sleep_timeout': '300', 'sleep_notice': '10', 'brightness': '16', 'sleep_light': 'manual'}
+ZONE_PINS = {'inventure_r5:HEATER_T0': 't0', 'inventure_r5:HEATER_T1': 't1',
+             'inventure_r5:HEATER_PC9': 'chamber_l', 'inventure_r5:HEATER_PC8': 'chamber_r'}
+TUNE_LINE = re.compile(r'^(control|pid_kp|pid_ki|pid_kd|max_delta)[ \t]*[:=]', re.I)
 SERVICES = {'inventure_native_z', 'inventure_operations', 'inventure_preflight',
             'inventure_filament', 'inventure_motion', 'inventure_nozzle_xy'}
 HEATER_OPTIONS = re.compile(r'^(?:heater_pin|sensor_type|sensor_channel|pwm_cycle_time|smooth_time|'
@@ -130,7 +133,15 @@ def organize_klipper(module, main, updates):
                 if pins or tune:
                     edits[source].append((start, end, ''.join(line for line in lines if line not in pins+tune)))
                 continue
-            if name == 'inventure_oled':
+            if name == 'inventure_chamber chamber':
+                group = 'chamber.cfg'
+            elif name.startswith('heater_fan ') and active.get(name, 'pin', fallback='').startswith('inventure_r5:'):
+                group = 'cooling.cfg'
+            elif name.startswith('verify_heater ') and any(
+                    h.split()[-1] == name.split()[-1] and active.get(h, 'heater_pin', fallback='') in heater_pins
+                    for h in active.sections()):
+                group = 'heater_monitors.cfg'
+            elif name == 'inventure_oled':
                 group = 'display.cfg'
             elif source == main and name in SERVICES:
                 group = 'services.cfg'
@@ -187,7 +198,7 @@ def organize_klipper(module, main, updates):
 
     if active.has_section('inventure_oled'):
         display = destination('display.cfg')
-        policy = 'inventure' if active.has_option('inventure_oled', 'sleep_timeout') else 'minutes'
+        policy = 'inventure'
         missing = {key: value for key, value in dict(DISPLAY_DEFAULTS, timer_policy=policy).items()
                    if not active.has_option('inventure_oled', key)}
         if missing:
@@ -222,7 +233,102 @@ def organize_klipper(module, main, updates):
             del result[section][key]
     if result != original:
         raise ValueError('The organized Klipper tree changes existing settings')
-    return final_paths
+    migrate_display_defaults(display if active.has_section('inventure_oled') else None, updates)
+    return organize_heater_profiles(module, main, folder, updates)
+
+
+def planned_bytes(path, updates):
+    return updates[path][1] if path in updates else path.read_bytes()
+
+
+def migrate_display_defaults(path, updates):
+    if path is None or not (path in updates or path.is_file()):
+        return
+    data = planned_bytes(path, updates)
+    # R34 emitted this exact contiguous block for a display without timer options.
+    # Keep a customized file and any explicit choices in the separate settings JSON.
+    signature = b'dim_minutes: 5\nsleep_minutes: 15\nbrightness: 16\ntimer_policy: minutes\n'
+    if not data.startswith(MANAGED.encode()):
+        return
+    if data.count(signature) == 1:
+        data = data.replace(signature, b'brightness: 16\ntimer_policy: inventure\n')
+    sections = list(HEADER.finditer(data.decode()))
+    if len(sections) > 1 and all(h[1] == 'inventure_oled' for h in sections):
+        text = data.decode()
+        for h in reversed(sections[1:]):
+            text = text[:h.start()] + text[h.end():]
+        data = text.encode()
+    stage(updates, path, data)
+
+
+def organize_heater_profiles(module, main, folder, updates):
+    """Move each board heater's baseline. Native SAVE_CONFIG overrides it after tuning."""
+    parsed, paths = active_klipper(module, main, updates)
+    path = folder / 'heater_control.cfg'
+    if path.is_symlink() or path.exists() and not path.is_file():
+        raise ValueError('Unsupported heater profile destination: '+str(path))
+    texts = {p: planned_bytes(p, updates).decode() for p in dict.fromkeys(paths)}
+    candidates = defaultdict(list)
+    for source, data in texts.items():
+        for name, start, end, body in blocks(data):
+            zone = ZONE_PINS.get(parsed.get(name, 'heater_pin', fallback=''))
+            if not zone or parsed.get(name, 'sensor_type', fallback='') != 'Inventure R5 ADC':
+                continue
+            for line in body.splitlines(keepends=True):
+                opt = TUNE_LINE.match(line)
+                if opt:
+                    candidates[name].append((source, start, end, line, opt[1].lower()))
+    marker = FOOTER.search(texts[main])
+    tail = texts[main][marker.start():] if marker else ''
+    first_section = re.search(r'^#\*# \[', tail, re.M)
+    saved_tail = tail[first_section.start():] if first_section else ''
+    saved = module.ConfigFileReader().build_fileconfig(
+        '\n'.join(line[4:] for line in saved_tail.splitlines() if line.startswith('#*# ')), str(main))
+    existing = planned_bytes(path, updates).decode() if path in updates or path.exists() else ''
+    desired = {name: dict(parsed.items(name)) for name in parsed.sections()}
+    additions = []
+    removals = defaultdict(set)
+    for name, entries in candidates.items():
+        zone = ZONE_PINS[parsed.get(name, 'heater_pin')]
+        keys = [key for *_, key in entries]
+        profiles = desired['inventure_mcu']
+        if (len(set(keys)) != len(keys) or 'control' not in keys
+                or any(zone+'_'+key in profiles or saved.has_option(name, key) for key in keys)
+                or any(not src.is_relative_to(main.parent) for src, *_ in entries)):
+            continue  # Keep an existing overlay or a site-owned external configuration.
+        mode = parsed.get(name, 'control')
+        allowed = {'pid': {'control','pid_kp','pid_ki','pid_kd'}, 'watermark': {'control','max_delta'}}
+        if not set(keys) <= allowed.get(mode, set()):
+            continue
+        additions.append('# '+name+' ('+zone+')')
+        for source, start, end, line, key in entries:
+            option = zone+'_'+key
+            additions.append(TUNE_LINE.sub(lambda m: option+m[0][len(m[1]):], line, count=1).rstrip('\r\n'))
+            profiles[option] = desired[name].pop(key)
+            removals[(source, start, end)].add(line)
+    if not additions:
+        return paths
+    if existing and not existing.startswith(MANAGED):
+        raise ValueError('Existing heater profile file is site-owned: '+str(path))
+    for (source, start, end), lines in sorted(removals.items(), reverse=True):
+        data = texts[source]
+        body = ''.join(line for line in data[start:end].splitlines(keepends=True) if line not in lines)
+        texts[source] = data[:start]+body+data[end:]
+    if path not in paths and not any(
+            Path(path).match(os.path.abspath(os.path.join(source.parent, name[8:].strip())))
+            for source, data in texts.items() for name, *_ in blocks(data) if name.startswith('include ')):
+        text = texts[main]
+        marker = FOOTER.search(text)
+        pos = marker.start() if marker else len(text)
+        texts[main] = text[:pos].rstrip()+'\n\n[include inventure/heater_control.cfg]\n\n'+text[pos:]
+    for source, data in texts.items():
+        stage(updates, source, data.encode())
+    header = existing.rstrip() if existing else MANAGED+'# Native heater baselines. Klipper SAVE_CONFIG has precedence.\n[inventure_mcu]'
+    stage(updates, path, (header+'\n'+'\n'.join(additions)+'\n').encode())
+    final, files = active_klipper(module, main, updates)
+    if files.count(path) != 1 or {s: dict(final.items(s)) for s in final.sections()} != desired:
+        raise ValueError('Heater profile migration changed the effective settings')
+    return files
 
 
 def moonraker_files(main):

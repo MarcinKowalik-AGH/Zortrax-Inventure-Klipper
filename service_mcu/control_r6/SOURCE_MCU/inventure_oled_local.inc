@@ -34,7 +34,10 @@ static uint8_t local_epoch_started;
 static unsigned local_init_pos, local_frame_pos;
 static uint8_t local_frame[128]; /* one row; no 8 KiB MCU framebuffer */
 static unsigned local_row;
-static uint8_t local_start_pending,local_reason;
+enum { LOCAL_BOOT, LOCAL_RELEASE, LOCAL_EXPIRED, LOCAL_SHUTDOWN, LOCAL_TRANSFER, LOCAL_PANEL_SPI };
+static uint8_t local_start_pending, local_reason, local_last_incident;
+static uint8_t local_brightness = 16;
+#include "inventure_oled_fault_glyphs.inc"
 static uint32_t local_epoch;
 static struct gpio_out local_cs, local_dc, local_reset, local_gate;
 static struct spi_config local_spi;
@@ -50,10 +53,13 @@ static int local_has_claim(void) {
     return local_state >= LOCAL_WAIT_POWER && local_state <= LOCAL_READY;
 }
 static void local_oled_cancel(void) {
+    oled_restore_light();
     local_epoch++;local_start_pending=0;
     local_state=LOCAL_HANDOVER;
 }
 static void local_oled_request(uint8_t reason) {
+    oled_restore_light();
+    if (reason >= LOCAL_EXPIRED) local_last_incident=reason;
     local_epoch++;local_reason=reason;local_start_pending=1;
     local_state=LOCAL_HANDOVER;
 }
@@ -62,6 +68,7 @@ uint8_t inventure_panel_needs_service(void) {
 }
 static void local_oled_failed(void) {
     if(oled_active || !local_has_claim())return;
+    local_last_incident=LOCAL_PANEL_SPI;
     local_state=LOCAL_FAILED;
     local_reset_released=0;
     oled_raw_blank(); /* only the panel: no global shutdown or heater mutation */
@@ -144,14 +151,41 @@ static void local_baud_line(char out[24],uint32_t baud) {
     while(k)out[n++]=digits[--k];
     out[n++]=' ';out[n++]='8';out[n++]='N';out[n++]='1';out[n]=0;
 }
+static const char *local_fault_text(void) {
+    switch (inventure_board_fault()) {
+    case 1:
+        if (inventure_board_guard_input()==1) return "#138 Extruder cable";
+        if (inventure_board_guard_input()==2) return "Host heartbeat expired";
+        return "Native control guard";
+    case 4: return "Temperature sensor guard";
+    case 5: return "Cooling fan feedback";
+    case 6: return "Door or lid open";
+    case 7: return "Build tray Z interlock";
+    case 8: return "Z reference failed";
+    default: return "Klipper shutdown";
+    }
+}
 static void local_render(unsigned row) {
     local_row=row;
     memset(local_frame,0,sizeof(local_frame));
     local_text(4,2,"ZORTRAX INVENTURE");
     if(row==12u)for(unsigned x=4;x<252u;x++)local_pixel(x,12,5u);
-    local_text(4,18,local_reason==3?"MCU stopped":"Waiting for Klipper...");
-    if(local_reason==3)local_text(4,34,"Cooling: automatic");
-    else if(local_reason)local_text(4,34,"Connection lost / released");
+    if (local_reason >= LOCAL_EXPIRED) {
+        int shutdown_page = local_reason == LOCAL_SHUTDOWN;
+        const uint8_t (*glyph)[7] = shutdown_page ? local_error_rows : local_warning_rows;
+        if (row >= 14 && row < 64) {
+            for (unsigned x=0; x<50; x++)
+                if (glyph[row-14][x/8] & (0x80u >> (x%8)))
+                    local_pixel(202+x, row, 15);
+        }
+        local_text(4,18,shutdown_page ? "MCU stopped" : "OLED connection");
+        local_text(4,34,shutdown_page ? local_fault_text() :
+                   (local_reason == LOCAL_EXPIRED ? "Host display timeout" : "SPI / DMA transfer failed"));
+        local_text(4,50,shutdown_page ? "Cooling: automatic" : "Waiting for Klipper...");
+        return;
+    }
+    local_text(4,18,"Waiting for Klipper...");
+    if(local_reason==LOCAL_RELEASE)local_text(4,34,"Host released display");
     else if(local_boot.revision==1) local_text(4,34,"MCU: RC8.0  BOOT: 1.4 r1");
     else if(local_boot.revision==2) local_text(4,34,"MCU: RC8.0  BOOT: 1.4 r2");
     else if(local_boot.revision==3) local_text(4,34,"MCU: RC8.0  BOOT: 1.6 RC2");
@@ -215,7 +249,9 @@ void inventure_local_oled_task(void) {
         unsigned idx=local_init_pos;
         if(idx+2u>sizeof(local_oled_init_bytes)) {local_oled_failed();return;}
         uint8_t cmd=local_oled_init_bytes[idx++],count=local_oled_init_bytes[idx++];
-        if(idx+count>sizeof(local_oled_init_bytes) || !local_cmd(cmd,&local_oled_init_bytes[idx],count)) {
+        uint8_t contrast=(uint8_t)((159u*local_brightness+8u)/16u);
+        const uint8_t *params = cmd==0xc1 ? &contrast : &local_oled_init_bytes[idx];
+        if(idx+count>sizeof(local_oled_init_bytes) || !local_cmd(cmd,params,count)) {
             local_oled_failed();return;
         }
         local_init_pos=idx+count;
@@ -250,3 +286,22 @@ void command_inventure_local_oled_query(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_local_oled_query,HF_IN_SHUTDOWN,
                    "inventure_local_oled_query");
+
+/* Diagnostic reads work in shutdown. Preferences are display-only, in RAM.
+ * Report the most recent incident even after a new host owns the panel. */
+static void local_send_diag(void) {
+    sendf("inventure_local_oled_diag state=%c boot_revision=%c baud=%u reason=%c last_incident=%c board_fault=%c guard_input=%c display_fault=%c brightness=%c",
+          local_state,local_boot.revision,local_boot.baud,local_reason,local_last_incident,inventure_board_fault(),
+          inventure_board_guard_input(),local_state==LOCAL_FAILED,local_brightness);
+}
+void command_inventure_local_oled_diag_query(uint32_t *args) {
+    (void)args;
+    local_send_diag();
+}
+DECL_COMMAND_FLAGS(command_inventure_local_oled_diag_query,HF_IN_SHUTDOWN,"inventure_local_oled_diag_query");
+
+void command_inventure_local_oled_pref(uint32_t *args) {
+    if (args[0]>=1 && args[0]<=16) local_brightness=args[0];
+    local_send_diag();
+}
+DECL_COMMAND(command_inventure_local_oled_pref,"inventure_local_oled_pref level=%c");

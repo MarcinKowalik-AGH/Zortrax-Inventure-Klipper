@@ -58,6 +58,12 @@ def check_loaded(printer, config):
     chamber = printer.lookup_object('inventure_chamber chamber')
     chamber.connect()
     left, right = chamber.zones
+    if config.read_text().count('#*# pid_kp = 18.125') == 4:
+        from extras.heaters import PID_PARAM_BASE
+        for zone in (t0, t1, left, right):
+            assert type(zone.control).__name__ == 'ControlPID'
+            for attr, expected in (('Kp',18.125),('Ki',0.718),('Kd',110.5)):
+                assert abs(getattr(zone.control, attr)*PID_PARAM_BASE - expected) < 1.e-8
     assert [z.sensor.channel for z in chamber.zones] == [2, 3]
     assert [z.mcu_pwm.name for z in chamber.zones] == ['HEATER_PC9', 'HEATER_PC8']
     assert all(type(z.control).__name__ == 'ControlPID' for z in chamber.zones)

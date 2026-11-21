@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-PAD-THERMAL-R13'
+MCU_RELEASE = 'RC8-CONTROL-R7-DISPLAY-R14'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -47,7 +47,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     for name in ('inventure_board.c', 'inventure_control.inc', 'inventure_z_home.inc',
                  'inventure_transport.inc','inventure_transport.h', 'inventure_motor_test.inc', 'inventure_xy_seek.inc', 'inventure_cooling.inc', 'inventure_fan_manual.inc', 'inventure_heat_test.inc',
                  'inventure_panel.c', 'inventure_fans.inc', 'gpioperiph.c',
-                 'inventure_p4_baud.c','inventure_p4_baud.h','serial.c','inventure_oled_local.inc'):
+                 'inventure_p4_baud.c','inventure_p4_baud.h','serial.c','inventure_oled_local.inc',
+                 'inventure_oled_fault_glyphs.inc'):
         data = (source / name).read_bytes()
         (root / 'src/stm32' / name).write_bytes(data)
         changes[name] = base.sha(data)
@@ -91,6 +92,11 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_DOOR_POLICY_GLOBAL'] == 1
     assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
     assert c['INVENTURE_MOTOR_TEST_RELEASE'] == MCU_RELEASE
+    assert c['INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI'] == 1
+    assert 'inventure_local_oled_diag_query' in dictionary['commands']
+    assert 'inventure_oled_sleep_light mode=%c' in dictionary['commands']
+    assert 'inventure_local_oled_pref level=%c' in dictionary['commands']
+    assert 'inventure_local_oled_diag state=%c boot_revision=%c baud=%u reason=%c last_incident=%c board_fault=%c guard_input=%c display_fault=%c brightness=%c' in dictionary['responses']
     assert c['INVENTURE_CONTROL_ABI'] == 1
     assert c['INVENTURE_MOTION_ABI'] == 1
     assert c['INVENTURE_OUTPUT_ABI'] == 1
@@ -198,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   release=c['INVENTURE_HEAT_TEST_RELEASE'], baud_mode='InventureBoot_journal',
                   fallback_baud=250000,forced_baud=0,boot17_abi=1,
                   compiler=env['gcc'], fan_manual_response=response,
-                  heat_response=heat_response, sensor_response=sensor_response, sources_sha256=changes,
+                  heat_response=heat_response, sensor_response=sensor_response, sources_sha256=changes, local_oled_diagnostic_abi=1,
                   ivb_bytes=len(ivb), ivb_sha256=base.sha(ivb),
                   application_sha256=base.sha(app), tested_on_printer=False)
     (out / 'THERMAL_TEST_VERIFY.json').write_text(json.dumps(report, indent=2) + '\n')
