@@ -65,7 +65,7 @@ jobs:
         run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R31.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_THERMAL_OLED_R31
+          name: INVENTURE_THERMAL_OLED_R31_1
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -76,7 +76,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-thermal-oled-r31-release
+      group: inventure-thermal-oled-r31-1-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_THERMAL_OLED_R31
+          name: INVENTURE_THERMAL_OLED_R31_1
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -99,7 +99,7 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R31 · Chamber PID and live OLED in Fluidd" \
+              --title "Inventure R31.1 · Fix Fluidd discovery with empty nginx arguments" \
               --notes-file docs/INVENTURE_THERMAL_OLED_R31.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber

@@ -15,9 +15,11 @@ import tempfile
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
-TAG = 'inventure-thermal-oled-r31'
-ASSET = 'INVENTURE_FLUIDD_WEB_R31.zip'
-RELEASE = 'https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/download/'+TAG+'/'
+_release = json.loads((Path(__file__).resolve().parent/'orange_pi/RELEASE.json').read_text())
+TAG = _release['fluidd_dashboard']['web_build_tag']
+ASSET = _release['fluidd_dashboard']['web_package']
+RELEASE = ('https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/download/'
+           + _release['nozzle_pad_calibration']['release_tag'] + '/')
 MARKER = '.inventure-fluidd-build'
 
 
@@ -43,7 +45,8 @@ def web_root(override=None):
     tokens.whitespace_split = True
     words, paths = [], set()
     for token in tokens:
-        if token[0] in '{};':
+        # shlex returns an empty string for a quoted empty nginx argument.
+        if token.startswith(('{', '}', ';')):
             if len(words) == 2 and words[0] == 'root' and '$' not in words[1]:
                 path = Path(words[1])
                 if path.is_absolute() and is_fluidd(path):

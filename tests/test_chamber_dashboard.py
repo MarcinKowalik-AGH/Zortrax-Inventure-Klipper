@@ -4,12 +4,12 @@ import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import zlib
 
 from orange_pi.inventure_chamber import InventureChamber
 from orange_pi.inventure_oled_preview import OledPreview
-from fluidd_web import deploy, exchange, MARKER, TAG
+from fluidd_web import deploy, exchange, web_root, MARKER, TAG
 
 
 class Zone:
@@ -130,6 +130,38 @@ class OledTests(unittest.TestCase):
 
 
 class WebInstallTests(unittest.TestCase):
+    def test_web_root_accepts_empty_nginx_map_keys_and_header_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'Fluidd site'
+            root.mkdir()
+            (root / 'index.html').write_text('<title>fluidd</title><script src="./assets/main.js"></script>')
+            for empty in ("''", '""'):
+                with self.subTest(empty=empty):
+                    dump = f'''
+                        map $http_upgrade $connection_upgrade {{ default upgrade; {empty} close; }}
+                        # configuration file /etc/nginx/sites-enabled/inventure:
+                        server {{
+                            root "{root}";
+                            location /websocket {{ proxy_set_header Connection {empty}; }}
+                        }}
+                    '''
+                    with patch('fluidd_web.subprocess.run', return_value=SimpleNamespace(stdout=dump)):
+                        self.assertEqual(web_root(), root.resolve())
+
+    def test_empty_nginx_arguments_preserve_missing_and_ambiguous_site_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for count in (0, 2):
+                with self.subTest(count=count):
+                    dump = "map $http_upgrade $connection_upgrade { '' close; default upgrade; }\n"
+                    for index in range(count):
+                        root = Path(directory) / str(index)
+                        root.mkdir()
+                        (root / 'index.html').write_text('<title>fluidd</title>assets/')
+                        dump += f'server {{root "{root}";}}\n'
+                    with patch('fluidd_web.subprocess.run', return_value=SimpleNamespace(stdout=dump)):
+                        with self.assertRaisesRegex(ValueError, f'Found {count} Fluidd nginx roots'):
+                            web_root()
+
     def test_atomic_upgrade_preserves_config_and_old_assets(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'site'

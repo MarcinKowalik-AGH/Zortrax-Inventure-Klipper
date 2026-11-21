@@ -68,7 +68,7 @@ def package(build, output, web):
     shutil.copyfile(web, web_zip)
     with ZipFile(web_zip) as archive:
         assert archive.testzip() is None
-        assert archive.read('.inventure-fluidd-build').decode().strip() == pad['release_tag']
+        assert archive.read('.inventure-fluidd-build').decode().strip() == release['fluidd_dashboard']['web_build_tag']
     assets = (mcu_zip, host_zip, audit_copy, web_zip)
     digests = {asset.name: sha256(asset.read_bytes()).hexdigest() for asset in assets}
     (output/'SHA256SUMS').write_text(''.join(

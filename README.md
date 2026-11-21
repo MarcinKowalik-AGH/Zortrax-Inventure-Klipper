@@ -2,7 +2,7 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R31 with MCU R13** adds **Extruder 0**, **Extruder 1** and **Chamber** to the Fluidd thermal card. One chamber target drives the left and right PID loops. The main reading comes from the center thermometer. The printer status card shows **OLED INVENTURE** from the last acknowledged display frame. The R30 macro groups remain available. [R31 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-thermal-oled-r31) · [Thermal control, OLED and validation](docs/INVENTURE_THERMAL_OLED_R31.md) · [M300 macro comparison](docs/INVENTURE_FLUIDD_R30.md)
+**Host R31 with MCU R13** adds **Extruder 0**, **Extruder 1** and **Chamber** to the Fluidd thermal card. One chamber target drives the left and right PID loops. The main reading comes from the center thermometer. The printer status card shows **OLED INVENTURE** from the last acknowledged display frame. The R30 macro groups remain available. [R31.1 installer release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-thermal-oled-r31.1) · [Thermal control, OLED and validation](docs/INVENTURE_THERMAL_OLED_R31.md) · [M300 macro comparison](docs/INVENTURE_FLUIDD_R30.md)
 
 <a id="aktualizacja-orange-pi"></a>
 
@@ -11,12 +11,12 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. Keep the installed R13 MCU.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-thermal-oled-r31 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-thermal-oled-r31" refs/tags/inventure-thermal-oled-r31 &&
-python3 "$HOME/inventure-thermal-oled-r31/install-orange-pi.py" --configure-fluidd
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-thermal-oled-r31.1 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-thermal-oled-r31.1" refs/tags/inventure-thermal-oled-r31.1 &&
+python3 "$HOME/inventure-thermal-oled-r31.1/install-orange-pi.py" --configure-fluidd
 ```
 
-If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
+If this R31.1 worktree already exists, run the final installer command there. For an existing R31 checkout that stopped during nginx discovery, use the [retry instructions](docs/INVENTURE_THERMAL_OLED_R31.md#retry-an-existing-r31-checkout). Once Klipper is ready, enter the following in the **Fluidd console**.
 
 ```gcode
 INVENTURE_VERSION

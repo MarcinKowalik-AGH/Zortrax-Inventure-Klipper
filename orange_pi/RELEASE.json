@@ -3,8 +3,8 @@
   "host_module_sha256": "1fd1e679c2a74e9fa648a6a7234a236ba36857584a3af7840878983b4178f740",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 758,
-  "previous_host_commit": "070c0888eb7a0efa4b44d0a83afcb70bbd6b9ad3",
+  "verified_public_host_tests": 760,
+  "previous_host_commit": "2db4c2b1c028cc44827993bdc43cd3cf4a77bab3",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -760,8 +760,8 @@
       110
     ],
     "package_filename": "INVENTURE_MCU_PAD_SWEEP_R13_BOOT17.zip",
-    "release_tag": "inventure-thermal-oled-r31",
-    "host_package_filename": "INVENTURE_ORANGE_PI_THERMAL_OLED_R31.zip",
+    "release_tag": "inventure-thermal-oled-r31.1",
+    "host_package_filename": "INVENTURE_ORANGE_PI_THERMAL_OLED_R31_1.zip",
     "ivb_sha256": "7bb8a9334d2aade7eb38f4d949d73f2e10870cde4b12e3c8803ba7cdff0b8f35",
     "audit_report": "docs/INVENTURE_THERMAL_OLED_R31.md",
     "release_notes": "docs/INVENTURE_PAD_XYZ_R25.md",
@@ -961,6 +961,7 @@
     "hardware_validation": "R31 chamber and OLED field validation pending",
     "report": "docs/INVENTURE_THERMAL_OLED_R31.md",
     "web_package": "INVENTURE_FLUIDD_WEB_R31.zip",
-    "upstream_fluidd": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4"
+    "upstream_fluidd": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4",
+    "web_build_tag": "inventure-thermal-oled-r31"
   }
 }
