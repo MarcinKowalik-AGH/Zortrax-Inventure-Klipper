@@ -71,7 +71,14 @@ def check_loaded(printer, config):
     assert 'inventure_chamber chamber' in heaters.available_sensors
     assert printer.lookup_object('inventure_oled_preview')
     from extras.inventure_oled_graphics import status_footer
-    native = printer.lookup_object('inventure_oled').native_status
+    physical = printer.lookup_object('inventure_oled')
+    native = physical.native_status
+    if (config.parent/'inventure_display.cfg').is_file():
+        settings = printer.lookup_object('inventure_display')
+        assert settings.panel is physical
+        assert settings.get_status(0.)['normal_contrast'] == 159
+        assert settings.get_status(0.)['sleep_timeout'] == 900
+        assert 'idle_timeout' not in printer.lookup_object('configfile').get_status(0.)['config']['inventure_oled']
     display = printer.lookup_object('display_status')
     now = printer.get_reactor().monotonic()
     assert 'display_status' in printer.lookup_object('configfile').get_status(now)['config']

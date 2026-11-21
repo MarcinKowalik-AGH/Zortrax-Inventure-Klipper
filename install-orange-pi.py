@@ -530,11 +530,21 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
 def plan_klipper_docs(target, updates):
     """Moonraker registers <running klipper_path>/docs as a read-only root."""
     directory = target / 'docs'
+    guide = directory / 'Inventure_Display.md'
     if directory.is_dir() and directory.resolve() != Path('/'):
-        return None
+        # Update a guide installed by R36. Respect site-owned directories and edits.
+        if directory.is_symlink() or guide.is_symlink() or not guide.is_file():
+            return None
+        previous = guide.read_bytes()
+        if sha256(previous).hexdigest() != '10f211ecf18b1a409df8d08362ddb795930b66c52f4a9f9ffde182869313e0bf':
+            return None
+        updated = (ROOT/'docs/Inventure_Display.md').read_bytes()
+        if updated == previous:
+            return None
+        updates[guide] = (previous, updated)
+        return guide
     if directory.exists() or directory.is_symlink():
         raise ValueError('The active Klipper docs path must point to a directory: '+str(directory))
-    guide = directory / 'Inventure_Display.md'
     updates[guide] = (None, (ROOT/'docs/Inventure_Display.md').read_bytes())
     return guide
 
@@ -563,6 +573,9 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         restart_docs = bool(docs_guide and configure_fluidd)
         identity['moonraker_docs_root'] = str(target/'docs')
     expected_sections = None
+    if configure_fluidd and not organize_config:
+        from inventure_config_layout import split_display_preferences
+        split_display_preferences(klipper_config_module(target), config.resolve(), config_updates)
     if organize_config:
         from inventure_config_layout import organize_klipper, organize_moonraker
         paths = organize_klipper(klipper_config_module(target), config, config_updates)

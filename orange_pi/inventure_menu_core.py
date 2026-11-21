@@ -19,7 +19,7 @@ SUPPORT_MATERIALS = ((7,'Z-SUPPORT'),(13,'Z-SUPPORT Plus'),
     (17,'Z-SUPPORT Premium'),(23,'BASF Ultrafuse BVOH'),(127,'External Support'))
 
 READ_ACTIONS = frozenset(('version','printer_info','help','job_info','thermal_info',
-    'settings_info','oled_info','oled_icons','mcu_info','uart_info','fans_info','adc_info','rfid_info',
+    'settings_info','current_procedure','oled_info','oled_icons','mcu_info','uart_info','fans_info','adc_info','rfid_info',
     'save_print','motion_disabled','homing_disabled','heating_disabled'))
 NATIVE_ACTIONS = {'leveling':'inventure_leveling', 'alignment':'inventure_alignment',
     'pause':'inventure_cycle','resume':'inventure_cycle','cancel_yes':'inventure_cycle',
@@ -38,10 +38,11 @@ CHOICE_ACTIONS = frozenset(('sd_browser','spool_catalog_model','spool_catalog_su
     'heat','maintenance_t0','maintenance_t1','move_platform','fan_test','filament_jam'))
 DISPLAY_ACTIONS = frozenset(('oled_brightness','oled_timers','oled_idle','oled_notice',
     'oled_dim','oled_sleep','oled_sleep_mode','oled_sleep_light'))
-SETTING_ACTIONS = DISPLAY_ACTIONS | frozenset(('sort_desc','sort_asc','sort_name','sort_size',
+HOME_ACTIONS = {'home_' + axes.lower(): axes for axes in ('X','Y','Z','XY','XYZ')}
+SETTING_ACTIONS = {'light'} | DISPLAY_ACTIONS | frozenset(('sort_desc','sort_asc','sort_name','sort_size',
     'language_en','door_lock','door_unlock'))
 NAV_ACTIONS = frozenset(('back','go_status','cancel_no','question_no','question_yes'))
-ALL_ACTIONS = READ_ACTIONS | set(NATIVE_ACTIONS) | set(SERVICE_ACTIONS) | CHOICE_ACTIONS | SETTING_ACTIONS | NAV_ACTIONS
+ALL_ACTIONS = READ_ACTIONS | set(NATIVE_ACTIONS) | set(SERVICE_ACTIONS) | CHOICE_ACTIONS | SETTING_ACTIONS | NAV_ACTIONS | set(HOME_ACTIONS)
 
 
 class MenuError(ValueError):pass
@@ -73,10 +74,11 @@ class View:
         # Keep Back in the first row, like the existing M300 navigation.
         pinned = bool(self.options and self.options[0][0] == 'Back')
         window = max(1, self.selected - 3) if pinned else max(0, self.selected - 4)
+        icon = self.option_icons[self.selected] if self.option_icons else self.icon
         return dict(page='zortrax:'+self.token,title=self.title,
             labels=[str(option[0]) for option in self.options],selected=self.selected,
-            window=window,icon=self.option_icons[self.selected] if self.option_icons else self.icon,
-            animated=self.animated,
+            window=window,icon=icon,
+            animated=self.animated or bool(self.option_icons and icon and icon.startswith('project:')),
             notice=None,language='en',generation=self.generation)
 
     def status(self):

@@ -169,6 +169,27 @@ _BENCH_BRANCHES = {
 }
 
 
+def _operator_rows():
+    language, sorting, *native_settings = MENU['settings'][2]
+    leveling, alignment, hotends, heat, _, fans = MENU['maintenance'][2]
+    homes = [Item('Home ' + axes, action='home_' + axes.lower()) for axes in ('X', 'Y', 'Z', 'XY', 'XYZ')]
+    return {
+        'settings': [Item('Light', action='light'), Item('Sleep mode', action='oled_sleep_mode'),
+                     language, sorting, Item('OLED brightness', action='oled_brightness'),
+                     Item('OLED dim time', action='oled_dim'), Item('OLED sleep time', action='oled_sleep'),
+                     *native_settings, Item('OLED timers', action='oled_timers'),
+                     Item('Sleep lighting', action='oled_sleep_light'), Item('OLED icons', action='oled_icons')],
+        'maintenance': [leveling, *homes, heat, Item('Move the platform up', action='platform_up'),
+                        Item('Move the platform down', action='platform_down'), fans,
+                        Item('Current procedure', action='current_procedure'), alignment, hotends],
+    }
+
+
+OPERATOR_ROWS = _operator_rows()
+PROJECT_ACTION_ICONS = {'home_xy': 'homing-xy', 'home_z': 'homing-z', 'home_xyz': 'homing-all',
+                        'light': 'led_brightness'}
+
+
 # The renderer resolves each operation to an audited Inventure symbol.
 _ACTION_ICONS = {
     'heat': 'heat_nozzle', 'heat_t0': 'heat_nozzle', 'heat_t1': 'heat_nozzle',
@@ -180,6 +201,8 @@ _ACTION_ICONS = {
 
 
 def action_icon(action):
+    if action in PROJECT_ACTION_ICONS:
+        return 'project:' + PROJECT_ACTION_ICONS[action]
     name = _ACTION_ICONS.get(action)
     return 'activity:' + name if name else None
 
@@ -199,13 +222,9 @@ class OEMMenu:
         self.notice=None;self.last_action=None;self.generation=0
 
     def items(self):
-        nodes=MENU[self.page][2]
-        if self.operational and self.page == 'settings':
-            nodes = nodes + [Item('OLED brightness', action='oled_brightness'),
-                             Item('OLED timers', action='oled_timers'),
-                             Item('OLED sleep mode', action='oled_sleep_mode'),
-                             Item('Sleep lighting', action='oled_sleep_light'),
-                             Item('OLED icons', action='oled_icons')]
+        nodes = MENU[self.page][2]
+        if self.operational:
+            nodes = OPERATOR_ROWS.get(self.page, nodes)
         if self.bench:
             if not self.operational or self.page=='service_tests':
                 nodes=[_BENCH_BRANCHES.get(node.action,node) for node in nodes]
@@ -226,7 +245,8 @@ class OEMMenu:
         return {'page':self.page,'title':MENU[self.page][0],
                 'labels':[item.label for item in items],
                 'selected':self.selected,'window':self.window,
-                'icon':icon,'language':self.language,'notice':self.notice,
+                'icon':icon,'animated':bool(icon and icon.startswith('project:') and not self.notice),
+                'language':self.language,'notice':self.notice,
                 'generation':self.generation}
 
     def move(self, direction):

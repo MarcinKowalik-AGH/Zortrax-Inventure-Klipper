@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-DISPLAY-R36",
-  "host_module_sha256": "f19ae61aa3e4f190511070357b5c1c5672af27b694af9e536b0d4aeeb8cf9484",
+  "host_revision": "RC8-CONTROL-R7-LAYOUT-R37",
+  "host_module_sha256": "7fbc7eb9654ed735fa5f84e138bd281933d2622d07ac865b3ec1ef84d083fc37",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 793,
-  "previous_host_commit": "97a773c9458f2cb570d7cc7f8ec211d4dbe964ac",
+  "verified_public_host_tests": 802,
+  "previous_host_commit": "e3c4b742490021612dc55511d28e98d5e3159090",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-DISPLAY-R36",
+  "release": "RC8-CONTROL-R7-LAYOUT-R37",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -760,10 +760,10 @@
       110
     ],
     "package_filename": "INVENTURE_MCU_NATIVE_OLED_R14_BOOT17.zip",
-    "release_tag": "inventure-display-r36",
-    "host_package_filename": "INVENTURE_ORANGE_PI_DISPLAY_R36.zip",
+    "release_tag": "inventure-layout-r37",
+    "host_package_filename": "INVENTURE_ORANGE_PI_LAYOUT_R37.zip",
     "ivb_sha256": "f4342f906793fe377a3a27112d84a3a2e82c154973031657d41e100e037d1035",
-    "audit_report": "docs/INVENTURE_DISPLAY_R36.md",
+    "audit_report": "docs/INVENTURE_LAYOUT_R37.md",
     "release_notes": "docs/INVENTURE_NATIVE_UI_R35.md",
     "application_sha256": "2c79550a30112e7a7255c1d164f9af26ca88160d25c4847101fae9ee215dc2a3",
     "ivb_bytes": 106244,
@@ -960,10 +960,10 @@
     "install_option": "--configure-fluidd",
     "reference": "M300 v1.0.0 c93868df931bbbccddbbe4a57abb83e8a1253da7",
     "hardware_validation": "New native OLED, RAM brightness and local fault pages await hardware verification.",
-    "report": "docs/INVENTURE_DISPLAY_R36.md",
-    "web_package": "INVENTURE_FLUIDD_WEB_R36.zip",
+    "report": "docs/INVENTURE_LAYOUT_R37.md",
+    "web_package": "INVENTURE_FLUIDD_WEB_R37.zip",
     "upstream_fluidd": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4",
-    "web_build_tag": "inventure-display-r36"
+    "web_build_tag": "inventure-layout-r37"
   },
   "configuration_layout": {
     "install_option": "--organize-config",
@@ -971,11 +971,15 @@
     "reference_m300_commit": "67e300b8259886a7d5033c3e6c290d9e10012f32",
     "r0323_threshold_pairs": 205,
     "mcu_release": "RC8-CONTROL-R7-DISPLAY-R14",
-    "report": "docs/INVENTURE_DISPLAY_R36.md",
-    "heater_defaults": "inventure/heater_control.cfg",
+    "report": "docs/INVENTURE_LAYOUT_R37.md",
+    "heater_defaults": "inventure_heater_control.cfg",
     "sensor_map_source": "Inventure r0323 0x080296B6",
     "default_timer_policy": "inventure",
-    "display": "inventure/display.cfg"
+    "display": "inventure_display.cfg",
+    "display_section": "inventure_display",
+    "physical_display": "inventure_base.cfg",
+    "sensor_maps": "inventure_temperature_sensors.cfg",
+    "project_rule": "AGENTS.md"
   },
   "native_display": {
     "mcu_release": "RC8-CONTROL-R7-DISPLAY-R14",

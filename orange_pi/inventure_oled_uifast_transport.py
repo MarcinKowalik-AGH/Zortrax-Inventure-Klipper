@@ -176,6 +176,7 @@ class OledStream:
         self.pending_op=None
         self.display_mode='unknown';self.requested_mode='awake';self._mode_target=None
         self.awake_level=15
+        self.normal_contrast, self.dim_contrast = 159, 32
         self.fade_step=16
         self.display_contrast=159
         self._contrast_target=159
@@ -197,13 +198,16 @@ class OledStream:
         if self.requested_mode != self.display_mode:
             return True
         return (self.requested_mode != 'off' and self.display_contrast !=
-                panel_contrast(self.requested_mode, self.awake_level, self.fade_step))
+                panel_contrast(self.requested_mode, self.awake_level, self.fade_step,
+                               self.normal_contrast, self.dim_contrast))
 
     def begin_mode_update(self, fast=False):
         self._mode_target = self.requested_mode
         self._level_target = self.awake_level
-        self._contrast_target = panel_contrast(self._mode_target, self._level_target, self.fade_step)
-        return iter(mode_operations(self.display_mode, self._mode_target, fast, self._level_target, self.fade_step))
+        self._contrast_target = panel_contrast(self._mode_target, self._level_target, self.fade_step,
+                                               self.normal_contrast, self.dim_contrast)
+        return mode_operations(self.display_mode, self._mode_target, fast, self._level_target,
+                               self.fade_step, self.normal_contrast, self.dim_contrast)
 
     def finish_mode_update(self):
         self.display_mode = self._mode_target
@@ -328,18 +332,18 @@ class OledStream:
         self.sent+=1;return self.pending_op
 
 
-def panel_contrast(mode, awake_level, fade_step=16):
-    maximum = 32 if mode == 'dim' else 159
+def panel_contrast(mode, awake_level, fade_step=16, normal=159, dim=32):
+    maximum = dim if mode == 'dim' else normal
     value = max(1, round(maximum * (awake_level + 1) / 16))
     return 1 + round((value - 1) * (fade_step - 1) / 15) if mode == 'dim' else value
 
 
-def mode_operations(previous,requested,fast=False,awake_level=15,fade_step=16):
+def mode_operations(previous,requested,fast=False,awake_level=15,fade_step=16,normal=159,dim=32):
     emit=fast_command if fast else command
     if requested=='off':
         yield from emit(0xae)
     else:
-        yield from emit(0xc1, bytes([panel_contrast(requested, awake_level, fade_step)]))
+        yield from emit(0xc1, bytes([panel_contrast(requested, awake_level, fade_step, normal, dim)]))
         if previous=='off':yield from emit(0xaf)
 
 

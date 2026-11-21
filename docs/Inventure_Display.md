@@ -4,9 +4,18 @@ The Orange Pi composes the 256 × 64 grayscale image. Klipper sends changed regi
 
 ## Configuration
 
-The organized installation stores the physical panel's `[inventure_oled]` section and the explicit Klipper `[display_status]` section in `inventure/display.cfg`, included by the active `printer.cfg`. The latter supplies the progress and message reported by `M73` and `M117`. The physical driver creates `inventure_oled_preview` for Moonraker automatically. The installer respects existing display sections, including a site-owned generic display.
+Open `inventure_display.cfg` next to the active `printer.cfg`. Its `[inventure_display]` section contains the panel preferences. Times are in seconds. The separate `inventure_base.cfg` contains the physical `[inventure_oled]` driver and Klipper's `[display_status]` for progress and messages. The physical driver publishes `inventure_oled_preview` to Moonraker.
 
-Use **Settings → OLED brightness**, **OLED timers** and **OLED sleep mode** to edit the panel preferences. The port defaults to 300 seconds of inactivity and a 10-second notice. Saved operator settings take precedence. The Inventure firmware supplies the native menu graphics, fault screens and thermal calibration.
+| Option | Inventure default | Purpose |
+|---|---|---|
+| `timeout` | 300 s | Dim in timed mode |
+| `sleep_timeout` | 900 s | Switch the panel off in timed mode |
+| `normal_contrast`, `dim_contrast` | 159, 32 | Panel contrast at maximum brightness |
+| `notice_seconds` | 10 s | Duration of the sleep notice |
+| `timer_policy`, `idle_timeout` | `inventure`, 300 s | Start the native Inventure sleep notice after inactivity |
+| `brightness`, `sleep_light` | 16, `manual` | Panel brightness level and chamber lighting during sleep |
+
+In **Settings**, use **Sleep mode**, **OLED brightness**, **OLED dim time** or **OLED sleep time**. **OLED timers** also exposes the native idle/notice settings. A saved choice on the Orange Pi takes priority over the corresponding file default. Changing a timed threshold selects timed mode. Changing a native idle or notice threshold selects native mode.
 
 ## Project artwork
 

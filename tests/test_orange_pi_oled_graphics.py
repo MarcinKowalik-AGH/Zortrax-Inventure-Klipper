@@ -59,7 +59,17 @@ class Graphics(unittest.TestCase):
             menu.page, menu.selected, menu.window = page, 0, 1
             for _ in menu.items():
                 view = menu.view()
-                if not (view.get('icon') or '').startswith('activity:'):
+                icon = view.get('icon') or ''
+                if icon.startswith('project:'):
+                    for index, source in enumerate(graphics.project_symbols()[icon[8:]]['frames']):
+                        expected = native.Frame().oem_menu(view)
+                        packed = zlib.decompress(base64.b64decode(source['zlib_b64']))
+                        for y in range(50):
+                            for x in range(50):
+                                pair = packed[y * 25 + x // 2]
+                                expected.pixel(203 + x, 13 + y, pair & 15 if x % 2 else pair >> 4)
+                        self.assertEqual(graphics.menu_wire(view, index=index), expected.wire_bytes())
+                elif not icon.startswith('activity:'):
                     self.assertEqual(graphics.menu_wire(view), native.Frame().oem_menu(view).wire_bytes())
                 menu.move(1)
         for name in native.get_oem_assets().icons:

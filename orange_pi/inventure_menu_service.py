@@ -10,7 +10,7 @@ import textwrap
 from pathlib import Path
 
 from .inventure_oem_menu import action_icon
-from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, DISPLAY_ACTIONS, MODEL_MATERIALS,
+from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, DISPLAY_ACTIONS, HOME_ACTIONS, MODEL_MATERIALS,
     NATIVE_ACTIONS, READ_ACTIONS, SERVICE_ACTIONS, SUPPORT_MATERIALS,
     MenuError, SettingsStore, View, source_identity)
 
@@ -51,6 +51,7 @@ class ZortraxMenuService:
         self.executing=False;self.last_buttons=0;self.last_sequence=None;self.last_native_key=None
         self.menu_dialog_requested = False
         self.menu_dialog_token = None
+        self.operator_page_open = False
         self.platform_dialog = None
         self.jam_dialog = None
         self.last_pause_view=None
@@ -192,6 +193,7 @@ class ZortraxMenuService:
                 self.reactor.monotonic() >= view.deadline or view.kind not in ('confirm', 'choice', 'fan', 'info', 'files', 'preview')):
             self._close_menu_dialog()
             self.menu_dialog_requested = False
+            self.operator_page_open = False
             return
         if view.token == self.menu_dialog_token:
             return
@@ -314,6 +316,13 @@ class ZortraxMenuService:
     def _confirm(self,action,params=None,title=None):
         reviews=[]
         if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
+        elif action in HOME_ACTIONS:
+            axes = HOME_ACTIONS[action]
+            title = 'Home '+axes+'?'
+            if 'Z' in axes:
+                title = 'Pad and clearance OK?'
+                target = self._obj('inventure_native_z').target
+                reviews = ['Home '+axes+' with T0', 'Nozzle target: %g C' % target]
         elif action=='leveling':
             if self.capability(action)['backend'] == 'platform_level':
                 title = 'Start platform leveling?'
@@ -343,6 +352,14 @@ class ZortraxMenuService:
     def capability(self,action):
         if action not in ALL_ACTIONS and not action.startswith(('fan_','platform_','spool_')):
             return dict(available=False,backend=None,reason='Unknown menu action')
+        if action in HOME_ACTIONS:
+            ready = callable(getattr(self._obj('inventure_native_z'), 'cmd_home_axes', None))
+            return dict(available=ready, backend='inventure_native_z' if ready else None,
+                        reason=None if ready else 'The native homing module is unavailable')
+        if action == 'light':
+            ready = self.board.connected and 'rgb' in self.board.commands
+            return dict(available=ready, backend='rgb' if ready else None,
+                        reason=None if ready else 'The MCU lighting command is unavailable')
         if action in DISPLAY_ACTIONS:
             available = self._obj('inventure_oled') is not None
             if action == 'oled_sleep_light':
@@ -389,6 +406,7 @@ class ZortraxMenuService:
         view.option_icons = tuple(navigation.item_icon(node) for node in items)
         view.selected = navigation.selected
         self.menu_dialog_requested = True
+        self.operator_page_open = True
         self._sync_menu_dialog()
         return view
 
@@ -418,7 +436,7 @@ class ZortraxMenuService:
                  (('manual','Keep current light'),('dynamic','Dynamic (magenta)'),('white','White'),('off','Off'))])
         if action == 'oled_sleep_mode':
             current = bool(values.get('sleep_enabled', oled.configured_sleep))
-            return self._set_view('choice', 'OLED sleep mode', [
+            return self._set_view('choice', 'Sleep mode', [
                 ('Back', ('close', {})), ('Currently ' + ('on' if current else 'off'), None),
                 ('Enable', ('display_save', {'ENABLED': 1})),
                 ('Disable', ('display_save', {'ENABLED': 0}))])
@@ -441,12 +459,32 @@ class ZortraxMenuService:
     def open(self,action,**params):
         if self.stopped:raise MenuError('Menu lifecycle ended; reconnect first')
         if not isinstance(action,str) or not action:raise MenuError('Specify a stable menu ACTION identifier')
+        if params and (action in HOME_ACTIONS or action in ('light', 'current_procedure')):
+            raise MenuError('This menu entry uses the configured printer settings')
+        if action == 'current_procedure':
+            if self.active is not None:
+                return self._running_view()
+            context = self.board.load_test_context
+            report = self.board._load_test_report(context) if context is not None else {}
+            factory = report.get('factory') or {}
+            operation = self._status('inventure_operations').get('operation')
+            phase = factory.get('phase') or report.get('phase') or operation
+            if not phase and self._status('inventure_native_z').get('running'):
+                phase = 'Native Z reference'
+            return self._info('Current procedure', str(phase or 'No current service operation'))
         if self.active is not None:self._running_view()
         if self.active is not None:raise MenuError('A menu procedure is active; use its current controls')
         if self.fan_session is not None and action not in READ_ACTIONS and action not in ('fan_test','back','go_status') and not action.startswith('fan_'):
             return self._info('Fan test active','End the fan-test session before starting another menu operation')
         if action in ('go_status','back','cancel_no','question_no'):self.view=None;return
         if action=='question_yes':return self._info('Confirmation','No bound question is active; open the intended operation')
+        if action == 'light':
+            cap = self.capability(action)
+            if not cap['available']:
+                return self._info('Light', cap['reason'])
+            return self._set_view('choice', 'Light', [('Back', ('close', {})),
+                ('White', ('set_light', {'mask': 7})), ('Off', ('set_light', {'mask': 0})),
+                ('Sleep lighting', ('request', {'action': 'oled_sleep_light'}))])
         if action in DISPLAY_ACTIONS and action != 'oled_timers':
             return self._display_editor(action)
         if action == 'oled_timers':
@@ -711,6 +749,11 @@ class ZortraxMenuService:
             self._call(self.board,'cmd_fan_manual',CHANNEL=params.get('channel',0),ACTION=action[4:].upper(),ACK='COLD' if action=='fan_on' else 'OBSERVED')
             if action=='fan_on':self.fan_session=dict(run=self.board.fan_manual_last['run'],channel=params.get('channel',0))
             if action=='fan_cancel':self.fan_session=None
+        elif action in HOME_ACTIONS:
+            from .inventure_z_home import Z_HOME_ACK
+            axes = HOME_ACTIONS[action]
+            options = {'ACK': Z_HOME_ACK} if 'Z' in axes else {}
+            self._call(self._obj('inventure_native_z'), 'cmd_home_axes', AXES=axes, **options)
         elif action.startswith('platform_'):
             from .inventure_fluidd import move_platform
             move_platform(self.board, action.split('_')[1],
@@ -949,6 +992,9 @@ class ZortraxMenuService:
     def _dispatch_choice(self,verb,args):
         if verb == 'operator_item':
             return self._choose_operator_item(args['index'])
+        if verb == 'set_light':
+            self._call(self.board, 'cmd_rgb', MASK=args['mask'])
+            return self._info('Light', 'White' if args['mask'] else 'Off')
         if verb == 'display_edit':
             return self._display_editor(**args)
         if verb == 'display_save':
@@ -958,6 +1004,8 @@ class ZortraxMenuService:
         if verb=='close':
             if self.active is not None:self.last_native_key=None;return self._running_view()
             if self.fan_session is not None:return self._fan_page(self.fan_session['channel'])
+            if self.operator_page_open and self.menu_dialog_requested:
+                return self.open_operator_page()
             self.view=None;return
         if verb=='browse':return self._browse()
         if verb=='preview':return self._preview(args['name'])
@@ -1235,12 +1283,13 @@ class ZortraxMenuService:
                 query=getattr(gcmd,'get_command_parameters',None)
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
-                if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | {
-                        'oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1',
+                if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | HOME_ACTIONS.keys() | {
+                        'light','current_procedure','oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1',
                         'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
                     raise MenuError('This procedure supplies its own operator interface')
                 params={k:v for k,v in values.items() if k not in ('OP','ACTION','PROMPT')}
                 if not set(params)<=allowed:raise MenuError('Unknown procedure parameter: '+', '.join(sorted(set(params)-allowed)))
+                self.operator_page_open = False
                 self.open(gcmd.get('ACTION'),**params)
                 if not show:
                     self._close_menu_dialog()

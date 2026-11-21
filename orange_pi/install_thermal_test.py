@@ -72,7 +72,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
         names.append('inventure_factory_core.py');optional.add('inventure_factory_core.py')
     extra_modules=meta.get('extra_modules',{})
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
-                    'inventure_oled_uifast_transport.py','inventure_z_home.py',
+                    'inventure_oled_uifast_transport.py','inventure_display.py','inventure_z_home.py',
                     'inventure_chamber.py','inventure_oled_preview.py','inventure_oled_graphics.py','inventure_activity_sprites.json',
                     'inventure_project_activity_sprites.json','inventure_project_menu_sprites.json',
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',

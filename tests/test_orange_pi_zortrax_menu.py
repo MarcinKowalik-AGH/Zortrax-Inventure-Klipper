@@ -42,6 +42,69 @@ class MenuFixture:
 
 
 class MenuCoreTests(unittest.TestCase):
+    def test_common_settings_and_maintenance_use_the_reference_order(self):
+        nav = menu_module.OEMMenu('en', operational=True)
+        nav.page = 'settings'
+        self.assertEqual([i.label for i in nav.items()], ['Back','Light','Sleep mode','Language',
+            'Models sorting','OLED brightness','OLED dim time','OLED sleep time','Door lock',
+            'File checking','Ignore material endstops','OLED timers','Sleep lighting','OLED icons'])
+        nav.page = 'maintenance'
+        self.assertEqual([nav.item_icon(i) for i in nav.items() if i.action in ('home_z','home_xy','home_xyz')],
+                         ['project:homing-z','project:homing-xy','project:homing-all'])
+        self.assertEqual([i.label for i in nav.items()][2:7], ['Home X','Home Y','Home Z','Home XY','Home XYZ'])
+        activity_index = importlib.import_module(adapter.__package__+'.inventure_oled_graphics').activity_index
+        nav.selected = next(i for i, node in enumerate(nav.items()) if node.action == 'home_xyz')
+        view = nav.view()
+        self.assertEqual([activity_index(view,t) for t in (0,.25,.5,1.,1.5)], [0,0,1,2,3])
+        self.assertTrue(all(i.action in core.ALL_ACTIONS or i.action in ('platform_up','platform_down')
+                            for i in nav.items() if i.action))
+
+    def test_shared_home_controls_dispatch_only_after_the_printed_review(self):
+        board, menu = MenuFixture().host()
+        seen = []
+        board.printer.objects['inventure_native_z'] = types.SimpleNamespace(target=205,
+            cmd_home_axes=lambda g: seen.append(g.get_command_parameters()))
+        for action,axes in core.HOME_ACTIONS.items():
+            menu.open(action)
+            self.assertEqual(menu.view.kind, 'confirm')
+            if 'Z' in axes:
+                self.assertEqual(menu.view.title, 'Pad and clearance OK?')
+                self.assertIn(('Nozzle target: 205 C',None), menu.view.options)
+            before = len(seen)
+            menu.choose(menu.view.token,index=0)
+            self.assertEqual(len(seen), before)
+            menu.open(action)
+            menu.choose(menu.view.token,confirm=True)
+            self.assertEqual(seen[-1], {'AXES':axes,'ACK':'PAD_AND_CLEARANCE_CHECKED'}
+                             if 'Z' in axes else {'AXES':axes})
+        self.assertEqual(len(seen), 5)
+
+    def test_back_from_shared_settings_returns_to_the_same_row_in_fluidd(self):
+        board, menu = MenuFixture().host()
+        nav = menu_module.OEMMenu('en', operational=True)
+        nav.page = 'settings'
+        board.printer.objects['inventure_oled'] = types.SimpleNamespace(oem_menu=nav)
+        board.commands['rgb'] = types.SimpleNamespace(send=lambda value: self.fail('unexpected RGB command'))
+        page = menu.open_operator_page()
+        index = next(i for i,n in enumerate(nav.items()) if n.action == 'light')
+        menu.choose(page.token, index)
+        self.assertEqual(menu.view.title, 'Light')
+        menu.choose(menu.view.token, 0)
+        self.assertEqual(menu.view.title, 'Settings')
+        self.assertEqual(menu.view.selected, index)
+        self.assertEqual(menu.menu_dialog_token, menu.view.token)
+
+    def test_shared_light_prompt_sends_one_mask_for_an_operator_choice(self):
+        board, menu = MenuFixture().host()
+        sent = []
+        board.commands['rgb'] = types.SimpleNamespace(send=sent.append)
+        board.gcode.run_script_from_command('INVENTURE_ZORTRAX OP=OPEN ACTION=light PROMPT=1')
+        self.assertEqual(sent, [])
+        menu.choose(menu.view.token, 1)
+        menu.open('light')
+        menu.choose(menu.view.token, 2)
+        self.assertEqual(sent, [[7],[0]])
+
     def test_oled_gallery_uses_the_same_read_only_view_from_panel_and_gcode(self):
         board, svc = MenuFixture().host()
         hardware = board.load_test_context

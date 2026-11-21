@@ -65,6 +65,9 @@ class InventureOLED:
         self.configured_notice = self.sleep_notice
         self.configured_dim_min = config.getint('dim_minutes', 5, minval=1, maxval=60)
         self.configured_sleep_min = config.getint('sleep_minutes', 15, minval=1, maxval=60)
+        self.configured_dim_s = self.configured_dim_min * 60.
+        self.configured_off_s = self.configured_sleep_min * 60.
+        self.configured_normal, self.configured_dim = 159, 32
         self.configured_brightness = config.getint('brightness', 16, minval=1, maxval=16)
         self.configured_light = config.get('sleep_light', 'manual').lower()
         if self.configured_light not in ('manual', 'dynamic', 'white', 'off'):
@@ -686,7 +689,7 @@ class InventureOLED:
                 menu_view=self.oem_menu.view()
                 snapshot=('menu',menu_view['page'],menu_view['generation'],
                           menu_view['selected'],menu_view['window'],
-                          menu_view.get('icon'),menu_view.get('notice'))
+                          menu_view.get('icon'),menu_view.get('notice'),activity_index(menu_view, now))
             if snapshot==self._oem_render_cache:
                 self._render_cache_hits+=1
                 self._user_refresh_pending=False
@@ -1031,14 +1034,22 @@ class InventureOLED:
         self.minute_timers = values.get('timer_policy', policy) == 'minutes'
         if self.minute_timers:
             dim, sleep = self.timer_preferences(values)
-            self.dim_timeout = min(dim, sleep) * 60
-            self.sleep_timeout = sleep * 60 if enabled else 0.
+            dim_s, off_s = dim * 60., sleep * 60.
+            if values.get('timer_policy') != 'minutes':
+                if 'dim_min' not in values:
+                    dim_s = self.configured_dim_s
+                if 'sleep_min' not in values:
+                    off_s = self.configured_off_s
+            self.dim_timeout = min(dim_s, off_s)
+            self.sleep_timeout = off_s if enabled else 0.
         self.sleep_notice = values.get('notice_s', self.configured_notice)
         level = values.get('oled_level', self.configured_brightness)
         self.stream.awake_level = level - 1
+        self.stream.normal_contrast = self.configured_normal
+        self.stream.dim_contrast = self.configured_dim
         sync = getattr(self.board, 'set_local_oled_brightness', None)
         if sync is not None:
-            sync(level)
+            sync(max(1, round(self.configured_normal * level / 159)))
 
     def cmd_display_control(self, gcmd):
         menu = self.board.zortrax

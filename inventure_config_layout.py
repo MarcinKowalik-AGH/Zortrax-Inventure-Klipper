@@ -12,7 +12,6 @@ HEADER = re.compile(r'^\[([^\]\n]+)\][ \t]*(?:[#;][^\n]*)?\r?$', re.M)
 FOOTER = re.compile(r'^#\*#', re.M)
 MANAGED = '# Inventure configuration layout v1\n'
 MAP_KEYS = ('nozzle_reference_mv', 'nozzle_mv_per_c', 'thermistor_thresholds')
-DISPLAY_DEFAULTS = {'sleep_timeout': '300', 'sleep_notice': '10', 'brightness': '16', 'sleep_light': 'manual'}
 ZONE_PINS = {'inventure_r5:HEATER_T0': 't0', 'inventure_r5:HEATER_T1': 't1',
              'inventure_r5:HEATER_PC9': 'chamber_l', 'inventure_r5:HEATER_PC8': 'chamber_r'}
 TUNE_LINE = re.compile(r'^(control|pid_kp|pid_ki|pid_kd|max_delta)[ \t]*[:=]', re.I)
@@ -69,11 +68,203 @@ def active_klipper(module, main, updates):
     return cfg, files
 
 
+# Active filenames mirror the M300 installer. The base file holds the physical
+# driver and standard Klipper status. R34–R36 used the keys on the left.
+LAYOUT_NAMES = {
+    'display.cfg': 'inventure_base.cfg', 'temperature_sensors.cfg': 'inventure_temperature_sensors.cfg',
+    'services.cfg': 'inventure_services.cfg', 'operations.cfg': 'inventure_operations.cfg',
+    'calibration.cfg': 'klipper_calibration.cfg', 'heaters.cfg': 'inventure_heaters.cfg',
+    'heater_control.cfg': 'inventure_heater_control.cfg', 'chamber.cfg': 'inventure_chamber.cfg',
+    'cooling.cfg': 'inventure_cooling.cfg', 'heater_monitors.cfg': 'inventure_heater_monitors.cfg',
+}
+DISPLAY_NAME = 'inventure_display.cfg'
+FORWARD = '# Inventure R37 compatibility include\n'
+DISPLAY_KEYS = {'dim_minutes': 'timeout', 'sleep_minutes': 'sleep_timeout',
+                'sleep_notice': 'notice_seconds', 'sleep_timeout': 'idle_timeout',
+                'brightness': 'brightness', 'sleep_light': 'sleep_light', 'timer_policy': 'timer_policy'}
+OPTION = re.compile(r'^[ \t]*([a-zA-Z_][\w]*)[ \t]*[:=][ \t]*([^#;\r\n]*?)([ \t]*(?:[#;][^\r\n]*)?)(\r?\n|$)')
+
+
+def local_destination(path):
+    if path.is_symlink() or path.exists() and not path.is_file():
+        raise ValueError('Unsupported layout destination: '+str(path))
+    return path
+
+
+def config_values(parsed):
+    return {name: dict(parsed.items(name)) for name in parsed.sections()}
+
+
+def upgrade_layout_names(module, main, updates):
+    """Move R36 role files in situ, retaining include order and wildcard users."""
+    before, files = active_klipper(module, main, updates)
+    olddir = main.parent/'inventure'
+    if olddir.is_symlink():
+        raise ValueError('Unsupported legacy layout directory: '+str(olddir))
+    active = set(files)
+    moves = {}
+    for oldname, newname in LAYOUT_NAMES.items():
+        old = olddir/oldname
+        if old not in active:
+            continue
+        local_destination(old)
+        data = planned_bytes(old, updates)
+        if data.startswith(FORWARD.encode()):
+            continue
+        if oldname == 'temperature_sensors.cfg':
+            reader = module.ConfigFileReader()
+            sensors = reader.build_fileconfig(data.decode(), str(old))
+            if sensors.sections() != ['inventure_mcu'] or set(sensors.options('inventure_mcu')) != set(MAP_KEYS):
+                continue
+        elif not data.startswith(MANAGED.encode()):
+            continue
+        moves[old] = local_destination(main.parent/newname)
+    if not moves:
+        return
+    texts = {p: planned_bytes(p, updates).decode() for p in dict.fromkeys(files)}
+    globs = [str(src.parent / name[8:].strip()) for src, data in texts.items()
+             for name, *_ in blocks(data) if name.startswith('include ') and glob.has_magic(name[8:])]
+    def covered(path):
+        return any(path.match(os.path.abspath(pattern)) for pattern in globs)
+
+    for src, data in texts.items():
+        if not src.is_relative_to(main.parent):
+            continue
+        dest = moves.get(src, src)
+        for name, start, _, _ in reversed(list(blocks(data))):
+            if not name.startswith('include '):
+                continue
+            target = Path(os.path.abspath(src.parent/name[8:].strip()))
+            relocated = moves.get(target, target)
+            if dest == src and relocated == target:
+                continue
+            old_header = '['+name+']'
+            if relocated != target and covered(relocated):
+                new_header = '# Included by the existing configuration wildcard'
+            else:
+                new_header = '[include '+os.path.relpath(relocated, dest.parent)+']'
+            data = data[:start] + new_header + data[start+len(old_header):]
+        if dest != src:
+            if (dest.is_file() or dest in updates) and planned_bytes(dest, updates) != data.encode():
+                raise ValueError('Both old and new configuration files contain settings: '+str(dest))
+            shim = FORWARD + ('# Loaded by the existing wildcard: '+dest.name+'\n' if covered(dest)
+                              else '[include '+os.path.relpath(dest, src.parent)+']\n')
+            stage(updates, src, shim.encode())
+        stage(updates, dest, data.encode())
+    after, visited = active_klipper(module, main, updates)
+    if config_values(after) != config_values(before) or any(visited.count(p) != 1 for p in moves.values()):
+        raise ValueError('Moving the legacy configuration would change active settings or include order')
+
+
+def split_display_preferences(module, main, updates):
+    """Use a single display preference file. Leave SPI and MCU ownership in the base."""
+    parsed, files = active_klipper(module, main, updates)
+    if not parsed.has_section('inventure_oled') and not parsed.has_section('inventure_display'):
+        return files
+    dest = local_destination(main.parent/DISPLAY_NAME)
+    template = (ROOT/'config'/DISPLAY_NAME).read_text()
+    files = list(dict.fromkeys(files))
+    texts = {p: planned_bytes(p, updates).decode() for p in files}
+    expected = config_values(parsed)
+    canonical = expected.get('inventure_display', {}).copy()
+    extracted = {}
+    outside = set()
+    # Do not disturb site-owned include overlays outside the configuration tree.
+    # Their legacy values still feed the display through the physical driver.
+    for src, data in texts.items():
+        if not src.is_relative_to(main.parent):
+            for name, _, _, body in blocks(data):
+                if name == 'inventure_oled':
+                    outside.update(m[1].lower() for row in body.splitlines() if (m := OPTION.match(row)))
+    for src, data in list(texts.items()):
+        if not src.is_relative_to(main.parent):
+            continue
+        for name, start, end, body in reversed(list(blocks(data))):
+            if name != 'inventure_oled':
+                continue
+            keep = []
+            for row in body.splitlines(keepends=True):
+                match = OPTION.match(row)
+                key = match[1].lower() if match else None
+                if key not in DISPLAY_KEYS or key in outside:
+                    keep.append(row)
+                    continue
+                target = DISPLAY_KEYS[key]
+                # Use the value selected by Klipper even across multiple includes.
+                value = parsed.get(name, key)
+                if key in ('dim_minutes', 'sleep_minutes'):
+                    value = str(60*int(value))
+                extracted[target] = (value, match[3] if match[2].strip() == parsed.get(name, key) else '')
+                expected[name].pop(key, None)
+            data = data[:start]+''.join(keep)+data[end:]
+        texts[src] = data
+    adopt = dest.exists() and dest not in files
+    if adopt:
+        existing = dest.read_bytes().decode()
+        if [name for name, *_ in blocks(existing)] != ['inventure_display'] or canonical:
+            raise ValueError('Conflicting display configuration at '+str(dest))
+        local = module.ConfigFileReader().build_fileconfig(existing, str(dest))
+        canonical.update(local.items('inventure_display'))
+        texts[dest] = existing
+    # If a hand-written canonical section already exists, keep explicit choices
+    # and move a unique local section to its role file with its original comments.
+    local_sections = [(p,start,end,body) for p,data in texts.items()
+                      for name,start,end,body in blocks(data) if name == 'inventure_display']
+    covered = any(dest.match(os.path.abspath(src.parent/name[8:].strip())) for src,data in texts.items()
+                  for name, *_ in blocks(data) if name.startswith('include ') and glob.has_magic(name[8:]))
+    need_include = dest not in files and not covered
+    content = texts.get(dest, MANAGED+'\n[inventure_display]\n')
+    if len(local_sections) == 1:
+        src,start,end,body = local_sections[0]
+        if src != dest and src.is_relative_to(main.parent) and dest not in files:
+            ins = '[include '+os.path.relpath(dest, src.parent)+']\n' if need_include else ''
+            texts[src] = texts[src][:start]+ins+texts[src][end:]
+            content = MANAGED+'\n'+body
+            need_include = False
+    rendered = []
+    for line in template.splitlines(keepends=True):
+        match = OPTION.match(line)
+        if not match:
+            rendered.append(line)
+            continue
+        key = match[1]
+        if key in canonical or any(DISPLAY_KEYS.get(k) == key for k in outside):
+            continue
+        value, comment = extracted.get(key, (match[2].strip(), match[3]))
+        # A customized normal limit also bounds the implicit dim contrast.
+        if key == 'dim_contrast' and 'normal_contrast' in canonical:
+            value = str(min(int(value), int(canonical['normal_contrast'])))
+        rendered.append(key+': '+value+comment+'\n')
+        canonical[key] = value
+    if not local_sections and dest not in files:
+        content = ''.join(rendered)
+    else:
+        additions = [line for line in rendered if OPTION.match(line)]
+        if additions:
+            sections = [(start,end) for name,start,end,_ in blocks(content) if name == 'inventure_display']
+            pos = sections[-1][1] if sections else len(content)
+            prefix = '' if sections else '\n[inventure_display]\n'
+            content = content[:pos].rstrip()+'\n'+prefix+''.join(additions)+'\n'+content[pos:]
+    if need_include:
+        data = texts[main]
+        tail = FOOTER.search(data)
+        pos = tail.start() if tail else len(data)
+        texts[main] = data[:pos].rstrip()+'\n\n[include '+dest.name+']\n\n'+data[pos:]
+    texts[dest] = content
+    for p, data in texts.items():
+        stage(updates, p, data.encode())
+    expected['inventure_display'] = canonical
+    after, paths = active_klipper(module, main, updates)
+    if config_values(after) != expected or paths.count(dest) != 1:
+        raise ValueError('Splitting the display would change the effective panel configuration')
+    return paths
+
+
 def organize_klipper(module, main, updates):
     main = main.resolve()
-    folder = main.parent / 'inventure'
-    if folder.is_symlink() or folder.exists() and not folder.is_dir():
-        raise ValueError('Expected a local Inventure configuration directory: '+str(folder))
+    upgrade_layout_names(module, main, updates)
+    folder = main.parent
+    managed_files = {folder/name for name in (*LAYOUT_NAMES.values(), DISPLAY_NAME)}
     active, paths = active_klipper(module, main, updates)
     if not active.has_section('inventure_mcu'):
         raise ValueError('Select the active Inventure Klipper configuration')
@@ -94,10 +285,7 @@ def organize_klipper(module, main, updates):
         return path in included or any(path.match(pattern) for pattern in globs)
 
     def destination(name):
-        path = folder / name
-        if path.is_symlink() or path.exists() and not path.is_file():
-            raise ValueError('Unsupported layout destination: '+str(path))
-        return path
+        return local_destination(folder / LAYOUT_NAMES[name])
 
     def own(path):
         if path in texts:
@@ -115,7 +303,7 @@ def organize_klipper(module, main, updates):
     heater_blocks = []
     adjustable = []
     for source, data in texts.items():
-        if not source.is_relative_to(main.parent) or source.parent == folder:
+        if not source.is_relative_to(main.parent) or source in managed_files:
             continue
         for name, start, end, body in blocks(data):
             if counts[name] != 1:
@@ -176,7 +364,7 @@ def organize_klipper(module, main, updates):
     additions = defaultdict(dict)
     sensor_file = destination('temperature_sensors.cfg')
     sensor_data = (ROOT/'config/inventure_temperature_sensors.cfg').read_bytes()
-    if sensor_file.exists():
+    if sensor_file.exists() or sensor_file in updates:
         reader = module.ConfigFileReader()
         def curve(data):
             cfg = reader.build_fileconfig(data.decode(), str(sensor_file))
@@ -185,7 +373,7 @@ def organize_klipper(module, main, updates):
             options = cfg['inventure_mcu']
             rows = [tuple(map(int, row.split(','))) for row in options['thermistor_thresholds'].splitlines() if row.strip()]
             return options.getint('nozzle_reference_mv'), options.getint('nozzle_mv_per_c'), rows
-        existing = sensor_file.read_bytes()
+        existing = planned_bytes(sensor_file, updates)
         if curve(existing) != curve(sensor_data):
             raise ValueError('Existing sensor map differs from the R13 MCU: '+str(sensor_file))
         sensor_data = existing
@@ -198,23 +386,6 @@ def organize_klipper(module, main, updates):
 
     if active.has_section('inventure_oled'):
         display = destination('display.cfg')
-        policy = 'inventure'
-        missing = {key: value for key, value in dict(DISPLAY_DEFAULTS, timer_policy=policy).items()
-                   if not active.has_option('inventure_oled', key)}
-        if missing:
-            defaults = ''.join(key+': '+value+'\n' for key, value in missing.items())
-            group = grouped[display]
-            oled_block = next((i for i, body in enumerate(group)
-                              if HEADER.match(body)[1] == 'inventure_oled'), None)
-            if oled_block is not None:
-                group[oled_block] = group[oled_block].rstrip('\r\n')+'\n'+defaults
-            else:
-                # A display section in an external or already split file keeps its
-                # device options in place; the local include supplies only defaults.
-                if not group and not already_included(display):
-                    append_main_include(display)
-                group.append('[inventure_oled]\n'+defaults)
-            additions['inventure_oled'].update(missing)
         add_status = not any(active.has_section(name) for name in ('display_status', 'display'))
         if add_status:
             if not grouped[display] and not already_included(display):
@@ -243,6 +414,7 @@ def organize_klipper(module, main, updates):
     if result != original:
         raise ValueError('The organized Klipper tree changes existing settings')
     migrate_display_defaults(display if active.has_section('inventure_oled') else None, updates)
+    split_display_preferences(module, main, updates)
     return organize_heater_profiles(module, main, folder, updates)
 
 
@@ -285,7 +457,7 @@ def migrate_display_defaults(path, updates):
 def organize_heater_profiles(module, main, folder, updates):
     """Move each board heater's baseline. Native SAVE_CONFIG overrides it after tuning."""
     parsed, paths = active_klipper(module, main, updates)
-    path = folder / 'heater_control.cfg'
+    path = folder / LAYOUT_NAMES['heater_control.cfg']
     if path.is_symlink() or path.exists() and not path.is_file():
         raise ValueError('Unsupported heater profile destination: '+str(path))
     texts = {p: planned_bytes(p, updates).decode() for p in dict.fromkeys(paths)}
@@ -341,7 +513,7 @@ def organize_heater_profiles(module, main, folder, updates):
         text = texts[main]
         marker = FOOTER.search(text)
         pos = marker.start() if marker else len(text)
-        texts[main] = text[:pos].rstrip()+'\n\n[include inventure/heater_control.cfg]\n\n'+text[pos:]
+        texts[main] = text[:pos].rstrip()+'\n\n[include '+path.name+']\n\n'+text[pos:]
     for source, data in texts.items():
         stage(updates, source, data.encode())
     header = existing.rstrip() if existing else MANAGED+'# Native heater baselines. Klipper SAVE_CONFIG has precedence.\n[inventure_mcu]'

@@ -45,18 +45,107 @@ class ConfigLayoutTests(unittest.TestCase):
                 for path, (_, data) in changes.items():
                     path.parent.mkdir(exist_ok=True)
                     path.write_bytes(data)
-                display = (main.parent/'inventure/display.cfg').read_text()
+                display = (main.parent/'inventure_base.cfg').read_text()
                 self.assertEqual(display.count('[inventure_oled]'), 1)
                 self.assertEqual(display.count('[display_status]'), int(not header.startswith('[display]')))
                 effective = layout.active_klipper(self.parser, main, {})[0]
-                self.assertEqual(effective.getint('inventure_oled', 'brightness'), 9)
-                self.assertEqual(effective.get('inventure_oled', 'timer_policy'), 'inventure')
+                self.assertEqual(effective.getint('inventure_display', 'brightness'), 9)
+                self.assertEqual(effective.get('inventure_display', 'timer_policy'), 'inventure')
                 self.assertTrue(effective.has_section('display') or effective.has_section('display_status'))
                 if effective.has_section('display_status'):
                     self.assertEqual(effective.items('display_status'), [])
                 again = {}
                 layout.organize_klipper(self.parser, main, again)
                 self.assertEqual(again, {})
+
+    def test_r36_explicit_and_wildcard_paths_preserve_settings_and_have_one_owner(self):
+        for include in ('[include inventure/display.cfg]', '[include inventure/*.cfg]',
+                        '[include inventure/*.cfg]\n[include inventure_*.cfg]'):
+            with self.subTest(include=include), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                main = root/'printer.cfg'
+                old = root/'inventure/display.cfg'
+                old.parent.mkdir()
+                old.write_text(layout.MANAGED + '[inventure_oled]\nspi_speed: 3750000\n'
+                               'sleep_timeout: 121  # native seconds\nsleep_notice: 14\n'
+                               'dim_minutes: 7\nsleep_minutes: 19\nbrightness: 9\n'
+                               'timer_policy: minutes\nsleep_light: WHITE\n[display_status]\n')
+                main.write_text('[inventure_mcu]\n'+include+'\n')
+                changes = {}
+                layout.organize_klipper(self.parser, main, changes)
+                for path,(before, after) in changes.items():
+                    update.atomic_config_write(path, after, create=before is None)
+                cfg, paths = layout.active_klipper(self.parser, main, {})
+                self.assertEqual(paths.count(root/'inventure_base.cfg'), 1)
+                self.assertEqual(paths.count(root/'inventure_display.cfg'), 1)
+                self.assertEqual(dict(cfg['inventure_oled']), {'spi_speed':'3750000'})
+                values = cfg['inventure_display']
+                self.assertEqual([values[key] for key in ('idle_timeout','notice_seconds','timeout',
+                                 'sleep_timeout','brightness','timer_policy','sleep_light')],
+                                 ['121','14','420','1140','9','minutes','WHITE'])
+                self.assertIn('121  # native seconds', (root/'inventure_display.cfg').read_text())
+                self.assertIn(layout.FORWARD, old.read_text())
+                again = {}
+                layout.organize_klipper(self.parser, main, again)
+                self.assertEqual(again, {})
+
+    def test_inactive_site_display_file_is_adopted_and_operator_values_win(self):
+        self.main.write_text('[inventure_mcu]\n[inventure_oled]\nbrightness: 12\n')
+        target = self.directory/'inventure_display.cfg'
+        target.write_text('# local panel\n[inventure_display]\nnormal_contrast: 24\nbrightness: 8\n')
+        changes = self.plan()
+        updated, paths = layout.active_klipper(self.parser, self.main, changes)
+        self.assertEqual(paths.count(target), 1)
+        self.assertEqual(updated['inventure_display'].getint('brightness'), 8)
+        self.assertEqual(updated['inventure_display'].getint('normal_contrast'), 24)
+        self.assertEqual(updated['inventure_display'].getint('dim_contrast'), 24)
+        self.assertIn(b'# local panel', changes[target][1])
+        target.write_text('[gcode_macro SITE]\ngcode: M117 custom\n')
+        with self.assertRaisesRegex(ValueError, 'Conflicting display'):
+            self.plan()
+
+    def test_site_owned_external_display_override_remains_effective(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            external = Path(tmp)/'display.inc'
+            data = b'[inventure_oled]\nsleep_timeout: 72\n'
+            external.write_bytes(data)
+            self.main.write_text('[inventure_mcu]\n[inventure_oled]\nsleep_timeout: 66\n'
+                                 '[include '+str(external)+']\n')
+            changes = self.plan()
+            self.assertNotIn(external, changes)
+            cfg, _ = layout.active_klipper(self.parser, self.main, changes)
+            self.assertEqual(cfg.getint('inventure_oled','sleep_timeout'), 72)
+            self.assertFalse(cfg.has_option('inventure_display','idle_timeout'))
+            self.assertEqual(external.read_bytes(), data)
+
+    def test_display_object_uses_exact_seconds_contrast_and_existing_panel(self):
+        from orange_pi.inventure_display import load_config
+        _, panel = oled()
+        printer = Mock()
+        printer.load_object.return_value = panel
+        self.main.write_text('[inventure_display]\ntimer_policy: minutes\ntimeout: 73\n'
+                             'sleep_timeout: 187\nnormal_contrast: 88\ndim_contrast: 18\nbrightness: 8\n')
+        reader = self.parser.ConfigFileReader()
+        conf = reader.build_fileconfig(self.main.read_text(), str(self.main))
+        section = self.parser.ConfigWrapper(printer, conf, {}, 'inventure_display')
+        settings = load_config(section)
+        printer.load_object.assert_called_once_with(section, 'inventure_oled')
+        self.assertIs(settings.panel, panel)
+        panel._apply_display_settings()
+        self.assertEqual((panel.dim_timeout, panel.sleep_timeout), (73, 187))
+        for mode, level in [('awake',44),('dim',9)]:
+            panel.stream.set_display_mode(mode)
+            ops = list(panel.stream.begin_mode_update())
+            self.assertEqual(ops[1][1][1], bytes([level]))
+            panel.stream.finish_mode_update()
+            self.assertFalse(panel.stream.needs_mode_update())
+        self.assertEqual(settings.get_status(0)['brightness'], 8)
+
+    def test_shipped_display_matches_shared_option_order(self):
+        sections = list(layout.blocks((layout.ROOT/'config/inventure_display.cfg').read_text()))
+        self.assertEqual([r[0] for r in sections], ['inventure_display'])
+        rows = [m[1] for row in sections[0][3].splitlines() if (m := layout.OPTION.match(row))]
+        self.assertEqual(rows[:5], ['timeout','sleep_timeout','normal_contrast','dim_contrast','notice_seconds'])
 
     def test_docs_plan_accepts_site_docs_and_preserves_conflicting_paths(self):
         custom = self.directory/'site-docs'
@@ -111,8 +200,9 @@ class ConfigLayoutTests(unittest.TestCase):
             path.parent.mkdir(exist_ok=True)
             update.atomic_config_write(path, after, create=before is None)
         self.assertEqual(self.plan(), {})
-        opts = layout.active_klipper(self.parser, self.main, {})[0]['inventure_oled']
-        self.assertEqual(opts.getint('sleep_timeout'), 123)
+        opts = layout.active_klipper(self.parser, self.main, {})[0]['inventure_display']
+        self.assertEqual(opts.getint('idle_timeout'), 123)
+        self.assertEqual(opts.getint('sleep_timeout'), 900)
         self.assertEqual(opts.get('timer_policy'), 'inventure')
 
     def test_r34_split_tree_migrates_once_with_custom_pid_and_native_sleep(self):
@@ -130,12 +220,13 @@ class ConfigLayoutTests(unittest.TestCase):
             path.write_bytes(data)
         self.assertEqual(self.plan(), {})
         opts = layout.active_klipper(self.parser, self.main, {})[0]
-        self.assertEqual(opts.get('inventure_oled', 'timer_policy'), 'inventure')
-        self.assertIn('menu_profile = inventure  # launcher', display.read_text())
+        self.assertEqual(opts.get('inventure_display', 'timer_policy'), 'inventure')
+        self.assertIn('menu_profile = inventure  # launcher', (self.directory/'inventure_base.cfg').read_text())
         self.assertEqual(opts.getint('inventure_oled', 'spi_speed'), 2000000)
         self.assertEqual(opts.getfloat('inventure_mcu', 't0_pid_kp'), 29.37)
-        self.assertIn('# tuned on this machine', (folder/'heater_control.cfg').read_text())
+        self.assertIn('# tuned on this machine', (self.directory/'inventure_heater_control.cfg').read_text())
         self.assertFalse(opts.has_option('extruder', 'pid_kp'))
+        display = self.directory/'inventure_display.cfg'
         display.write_text(display.read_text().replace('timer_policy: inventure','timer_policy: minutes'))
         self.assertEqual(self.plan(), {})
 
@@ -152,7 +243,7 @@ class ConfigLayoutTests(unittest.TestCase):
         self.main.write_text('[inventure_mcu]\n')
         folder = self.directory/'inventure'
         folder.mkdir()
-        target = folder/'temperature_sensors.cfg'
+        target = self.directory/'inventure_temperature_sensors.cfg'
         target.write_text('# Site sensor mapping\n')
         with self.assertRaisesRegex(ValueError, 'differs'):
             self.plan()
@@ -168,7 +259,7 @@ class ConfigLayoutTests(unittest.TestCase):
         for path, (before, after) in self.plan().items():
             path.parent.mkdir(exist_ok=True)
             update.atomic_config_write(path, after, create=before is None)
-        sensor = self.directory/'inventure/temperature_sensors.cfg'
+        sensor = self.directory/'inventure_temperature_sensors.cfg'
         sensor.write_text('# Site note\n'+sensor.read_text())
         self.assertEqual(self.plan(), {})
         _, files = layout.active_klipper(self.parser, self.main, {})
@@ -215,7 +306,7 @@ class ConfigLayoutTests(unittest.TestCase):
             update.update_host(False, False, False, False, False, False, False, None, self.directory/'site', True, moon)
         for path, data in originals.items():
             self.assertEqual(path.read_bytes(), data)
-        self.assertEqual(list((self.directory/'inventure').glob('*.cfg')), [])
+        self.assertEqual(list(self.directory.glob('*.cfg')), [self.main])
         self.assertFalse((self.runtime/'docs').exists())
 
     def test_docs_repair_restarts_moonraker_when_the_config_is_already_organized(self):
