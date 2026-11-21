@@ -227,7 +227,7 @@ def add_leveling_macros(target, config, updates):
     add_fluidd_controls(target, config, updates, leveling=True)
 
 
-def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False):
+def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, filament=False):
     """Stage the selected controls in the active Klipper configuration and its includes."""
     config = config.resolve()
     sources = {}
@@ -255,7 +255,8 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False):
 
     level_config = ROOT/'config/INVENTURE_PLATFORM_LEVEL.cfg'
     jam_config = ROOT/'config/INVENTURE_FILAMENT_JAM.cfg'
-    selected = set()
+    material_config = ROOT/'config/INVENTURE_MATERIAL.cfg'
+    selected = {material_config} if filament else set()
     if leveling:
         selected.add(level_config)
     if jam:
@@ -281,7 +282,7 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False):
     templates = {}
     required = {}
     for path in [level_config, ROOT/'config/INVENTURE_NOZZLE_PAD.cfg',
-                 *([jam_config] if jam else []), *sorted((ROOT/'fluidd').glob('*.cfg'))]:
+                 *([jam_config] if jam else []), *([material_config] if filament else []), *sorted((ROOT/'fluidd').glob('*.cfg'))]:
         for name, _, body in macro_sections(path.read_text()):
             templates[name] = body
             if path in selected:
@@ -349,7 +350,7 @@ def atomic_config_write(path, data):
 
 
 def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
-           configure_leveling=False, configure_jam=False):
+           configure_leveling=False, configure_jam=False, configure_filament=False):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
@@ -357,9 +358,9 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
     plan=core.install(target)
     config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
                     if upgrade_nozzle_limits or configure_nozzles else {})
-    if configure_leveling or configure_jam:
+    if configure_leveling or configure_jam or configure_filament:
         add_fluidd_controls(target, config, config_updates,
-                           leveling=configure_leveling, jam=configure_jam)
+                           leveling=configure_leveling, jam=configure_jam, filament=configure_filament)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
     check_print_job()
@@ -414,9 +415,11 @@ def main():
                         help='Add the leveling buttons and the global door menu to Fluidd')
     parser.add_argument('--configure-jam', action='store_true',
                         help='Add Inventure filament recovery controls and Klipper pause support')
+    parser.add_argument('--configure-filament', action='store_true',
+                        help='Add cassette settings, load, unload and manual feed controls to Fluidd')
     args=parser.parse_args()
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,
-               args.configure_leveling,args.configure_jam)
+               args.configure_leveling,args.configure_jam,args.configure_filament)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

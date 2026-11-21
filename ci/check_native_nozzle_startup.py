@@ -52,9 +52,29 @@ def check_loaded(printer, config):
                  'ZORTRAX_JAM_REPORT', 'ZORTRAX_JAM_STATUS', 'ZORTRAX_JAM_SOURCE',
                  'ZORTRAX_JAM_RETRY', 'ZORTRAX_JAM_CONFIRM_FLOW', 'ZORTRAX_JAM_CANCEL',
                  'ZORTRAX_JAM_SERVICE_TEST', 'ZORTRAX_JAM_MISSING', 'ZORTRAX_JAM_BROKEN',
-                 'ZORTRAX_JAM_CLEARED', 'ZORTRAX_JAM_LOAD', 'ZORTRAX_JAM_CONTINUE'):
+                 'ZORTRAX_JAM_CLEARED', 'ZORTRAX_JAM_LOAD', 'ZORTRAX_JAM_CONTINUE',
+                 'ZORTRAX_FILAMENT_SAVE', 'ZORTRAX_FILAMENT_STATUS', 'ZORTRAX_LOAD', 'ZORTRAX_UNLOAD',
+                 'ZORTRAX_FEED_MORE', 'ZORTRAX_RETRACT_MORE', 'ZORTRAX_FILAMENT_FINISH', 'ZORTRAX_FILAMENT_JOG'):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
+    assert 'INVENTURE_MATERIAL' in gcode.ready_gcode_handlers
+    # Render the Fluidd buttons with Klipper's own Jinja environment. This also
+    # checks the single-use identity passed from the open prompt to a button.
+    prompt = dict(session=9542, prompt=3, tool='T1')
+    context = dict(printer={'inventure_mcu': {'material_service': prompt}})
+    for macro, arguments, expected in (
+            ('ZORTRAX_FILAMENT_SAVE', dict(TOOL='T1', LOAD_SPEED='1.4', UNLOAD_TEMP='235'),
+             'ACTION=SAVE TOOL=T1 LOAD_SPEED=1.4 UNLOAD_TEMP=235'),
+            ('ZORTRAX_LOAD', dict(TOOL='T0'), 'ACTION=LOAD TOOL=T0 INTERACTIVE=1'),
+            ('ZORTRAX_UNLOAD', dict(TOOL='T1', TEMP='250'), 'ACTION=UNLOAD TOOL=T1 INTERACTIVE=1 TEMP=250'),
+            ('ZORTRAX_FEED_MORE', {}, 'ACTION=MORE DIR=LOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=5'),
+            ('ZORTRAX_RETRACT_MORE', dict(MM='2'), 'ACTION=MORE DIR=UNLOAD TOOL=T1 SESSION=9542 PROMPT=3 MM=2'),
+            ('ZORTRAX_FILAMENT_FINISH', {}, 'ACTION=FINISH TOOL=T1 SESSION=9542 PROMPT=3'),
+            ('ZORTRAX_FILAMENT_JOG', dict(TOOL='T0'), 'ACTION=JOG TOOL=T0 DIR=LOAD MM=5'),
+            ('ZORTRAX_FILAMENT_STATUS', {}, 'ACTION=STATUS')):
+        template = printer.lookup_object('gcode_macro '+macro).template
+        rendered = template.render(dict(context, params=arguments))
+        assert rendered.split() == ('INVENTURE_MATERIAL '+expected).split(), (macro, rendered)
     assert 'ZORTRAX_PLATFORM_LEVEL' in gcode.ready_gcode_handlers
     assert 'ZORTRAX_FILAMENT_JAM' in gcode.ready_gcode_handlers
     assert printer.lookup_object('pause_resume') is not None
@@ -138,7 +158,7 @@ def check():
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True)
-            updater.add_fluidd_controls(klipper,field,updates,leveling=True,jam=True)
+            updater.add_fluidd_controls(klipper,field,updates,leveling=True,jam=True,filament=True)
             assert updates
             for path,(before,after) in updates.items():
                 assert path.read_bytes() == before

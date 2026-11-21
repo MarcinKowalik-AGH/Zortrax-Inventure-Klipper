@@ -230,7 +230,7 @@ class ZortraxMenuService:
         platform = self._platform_status()
         jam = self._jam_status()
         return (jam.get('run_id'), jam.get('prompt_id'), jam.get('phase'),
-            tuple(jam.get('allowed_actions', ())),id(ctx) if ctx is not None else None, f.get('token'),
+            tuple(jam.get('allowed_actions', ())),id(ctx) if ctx is not None else None, f.get('token'), f.get('material_prompt'),
             None if ctx is None else ctx.get('measurement',{}).get('completed_jogs'),
             getattr(ops,'epoch',None),getattr(self._obj('inventure_materials'),'generation',None),
             cal.get('revision'),self._native_job(),getattr(filament,'job',None),
@@ -366,12 +366,22 @@ class ZortraxMenuService:
             tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
             if 'TOOL' in params and str(params['TOOL']).upper()!='T%d'%tool:raise MenuError('TOOL differs from the selected menu nozzle')
             params.pop('TOOL',None)
-            parsed=parameters(Command(self,TOOL='T%d'%tool,**params),getattr(self.board,'procedure_profiles',None))
             native_filament=(action.startswith(('load_cartridge_','unload_'))
                 and self._enabled('inventure_filament'))
+            operation=SERVICE_ACTIONS[action][0] if action in SERVICE_ACTIONS else 'HEAT'
+            service = getattr(self.board, 'material_service', None)
+            if service is not None and not native_filament and operation in ('AUTO','UNLOAD','MANUAL'):
+                if operation != 'MANUAL':
+                    params.setdefault('SPEED_PROFILE','OEM')
+                    params.setdefault('INTERACTIVE',1)
+                elif action.startswith('manual_unload_'):
+                    params['MANUAL_DIR']='UNLOAD'
+                parsed=service.parameters(Command(self,TOOL='T%d'%tool,**params), operation)
+            else:
+                parsed=parameters(Command(self,TOOL='T%d'%tool,**params),getattr(self.board,'procedure_profiles',None),
+                                  max_target=getattr(self.board,'nozzle_service_target_max',240.))
             if not native_filament:
-                operation=SERVICE_ACTIONS[action][0] if action in SERVICE_ACTIONS else 'HEAT'
-                require_heated_target(parsed,operation)
+                require_heated_target(parsed,operation,getattr(self.board,'nozzle_service_target_max',240.))
             for key in ('MAX_POWER','DURATION'):params.setdefault(key,parsed[key.lower()])
             if not parsed['target_requires_override']:
                 params.setdefault('TARGET',parsed['target'])
@@ -626,6 +636,13 @@ class ZortraxMenuService:
                 self.active=None;self.last=self.board.load_test_last
                 return self._info('Procedure ended',self.last.get('reason',self.last.get('phase','ended')),result=self.last)
             detail=self.board._load_test_report(ctx);phase=(detail.get('factory') or {}).get('phase',detail['phase'])
+            service = getattr(self.board, 'material_service', None)
+            if service is not None and (ctx.get('factory') or {}).get('material_prompt') is not None:
+                state = service.status()
+                identity = dict(TOOL=state['tool'], SESSION=state['session'], PROMPT=state['prompt'])
+                options += [('Feed 5 mm', ('material', dict(identity, ACTION='MORE', DIR='LOAD'))),
+                            ('Retract 5 mm', ('material', dict(identity, ACTION='MORE', DIR='UNLOAD'))),
+                            ('Finish / heaters off', ('material', dict(identity, ACTION='FINISH')))]
             if active['action'].startswith('heat_') and detail.get('ready_for_jog'):
                 options.append(('Finish / heaters off',('cancel',{})))
                 options += [('Feed 20mm',('jog',dict(reverse=False))),
@@ -894,6 +911,9 @@ class ZortraxMenuService:
             elif backend=='level':self._call(obj,'cmd_advance',ACK='ADJUSTED_AND_DOORS_CLOSED')
             elif backend=='align':self._call(obj,'cmd_advance')
             else:raise MenuError('This owner has no continuation')
+        elif verb=='material' and backend=='service':
+            if self.board.load_test_context is not obj:raise MenuError('Cassette procedure changed')
+            self.board.material_service.command(Command(self, **args))
         elif verb=='jog' and backend=='service':
             if self.board.load_test_context is not obj:raise MenuError('Heated service owner changed')
             self._call(self.board,'cmd_load_test',ACTION='JOG',STEPS=19200,

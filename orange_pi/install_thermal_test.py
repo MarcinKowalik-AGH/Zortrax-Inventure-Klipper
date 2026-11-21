@@ -76,7 +76,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
                     'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py',
                     'inventure_filament_jam.py','inventure_jam_motion.py','inventure_jam_monitor.py',
-                    'inventure_jam_service.py','inventure_jam_sources.py'}
+                    'inventure_jam_service.py','inventure_jam_sources.py','inventure_material_service.py'}
     if not isinstance(extra_modules,dict) or not set(extra_modules)<=allowed_extras | HOST_OVERLAYS:
         raise ValueError('Unexpected optional module manifest')
     names.extend(extra_modules);optional.update(extra_modules)

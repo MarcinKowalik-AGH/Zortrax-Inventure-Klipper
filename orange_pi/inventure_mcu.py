@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-FILAMENT-JAM-R28'
+HOST_REVISION = 'RC8-CONTROL-R7-FILAMENT-PROFILES-R29'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -255,6 +255,11 @@ class InventureMCU:
         self.allow_actuators = config.getboolean('allow_actuators', False)
         self.diag_adc = config.getboolean('diagnostic_adc', True)
         self._configure_procedures(config)
+        from .inventure_material_service import MaterialService
+        try:
+            self.material_service = MaterialService(self)
+        except (ValueError, OSError) as exc:
+            raise config.error('Inventure filament settings: ' + str(exc)) from exc
         self.nozzle_xy_targets=tuple(config.getfloat('nozzle_xy_t%d_target'%tool, target,
             minval=200.,maxval=230.) for tool,target in enumerate(NOZZLE_XY_TARGETS))
         self.status = {}
@@ -383,6 +388,7 @@ class InventureMCU:
         self.gcode.register_command('INVENTURE_FEEDER_TEST',self.cmd_feeder_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FEEDER_RUN',self.cmd_feeder_run,when_not_ready=True)
         self.gcode.register_command('INVENTURE_LOAD_TEST',self.cmd_load_test,when_not_ready=True)
+        self.gcode.register_command('INVENTURE_MATERIAL', self.material_service.command)
         self.gcode.register_command('INVENTURE_PROCEDURE',self.cmd_procedure,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_Z_TEST',self.cmd_nozzle_z_test,when_not_ready=True)
         self.gcode.register_command('INVENTURE_NOZZLE_XY_TEST',self.cmd_nozzle_xy_test,when_not_ready=True)
@@ -1563,6 +1569,7 @@ class InventureMCU:
     def get_status(self, eventtime):
         return dict(self.status, temperatures=list(self.temperatures),
                     platform_level=self.platform_level_status(),
+                    material_service=self.material_service.status() if hasattr(self, 'material_service') else {},
                     filament_jam=self.filament_jam.get_status(eventtime) if hasattr(self, 'filament_jam') else {},
                     host_revision=HOST_REVISION, host_module=str(Path(__file__).resolve()),
                     heat_test_abi=self.heat_test_abi,
@@ -3432,7 +3439,7 @@ class InventureMCU:
             modules={name:procedure_modules(name,tool_index,profile) for name in PROCEDURES}
             if tool_index==0:modules.update(Z_HOME_PROCEDURES)
             gcmd.respond_info('V9_PROCEDURES '+json.dumps(dict(api=1,tool=tool,procedures=modules,
-                precedence=['builtin','procedure_defaults','procedure_t0_or_t1','command'],
+                precedence=['builtin','procedure_defaults','procedure_t0_or_t1','saved_material_settings','command'],
                 standalone_homes=True,MCU_required='RC8-CONTROL-R7-FACTORY',
                 MCU_required_for_feeder=FACTORY_FEED_RELEASE,
                 MCU_required_for_oem_speed=FACTORY_DUAL_RELEASE if tool_index else FACTORY_MOTION_RELEASE,
@@ -3446,9 +3453,17 @@ class InventureMCU:
                 ', '.join((*PROCEDURES,*Z_HOME_PROCEDURES)))
         return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
 
-    def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None,platform=None):
+    def _factory_parameters(self, gcmd, operation):
+        from .inventure_factory_core import parameters
+        if hasattr(self, 'material_service'):
+            return self.material_service.parameters(gcmd, operation)
+        return parameters(gcmd, getattr(self, 'procedure_profiles', None), operation,
+                          max_target=getattr(self, 'nozzle_service_target_max', LEGACY_SERVICE_TARGET_MAX_C))
+
+    def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None,platform=None,
+                       enter_service=False, cassette_jog=False):
         from .inventure_factory_core import (
-            parameters, FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
+            FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
         )
         from .inventure_z_home import Z_HOME_PROCEDURES, ZHomeProgram, z_home_parameters
         nozzle_test=nozzle_parameters is not None
@@ -3467,13 +3482,19 @@ class InventureMCU:
                 p,z_settings=nozzle_parameters
             else:
                 service_max=getattr(self,'nozzle_service_target_max',LEGACY_SERVICE_TARGET_MAX_C)
-                p=parameters(gcmd,getattr(self,'procedure_profiles',None),operation,max_target=service_max)
+                p=self._factory_parameters(gcmd, operation)
             z_edges=operation=='HOME_Z' and p['speed_profile']=='OEM'
             if z_home and not nozzle_test:
                 if p['tool']!=0:raise ValueError('Z reference uses the model nozzle TOOL=T0')
                 if gcmd.get('TARGET',None) is None:p['target']=200.
                 p['target_requires_override']=False
                 z_settings=z_home_parameters(gcmd,p,required=operation=='HOME_Z' and not read_only)
+            raw_interactive = str(gcmd.get('INTERACTIVE', 0))
+            if raw_interactive not in ('0', '1'):
+                raise ValueError('INTERACTIVE must be 0 or 1')
+            interactive = raw_interactive == '1'
+            if interactive and operation not in ('AUTO', 'UNLOAD'):
+                raise ValueError('INTERACTIVE is supported for cassette loading and unloading')
             timeout=p['procedure_timeout']
             fast_available=self._factory_motion_available(p['tool'])
             if read_only:
@@ -3530,7 +3551,17 @@ class InventureMCU:
                     *self.nozzle_z_context['parameters'][1])
                 elif nozzle_test:program=ZHomeProgram(p,z_settings).run_nozzle(prepare=True)
                 else:program=ZHomeProgram(p,z_settings).run(operation)
-            else:program=FactoryProgram(p).run(operation)
+            else:
+                program=FactoryProgram(p, operation).run(
+                    operation, interactive=interactive, cassette_jog=cassette_jog)
+            if enter_service:
+                self._nozzle_service_cutoff(p['tool'], p['target'])
+                control = self._control_query()
+                self._feeder_service_preflight(control_state=control, allow_off=True)
+                if control['mode'] == 'OFF':
+                    control = self._control_query(1, CONTROL_MODES.index('SERVICE'))
+                    if control['reject'] or control['mode'] != 'SERVICE':
+                        raise ValueError('MCU did not enter SERVICE mode')
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
             def get(self,key,default=None):
@@ -3555,6 +3586,11 @@ class InventureMCU:
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
+        if interactive:
+            saved = getattr(getattr(self, 'material_service', None), 'profiles', {}).get('T%d' % p['tool'], {})
+            context['factory'].update(interactive_material=True, manual_speeds={
+                'LOAD': p['e_speed'] if operation == 'AUTO' else saved.get('load_speed', p['e_speed']),
+                'UNLOAD': p['unload_speed2'] if operation == 'UNLOAD' else saved.get('unload_speed', p['unload_speed2'])})
         if platform is not None:
             f=context['factory']
             f['platform_level_run']=platform.run
@@ -4248,6 +4284,9 @@ class InventureMCU:
 
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
+        if kind == 'material_wait' and f.get('interactive_material'):
+            from .inventure_material_service import wait_for_operator
+            return wait_for_operator(self, context, action)
         if kind.startswith('level_') and 'platform_level_run' in f:
             from .inventure_leveling_transport import factory_action
             return factory_action(self,context,action)

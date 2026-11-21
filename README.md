@@ -2,33 +2,34 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R28 with MCU R13** handles filament jams, missing material and confirmed breaks in the guide tube on either nozzle. Fluidd and the OLED share the same prompts for cassette and external spool recovery. [R28 operator instructions and hardware prerequisites](docs/INVENTURE_FILAMENT_JAM_R28.md) · [R28 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-filament-jam-r28)
+**Host R29 with MCU R13** saves independent cassette load and unload temperatures and filament speeds for T0 and T1. After either operation, Fluidd and the R7 OLED can feed or retract another portion over the waste bin. [R29 settings and controls](docs/INVENTURE_FILAMENT_PROFILES_R29.md) · [R29 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-filament-profiles-r29)
 
 <a id="aktualizacja-orange-pi"></a>
 
 ## Update an existing Orange Pi installation
 
-With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, adds the filament recovery buttons and native Klipper pause support to the active configuration, and restarts Klipper. Keep the installed R13 MCU.
+With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, adds the cassette load, unload and manual controls to the active configuration, and restarts Klipper. Keep the installed R13 MCU.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-filament-jam-r28 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-filament-jam-r28" refs/tags/inventure-filament-jam-r28 &&
-python3 "$HOME/inventure-filament-jam-r28/install-orange-pi.py" --configure-jam
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-filament-profiles-r29 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-filament-profiles-r29" refs/tags/inventure-filament-profiles-r29 &&
+python3 "$HOME/inventure-filament-profiles-r29/install-orange-pi.py" --configure-filament
 ```
 
 If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
 
 ```gcode
 INVENTURE_VERSION
-ZORTRAX_JAM_STATUS
+ZORTRAX_FILAMENT_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-FILAMENT-JAM-R28` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. On a fresh installation, add `--configure-leveling` to the same installer command to install the leveling and global door policy buttons as well. [Five-point leveling instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
+The host should report `RC8-CONTROL-R7-FILAMENT-PROFILES-R29` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. On a fresh installation, add `--configure-jam --configure-leveling` to install jam recovery, leveling and global door controls as well. [Five-point leveling instructions](docs/INVENTURE_PLATFORM_LEVEL_R26_2.md#run-the-procedure)
 
 ## Printer procedures
 
 | Task | Operator interface | What it measures or controls |
 |---|---|---|
+| Load or unload a cassette | `ZORTRAX_FILAMENT_SAVE`, `ZORTRAX_LOAD`, `ZORTRAX_UNLOAD`, `ZORTRAX_FEED_MORE`, `ZORTRAX_FILAMENT_JOG` | Separate temperatures and speeds for both nozzles, with manual portions over the waste bin. [Operator commands](docs/INVENTURE_FILAMENT_PROFILES_R29.md) |
 | Recover filament transport | `ZORTRAX_JAM_REPORT`, `ZORTRAX_JAM_MISSING`, `ZORTRAX_JAM_BROKEN`, OLED recovery prompts | Cassette and external spool recovery for the selected nozzle. [Requirements and operator actions](docs/INVENTURE_FILAMENT_JAM_R28.md) |
 | Level the platform | `ZORTRAX_LEVEL`, `ZORTRAX_LEVEL_NEXT`, `ZORTRAX_LEVEL_STATUS`, `ZORTRAX_LEVEL_SAVE`, `ZORTRAX_LEVEL_CANCEL` | Five tray pads and three adjustments using T0. The saved report contains platform depth and center deviation. |
 | Set the door policy | **Settings → Door lock**, `ZORTRAX_DOOR_LOCK` | One global setting for the front door and lid. Read its current state with `INVENTURE_DOOR_POLICY`. |

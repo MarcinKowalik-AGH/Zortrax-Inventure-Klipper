@@ -259,10 +259,11 @@ def _validated(values, operation=None, max_target=SERVICE_TARGET_MAX_C):
                                   p['wipe_y']-cy) / p['travel_speed'],
         CLEAN_X=max(p['wipe_span'], p['wipe_span']/2.+p['purge_span']/2.,
                     p['wipe_span']/2.+p['wipe_exit']) / p['travel_speed'],
-        LONG_MM=p['long_mm'] / p['e_speed'],
-        MANUAL_MM=p['manual_mm'] / p['e_speed'],
-        UNLOAD_L1=p['unload_l1'] / p['unload_speed1'],
-        UNLOAD_L2=p['unload_l2'] / p['unload_speed2'])
+        MANUAL_MM=p['manual_mm'] / p['e_speed'])
+    if operation != 'MANUAL':
+        seconds.update(LONG_MM=p['long_mm'] / p['e_speed'],
+                       UNLOAD_L1=p['unload_l1'] / p['unload_speed1'],
+                       UNLOAD_L2=p['unload_l2'] / p['unload_speed2'])
     if park_approaches:
         seconds['PARK'] = max(travel(x, y, left if x < cx else right, cy)
                               for x, y in park_approaches)
@@ -385,8 +386,8 @@ def _snapshot(result):
 
 class FactoryProgram:
     """Yield bounded actions; the host sends their fresh completion snapshots."""
-    def __init__(self, p):
-        self.p = _validated(p)
+    def __init__(self, p, operation=None):
+        self.p = _validated(p, operation)
         self.stock_sequence = uses_r0323_sequence(self.p['tool'], self.p['speed_profile'])
         self.xy = (0., 0.)
         self.history = []
@@ -591,15 +592,20 @@ class FactoryProgram:
                               leg='selector_press')
         return (yield from self._center(leg='selector_return'))
 
-    def manual_feed(self):
-        yield from self._module('manual_feed', self._manual_steps())
+    def manual_feed(self, cassette=False):
+        yield from self._module('manual_feed', self._manual_steps(cassette))
 
-    def _manual_steps(self):
+    def _manual_steps(self, cassette):
         p = self.p
         forward = p['manual_dir'] == 'LOAD'
-        yield from self._mode((2 if forward else 3) if p['feeder'] else 0)
-        yield from self._move(*self.xy, e=p['manual_mm']*(1 if forward else -1),
-                              speed=p['e_speed'])
+        mode = (2 if forward else 3) if p['feeder'] else 0
+        if cassette:
+            mode = 1 if forward else 4
+        yield from self._manual_move(p['manual_mm'] if forward else -p['manual_mm'], p['e_speed'], mode)
+
+    def _manual_move(self, mm, speed, mode):
+        yield from self._mode(mode, monitor=self.p['monitor'] if mode == 1 else 0)
+        yield from self._move(*self.xy, e=mm, speed=speed)
         yield from self._mode(0)
 
     def _load_l1(self):
@@ -674,7 +680,25 @@ class FactoryProgram:
         yield from self._module('load_l4', self._load_l4())
         return 'L4'
 
-    def run(self, operation='AUTO'):
+    def _manual_finish(self):
+        yield from self._mode(0)
+        prompt = 0
+        fed = False
+        while True:
+            prompt += 1
+            yield from self._phase('WAIT_FILAMENT')
+            reply = yield dict(kind='material_wait', prompt=prompt)
+            if reply['kind'] == 'FINISH':
+                if fed:
+                    yield from self.clean()
+                    yield from self.return_to_bin()
+                return fed
+            forward = reply['mm'] > 0.
+            yield from self._phase('MANUAL_FEED' if forward else 'MANUAL_RETRACT')
+            yield from self._manual_move(reply['mm'], reply['speed'], 1 if forward else 4)
+            fed = fed or forward
+
+    def run(self, operation='AUTO', *, interactive=False, cassette_jog=False):
         """Compose shared modules once under one lease and homing reference."""
         operation = str(operation).upper()
         if operation not in PROCEDURES:
@@ -689,7 +713,7 @@ class FactoryProgram:
             _validated(p, operation)
         parked_cassette = self.stock_sequence and operation in ('AUTO', 'UNLOAD')
         heated = 'heat' in PROCEDURES[operation]
-        park_before_heat = parked_cassette or operation in ('PARK', 'SWEEP')
+        park_before_heat = parked_cassette or cassette_jog or operation in ('PARK', 'SWEEP')
         yield from self.home(y_first=park_before_heat or (self.stock_sequence and operation == 'SELECT'))
         if park_before_heat:
             yield from self._phase('PARK')
@@ -720,7 +744,11 @@ class FactoryProgram:
                 yield from self.clean()
                 cleaned = True
             elif operation == 'MANUAL':
-                yield from self.manual_feed()
+                yield from self.manual_feed(cassette=cassette_jog)
+                if cassette_jog and p['manual_dir'] == 'LOAD':
+                    yield from self.clean()
+                    yield from self.return_to_bin()
+                    cleaned = True
             else:
                 result = yield from self.unload()
                 if not result['sensor_empty_proven']:
@@ -729,5 +757,8 @@ class FactoryProgram:
         if heated and self.xy != (p['center_x'], p['center_y']):
             yield from self._phase('PARK')
             yield from self.return_to_bin()
+        if interactive:
+            manual_clean = yield from self._manual_finish()
+            cleaned = cleaned or manual_clean
         yield from self._phase('DONE')
         yield dict(kind='done', success=True, terminal=terminal, cleaning_done=cleaned)

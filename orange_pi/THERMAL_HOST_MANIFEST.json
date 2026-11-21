@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-FILAMENT-JAM-R28",
+  "release": "RC8-CONTROL-R7-FILAMENT-PROFILES-R29",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f",
+  "module_sha256": "1af0e523fb713bf354f42209c6b9f044da796163e1114c493bdff5898a27b5fa",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -95,9 +95,10 @@
     "76762c5f639d7b32ead9c16ef77a2988560b545b11f8a944c9a5a39d51d17e96",
     "045fae3cecb7c05898a0c060408daa9965781520c1823f60c2947868628dc8bc",
     "aa5ca50fe1ebd2ba9484cde98e3323d7d03d9229a96f5d49b05d66c8de4d631c",
-    "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b"
+    "374e1fb77ca2d8bc104dfe87337742b27d72a14c0fdcbb84b99b39534e08574b",
+    "fe4f8c5d050d215e04c1221e29916576e8bc5fcbf53ef70f3b56b23999547a0f"
   ],
-  "host_revision": "RC8-CONTROL-R7-FILAMENT-JAM-R28",
+  "host_revision": "RC8-CONTROL-R7-FILAMENT-PROFILES-R29",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "3b95152e9adbd76a093e569e4cc2014f0101eaeeb1cce0472f17a1cea91011da",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -263,7 +264,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "factory_core_sha256": "22cbf3cb0148503684723ed61192a59fc358cfd79c0a28ea2c8457a159357df7",
+  "factory_core_sha256": "f0da9f91ade14566997e2af4fccbb445d232e7c306bfd59e5d6c0ead5c54e828",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -374,7 +375,8 @@
     "4354028aa26f50c0d2dee48e2643f5b68998e92dee3e33b64be9d11874cee806",
     "600b9f5641cc7dba0a8afff9ceec76fa97f816955633389603e6dfca633b68db",
     "78e663228854bb897afb39c8bf6d5e80d342616da5edf0e23da8a6bd48f7b784",
-    "512689fa19deb6a382dc27845c3f41977e0eeba60966b323b9f88c618e801673"
+    "512689fa19deb6a382dc27845c3f41977e0eeba60966b323b9f88c618e801673",
+    "22cbf3cb0148503684723ed61192a59fc358cfd79c0a28ea2c8457a159357df7"
   ],
   "procedure_api": 1,
   "zortrax_menu_api": 1,
@@ -387,7 +389,7 @@
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "d531808a26fb5d79cc3cdfa9749be4159bc75f45bdd7f9a043580157d1ca13e9",
+      "sha256": "61a8615df91fb20a376a20591cfb11003c71f6770eeb16a869326e576aac75ab",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
@@ -395,7 +397,8 @@
         "213b1a6c99308cae46f3a186fe0568aaf98a30cb323d3901c16dd89d8f41d88f",
         "147fb3295b50d20752094118581a87ba296e7b91eb51504826d6b499b564dc9f",
         "f7aa49580fe96665648ebf050364a98a5685f9ab3dad35ab0349bcaf5b49498f",
-        "c214a066aad4eacbf6fdeb1b63a14caa675e8b5fd67d0f3091fed7ae0c80515e"
+        "c214a066aad4eacbf6fdeb1b63a14caa675e8b5fd67d0f3091fed7ae0c80515e",
+        "d531808a26fb5d79cc3cdfa9749be4159bc75f45bdd7f9a043580157d1ca13e9"
       ]
     },
     "inventure_oem_menu.py": {
@@ -538,6 +541,10 @@
       "allowed_existing_sha256": [
         "2e9aacd6b00f0ec8c269faf845d7a82a73aba6d29f07ca4be4ce2f3136dfb134"
       ]
+    },
+    "inventure_material_service.py": {
+      "sha256": "b9e6119b91e63f667602ae8d29e554ff40ae3175c847e9045164730d47f02e94",
+      "allowed_existing_sha256": []
     }
   },
   "axis_timer_motion": {
@@ -923,5 +930,25 @@
     "stock_reference": "Inventure 1.6.1 r0323, transport sections 4.3, 5 and 11",
     "documentation": "docs/INVENTURE_FILAMENT_JAM_R28.md",
     "physical_qualification": "T0 inlet and loaded guide-tube response observed, identical T1 mechanism confirmed by owner, interrupted-print recovery pending"
+  },
+  "filament_service": {
+    "tools": [
+      "T0",
+      "T1"
+    ],
+    "fields": [
+      "load_temp",
+      "load_speed",
+      "unload_temp",
+      "unload_speed"
+    ],
+    "command": "INVENTURE_MATERIAL",
+    "config": "config/INVENTURE_MATERIAL.cfg",
+    "installer_option": "--configure-filament",
+    "settings_file": "inventure_filament_settings.json",
+    "default_manual_mm": 5,
+    "manual_prompt_s": 120,
+    "hardware_validation": "R29 physical trial pending",
+    "documentation": "docs/INVENTURE_FILAMENT_PROFILES_R29.md"
   }
 }

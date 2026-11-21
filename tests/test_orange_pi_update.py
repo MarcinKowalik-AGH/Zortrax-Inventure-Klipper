@@ -19,19 +19,22 @@ update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
 
 
 class OrangePiInstallerCLITests(unittest.TestCase):
-    def test_help_lists_leveling_and_jam_options(self):
+    def test_help_lists_leveling_jam_and_filament_options(self):
         result = subprocess.run([sys.executable, str(ROOT/'install-orange-pi.py'), '--help'],
                                 capture_output=True, text=True, check=True)
         self.assertIn('--configure-leveling', result.stdout)
         self.assertIn('--configure-jam', result.stdout)
+        self.assertIn('--configure-filament', result.stdout)
 
     def test_cli_passes_requested_options_to_installer(self):
         for args, expected in (
-                ([], (False, False, False, False, False)),
-                (['--configure-leveling'], (False, False, False, True, False)),
-                (['--check', '--configure-leveling'], (True, False, False, True, False)),
-                (['--upgrade-nozzle-limits', '--configure-nozzles'], (False, True, True, False, False)),
-                (['--configure-jam'], (False, False, False, False, True))):
+                ([], (False, False, False, False, False, False)),
+                (['--configure-leveling'], (False, False, False, True, False, False)),
+                (['--check', '--configure-leveling'], (True, False, False, True, False, False)),
+                (['--upgrade-nozzle-limits', '--configure-nozzles'], (False, True, True, False, False, False)),
+                (['--configure-jam'], (False, False, False, False, True, False)),
+                (['--configure-filament'], (False, False, False, False, False, True)),
+                (['--configure-jam', '--configure-filament'], (False, False, False, False, True, True))):
             with self.subTest(args=args), patch.object(sys, 'argv', ['install-orange-pi.py', *args]), \
                     patch.object(update, 'update') as install:
                 update.main()
