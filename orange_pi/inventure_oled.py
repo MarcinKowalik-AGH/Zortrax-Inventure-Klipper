@@ -105,6 +105,8 @@ class InventureOLED:
         self.gcode.register_command('INVENTURE_OLED_STATUS',self.cmd_status,when_not_ready=True)
         self.gcode.register_command('INVENTURE_MENU_STATUS',self.cmd_menu_status,when_not_ready=True)
         self.timer=self.reactor.register_timer(self._tick)
+        from .inventure_oled_preview import OledPreview
+        self.printer.add_object('inventure_oled_preview', OledPreview(self))
 
     def _event(self,code,**data):
         self.events.append(dict(time=self.reactor.monotonic(),code=code,**data))

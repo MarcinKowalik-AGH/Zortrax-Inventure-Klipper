@@ -80,7 +80,49 @@ def klipper_config_module(target):
     return module
 
 
-def nozzle_limit_updates(target, config, configure_nozzles=False):
+def chamber_sections(active, sources, section_sources, by_file):
+    """Reuse locally tuned native heaters, identified by their pins and sensors."""
+    template = (ROOT/'config/INVENTURE_CHAMBER.cfg').read_text()
+    sections = re.split(r'(?m)(?=^\[)', template)[1:]
+    added, zones = [], []
+    for name, pin, channel, body in zip(('chamber_l', 'chamber_r'), ('PC9', 'PC8'), (2, 3), sections):
+        physical = 'inventure_r5:HEATER_'+pin
+        found = [s for s in active.sections() if active.get(s, 'heater_pin', fallback='') == physical]
+        if not found:
+            if active.has_section('heater_generic '+name):
+                raise ValueError('Conflicting chamber heater name: '+name)
+            added.append(body)
+        else:
+            section = found[0]
+            if (len(found) != 1 or not section.startswith('heater_generic ')
+                    or active.get(section, 'sensor_type', fallback='') != 'Inventure R5 ADC'
+                    or active.getint(section, 'sensor_channel', fallback=-1) != channel):
+                raise ValueError('Chamber heater '+pin+' requires its matching shared ADC')
+            name = section.split()[-1]
+            if active.get(section, 'control', fallback='').lower() == 'watermark':
+                edits = {'control': 'pid', 'max_delta': None,
+                         'pid_kp': '22.2', 'pid_ki': '0.25', 'pid_kd': '228'}
+                for key, value in edits.items():
+                    if ((value is None and not active.has_option(section, key)) or
+                            (key.startswith('pid_') and active.has_option(section, key))):
+                        continue
+                    source = sources.get((section, key), section_sources[section])
+                    by_file[source][section, key] = value
+        if not active.has_section('verify_heater '+name):
+            added.append('[verify_heater '+name+']\ncheck_gain_time: 40\n')
+        zones.append(name)
+    group = 'inventure_chamber chamber'
+    if active.has_section('heater_generic chamber'):
+        raise ValueError('A heater already owns the chamber setpoint')
+    if active.has_section(group):
+        if [active.get(group, side+'_heater') for side in ('left', 'right')] != zones:
+            raise ValueError('Active chamber heater mapping conflicts with the physical outputs')
+    else:
+        added.append('[inventure_chamber chamber]\nleft_heater: %s\nright_heater: %s\nmax_temp: 90\n' % tuple(zones))
+    return zones, '\n'.join(added).encode()
+
+
+def nozzle_limit_updates(target, config, configure_nozzles=False, configure_chamber=False):
     module = klipper_config_module(target)
     source_reader = module.ConfigFileReader()
     sources = {}
@@ -131,6 +173,14 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
             # loads it before the board can register its shared ADC factory.
             relocate = section_sources[nozzles[1]]
         heater_names = [nozzles[tool].split()[-1] for tool in (0, 1)]
+        blower_pins = set()
+        zone_names = []
+        if configure_chamber:
+            zone_names, chamber_config = chamber_sections(active, sources, section_sources, by_file)
+            if chamber_config:
+                additions += b'\n' + chamber_config
+            if not active.has_section('inventure_oled'):
+                additions += b'\n' + (ROOT/'config/OLED_FAST_RC7_5.cfg').read_bytes()
         for section in active.sections():
             if not section.startswith('heater_fan '):
                 continue
@@ -138,10 +188,23 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
             if pin not in ('inventure_r5:F0', 'inventure_r5:F2', 'inventure_r5:F3'):
                 continue
             current = [name.strip() for name in active.get(section, 'heater', fallback='extruder').split(',')]
-            combined = list(dict.fromkeys(current+heater_names))
+            blower_pins.add(pin)
+            sides = zone_names if pin in ('inventure_r5:F2', 'inventure_r5:F3') else []
+            combined = list(dict.fromkeys(current+heater_names+sides))
             if current != combined:
                 source = sources.get((section, 'heater'), section_sources[section])
                 by_file[source][section, 'heater'] = ', '.join(combined)
+
+        if configure_chamber:
+            for index in (2, 3):
+                pin = 'inventure_r5:F'+str(index)
+                if pin in blower_pins:
+                    continue
+                if any(active.get(s, 'pin', fallback='') == pin for s in active.sections()):
+                    raise ValueError('Chamber blower already has another owner: '+pin)
+                additions += ('\n[heater_fan inventure_chamber_f%d]\npin: %s\ncycle_time: 0.1\n'
+                              'heater: %s\nheater_temp: 40\n' % (
+                                  index, pin, ', '.join(heater_names+zone_names))).encode()
 
     updates = {}
     for source, options in by_file.items():
@@ -162,7 +225,7 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
                 section = header.group('header')
                 rewritten.append(line)
                 for key, value in options.items():
-                    if key[0] == section and key not in sources:
+                    if key[0] == section and key not in sources and value is not None:
                         rewritten.append(key[1]+': '+value+'\n')
                         found.add(key)
                 continue
@@ -171,6 +234,9 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
             if key in options:
                 if key in found:
                     raise ValueError('Multiple active option definitions in '+str(source))
+                if options[key] is None:
+                    found.add(key)
+                    continue
                 comment = re.search(r'[#;].*', option.group(3))
                 line = (option.group(1).rstrip()+' '+options[key]
                         +(' '+comment.group() if comment else '')+(option.group(4) or ''))
@@ -183,7 +249,8 @@ def nozzle_limit_updates(target, config, configure_nozzles=False):
     if relocate is not None:
         original = relocate.read_bytes()
         before, after = updates.get(relocate, (original, original))
-        after, additions = remove_config_section(after, nozzles[1])
+        after, moved = remove_config_section(after, nozzles[1])
+        additions = moved.rstrip() + b"\n\n" + additions
         updates[relocate] = (before, after)
     if additions:
         original = config.read_bytes()
@@ -299,6 +366,8 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
         if name == 'START_PRINT':
             return all(active.getboolean('inventure_preflight', option, fallback=False)
                        for option in ('enabled', 'p14_integration_qualified', 'start_qualified'))
+        if name in ('M141', 'M191', 'PID_CHAMBER'):
+            return active.has_section('inventure_chamber chamber')
         if name in ('PID_HOTEND', 'PID_STATUS', 'PID_SAVE'):
             return any(active.get(section, 'heater_pin', fallback='') in
                        ('inventure_r5:HEATER_T0', 'inventure_r5:HEATER_T1')
@@ -392,14 +461,28 @@ def atomic_config_write(path, data):
 
 
 def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
-           configure_leveling=False, configure_jam=False, configure_filament=False, configure_fluidd=False):
+           configure_leveling=False, configure_jam=False, configure_filament=False, configure_fluidd=False,
+           fluidd_root=None, fluidd_zip=None):
+    with tempfile.TemporaryDirectory(prefix='inventure-fluidd-') as temp:
+        source = root = None
+        if configure_fluidd:
+            from fluidd_web import release_bundle, web_root
+            root = web_root(fluidd_root)
+            if not check_only:
+                source = release_bundle(Path(temp), fluidd_zip)
+        return update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_leveling,
+                           configure_jam, configure_filament, configure_fluidd, source, root)
+
+
+def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_leveling,
+                configure_jam, configure_filament, configure_fluidd, source, root):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
     config=core.running_printer_config()
     plan=core.install(target)
-    config_updates=(nozzle_limit_updates(target,config,configure_nozzles)
-                    if upgrade_nozzle_limits or configure_nozzles else {})
+    config_updates=(nozzle_limit_updates(target,config,configure_nozzles or configure_fluidd,configure_fluidd)
+                    if upgrade_nozzle_limits or configure_nozzles or configure_fluidd else {})
     if configure_leveling or configure_jam or configure_filament or configure_fluidd:
         add_fluidd_controls(target, config, config_updates,
                            leveling=configure_leveling, jam=configure_jam, filament=configure_filament,
@@ -430,6 +513,11 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
             atomic_config_write(path,after)
         service('start')
         subprocess.run(['systemctl','is-active','--quiet','klipper'],check=True,timeout=10)
+        if configure_fluidd:
+            from fluidd_web import activate
+            subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--wait', '60',
+                            '--config-directory', str(config.parent)], check=True)
+            identity.update(fluidd_root=str(root), previous_fluidd_site=activate(source, root))
     except BaseException:
         if config_backups or result and result.get('status')=='INSTALLED':
             service('stop')
@@ -444,9 +532,6 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
                     config_backups={str(path):str(backup) for path,backup in config_backups.items()})
     print(json.dumps(dict(identity,status=status,backup=result.get('backup')),
                      indent=2))
-    if configure_fluidd:
-        subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--wait', '60',
-                        '--config-directory', str(config.parent)], check=True)
     print('In Klipper console: INVENTURE_VERSION')
 
 
@@ -465,9 +550,12 @@ def main():
                         help='Add cassette settings, load, unload and manual feed controls to Fluidd')
     parser.add_argument('--configure-fluidd', action='store_true',
                         help='Install the Inventure dashboard and group its buttons in the active Fluidd instance')
+    parser.add_argument('--fluidd-root', type=Path, help='Select the Inventure nginx web root on a multi-site host')
+    parser.add_argument('--fluidd-zip', type=Path, help='Use the release web ZIP and adjacent SHA256SUMS offline')
     args=parser.parse_args()
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,
-               args.configure_leveling,args.configure_jam,args.configure_filament,args.configure_fluidd)
+               args.configure_leveling,args.configure_jam,args.configure_filament,args.configure_fluidd,
+               args.fluidd_root,args.fluidd_zip)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

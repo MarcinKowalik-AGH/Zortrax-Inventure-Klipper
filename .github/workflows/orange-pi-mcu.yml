@@ -8,9 +8,12 @@ on:
       - 'service_mcu/control_r6/SOURCE_MCU/**'
       - 'service_mcu/control_r6/TESTS/**'
       - 'ci/**'
+      - 'fluidd/inventure-ui/**'
+      - 'fluidd_web.py'
+      - 'config/INVENTURE_CHAMBER.cfg'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_FLUIDD_R30.md'
+      - 'docs/INVENTURE_THERMAL_OLED_R31.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -49,11 +52,20 @@ jobs:
           echo "$RUNNER_TEMP/arm-toolchain/bin" >> "$GITHUB_PATH"
       - name: Build and validate the InventureBoot 1.7 application
         run: python service_mcu/control_r6/SOURCE_MCU/build_thermal_test.py "$RUNNER_TEMP/inventure-kit" "$RUNNER_TEMP/inventure-mcu"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.3'
+      - name: Build the Fluidd dashboard
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R31.zip"
+      - name: Test the compiled dashboard in Chrome
+        run: |
+          python -m pip install 'playwright==1.56.0'
+          python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R31.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_FLUIDD_R30
+          name: INVENTURE_THERMAL_OLED_R31
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -64,7 +76,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-fluidd-r30-release
+      group: inventure-thermal-oled-r31-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +84,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_FLUIDD_R30
+          name: INVENTURE_THERMAL_OLED_R31
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -87,8 +99,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R30 · Fluidd dashboard and Klipper controls" \
-              --notes-file docs/INVENTURE_FLUIDD_R30.md
+              --title "Inventure R31 · Chamber PID and live OLED in Fluidd" \
+              --notes-file docs/INVENTURE_THERMAL_OLED_R31.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

@@ -293,6 +293,7 @@ class Printer:
         self.board=types.SimpleNamespace(mcu=self.mcu,connected=True,load_test_context=None,
             motion_last={},get_status=lambda now:{'status_age':0.,'fault':0,'temperatures':[25.]*8,'adc_ages':[0.]*8})
     def get_reactor(self):return self.reactor
+    def add_object(self,name,obj):self.objects[name]=obj
     def load_object(self,cfg,name):return self.board
     def lookup_object(self,name,default=None):
         return {'gcode':self.gcode,'inventure_mcu':self.board}.get(name,self.objects.get(name,default))

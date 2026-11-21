@@ -2,7 +2,7 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**Host R30 with MCU R13** installs two Fluidd groups. **ZORTRAX INVENTURE** contains the English `INVENTURE_*` printer controls. **Klipper** contains native print, PID and display utilities supported by the installed profile. R29 cassette settings and manual feed are available for both nozzles. [R30 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-fluidd-r30) · [M300 comparison, validation and outstanding work](docs/INVENTURE_FLUIDD_R30.md)
+**Host R31 with MCU R13** adds **Extruder 0**, **Extruder 1** and **Chamber** to the Fluidd thermal card. One chamber target drives the left and right PID loops. The main reading comes from the center thermometer. The printer status card shows **OLED INVENTURE** from the last acknowledged display frame. The R30 macro groups remain available. [R31 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-thermal-oled-r31) · [Thermal control, OLED and validation](docs/INVENTURE_THERMAL_OLED_R31.md) · [M300 macro comparison](docs/INVENTURE_FLUIDD_R30.md)
 
 <a id="aktualizacja-orange-pi"></a>
 
@@ -11,9 +11,9 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. Keep the installed R13 MCU.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-fluidd-r30 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-fluidd-r30" refs/tags/inventure-fluidd-r30 &&
-python3 "$HOME/inventure-fluidd-r30/install-orange-pi.py" --configure-fluidd
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-thermal-oled-r31 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-thermal-oled-r31" refs/tags/inventure-thermal-oled-r31 &&
+python3 "$HOME/inventure-thermal-oled-r31/install-orange-pi.py" --configure-fluidd
 ```
 
 If this tagged worktree already exists, run the final installer command there. Once Klipper is ready, enter the following in the **Fluidd console**.
@@ -23,7 +23,7 @@ INVENTURE_VERSION
 INVENTURE_CASSETTE_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-FLUIDD-R30` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. Refresh the existing Fluidd page after the installer reports `GROUPS_INSTALLED` or `ALREADY_GROUPED`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
+The host should report `RC8-CONTROL-R7-THERMAL-OLED-R31` and the MCU `RC8-CONTROL-R7-PAD-THERMAL-R13`. Refresh the existing Fluidd page after the installer reports the active `fluidd_root`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
 
 ## Printer procedures
 

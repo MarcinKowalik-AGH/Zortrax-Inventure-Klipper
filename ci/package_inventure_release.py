@@ -9,7 +9,7 @@ import subprocess
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 
-def package(build, output):
+def package(build, output, web):
     root = Path(__file__).resolve().parents[1]
     if subprocess.check_output(
             ['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root, text=True):
@@ -64,7 +64,12 @@ def package(build, output):
     audit_source = root/pad['audit_report']
     audit_copy = output/audit_source.name
     shutil.copyfile(audit_source, audit_copy)
-    assets = (mcu_zip, host_zip, audit_copy)
+    web_zip = output/'INVENTURE_FLUIDD_WEB_R31.zip'
+    shutil.copyfile(web, web_zip)
+    with ZipFile(web_zip) as archive:
+        assert archive.testzip() is None
+        assert archive.read('.inventure-fluidd-build').decode().strip() == pad['release_tag']
+    assets = (mcu_zip, host_zip, audit_copy, web_zip)
     digests = {asset.name: sha256(asset.read_bytes()).hexdigest() for asset in assets}
     (output/'SHA256SUMS').write_text(''.join(
         f'{digest}  {name}\n' for name, digest in digests.items()))
@@ -75,5 +80,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('build', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--web', type=Path, required=True)
     args = parser.parse_args()
-    package(args.build.resolve(), args.output.resolve())
+    package(args.build.resolve(), args.output.resolve(), args.web.resolve())

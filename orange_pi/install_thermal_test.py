@@ -73,6 +73,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
     extra_modules=meta.get('extra_modules',{})
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
                     'inventure_oled_uifast_transport.py','inventure_z_home.py',
+                    'inventure_chamber.py','inventure_oled_preview.py',
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
                     'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py',
                     'inventure_filament_jam.py','inventure_jam_motion.py','inventure_jam_monitor.py',

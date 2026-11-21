@@ -44,9 +44,18 @@ def check_loaded(printer, config):
     assert t0.sensor.channel == 0 and t1.sensor.channel == 1
     assert board.shared_adc_sensors[0] == [t0.sensor]
     assert board.shared_adc_sensors[1] == [t1.sensor]
+    chamber = printer.lookup_object('inventure_chamber chamber')
+    chamber.connect()
+    left, right = chamber.zones
+    assert [z.sensor.channel for z in chamber.zones] == [2, 3]
+    assert [z.mcu_pwm.name for z in chamber.zones] == ['HEATER_PC9', 'HEATER_PC8']
+    assert all(type(z.control).__name__ == 'ControlPID' for z in chamber.zones)
+    assert len(board.shared_adc_sensors[2]) == len(board.shared_adc_sensors[3]) == 1
+    assert 'inventure_chamber chamber' in heaters.available_sensors
+    assert printer.lookup_object('inventure_oled_preview')
     for _, fan in printer.lookup_objects('heater_fan'):
         fan.handle_ready()
-        assert fan.heaters == [t0, t1]
+        assert fan.heaters == ([t0,t1,left,right] if fan.fan.mcu_fan.name in ('F2','F3') else [t0,t1])
     for name in ('INVENTURE_LEVEL', 'INVENTURE_LEVEL_NEXT', 'INVENTURE_LEVEL_PROGRESS',
                  'INVENTURE_LEVEL_SAVE', 'INVENTURE_LEVEL_STOP', 'INVENTURE_DOOR_LOCK',
                  'INVENTURE_JAM_REPORT', 'INVENTURE_JAM_STATUS', 'INVENTURE_JAM_SOURCE',
@@ -122,10 +131,10 @@ def check_loaded(printer, config):
     assert not names.intersection(('INVENTURE_HOME_XYZ', 'ZORTRAX_NOZZLE_PAD_CALIBRATE'))
     counts = {group: sum(value == group for value in assignments.values()) for group in groups.GROUPS}
     visible = sum(row['visible'] for row in settings['stored'])
-    assert counts['Klipper'] == 6
+    assert counts['Klipper'] == 9
     print('Dashboard macros:', counts, 'visible:', visible)
     print(json.dumps(dict(status='CONFIG_LOADED', limits_c=[t0.max_temp,t1.max_temp],
-                         adc_readers=len(board.adcs), fan_heaters=['extruder','inventure_t1'])))
+                         adc_readers=len(board.adcs), chamber_pid_zones=['chamber_l','chamber_r'], chamber_sensors=['PC1','PC2','PA4'])))
 
 
 def prepare_runtime(destination):
@@ -185,13 +194,13 @@ def check():
                 field.write_text('[include hardware.cfg]\n[include fluidd.cfg]\n\n'
                     '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
                     '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
-            updates = updater.nozzle_limit_updates(klipper,field,True)
+            updates = updater.nozzle_limit_updates(klipper,field,True,True)
             updater.add_fluidd_controls(klipper,field,updates,dashboard=True)
             assert updates
             for path,(before,after) in updates.items():
                 assert path.read_bytes() == before
                 updater.atomic_config_write(path,after)
-            assert updater.nozzle_limit_updates(klipper,field,True) == {}
+            assert updater.nozzle_limit_updates(klipper,field,True,True) == {}
             second = {}
             updater.add_fluidd_controls(klipper,field,second,dashboard=True)
             assert second == {}

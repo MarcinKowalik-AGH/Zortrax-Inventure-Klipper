@@ -1,0 +1,173 @@
+diff --git a/src/components/widgets/status/PrinterStatusCard.vue b/src/components/widgets/status/PrinterStatusCard.vue
+index 4f36019..849ddd8 100644
+--- a/src/components/widgets/status/PrinterStatusCard.vue
++++ b/src/components/widgets/status/PrinterStatusCard.vue
+@@ -65,6 +65,7 @@
+         />
+       </v-tab-item>
+     </v-tabs-items>
++    <inventure-oled-preview />
+   </collapsable-card>
+ </template>
+
+@@ -73,6 +74,7 @@ import { Component, Mixins, Watch } from 'vue-property-decorator'
+ import { SocketActions } from '@/api/socketActions'
+ import StateMixin from '@/mixins/state'
+ import AfcMixin from '@/mixins/afc'
++import InventureOledPreview from './InventureOledPreview.vue'
+ import StatusControls from './StatusControls.vue'
+ import StatusTab from './StatusTab.vue'
+ import ReprintTab from './ReprintTab.vue'
+@@ -81,6 +83,7 @@ import getFilePaths from '@/util/get-file-paths'
+
+ @Component({
+   components: {
++    InventureOledPreview,
+     StatusControls,
+     StatusTab,
+     ReprintTab
+diff --git a/src/components/widgets/thermals/TemperatureTargets.vue b/src/components/widgets/thermals/TemperatureTargets.vue
+index 0b00d7e..62cd031 100644
+--- a/src/components/widgets/thermals/TemperatureTargets.vue
++++ b/src/components/widgets/thermals/TemperatureTargets.vue
+@@ -52,6 +52,10 @@
+             >
+               {{ item.prettyName }}
+             </span>
++            <small v-if="item.type === 'inventure_chamber' && chamber" class="d-block text-no-wrap">
++              L {{ zoneTemperature(chamber.left) }} · R {{ zoneTemperature(chamber.right) }}
++              <span v-if="chamber.split_targets"> · targets {{ chamber.zone_targets.join(" / ") }}°</span>
++            </small>
+           </td>
+           <td class="temp-power">
+             <span
+@@ -60,7 +64,7 @@
+               @click="legendClick(item, 'power')"
+             >
+               <span v-if="item.power <= 0 && item.target <= 0">off</span>
+-              <span v-if="item.target > 0">
++              <span v-if="item.target > 0 || item.power > 0">
+                 {{ (item.power) ? (item.power * 100).toFixed() : 0 }}<small>%</small>
+               </span>
+             </span>
+@@ -396,6 +400,14 @@ export default class TemperatureTargets extends Mixins(StateMixin) {
+     return this.$store.getters['printer/getOutputs'](['temperature_fan'])
+   }
+
++  get chamber () {
++    return this.$typedState.printer.printer['inventure_chamber chamber']
++  }
++
++  zoneTemperature (value: number | null) {
++    return value == null ? '—' : value.toFixed(1) + '°'
++  }
++
+   get nevermore () {
+     return this.$store.getters['printer/getOutputs'](['nevermore'])
+   }
+@@ -542,6 +554,7 @@ export default class TemperatureTargets extends Mixins(StateMixin) {
+   }
+
+   handleHeaterRowClick (item: Heater, event: MouseEvent) {
++    if (item.type === 'inventure_chamber') return
+     if (this.contextMenuState.open) {
+       this.contextMenuState.open = false
+
+diff --git a/src/components/widgets/thermals/ThermalChart.vue b/src/components/widgets/thermals/ThermalChart.vue
+index bd1b3aa..dd432a5 100644
+--- a/src/components/widgets/thermals/ThermalChart.vue
++++ b/src/components/widgets/thermals/ThermalChart.vue
+@@ -367,11 +367,12 @@ export default class ThermalChart extends Mixins(BrowserMixin) {
+               if (temperature == null) return
+
+               const name = param.seriesName.trim().split(/\s+/).pop() || ''
++              const heater = this.$typedGetters['printer/getHeaters'].find(item => item.key === param.seriesName)
+               text += `
+                 <div>
+                   ${param.marker}
+                   <span style="font-size:${fontSize}px;color:${fontColor};font-weight:400;margin-left:2px">
+-                    ${this.$filters.prettyCase(name)}:
++                    ${heater?.prettyName ?? this.$filters.prettyCase(name)}:
+                   </span>
+                   <span style="float:right;margin-left:20px;font-size:${fontSize}px;color:${fontColor};font-weight:900">
+                     ${temperature.toFixed(2)}<small>°C</small>`
+diff --git a/src/store/printer/getters.ts b/src/store/printer/getters.ts
+index 3db4847..d78748e 100644
+--- a/src/store/printer/getters.ts
++++ b/src/store/printer/getters.ts
+@@ -614,7 +614,9 @@ export const getters = {
+         const name = nameFromSplit || key
+
+         const color = resolveSensorColor(sensorColors, key)
+-        const prettyName = Vue.$filters.prettyCase(name)
++        const label = config?.heater_pin === 'inventure_r5:HEATER_T0' ? 'Extruder 0'
++          : config?.heater_pin === 'inventure_r5:HEATER_T1' ? 'Extruder 1' : undefined
++        const prettyName = label ?? Vue.$filters.prettyCase(name)
+
+         const disconnected = configHasDisconnectedMcu(config, nonCriticalDisconnectedMcusSet)
+
+@@ -633,8 +635,21 @@ export const getters = {
+       }
+     }
+
+-    return heaters
+-      .sort((a, b) => a.name.localeCompare(b.name))
++    const chamber = state.printer['inventure_chamber chamber']
++    if (!chamber) return heaters.sort((a, b) => a.name.localeCompare(b.name))
++    const zones = new Set(chamber.zone_objects)
++    const rows = heaters.filter(heater => !zones.has(heater.key))
++    const settings = state.printer.configfile.settings['inventure_chamber chamber']
++    rows.push({
++      key: 'inventure_chamber chamber', type: 'inventure_chamber', name: 'chamber',
++      prettyName: 'Chamber', config: settings,
++      temperature: chamber.temperature, target: chamber.target, power: chamber.power,
++      color: resolveSensorColor(sensorColors, 'inventure_chamber chamber'),
++      minTemp: 0, maxTemp: settings?.max_temp ?? 90, disconnected: !chamber.sensors_valid
++    } as Heater)
++    const order = ['Extruder 0', 'Extruder 1', 'Chamber']
++    const rank = (row: Heater) => order.includes(row.prettyName) ? order.indexOf(row.prettyName) : 3
++    return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+   },
+
+   getAllLeds: (_, getters) => {
+@@ -938,8 +953,12 @@ export const getters = {
+     const heaters = [...state.printer.heaters?.available_heaters ?? []]
+       .sort((a, b) => a.localeCompare(b))
+
++    const chamber = state.printer['inventure_chamber chamber']
++    const visible = chamber
++      ? [...heaters.filter(name => !chamber.zone_objects.includes(name)), 'inventure_chamber chamber']
++      : heaters
+     return [
+-      ...heaters,
++      ...visible,
+       ...sensors
+     ]
+   },
+diff --git a/src/typings/klipper.d.ts b/src/typings/klipper.d.ts
+index 75ad05d..0b85f46 100644
+--- a/src/typings/klipper.d.ts
++++ b/src/typings/klipper.d.ts
+@@ -145,6 +145,10 @@ declare namespace Klipper {
+
+       z_calibration: KalicoZCalibrationState;
+
++      inventure_oled_preview: { display: string; image_base64: string };
++      'inventure_chamber chamber': { temperature: number | null; left: number | null; right: number | null;
++        power: number; target: number | null; zone_targets: number[]; split_targets: boolean; sensors_valid: boolean; zone_objects: string[] };
++
+       // These keys are for external modules
+
+       beacon: BeaconState;
+diff --git a/src/util/get-klipper-type.ts b/src/util/get-klipper-type.ts
+index 159d0ec..0089919 100644
+--- a/src/util/get-klipper-type.ts
++++ b/src/util/get-klipper-type.ts
+@@ -19,6 +19,7 @@ export default (name: string) => {
+   ]
+
+   const heaters = [
++    'inventure_chamber',
+     'heater_generic',
+     'extruder'
+   ]
