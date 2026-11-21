@@ -106,6 +106,8 @@ def check_loaded(printer, config):
                  'INVENTURE_FEED_MORE', 'INVENTURE_RETRACT_MORE', 'INVENTURE_FILAMENT_FINISH', 'INVENTURE_CASSETTE_JOG'):
         assert printer.lookup_object('gcode_macro '+name)
     gcode = printer.lookup_object('gcode')
+    from check_procedure_routes import audit_routes
+    audit_routes(printer)
     for name in ('CANCEL_PRINT', 'END_PRINT', 'PID_HOTEND', 'PID_SAVE', 'PID_STATUS',
                  'OLED_TIMERS', 'INVENTURE_MAIN_MENU', 'INVENTURE_OLED_BRIGHTNESS', 'INVENTURE_OLED_ICONS',
                  'INVENTURE_HOME_ALL', 'INVENTURE_NOZZLE_SELECT', 'INVENTURE_PLATFORM_UP'):

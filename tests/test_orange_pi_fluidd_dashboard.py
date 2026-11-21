@@ -217,7 +217,7 @@ class DashboardRouteTests(unittest.TestCase):
             for i,(name,pin) in enumerate((('extruder','HEATER_T0'),('right_nozzle','HEATER_T1'),('chamber','CHAMBER')))
         }.__getitem__
         board.printer.lookup_object.side_effect = lambda name,*args: heaters if name=='heaters' else None
-        board.nozzle_z_context=board.feeder_run_context=board.load_test_context=None
+        board.nozzle_z_context=board.feeder_run_context=board.load_test_context=board.filament_jam=None
         board._control_query.return_value=dict(mode='NATIVE',armed=1,fault=0,latched=0)
         cmd = MagicMock()
         cmd.get_float.return_value = 200.
@@ -235,13 +235,13 @@ class DashboardRouteTests(unittest.TestCase):
 
     def test_platform_sign_single_axis_limits_reference_and_guard(self):
         board = MagicMock()
-        board.nozzle_z_context=board.feeder_run_context=board.load_test_context=None
+        board.nozzle_z_context=board.feeder_run_context=board.load_test_context=board.filament_jam=None
         head, native, gm = MagicMock(), MagicMock(), MagicMock()
         devices=dict(toolhead=head,inventure_native_z=native,gcode_move=gm)
         board.printer.lookup_object.side_effect=lambda name,*args: devices.get(name)
         head.get_status.return_value={'homed_axes':'xyz','axis_minimum':[0,0,0],'axis_maximum':[150,150,140]}
         head.get_position.return_value=[7.,8.,3.,9.]
-        native.running=False
+        native.running=native.sequence_running=False
         native.last_result={'reference_established':True}
         board._control_next_token.return_value=5
         for direction,target in (('up',2.),('down',4.)):
@@ -252,6 +252,10 @@ class DashboardRouteTests(unittest.TestCase):
         for direction,distance in (('up',5.),('down',float('nan')),('up',10.)):
             with self.assertRaises(ValueError):
                 routes.move_platform(board,direction,distance,1.)
+        native.sequence_running=True
+        with self.assertRaisesRegex(ValueError,'homing to finish'):
+            routes.move_platform(board,'down',1.,2.)
+        native.sequence_running=False
         native.last_result=None
         with self.assertRaisesRegex(ValueError,'reference'):
             routes.move_platform(board,'up',1.,2.)

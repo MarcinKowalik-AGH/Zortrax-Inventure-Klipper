@@ -64,6 +64,7 @@ class InventureNativeZ:
         self.kin = None
         self.bottom = None
         self.running = False
+        self.sequence_running = False
         self.guard = None
         self.refine = None
         self.guard_owner = None
@@ -83,6 +84,9 @@ class InventureNativeZ:
         gcode.register_command(
             'INVENTURE_NATIVE_HOME', self.cmd_home_axes,
             desc='Run the Inventure X, Y, XY, heated Z or heated XYZ homing procedure')
+        gcode.register_command(
+            'INVENTURE_HOME_REQUEST', self.cmd_request_home,
+            desc='Home the requested axes from Fluidd or the Inventure OLED')
 
     def _build_config(self):
         constants = self.board.mcu.get_constants()
@@ -429,8 +433,8 @@ class InventureNativeZ:
         if self.running or self.bottom is None or self.guard is None or self.z_enable is None:
             raise gcmd.error('Native Inventure Z reference already running or unavailable')
 
-    def _reference_parameters(self, gcmd):
-        if gcmd.get('ACK', '') != Z_HOME_ACK:
+    def _reference_parameters(self, gcmd, require_ack=True):
+        if require_ack and gcmd.get('ACK', '') != Z_HOME_ACK:
             raise gcmd.error('Native Inventure Z requires ACK=' + Z_HOME_ACK)
         stable_requested = gcmd.get('Z_STABLE_CYCLES', None) is not None
         local = not stable_requested and gcmd.get('Z_PROBE_CYCLES', None) is None
@@ -502,12 +506,29 @@ class InventureNativeZ:
         raise FactoryError('Inventure homing was interrupted while heating')
 
     def cmd_home_axes(self, gcmd):
+        self._run_home_axes(gcmd, operator=False)
+
+    def cmd_request_home(self, gcmd):
+        self._run_home_axes(gcmd, operator=True)
+
+    def _run_home_axes(self, gcmd, operator):
         self._check_available(gcmd)
+        if self.sequence_running:
+            raise gcmd.error('An Inventure homing procedure is already running')
+        self.sequence_running = True
+        try:
+            self._home_axes(gcmd, operator)
+        finally:
+            self.sequence_running = False
+
+    def _home_axes(self, gcmd, operator):
+        from .inventure_fluidd import require_idle, native_control_state, select_native_control
         axes = gcmd.get('AXES', '').upper()
         if axes not in ('X', 'Y', 'XY', 'Z', 'XYZ'):
             raise gcmd.error('AXES must be X, Y, XY, Z or XYZ')
         hot = 'Z' in axes
         options = gcmd.get_command_parameters()
+        review = operator and hot and 'ACK' not in options
         allowed = {'AXES'}
         if axes != 'Z':
             allowed.add('XY_SPEED_FACTOR')
@@ -538,17 +559,28 @@ class InventureNativeZ:
             self._require_idle(now)
             if self.printer.lookup_object('gcode_move').move_transform is not None:
                 raise FactoryError('Inventure homing requires an untransformed working frame')
-            self._require_native()
+            if not operator:
+                self._require_native()
             status = self.kin.get_status(now)['homed_axes']
-            self.toolhead.wait_moves()
             if hot:
                 if axes == 'Z' and not all(axis in status for axis in 'xy'):
-                    raise FactoryError('Home both X and Y first or use INVENTURE_HOME_XYZ')
+                    raise FactoryError('Home both X and Y first or use INVENTURE_HOME_ALL')
                 z_command = self._z_macro_command(options)
-                heater, target = self._validate_z_macro(z_command)
+                heater, target = self._validate_z_macro(z_command, require_ack=not review)
                 self.board._z_home_inputs({})
                 previous_target = heater.get_temp(now)[1]
                 heaters = self.printer.lookup_object('heaters')
+            if operator:
+                require_idle(self.board)
+                control = native_control_state(self.board)
+                if review:
+                    self.board.zortrax.request_home_review(axes, options)
+                    gcmd.respond_info('Confirm Home %s in Fluidd or on the OLED to start' % axes)
+                    return
+                self.board.zortrax.cancel_motion_review()
+                select_native_control(self.board, control)
+            self.toolhead.wait_moves()
+            self._require_native()
             contact_known = ('z' in status and self.last_result is not None
                              and self.last_result.get('reference_established'))
             if hot or not contact_known:
@@ -596,8 +628,8 @@ class InventureNativeZ:
                   if key in options}
         return self.printer.lookup_object('gcode').create_gcode_command(name, name, params)
 
-    def _validate_z_macro(self, gcmd):
-        approach, span, _, _, local, target = self._reference_parameters(gcmd)
+    def _validate_z_macro(self, gcmd, require_ack=True):
+        approach, span, _, _, local, target = self._reference_parameters(gcmd, require_ack)
         self._reference_window(approach, span, local)
         extruder = self.toolhead.get_extruder()
         if extruder.get_name() != 'extruder':
@@ -701,7 +733,7 @@ class InventureNativeZ:
         gcmd.respond_info('V9_NATIVE_Z ' + json.dumps(self.last_result, sort_keys=True))
 
     def get_status(self, eventtime):
-        return dict(running=self.running, last_result=self.last_result)
+        return dict(running=self.running or self.sequence_running, last_result=self.last_result)
 
 
 def load_config(config):

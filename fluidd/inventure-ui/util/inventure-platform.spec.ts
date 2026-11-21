@@ -9,6 +9,9 @@ describe('Inventure platform', () => {
       expect(homeCommand(settings, axes)).toBe('INVENTURE_HOME_' + axes)
     }
     expect(homeCommand({ inventure_mcu: {} }, 'XY')).toBe('G28 X Y')
+    expect(homeCommand({ inventure_mcu: {}, inventure_native_z: {} }, 'ALL')).toBe('INVENTURE_HOME_REQUEST AXES=XYZ')
+    expect(homeCommand({ inventure_mcu: {}, inventure_native_z: {} }, 'Z')).toBe('INVENTURE_HOME_REQUEST AXES=Z')
+    expect(homeCommand({ inventure_mcu: {}, inventure_motion: { enabled: true } }, 'XY')).toBe('INVENTURE_HOME_XY')
     expect(homeCommand({ 'gcode_macro inventure_home_all': {} }, 'ALL')).toBe('G28')
   })
   it('keeps the true four corners and center and accepts a measured zero', () => {

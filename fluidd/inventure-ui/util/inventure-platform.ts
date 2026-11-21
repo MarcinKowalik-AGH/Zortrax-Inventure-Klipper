@@ -3,7 +3,11 @@ export type HomeAxes = 'X' | 'Y' | 'Z' | 'XY' | 'ALL'
 
 export function homeCommand (settings: Record<string, unknown>, axes: HomeAxes): string {
   const macro = 'INVENTURE_HOME_' + axes
-  if ('inventure_mcu' in settings && ('gcode_macro ' + macro.toLowerCase()) in settings) return macro
+  if ('inventure_mcu' in settings) {
+    if (('gcode_macro ' + macro.toLowerCase()) in settings) return macro
+    if (axes === 'XY' && (settings.inventure_motion as { enabled?: boolean } | undefined)?.enabled) return macro
+    if ('inventure_native_z' in settings) return 'INVENTURE_HOME_REQUEST AXES=' + (axes === 'ALL' ? 'XYZ' : axes)
+  }
   return axes === 'ALL' ? 'G28' : 'G28 ' + axes.split('').join(' ')
 }
 

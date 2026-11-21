@@ -671,6 +671,11 @@ class HomeSequenceModel(Model):
         self.min_temp, self.max_temp = 0., 220.
         self.speeds = []
         self.native_mode = True
+        self.printer = self.reactor = self
+        self.inactive_mode = 'SERVICE'
+        self.service_active = self.control_fault = self.control_latched = False
+        self.control_reject = None
+        self.mode_requests = []
         self.print_state = 'standby'
         self.fail_axis = None
         self.heater_busy = False
@@ -698,8 +703,15 @@ class HomeSequenceModel(Model):
         return default
 
     def _control_query(self):
-        return dict(mode='NATIVE' if self.native_mode else 'SERVICE',
-                    armed=self.native_mode, latched=0, fault=0)
+        return dict(mode='NATIVE' if self.native_mode else self.inactive_mode,
+                    armed=self.native_mode, latched=self.control_latched, fault=self.control_fault,
+                    active=self.native_mode or self.service_active, reject=None)
+
+    def cmd_control(self, command):
+        self.mode_requests.append(command.get('MODE'))
+        if self.control_reject:
+            raise ValueError(self.control_reject)
+        self.native_mode = True
 
     def _z_home_inputs(self, expected):
         raw = super()._z_home_inputs(expected)
@@ -771,7 +783,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter.endstop = model.endstop
         self.adapter.guard = object()
         self.adapter.refine = model.refine
-        self.adapter.running = self.adapter.interrupted = False
+        self.adapter.sequence_running = self.adapter.running = self.adapter.interrupted = False
         self.adapter.last_result = None
         self.adapter.pad_x, self.adapter.pad_y = 82.8, 68.
         self.adapter.bottom_position = 145.
@@ -792,6 +804,120 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.set_position([82.8, 68., 0., 0.], 'z')
         self.model.physical_z = self.model.threshold + 1. / Z_STEPS_PER_MM
         self.adapter.last_result = dict(reference_established=True, coordinate_saved=True)
+
+    def operator_menu(self):
+        from test_orange_pi_zortrax_menu import MenuFixture
+        board, menu = MenuFixture().host()
+        self.model.zortrax = menu
+        board.printer.objects['inventure_native_z'] = self.adapter
+        lines = []
+        board.gcode.register_output_handler(lines.append)
+        return menu, lines
+
+    def test_bare_home_all_from_fluidd_or_oled_then_confirm(self):
+        for mode in ('OFF', 'SERVICE', 'NATIVE'):
+            for origin in ('fluidd', 'oled'):
+                with self.subTest(mode=mode, origin=origin):
+                    self.setUp()
+                    model = self.model
+                    model.native_mode, model.inactive_mode = mode == 'NATIVE', mode
+                    menu, lines = self.operator_menu()
+                    if origin == 'fluidd':
+                        self.adapter.cmd_request_home(Command(AXES='XYZ', TARGET='205', PARK_Z='8'))
+                        self.assertTrue(any('Yes / Start|INVENTURE_ZORTRAX' in line for line in lines))
+                        self.assertIn(('Nozzle target: 205 C', None), menu.view.options)
+                    else:
+                        menu.open('home_xyz')
+                    self.assertEqual((model.calls, model.mode_requests), ([], []))
+                    token = menu.view.token
+                    menu.choose(token, confirm=True)
+                    self.assertEqual(menu.view.title, 'Home XYZ complete')
+                    self.assertEqual(model.mode_requests, [] if mode == 'NATIVE' else ['NATIVE'])
+                    self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'], ['Z', 'Y', 'X'])
+                    reference, = [c[1] for c in model.calls if c[0] == 'reference']
+                    self.assertEqual(reference['ACK'], Z_HOME_ACK)
+                    self.assertEqual(float(reference.get('TARGET', self.adapter.target)),
+                                     205. if origin == 'fluidd' else self.adapter.target)
+                    self.assertEqual(model.get_position()[2], 8. if origin == 'fluidd' else 10.)
+                    before = list(model.calls)
+                    with self.assertRaises(ValueError):
+                        menu.choose(token, confirm=True)
+                    self.assertEqual(before, model.calls)
+
+    def test_operator_cold_axes_and_explicit_z_keep_script_behavior(self):
+        for axes in ('X', 'Y', 'XY', 'Z', 'XYZ'):
+            with self.subTest(axes=axes):
+                self.setUp()
+                self.model.axes = 'xy'
+                self.model.native_mode = False
+                menu, lines = self.operator_menu()
+                options = {'ACK': Z_HOME_ACK} if 'Z' in axes else {}
+                self.adapter.cmd_request_home(Command(AXES=axes, **options))
+                self.assertEqual(self.model.mode_requests, ['NATIVE'])
+                self.assertEqual(menu.view, None)
+                self.assertFalse(any('prompt_begin' in line for line in lines))
+                self.assertEqual(any(c[0] == 'reference' for c in self.model.calls), 'Z' in axes)
+                self.assertEqual(self.model.heater_target, 0.)
+
+    def test_home_review_back_timeout_stop_or_new_guard_never_moves(self):
+        for change in ('back', 'timeout', 'stop', 'tray', 'latch', 'print', 'service', 'jam'):
+            with self.subTest(change=change):
+                self.setUp()
+                self.model.native_mode = False
+                menu, lines = self.operator_menu()
+                self.adapter.cmd_request_home(Command(AXES='XYZ'))
+                token = menu.view.token
+                if change == 'back':
+                    menu.choose(token, index=0)
+                elif change == 'timeout':
+                    menu.view.deadline = menu.reactor.monotonic()
+                elif change == 'stop':
+                    menu.board.cmd_control_stop(Command())
+                elif change == 'tray':
+                    self.model.tray = 1
+                elif change == 'latch':
+                    self.model.control_latched = True
+                elif change == 'service':
+                    self.model.service_active = True
+                elif change == 'jam':
+                    self.model.filament_jam = types.SimpleNamespace(active=True)
+                else:
+                    self.model.print_state = 'paused'
+                with self.assertRaises(ValueError):
+                    menu.choose(token, confirm=True)
+                self.assertEqual((self.model.calls, self.model.mode_requests), ([], []))
+
+    def test_invalid_ack_parameters_and_busy_controller_do_not_arm(self):
+        for options, settings in ((dict(ACK='typo'), {}), (dict(TARGET='nan'), {}),
+                                  (dict(PARK_Z='200'), {}), ({}, dict(control_fault=True)),
+                                  ({}, dict(service_active=True))):
+            with self.subTest(options=options, settings=settings):
+                self.setUp()
+                self.model.native_mode = False
+                self.operator_menu()
+                for key, value in settings.items():
+                    setattr(self.model, key, value)
+                with self.assertRaises(ValueError):
+                    self.adapter.cmd_request_home(Command(AXES='XYZ', **options))
+                self.assertEqual((self.model.calls, self.model.mode_requests), ([], []))
+
+    def test_refused_native_transition_and_loss_mid_sequence_do_not_rearm(self):
+        self.operator_menu()
+        self.model.native_mode = False
+        self.model.control_reject = 'sensor_or_door_guard'
+        with self.assertRaisesRegex(ValueError, 'guard'):
+            self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        self.assertEqual((self.model.calls, self.model.mode_requests), ([], ['NATIVE']))
+        self.model.control_reject = None
+        home_bottom = self.adapter._home_bottom
+        def lose_control():
+            home_bottom()
+            self.model.native_mode = False
+        self.adapter._home_bottom = lose_control
+        with self.assertRaisesRegex(ValueError, 'NATIVE'):
+            self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        self.assertEqual(self.model.mode_requests, ['NATIVE', 'NATIVE'])
+        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z'])
 
     def test_xy_uses_y_then_x_with_temporary_clearance_and_scaled_speeds(self):
         self.adapter.cmd_home_axes(Command(AXES='XY'))

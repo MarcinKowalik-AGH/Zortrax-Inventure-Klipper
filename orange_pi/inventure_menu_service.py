@@ -185,6 +185,38 @@ class ZortraxMenuService:
             self.gcode.respond_raw('// action:prompt_end')
             self.menu_dialog_token = None
 
+    def request_home_review(self, axes, options):
+        action = 'home_' + axes.lower()
+        self.operator_page_open = False
+        view = self.open(action, **{k: v for k, v in options.items() if k != 'AXES'})
+        if view is None or view.kind != 'confirm':
+            raise MenuError('Homing unavailable: ' + (view.title if view else 'no confirmation'))
+        self.menu_dialog_requested = True
+        self._sync_menu_dialog()
+
+    def choose_cassette(self, action, options):
+        from .inventure_fluidd import require_idle
+        require_idle(self.board)
+        if self.stopped or self.executing or self.active is not None or self.fan_session is not None:
+            raise MenuError('Finish the current procedure before choosing a cassette')
+        title = {'LOAD': 'Load cassette', 'UNLOAD': 'Unload cassette', 'JOG': 'Manual cassette move'}[action]
+        rows = [('Back', ('close', {}))]
+        for tool in ('T0', 'T1'):
+            rows.append((tool, ('cassette_operation', dict(options, ACTION=action, TOOL=tool))))
+        self.operator_page_open = False
+        self._set_view('choice', title, rows, data={'action': 'choose_cassette'})
+        self.menu_dialog_requested = True
+        self._sync_menu_dialog()
+
+    def cancel_motion_review(self):
+        view = self.view
+        if view is not None and (view.kind == 'confirm' or view.data.get('action') == 'choose_cassette'):
+            self._close_menu_dialog()
+            self.menu_dialog_requested = False
+            self.operator_page_open = False
+            self.view = None
+            self._wake()
+
     def _sync_menu_dialog(self):
         if not self.menu_dialog_requested:
             return
@@ -321,8 +353,9 @@ class ZortraxMenuService:
             title = 'Home '+axes+'?'
             if 'Z' in axes:
                 title = 'Pad and clearance OK?'
-                target = self._obj('inventure_native_z').target
-                reviews = ['Home '+axes+' with T0', 'Nozzle target: %g C' % target]
+                target = float((params or {}).get('TARGET', self._obj('inventure_native_z').target))
+                reviews = ['Home '+axes+' with T0', 'T0 physically lowered', 'Tray seated, pad clear',
+                           'Platform travel clear', 'Nozzle target: %g C' % target]
         elif action=='leveling':
             if self.capability(action)['backend'] == 'platform_level':
                 title = 'Start platform leveling?'
@@ -353,7 +386,7 @@ class ZortraxMenuService:
         if action not in ALL_ACTIONS and not action.startswith(('fan_','platform_','spool_')):
             return dict(available=False,backend=None,reason='Unknown menu action')
         if action in HOME_ACTIONS:
-            ready = callable(getattr(self._obj('inventure_native_z'), 'cmd_home_axes', None))
+            ready = callable(getattr(self._obj('inventure_native_z'), 'cmd_request_home', None))
             return dict(available=ready, backend='inventure_native_z' if ready else None,
                         reason=None if ready else 'The native homing module is unavailable')
         if action == 'light':
@@ -459,7 +492,7 @@ class ZortraxMenuService:
     def open(self,action,**params):
         if self.stopped:raise MenuError('Menu lifecycle ended; reconnect first')
         if not isinstance(action,str) or not action:raise MenuError('Specify a stable menu ACTION identifier')
-        if params and (action in HOME_ACTIONS or action in ('light', 'current_procedure')):
+        if params and action in ('light', 'current_procedure'):
             raise MenuError('This menu entry uses the configured printer settings')
         if action == 'current_procedure':
             if self.active is not None:
@@ -548,6 +581,8 @@ class ZortraxMenuService:
             tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
             if 'TOOL' in params and str(params['TOOL']).upper()!='T%d'%tool:raise MenuError('TOOL differs from the selected menu nozzle')
             params.pop('TOOL',None)
+            if action in SERVICE_ACTIONS and self.board._factory_motion_available(tool):
+                params.setdefault('SPEED_PROFILE', 'OEM')
             native_filament=(action.startswith(('load_cartridge_','unload_'))
                 and self._enabled('inventure_filament'))
             operation=SERVICE_ACTIONS[action][0] if action in SERVICE_ACTIONS else 'HEAT'
@@ -585,6 +620,18 @@ class ZortraxMenuService:
         elif action=='spool_load':
             if type(params.get('tool')) is not int or params.get('material_id') not in dict(SUPPORT_MATERIALS if params.get('tool') else MODEL_MATERIALS):
                 raise MenuError('Choose a material from the current spool catalogue')
+            if not (self._enabled('inventure_materials') and self._enabled('inventure_filament')):
+                tool = 'T%d' % params['tool']
+                if 'factory_session' not in self.board.commands or not self.board._factory_motion_available(params['tool']):
+                    return self._info('External spool', 'The native spool or OEM service transport is required')
+                from .inventure_fluidd import require_idle
+                require_idle(self.board)
+                parent = 'spool_catalog_support' if params['tool'] else 'spool_catalog_model'
+                material = dict(SUPPORT_MATERIALS if params['tool'] else MODEL_MATERIALS)[params['material_id']]
+                options = [('Back', ('request', dict(action=parent))), (material, None), ('Guide filament by hand', None)]
+                for step, label in (('LOAD','Feed 20 mm'), ('UNLOAD','Retract 20 mm'), ('WIPE','Wipe nozzle')):
+                    options.append((label, ('jam_test_temperature', dict(TOOL=tool, SOURCE='EXTERNAL', STEP=step))))
+                return self._set_view('choice', tool+' external spool', options)
         elif action=='check_model':
             if not isinstance(params.get('identity'),dict):raise MenuError('Choose a model from the current browser preview')
         elif action=='print_model':
@@ -676,11 +723,9 @@ class ZortraxMenuService:
         if self.fan_session is not None:raise MenuError('End the menu fan-test session before starting heat or motion')
         if self._native_job()[2] in ('printing','paused'):raise MenuError('R7 SERVICE requires an idle printer; the native print retains ownership')
         if getattr(self.board,'load_test_context',None) is not None:raise MenuError('Another service procedure is active')
-        mode=self.board._control_query()
-        if mode['mode']=='OFF' and not mode['active'] and not mode['fault'] and not mode['latched']:
-            self._call(self.board,'cmd_control',MODE='SERVICE')
+        self.board._enter_operator_service()
     def _start_service(self,action,params):
-        operation,tool=SERVICE_ACTIONS[action];self._service_ready()
+        operation,tool=SERVICE_ACTIONS[action]
         args=dict(ACTION=operation,TOOL='T%d'%tool);args.update(params)
         if args['TOOL']!='T%d'%tool:raise MenuError('Menu tool differs from the requested procedure')
         if action.startswith('manual_unload_'):args['MANUAL_DIR']='UNLOAD'
@@ -720,7 +765,6 @@ class ZortraxMenuService:
                 self.active=dict(backend='level',object=obj,session=obj.session,action=action)
         elif action=='alignment':
             if self._xy_available():
-                self._service_ready()
                 self._call(self.board,'cmd_nozzle_xy_test',
                     **dict(params,ACTION='START',ACK='XY_PATTERN_SURFACE_READY'))
                 xy=self._xy_status()
@@ -752,8 +796,10 @@ class ZortraxMenuService:
         elif action in HOME_ACTIONS:
             from .inventure_z_home import Z_HOME_ACK
             axes = HOME_ACTIONS[action]
-            options = {'ACK': Z_HOME_ACK} if 'Z' in axes else {}
-            self._call(self._obj('inventure_native_z'), 'cmd_home_axes', AXES=axes, **options)
+            options = dict(params, ACK=Z_HOME_ACK) if 'Z' in axes else params
+            self._call(self._obj('inventure_native_z'), 'cmd_request_home', AXES=axes, **options)
+            self.last = dict(action=action, result='completed')
+            return self._info('Home '+axes+' complete', 'Homing procedure finished', action=action)
         elif action.startswith('platform_'):
             from .inventure_fluidd import move_platform
             move_platform(self.board, action.split('_')[1],
@@ -990,6 +1036,13 @@ class ZortraxMenuService:
         self._info('Operation cancelled','Current owner stopped; no recovery movement requested')
 
     def _dispatch_choice(self,verb,args):
+        if verb == 'cassette_operation':
+            self._call(self.board.material_service, 'command', **args)
+            context = self.board.load_test_context
+            if context is None:
+                raise MenuError('The cassette procedure did not start')
+            self.active = dict(backend='service', object=context, action=args['ACTION'].lower())
+            return self._running_view()
         if verb == 'operator_item':
             return self._choose_operator_item(args['index'])
         if verb == 'set_light':
@@ -1039,7 +1092,6 @@ class ZortraxMenuService:
                  ('Start %s / %s' % (args['TOOL'], args['SOURCE']), ('jam_test_start', args)),
                  ('Heat to %d C' % args['TARGET'], None)])
         if verb == 'jam_test_start':
-            self._service_ready()
             if 'STEP' in args:
                 self.gcode.run_script_from_command(
                     'INVENTURE_JAM_SERVICE_STEP TOOL={TOOL} SOURCE={SOURCE} STEP={STEP} TARGET={TARGET}'.format(**args))
@@ -1157,6 +1209,8 @@ class ZortraxMenuService:
         if self.executing:raise MenuError('A menu command is already executing')
         view=self.view
         if view is None:raise MenuError('No current menu view')
+        if token != view.token:
+            raise MenuError('Menu view expired or its procedure/job changed; open it again')
         if confirm:
             if view.kind!='confirm':raise MenuError('Current view is not a confirmation')
             index=1
@@ -1284,16 +1338,26 @@ class ZortraxMenuService:
                 values=query() if query is not None else getattr(gcmd,'values',{})
                 show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
                 if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | HOME_ACTIONS.keys() | {
-                        'light','current_procedure','oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1',
+                        'light','help','sd_browser','current_procedure','oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1',
                         'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
                     raise MenuError('This procedure supplies its own operator interface')
                 params={k:v for k,v in values.items() if k not in ('OP','ACTION','PROMPT')}
+                if params and gcmd.get('ACTION') in HOME_ACTIONS:
+                    raise MenuError('Pass homing parameters to the INVENTURE_HOME_* macro')
                 if not set(params)<=allowed:raise MenuError('Unknown procedure parameter: '+', '.join(sorted(set(params)-allowed)))
                 self.operator_page_open = False
                 self.open(gcmd.get('ACTION'),**params)
                 if not show:
                     self._close_menu_dialog()
                 self.menu_dialog_requested = bool(show)
+            elif op=='EXCHANGE_STEPS':
+                from .inventure_fluidd import require_idle
+                require_idle(self.board)
+                if self.stopped or self.active is not None or self.executing or self.fan_session is not None:
+                    raise MenuError('Finish the current operation before replacing filament')
+                self.operator_page_open = False
+                self._dispatch_choice('exchange_steps', {})
+                self.menu_dialog_requested = True
             elif op=='OLED_SAVE':self.save_display_value(gcmd)
             elif op=='CHOOSE':self.choose(gcmd.get('TOKEN',''),gcmd.get_int('INDEX'))
             elif op=='CONFIRM':self.choose(gcmd.get('TOKEN',''),confirm=True)

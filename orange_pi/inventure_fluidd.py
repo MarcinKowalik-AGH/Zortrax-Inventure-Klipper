@@ -142,6 +142,62 @@ def require_idle(board):
     if any(getattr(board, name, None) is not None for name in
            ('load_test_context', 'feeder_run_context', 'nozzle_z_context')):
         raise ValueError('An Inventure service procedure is active')
+    jam = getattr(board, 'filament_jam', None)
+    if jam is not None and jam.active:
+        raise ValueError('Finish the current filament recovery first')
+
+
+def native_control_state(board):
+    state = board._control_query()
+    if state['fault'] or state['latched'] or state.get('reject'):
+        raise ValueError('MCU blocked native control: fault=%s latched=%s reject=%s'
+                         % (state['fault'], state['latched'], state.get('reject')))
+    if state['mode'] == 'NATIVE' and state['armed']:
+        return state
+    require_idle(board)
+    if state['mode'] not in ('OFF', 'SERVICE') or state['active']:
+        raise ValueError('NATIVE control requires an idle motion controller')
+    return state
+
+
+def select_native_control(board, state):
+    if state['mode'] == 'NATIVE':
+        return
+    gcode = board.printer.lookup_object('gcode')
+    command = gcode.create_gcode_command('INVENTURE_CONTROL', 'INVENTURE_CONTROL MODE=NATIVE',
+                                          {'MODE': 'NATIVE'})
+    board.cmd_control(command)
+    current = board._control_query()
+    if (current['mode'] != 'NATIVE' or not current['armed'] or current['fault']
+            or current['latched'] or current.get('reject')):
+        raise ValueError('The MCU did not confirm NATIVE control')
+
+
+def bind_operator_heaters(board):
+    """Select NATIVE on an explicit Fluidd target change for this board's R5 heaters."""
+    from functools import partial
+    key, handlers = board.gcode.mux_commands.get('SET_HEATER_TEMPERATURE', (None, {}))
+    if key != 'HEATER':
+        return
+    for name, handler in list(handlers.items()):
+        heater = getattr(handler, '__self__', None)
+        pin = getattr(heater, 'mcu_pwm', None)
+        if (getattr(pin, 'board', None) is board and
+                pin.name in ('HEATER_T0', 'HEATER_T1', 'HEATER_PC8', 'HEATER_PC9')):
+            handlers[name] = partial(_operator_heater_target, board, heater, handler)
+
+
+def _operator_heater_target(board, heater, handler, gcmd):
+    import math
+    target = gcmd.get_float('TARGET', 0.)
+    if target:
+        if not math.isfinite(target) or not heater.min_temp <= target <= heater.max_temp:
+            raise gcmd.error('Target is outside the configured heater range')
+        try:
+            select_native_control(board, native_control_state(board))
+        except ValueError as exc:
+            raise gcmd.error(str(exc)) from exc
+    return handler(gcmd)
 
 
 def platform_available(board):
@@ -167,12 +223,14 @@ def move_platform(board, direction, distance, speed):
         raise ValueError('Platform movement requires a qualified native homed Z')
     ops = lookup('inventure_operations', None)
     native = lookup('inventure_native_z', None)
+    if native is not None and (native.running or getattr(native, 'sequence_running', False)):
+        raise ValueError('Wait for native homing to finish before moving the platform')
     if ops is not None:
         ops.require_motion()
         ops.require_position('z')
         scope = ops.procedure('calibration')
     else:
-        if native.running or not (native.last_result or {}).get('reference_established'):
+        if not (native.last_result or {}).get('reference_established'):
             raise ValueError('Establish a native pad Z reference before moving the platform')
         native._require_native()
         scope = nullcontext()
@@ -220,7 +278,5 @@ def calibrate_nozzle_pid(board, gcmd):
         raise ValueError('TARGET must be finite')
     board._nozzle_service_cutoff(channel, target)
     require_idle(board)
-    state = board._control_query()
-    if state['mode'] != 'NATIVE' or not state['armed'] or state['fault'] or state['latched']:
-        raise ValueError('Select INVENTURE_CONTROL MODE=NATIVE before native PID tuning')
+    select_native_control(board, native_control_state(board))
     board.gcode.run_script_from_command('PID_CALIBRATE HEATER=%s TARGET=%g' % (matches[0], target))

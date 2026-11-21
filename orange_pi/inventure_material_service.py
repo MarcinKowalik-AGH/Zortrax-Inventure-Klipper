@@ -156,6 +156,10 @@ class MaterialService:
                 gcmd.respond_info('INVENTURE_MATERIAL '+json.dumps(state, sort_keys=True))
                 return
             tool = str(gcmd.get('TOOL', '')).upper()
+            if not tool and action in ('LOAD', 'UNLOAD', 'JOG'):
+                options = gcmd.get_command_parameters()
+                self.board.zortrax.choose_cassette(action, {k: options[k] for k in keys})
+                return
             if tool not in self.profiles:
                 raise ValueError('Choose TOOL=T0 or T1')
             if action == 'SAVE' and not keys - {k.upper() for k in FIELDS}:

@@ -63,7 +63,7 @@ class MenuCoreTests(unittest.TestCase):
         board, menu = MenuFixture().host()
         seen = []
         board.printer.objects['inventure_native_z'] = types.SimpleNamespace(target=205,
-            cmd_home_axes=lambda g: seen.append(g.get_command_parameters()))
+            cmd_request_home=lambda g: seen.append(g.get_command_parameters()))
         for action,axes in core.HOME_ACTIONS.items():
             menu.open(action)
             self.assertEqual(menu.view.kind, 'confirm')
@@ -261,13 +261,16 @@ class MenuServiceTests(unittest.TestCase,MenuFixture):
         self.assertEqual(h.device.packets,[])
 
     def test_material_choices_preserve_support_categories_and_do_not_start_on_selection(self):
-        h,s=self.host();s.open('spool_catalog_support')
+        h,s=self.host()
+        h.factory_motion_abi, h.factory_motion_max_hz, h.factory_motion_tools = 1,125000,3
+        s.open('spool_catalog_support')
         self.assertEqual(s.view.options[-1][0],'External Support')
         s.choose(s.view.token,index=3)
-        self.assertEqual(s.view.kind,'confirm')
-        self.assertEqual(s.view.data['parameters'],{'tool':1,'material_id':17})
+        self.assertEqual((s.view.kind, s.view.title), ('choice', 'T1 external spool'))
+        self.assertEqual([row[0] for row in s.view.options[-3:]], ['Feed 20 mm','Retract 20 mm','Wipe nozzle'])
+        for label, (_, args) in s.view.options[-3:]:
+            self.assertEqual((args['TOOL'],args['SOURCE']), ('T1','EXTERNAL'))
         self.assertEqual(h.device.packets,[])
-        with self.assertRaisesRegex(core.MenuError,'P11/P13'):s.choose(s.view.token,confirm=True)
         self.assertIsNone(h.load_test_context)
 
     def test_native_P13_prompt_has_one_consumer_and_stale_continue_is_rejected(self):

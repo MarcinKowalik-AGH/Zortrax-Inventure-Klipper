@@ -154,7 +154,7 @@ def check(dist):
               card.sendGcode = cmd => testCommands.push(cmd)
               notify('inventure_mcu', {platform_level:{phase:'measuring', next_point:4, heights_steps:{0:401}}})
               const settings = {...app.$store.state.printer.printer.configfile.settings,
-                inventure_mcu:{}, 'gcode_macro inventure_home_xy':{}}
+                inventure_mcu:{}, 'gcode_macro inventure_home_xy':{}, 'gcode_macro inventure_home_all':{}}
               notify('configfile',{settings})
               card.$mount()
               const section = document.createElement('article'); section.id = 'test-tune'
@@ -167,7 +167,8 @@ def check(dist):
             expect(level).to_contain_text('0.500 mm')
             assert page.evaluate('testCommands') == []
             page.evaluate("testTune.homeAxes('XY','test-home')")
-            assert page.evaluate('testCommands') == ['INVENTURE_HOME_XY']
+            page.evaluate("testTune.homeAll()")
+            assert page.evaluate('testCommands') == ['INVENTURE_HOME_XY', 'INVENTURE_HOME_ALL']
             page.evaluate("notify('inventure_mcu',{platform_level:{phase:'saved', candidate_depth_um:138349,center_error_steps:25}})")
             expect(level).to_contain_text('Platform depth 138.349 mm')
             expect(level).to_contain_text('Center deviation 0.031 mm')

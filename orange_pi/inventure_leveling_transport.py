@@ -252,12 +252,11 @@ def _initial_bin(initial_tool, t0, t1):
 def start(board, gcmd, run):
     import json
     from pathlib import Path
-    from .inventure_mcu import CONTROL_MODES
     if not available(board):
         raise ValueError('Leveling requires an MCU connection, allow_actuators and the R13 Z probe ABI')
     if getattr(board, 'nozzle_z_context', None) is not None:
         raise ValueError('Nozzle calibration is active')
-    control = board._feeder_service_preflight(allow_off=True)
+    board._operator_service_preflight()
     active_tool = _initial_tool(board)
     heaters = board.printer.lookup_object('heaters', None)
     if heaters is not None and any(h.target_temp or h.last_pwm_value for h in heaters.heaters.values()):
@@ -302,7 +301,7 @@ def start(board, gcmd, run):
     toolhead = board.printer.lookup_object('toolhead', None)
     if toolhead is not None:
         toolhead.wait_moves()
-        board._feeder_service_preflight(allow_off=True)
+        board._operator_service_preflight()
         native_ops = board.printer.lookup_object('inventure_operations', None)
         if native_ops is not None:
             native_ops.state.selector_unknown('platform_level_service_selection')
@@ -312,10 +311,7 @@ def start(board, gcmd, run):
             kin.clear_homing_state('xyz')
         elif kin.get_status(board.reactor.monotonic()).get('homed_axes'):
             raise ValueError('Cannot clear the Klipper homing state before SERVICE motion')
-    if control['mode'] == 'OFF':
-        state = board._control_query(1, CONTROL_MODES.index('SERVICE'))
-        if state['reject'] or state['mode'] != 'SERVICE':
-            raise ValueError('The MCU did not enter SERVICE mode')
+    board._enter_operator_service()
     program = PlatformLevelTransport(p, settings, center, release, run, initial_bin)
     program.dual_heaters = dual_heaters
     board._factory_start(gcmd, operation='PLATFORM_LEVEL', nozzle_parameters=(p, settings),

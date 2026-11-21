@@ -10,4 +10,6 @@ Implement each entry through the Inventure hardware owner. Use this printer's wi
 
 The physical OLED and Fluidd must expose the same actions and settings for shared controls. Use English in the adaptation. Verify the installed include tree, startup and upgrade from the preceding public release. Publish tested installation changes through the Inventure GitHub repository and identify the compatible MCU. Report software verification and observations on a physical printer separately.
 
+Exercise the literal commands emitted by Fluidd buttons and the corresponding OLED selections through the installed Klipper macros. Cover normal use after restart and after the preceding procedure, including confirmation, cancellation and refusal under a real interlock condition. Record which stages reached the hardware interface in simulation and which were observed on the printer.
+
 [Reference M300 project](https://github.com/MarcinKowalik-AGH/Zortrax-m300-Klipper)

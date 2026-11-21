@@ -1,5 +1,7 @@
 # Inventure — kontaktowe bazowanie w natywnym CoreXY
 
+For current Fluidd and OLED operator controls, including Home All after restart, use the [R38 procedure guide](INVENTURE_HOMING_R38.md). The legacy bench forms below accept an explicit acknowledgement.
+
 Makra `INVENTURE_HOME_*` składają bazowanie z natywnych ruchów krańcowych,
 przygotowania T0, pomiaru PC14 i końcowego prześwitu. Przy pomiarze Z
 Klipper przypisuje Z=0 zweryfikowanemu rozwarciu PC14, po czym stół

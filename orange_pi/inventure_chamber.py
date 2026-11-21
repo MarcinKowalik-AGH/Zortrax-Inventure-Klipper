@@ -74,11 +74,10 @@ class InventureChamber:
         if None in self.readings(self.reactor.monotonic()):
             raise gcmd.error('A fresh reading is required from each of the three chamber sensors')
         try:
-            state = self.board._control_query()
+            from .inventure_fluidd import native_control_state, select_native_control
+            select_native_control(self.board, native_control_state(self.board))
         except ValueError as exc:
             raise gcmd.error(str(exc)) from exc
-        if state['mode'] != 'NATIVE' or not state['armed'] or state['fault'] or state['latched']:
-            raise gcmd.error('Select INVENTURE_CONTROL MODE=NATIVE for chamber heating')
         try:
             for zone in self.zones:
                 self.heaters.set_temperature(zone, target)
@@ -97,7 +96,7 @@ class InventureChamber:
                    for zone in self.zones)
 
     def cmd_pid(self, gcmd):
-        from .inventure_fluidd import require_idle
+        from .inventure_fluidd import require_idle, native_control_state, select_native_control
         side = gcmd.get('SIDE', 'LEFT').upper()
         if side not in ('LEFT', 'RIGHT'):
             raise gcmd.error('Choose SIDE=LEFT or RIGHT')
@@ -106,13 +105,11 @@ class InventureChamber:
             raise gcmd.error('Chamber PID target must be finite')
         try:
             require_idle(self.board)
-            state = self.board._control_query()
+            if None in self.readings(self.reactor.monotonic()) or any(z.target_temp for z in self.zones):
+                raise ValueError('PID tuning requires three valid chamber sensors and both zone targets off')
+            select_native_control(self.board, native_control_state(self.board))
         except ValueError as exc:
             raise gcmd.error(str(exc)) from exc
-        if state['mode'] != 'NATIVE' or not state['armed'] or state['fault'] or state['latched']:
-            raise gcmd.error('Select INVENTURE_CONTROL MODE=NATIVE for PID tuning')
-        if None in self.readings(self.reactor.monotonic()) or any(z.target_temp for z in self.zones):
-            raise gcmd.error('PID tuning requires three valid chamber sensors and both zone targets off')
         name = self.names[side == 'RIGHT']
         gcode = self.printer.lookup_object('gcode')
         gcode.run_script_from_command('PID_CALIBRATE HEATER=%s TARGET=%g' % (name, target))

@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-LAYOUT-R37'
+HOST_REVISION = 'RC8-CONTROL-R7-HOMING-R38'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -420,6 +420,7 @@ class InventureMCU:
                                ('INVENTURE_PANEL_IO_STATUS',self.cmd_panel_io),
                                ('INVENTURE_VERSION',self.cmd_version)]:
             self.gcode.register_command(name, callback)
+        self.gcode.register_command('INVENTURE_COOLING_STATUS',self.cmd_cooling_status,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FAN_DIAG_START',self.cmd_fan_diag_start)
         self.gcode.register_command('INVENTURE_FAN_DIAG_STATUS',self.cmd_fan_diag_status,when_not_ready=True)
         self.gcode.register_command('INVENTURE_FAN_DIAG_STOP',self.cmd_fan_diag_stop,when_not_ready=True)
@@ -538,7 +539,6 @@ class InventureMCU:
         if int(self.mcu.get_constants().get('INVENTURE_FAN_MANUAL_ABI', 0)) == 1:
             self.commands['fan_manual'] = self.mcu.lookup_query_command(
                 'inventure_fan_manual action=%c channel=%c', FAN_MANUAL_RESPONSE)
-        self.gcode.register_command('INVENTURE_COOLING_STATUS',self.cmd_cooling_status,when_not_ready=True)
         if int(self.mcu.get_constants().get('INVENTURE_T0_HEAT_TEST_ABI', 0)) == 1:
             self.commands['t0_heat'] = self.mcu.lookup_query_command(
                 'inventure_t0_heat_test action=%c', T0_HEAT_RESPONSE)
@@ -732,8 +732,9 @@ class InventureMCU:
                 if not self.adc_accepting: break
                 sensor.handle_sample(read_time + .003, temperature)
     def _ready(self):
-        from .inventure_fluidd import register_legacy_commands
+        from .inventure_fluidd import bind_operator_heaters, register_legacy_commands
         register_legacy_commands(self.printer, self.gcode)
+        bind_operator_heaters(self)
         self.connected = True
         self.local_brightness_retry = 0.
         if self.local_brightness is not None:
@@ -1914,7 +1915,10 @@ class InventureMCU:
 
     def _control_query(self, action=0, mode=0):
         was_armed=bool(getattr(self,'control_last',{}).get('armed'))
-        stopping=was_armed and (action==2 or action==1 and mode==0)
+        stop_requested = action == 2 or (action == 1 and mode == 0)
+        if stop_requested and getattr(self, 'zortrax', None) is not None:
+            self.zortrax.cancel_motion_review()
+        stopping=was_armed and stop_requested
         if stopping:self.printer.send_event('inventure:native_motion_lost')
         p=self._control_send('control',[action,mode],mutate=action==1 and mode!=0)
         self._control_validate(p,{'mode':(0,2),'armed':(0,1),'active':(0,1),
@@ -1923,6 +1927,8 @@ class InventureMCU:
             raise ValueError('Invalid R5 MCU ARM response')
         self.control_last=dict(p,mode=CONTROL_MODES[p['mode']],reject=CONTROL_REJECTS[p['reject']])
         if was_armed and not p['armed'] and not stopping:
+            if getattr(self, 'zortrax', None) is not None:
+                self.zortrax.cancel_motion_review()
             self.printer.send_event('inventure:native_motion_lost')
         return self.control_last
 
@@ -3087,7 +3093,7 @@ class InventureMCU:
                 params=xy_alignment_parameters(gcmd,baseline)
                 budget=xy_pattern_e_budget(params)
                 plans=self._nozzle_probe_plans(gcmd,(0,1),alignment=True,residual=baseline)
-                self._feeder_service_preflight()
+                self._enter_operator_service()
             except (KeyError,OSError,ValueError,TypeError) as exc:
                 raise gcmd.error(str(exc))
             run=dict(phase='printing',run_id=uuid.uuid4().hex,lines=dict(X=None,Y=None),
@@ -3292,13 +3298,7 @@ class InventureMCU:
                 temperatures=(self.panel_temperature(i,now) for i in (0,1))
                 if any(state!='valid' or not 0.<=temp<NOZZLE_PAD_COLD_MAX for temp,state in temperatures):
                     raise ValueError('Cold measurement requires both nozzles below 50 C')
-                control=self._control_query()
-                self._feeder_service_preflight(control_state=control,allow_off=True)
-                if control['mode']=='OFF':
-                    control=self._control_query(1,CONTROL_MODES.index('SERVICE'))
-                    if control['reject'] or control['mode']!='SERVICE':
-                        raise ValueError('MCU did not enter SERVICE mode')
-            else:self._feeder_service_preflight()
+            self._enter_operator_service()
         except (KeyError,OSError,TypeError,ValueError) as exc:
             raise gcmd.error(str(exc))
         run=dict(phase='running',run_id=uuid.uuid4().hex,mode=params['mode'],params=params,budget=budget,
@@ -3524,13 +3524,13 @@ class InventureMCU:
             if not math.isfinite(max_spread) or not .005<=max_spread<=.5:
                 raise ValueError('MAX_SPREAD_MM must be 0.005..0.5')
             plans=self._nozzle_probe_plans(gcmd,tools)
-            self._feeder_service_preflight()
             if prepare:
                 now=self.reactor.monotonic()
                 for index in (0,1):
                     temperature,state=self.panel_temperature(index,now)
                     if state!='valid' or temperature>=50.:
                         raise ValueError('Cold PREPARE requires both nozzles below 50 C')
+            self._enter_operator_service()
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         batch=dict(action=action,gcmd=gcmd,tool=tools[0],parameters=plans,results={},
                    max_spread_mm=max_spread)
@@ -3579,7 +3579,8 @@ class InventureMCU:
         if operation not in PROCEDURES and operation not in Z_HOME_PROCEDURES:
             raise gcmd.error('Use ACTION=LIST, PARAMS, STATUS, STOP or '+
                 ', '.join((*PROCEDURES,*Z_HOME_PROCEDURES)))
-        return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation)
+        return self._factory_start(gcmd,read_only=action=='PARAMS',operation=operation,
+                                   enter_service=action!='PARAMS')
 
     def _factory_parameters(self, gcmd, operation):
         from .inventure_factory_core import parameters
@@ -3684,12 +3685,7 @@ class InventureMCU:
                     operation, interactive=interactive, cassette_jog=cassette_jog)
             if enter_service:
                 self._nozzle_service_cutoff(p['tool'], p['target'])
-                control = self._control_query()
-                self._feeder_service_preflight(control_state=control, allow_off=True)
-                if control['mode'] == 'OFF':
-                    control = self._control_query(1, CONTROL_MODES.index('SERVICE'))
-                    if control['reject'] or control['mode'] != 'SERVICE':
-                        raise ValueError('MCU did not enter SERVICE mode')
+                self._enter_operator_service()
         except (ValueError,TypeError) as exc:raise gcmd.error(str(exc))
         class HeatCommand:
             def get(self,key,default=None):
@@ -4801,8 +4797,37 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
+    def _operator_service_preflight(self):
+        state = self._feeder_service_preflight(allow_off=True, allow_native=True)
+        native = self.printer.lookup_object('inventure_native_z', None)
+        if getattr(native, 'sequence_running', False) or getattr(native, 'running', False):
+            raise ValueError('Native homing is still running')
+        heaters = self.printer.lookup_object('heaters', None)
+        if heaters is not None and any(h.target_temp or h.last_pwm_value for h in heaters.heaters.values()):
+            raise ValueError('Set native heater targets to zero before starting SERVICE heating or motion')
+        return state
+
+    def _enter_operator_service(self):
+        state = self._operator_service_preflight()
+        if state['mode'] == 'SERVICE':
+            return
+        if state['mode'] == 'NATIVE':
+            head = self.printer.lookup_object('toolhead', None)
+            if head is not None:
+                head.wait_moves()
+            if self._operator_service_preflight()['mode'] != 'NATIVE':
+                raise ValueError('Native control changed while waiting for motion to finish')
+        try:
+            state = self._control_query(1, CONTROL_MODES.index('SERVICE'))
+        except Exception:
+            self._control_stop_outputs()
+            raise
+        if state['reject'] or state['fault'] or state['latched'] or state['mode'] != 'SERVICE':
+            raise ValueError('MCU did not enter SERVICE mode: %s' % (state['reject'] or state['mode']))
+        self._control_schedule()
+
     def _feeder_service_preflight(self,allow_run=False,allow_active=False,allow_load=False,
-                                  control_state=None,allow_off=False):
+                                  control_state=None,allow_off=False,allow_native=False):
         if not self.connected:raise ValueError('MCU is disconnected')
         sd=self.printer.lookup_object('virtual_sdcard',None)
         stats=self.printer.lookup_object('print_stats',None)
@@ -4814,10 +4839,14 @@ class InventureMCU:
         if getattr(self,'feeder_run_context',None) is not None and not allow_run:
             raise ValueError('Feeder run is active; use INVENTURE_STOP first')
         state=self._control_query() if control_state is None else control_state
-        if (state['mode'] not in (('OFF','SERVICE') if allow_off else ('SERVICE',))
+        if allow_native and (state['latched'] or state['fault'] or state['reject']):
+            raise ValueError('MCU blocked service control: fault=%s latched=%s reject=%s'
+                             % (state['fault'], state['latched'], state['reject']))
+        native = allow_native and state['mode'] == 'NATIVE' and state['armed']
+        if (not native and state['mode'] not in (('OFF','SERVICE') if allow_off else ('SERVICE',))
                 or state['latched'] or state['fault'] or state['reject']):
             raise ValueError('Select INVENTURE_CONTROL MODE=SERVICE first')
-        if state['active'] and not allow_active:
+        if state['active'] and not allow_active and not native:
             raise ValueError('Stop the active service output or motion before testing a feeder')
         ops=self.printer.lookup_object('inventure_operations',None)
         if ops is not None:

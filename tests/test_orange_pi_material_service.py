@@ -38,6 +38,54 @@ class MaterialTests(unittest.TestCase):
     def params(self, op, tool, **overrides):
         return self.h._factory_parameters(Command(TOOL=tool, SPEED_PROFILE='OEM', **overrides), op)
 
+    def test_fluidd_cassette_choice_preserves_target_and_speed_for_either_tool(self):
+        import test_orange_pi_control as control
+        from test_orange_pi_zortrax_menu import Config, service_module
+        self.h.gcode = control.gcode.GCodeDispatch(self.h.printer)
+        out = []
+        self.h.gcode.register_output_handler(out.append)
+        menu = self.h.zortrax = service_module.ZortraxMenuService(self.h, Config())
+        for action in ('LOAD', 'UNLOAD', 'JOG'):
+            for index, tool in enumerate(('T0', 'T1'), start=1):
+                with self.subTest(action=action, tool=tool):
+                    self.h.control_reply.update(mode=1, armed=1)
+                    self.command(action, TEMP='235', SPEED='1.8')
+                    token = menu.view.token
+                    self.assertTrue(any('prompt_button '+tool+'|' in line for line in out))
+                    self.assertIsNone(self.h.load_test_context)
+                    self.assertEqual(self.h.control_reply['mode'], 1)
+                    menu.choose(token, index)
+                    session = self.h.load_test_context
+                    self.assertEqual(session['tool'], index-1)
+                    self.assertEqual(session['target'], 235.)
+                    self.assertIs(menu.active['object'], session)
+                    self.assertEqual(self.h.control_reply['mode'], 2)
+                    with self.assertRaises(ValueError):
+                        menu.choose(token, index)
+                    self.h.cmd_control_stop(Command())
+                    menu._running_view()
+
+    def test_service_handoff_refuses_native_heat_print_and_fault_before_switching(self):
+        from types import SimpleNamespace
+        h = self.h
+        h.control_reply.update(mode=1, armed=1)
+        for obj in ('heaters', 'virtual_sdcard', 'fault'):
+            with self.subTest(obj=obj):
+                if obj == 'heaters':
+                    h.printer.objects[obj] = SimpleNamespace(heaters={'extruder': SimpleNamespace(
+                        target_temp=210., last_pwm_value=.1)})
+                elif obj == 'virtual_sdcard':
+                    h.printer.objects[obj] = SimpleNamespace(is_active=lambda: True)
+                else:
+                    h.control_reply.update(fault=1, armed=0)
+                before = list(h.device.packets)
+                with self.assertRaises((RuntimeError, ValueError)):
+                    self.command('LOAD', TOOL='T0', TEMP='235')
+                self.assertEqual(h.device.packets, before)
+                self.assertIsNone(h.load_test_context)
+                if obj != 'fault':
+                    h.printer.objects.pop(obj)
+
     def prompt(self):
         self.fixture.wait_phase(self.h, 'WAIT_FILAMENT')
         until = self.h.reactor.now + 40.
