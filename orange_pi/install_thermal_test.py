@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install verified thermal/UART/factory modules with exact reversible backups."""
 import argparse
+import ast
 from datetime import datetime,timezone
 import hashlib
 import importlib.util
@@ -11,6 +12,13 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parent
 def sha(data):return hashlib.sha256(data).hexdigest()
+
+def module_revision(data):
+    for node in ast.parse(data).body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            if any(isinstance(name, ast.Name) and name.id == 'HOST_REVISION' for name in node.targets):
+                return node.value.value
+    return None
 
 HOST_OVERLAYS = {'inventure_filament.py', 'inventure_consumption.py',
                  'inventure_cycle.py', 'inventure_cycle_core.py'}
@@ -25,18 +33,18 @@ def load_operations_patch():
     spec.loader.exec_module(module)
     return module
 
-def running_service_script(service='klipper', proc_root=Path('/proc')):
-    """Resolve the script of the running service, before stopping it.
-
-    A configured ~/klipper may be a different checkout. Read the actual
-    process arguments instead of guessing a repository from that name.
-    """
+def running_service_pid(service='klipper'):
     result=subprocess.run(['systemctl','show',service,'--property=MainPID','--value'],
                           capture_output=True,text=True,check=False,timeout=10)
     pid=result.stdout.strip()
     if result.returncode or not pid.isdecimal() or int(pid)<=0:
         raise ValueError('Cannot identify the running '+service+' service. No files changed; start the service and retry.')
-    process=Path(proc_root)/pid
+    return int(pid)
+
+
+def running_service_script(service='klipper', proc_root=Path('/proc')):
+    """Resolve the stage actually executed by systemd before stopping it."""
+    process=Path(proc_root)/str(running_service_pid(service))
     argv=[value.decode(errors='surrogateescape') for value in
           (process/'cmdline').read_bytes().split(b'\0') if value]
     indices=[i for i,value in enumerate(argv[1:],1) if Path(value).name=='klippy.py']
@@ -163,9 +171,12 @@ def install(target,apply=False,rollback=None,service='klipper'):
         result={'status':'ALREADY_INSTALLED','path':str(extras),'host_revision':meta['host_revision']}
         print(json.dumps(result));return result
     plan={'status':'READY_TO_APPLY' if not apply else 'INSTALLING','path':str(extras),
-          'host_revision':meta['host_revision'],
+          'host_revision':module_revision(incoming['inventure_mcu.py']) if rollback else meta['host_revision'],
           'before_sha256':{name:digest(before[name]) for name in names},
           'after_sha256':{name:digest(incoming[name]) for name in names}}
+    if rollback:
+        plan['status'] = 'ROLLING_BACK' if apply else 'READY_TO_ROLL_BACK'
+        plan['restored_from'] = str(backup)
     if not apply:print(json.dumps(plan,indent=2));return plan
     active=subprocess.run(['systemctl','is-active','--quiet',service],check=False)
     if active.returncode==0:raise ValueError('Stop the Klipper service before applying')
@@ -192,7 +203,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
             else:shutil.copy2(saved/name,dest_path(name))
             staged[name].unlink(missing_ok=True)
         raise
-    result=dict(plan,status='INSTALLED',backup=str(saved/'inventure_mcu.py'))
+    result=dict(plan,status='ROLLED_BACK' if rollback else 'INSTALLED',backup=str(saved/'inventure_mcu.py'))
     print(json.dumps(result,indent=2));return result
 
 def main():

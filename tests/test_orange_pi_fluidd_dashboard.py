@@ -26,6 +26,50 @@ spec.loader.exec_module(setup)
 
 
 class FluiddSettingsTests(unittest.TestCase):
+    def test_only_the_primary_mcu_configuration_latch_can_use_installed_macros(self):
+        message = "Can not update MCU 'mcu' config as it is shutdown"
+        for state, reason, permitted in (
+                ('error', message+'\nOnce the underlying issue is corrected', True),
+                ('shutdown', message, True),
+                ('shutdown', "MCU 'mcu' shutdown: ADC out of range", False),
+                ('error', "Can not update MCU 'aux' config as it is shutdown", False),
+                ('error', "Unable to parse option 'max_temp'", False),
+                ('error', "Invalid command\n"+message, False)):
+            with self.subTest(state=state, reason=reason), patch.object(setup, 'request', return_value={
+                    'status':{'webhooks':{'state':state,'state_message':reason}}}), \
+                    patch.object(setup, 'read_groups', return_value={}) as groups:
+                installed = MagicMock(return_value={'INVENTURE_DIAGNOSTICS','INVENTURE_HOME_ALL'})
+                if permitted:
+                    result = setup.setup('printer', Path('.'), installed_names=installed)
+                    self.assertTrue(result['firmware_restart_required'])
+                    self.assertEqual(result['klipper_message'], reason)
+                    with self.assertRaisesRegex(ValueError, 'missing INVENTURE_DIAGNOSTICS'):
+                        setup.setup('printer', Path('.'), installed_names=lambda: set())
+                    with self.assertRaises(setup.MCUConfigShutdown):
+                        setup.live_names('printer', 0)
+                else:
+                    with self.assertRaises(ValueError):
+                        setup.setup('printer', Path('.'), installed_names=installed)
+                    installed.assert_not_called()
+                    groups.assert_not_called()
+
+    def test_ready_with_stale_runtime_or_missing_macros_cannot_use_disk_fallback(self):
+        with patch.object(setup, 'request', return_value={'process_id':419}) as request:
+            with self.assertRaisesRegex(ValueError, 'Waiting for Klipper PID 421'):
+                setup.live_names('printer', 0, expected_pid=421)
+            self.assertEqual(request.call_count, 1)
+        for cfg, expected in (({}, 'missing INVENTURE_DIAGNOSTICS'),
+                              ({'gcode_macro INVENTURE_DIAGNOSTICS':{}}, 'running host revision old')):
+            answers = [{'status':{'webhooks':{'state':'ready'}, 'configfile':{'config':cfg}}},
+                       {'status':{'inventure_mcu':{'host_revision':'old'}}}]
+            with self.subTest(cfg=cfg), patch.object(setup, 'request', side_effect=answers), \
+                    patch.object(setup, 'read_groups') as groups:
+                installed = MagicMock()
+                with self.assertRaisesRegex(ValueError, expected):
+                    setup.setup('printer', Path('.'), installed_names=installed, expected_revision='new')
+                installed.assert_not_called()
+                groups.assert_not_called()
+
     def test_install_english_writes_only_locale_and_is_idempotent(self):
         endpoint = '/server/database/item?namespace=fluidd&key=uiSettings.general.locale'
         with patch.object(setup, 'request', side_effect=[{'value':'pl'}, {}, {'value':'en'}]) as request:

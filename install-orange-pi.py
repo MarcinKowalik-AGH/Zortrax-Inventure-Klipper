@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the verified Inventure host in the active Klipper checkout."""
 import argparse
-from collections import defaultdict
+from collections import defaultdict, deque
 import configparser
 from hashlib import sha256
 from datetime import datetime, timezone
@@ -12,17 +12,23 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location('inventure_host_installer',
-    ROOT/'orange_pi/install_thermal_test.py')
-core = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(core)
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+core = load_module('inventure_host_installer', ROOT/'orange_pi/install_thermal_test.py')
+dashboard = load_module('inventure_dashboard_setup', ROOT/'setup-fluidd.py')
 
 
 def service(action, name='klipper'):
@@ -74,11 +80,89 @@ def append_config_section(data, section):
 
 
 def klipper_config_module(target):
-    reader_spec = importlib.util.spec_from_file_location(
-        'inventure_klipper_configfile', target/'klippy/configfile.py')
-    module = importlib.util.module_from_spec(reader_spec)
-    reader_spec.loader.exec_module(module)
-    return module
+    return load_module('inventure_klipper_configfile', target/'klippy/configfile.py')
+
+
+def dashboard_runtime_current(revision):
+    try:
+        dashboard.live_names(dashboard.BASE, 0, revision)
+    except dashboard.MCUConfigShutdown:
+        # Restarting just the host cannot clear this MCU configuration latch.
+        return True
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def configure_dashboard(target, config, revision):
+    def installed_names():
+        from inventure_config_layout import active_klipper
+        parsed, _ = active_klipper(klipper_config_module(target), config, {})
+        return dashboard.configured_names({'config': parsed.sections()})
+
+    return dashboard.setup(dashboard.BASE, config.parent, apply=True, wait=60, english=True,
+                           installed_names=installed_names, expected_revision=revision,
+                           expected_pid=core.running_service_pid())
+
+
+def recent_shutdown_records(path, *, whole_file=False):
+    # A connect-time rejection often follows a previous Klippy session. Show
+    # the recorded lines verbatim; a prior shutdown may be a separate event.
+    marker = re.compile(r"^(?:Transition to shutdown state:|MCU '[^']+' shutdown:|Lost communication with MCU)")
+    try:
+        candidates = [path]
+        if not whole_file:
+            rotated = (p for p in path.parent.glob(path.name+'.*') if p.is_file() and p.suffix != '.gz')
+            latest = max(rotated, default=None, key=lambda p: p.stat().st_mtime)
+            if latest is not None:
+                candidates.append(latest)
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            with candidate.open('rb') as log:
+                if not whole_file:
+                    offset = max(0, log.seek(0, os.SEEK_END) - 4*1024*1024)
+                    log.seek(offset)
+                    if offset:
+                        log.readline()
+                lines = deque(maxlen=8)
+                events = deque(maxlen=4)
+                samples = deque(maxlen=40)
+                session_start = None
+                for raw in log:
+                    message = raw.decode('utf-8', 'replace').rstrip('\r\n')
+                    if message.startswith('Start printer at ') or message == 'Starting Klippy...':
+                        session_start = message
+                        samples.clear()
+                    elif message.startswith('Stats '):
+                        stamp = message.split(':', 1)[0]
+                        heater = re.search(r'\bextruder: target=\S+ temp=\S+ pwm=\S+', message)
+                        mcu = re.search(r'\bmcu: ([^:]*?)(?= [\w.\-]+:|$)', message)
+                        counters = (re.findall(r'\b(?:bytes_read|bytes_write|bytes_retransmit|bytes_invalid|receive_seq)=\d+',
+                                               mcu[1]) if mcu else [])
+                        samples.append(' '.join([stamp, *([heater[0]] if heater else []), *counters]))
+                    elif marker.match(message):
+                        lines.append(message)
+                        if message.startswith('Transition to shutdown state:'):
+                            chosen = dict.fromkeys((samples[0], samples[len(samples)//2], samples[-1])) if samples else ()
+                            events.append(dict(message=message, session_start=session_start, prior_stats=list(chosen)))
+            if lines:
+                return dict(file=str(candidate), recent_records=list(lines), events=list(events))
+    except OSError:
+        if whole_file:
+            raise
+    return dict(file=str(path), recent_records=[], events=[])
+
+
+def shutdown_log_evidence(config):
+    path = config.parent.parent/'logs/klippy.log'
+    try:
+        log_file = dashboard.request(dashboard.BASE, '/printer/info').get('log_file')
+        if log_file and Path(log_file).is_absolute():
+            path = Path(log_file)
+    except (OSError, ValueError, KeyError):
+        pass
+    return recent_shutdown_records(path)
 
 
 def chamber_sections(active, sources, section_sources, by_file):
@@ -613,15 +697,20 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         return
     if os.geteuid()!=0:
         subprocess.run(['sudo','-v'],check=True,timeout=120)
-    service('stop')
+    klipper_changes = set(config_updates).difference(moon_paths, {docs_guide})
+    restart_host = (not configure_fluidd or plan['status'] != 'ALREADY_INSTALLED'
+                    or bool(klipper_changes) or not dashboard_runtime_current(plan['host_revision']))
+    if restart_host:
+        service('stop')
     result=None
+    settings=None
     config_backups={}
     created_docs_dir = False
     stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     try:
         # Recheck module hashes after the service is stopped. The core owns
         # exact backups, atomic staging and rollback of a partial copy.
-        result=core.install(target,apply=True)
+        result = core.install(target,apply=True) if restart_host else plan
         # Install new include targets before publishing any references to them.
         for path, (before, after) in sorted(config_updates.items(), key=lambda item: item[1][0] is not None):
             if before is None:
@@ -654,16 +743,23 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
                         raise ValueError('Moonraker did not reload the expected configuration')
                     time.sleep(.25)
                 identity['moonraker_readback'] = 'server_config_verified'
-        service('start')
+        if restart_host:
+            service('start')
         subprocess.run(['systemctl','is-active','--quiet','klipper'],check=True,timeout=10)
         if configure_fluidd:
             from fluidd_web import activate
-            subprocess.run([sys.executable, str(ROOT/'setup-fluidd.py'), '--apply', '--english', '--wait', '60',
-                            '--config-directory', str(config.parent)], check=True)
+            settings = configure_dashboard(target, config, plan['host_revision'])
+            identity.update(fluidd_groups_status=settings['status'],
+                            fluidd_groups_backup=settings.get('backup'),
+                            **{key: settings[key] for key in ('macro_source', 'klipper_state', 'klipper_message',
+                               'running_host_revision', 'firmware_restart_required') if key in settings})
+            if settings.get('firmware_restart_required'):
+                identity['shutdown_log'] = shutdown_log_evidence(config)
             identity.update(fluidd_root=str(root), previous_fluidd_site=activate(source, root))
     except BaseException:
         if config_backups or result and result.get('status')=='INSTALLED':
-            service('stop')
+            if restart_host:
+                service('stop')
             for path, backup in reversed(config_backups.items()):
                 if backup is None:
                     path.unlink(missing_ok=True)
@@ -673,21 +769,36 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
                 core.install(target,apply=True,rollback=Path(result['backup']))
         if created_docs_dir and not any(docs_guide.parent.iterdir()):
             docs_guide.parent.rmdir()
-        service('start')
+        if restart_host:
+            service('start')
         if moon_paths.intersection(config_backups) or restart_docs and docs_guide in config_backups:
             service('restart', 'moonraker')
+        if settings is not None and settings.get('backup'):
+            dashboard.setup(dashboard.BASE, config.parent, apply=True, rollback=Path(settings['backup']))
         raise
-    status='HOST_RESTARTED' if result['status']=='ALREADY_INSTALLED' else 'HOST_UPDATED'
+    if identity.get('firmware_restart_required'):
+        status = 'HOST_INSTALLED_MCU_SHUTDOWN'
+    elif not restart_host:
+        status = 'HOST_ALREADY_CURRENT'
+    else:
+        status = 'HOST_RESTARTED' if result['status']=='ALREADY_INSTALLED' else 'HOST_UPDATED'
     identity.update(config_changed=bool(config_backups),
                     created_files=[str(path) for path, backup in config_backups.items() if backup is None],
                     config_backups={str(path):str(backup) for path,backup in config_backups.items() if backup is not None})
     print(json.dumps(dict(identity,status=status,backup=result.get('backup')),
                      indent=2))
-    print('In Klipper console: INVENTURE_VERSION')
+    if identity.get('firmware_restart_required'):
+        print('Host and dashboard installed. MCU is still shut down. Review the original shutdown '
+              'in klippy.log. Once its cause is corrected, run FIRMWARE_RESTART in Fluidd. '
+              'Wait for Ready, then run INVENTURE_VERSION.')
+    else:
+        print('In Klipper console: INVENTURE_VERSION')
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--shutdown-log', type=Path, metavar='KLIPPY_LOG',
+                        help='Read shutdown reasons, heater readings and link counters from an existing Klipper log, then exit')
     parser.add_argument('--check',action='store_true',help='Read-only validation')
     parser.add_argument('--upgrade-nozzle-limits',action='store_true',
                         help='Migrate the legacy 220 C stock R5 nozzle limit to 310 C')
@@ -707,6 +818,17 @@ def main():
                         help='Split the live Klipper configuration and clean matching Moonraker entries')
     parser.add_argument('--moonraker-config', type=Path, help='Select the active Moonraker config for --organize-config')
     args=parser.parse_args()
+    if args.shutdown_log is not None:
+        if any(v for k, v in vars(args).items() if k != 'shutdown_log'):
+            parser.error('--shutdown-log is a separate read-only action')
+        if not args.shutdown_log.is_file():
+            parser.error('Cannot read the specified Klipper log: '+str(args.shutdown_log))
+        try:
+            records = recent_shutdown_records(args.shutdown_log, whole_file=True)
+        except OSError as exc:
+            parser.error(str(exc))
+        print(json.dumps(records, indent=2))
+        return
     if args.moonraker_config and not args.organize_config:
         parser.error('--moonraker-config requires --organize-config')
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,

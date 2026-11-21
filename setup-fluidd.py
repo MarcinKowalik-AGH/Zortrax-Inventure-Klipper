@@ -143,31 +143,71 @@ def install_english(base):
         raise ValueError('Moonraker did not confirm the English Fluidd locale')
 
 
-def live_names(base, wait):
+class MCUConfigShutdown(ValueError):
+    """Klipper parsed the config but the primary MCU rejected configuration."""
+    def __init__(self, state, reason):
+        super().__init__('Klipper: ' + reason)
+        self.state = state
+        self.reason = reason
+
+
+def live_names(base, wait, expected_revision=None, expected_pid=None):
     deadline = time.monotonic() + wait
     while True:
         try:
+            if expected_pid is not None:
+                current_pid = request(base, '/printer/info').get('process_id')
+                if current_pid != expected_pid:
+                    raise ConnectionError('Waiting for Klipper PID %s, Moonraker reports %s'
+                                          % (expected_pid, current_pid))
             status = request(base, '/printer/objects/query?webhooks&configfile')['status']
             names = configured_names(status.get('configfile', {}))
             state = status.get('webhooks', {}).get('state')
-            if state == 'ready' and 'INVENTURE_DIAGNOSTICS' in names:
-                return names
-            reason = status.get('webhooks', {}).get('state_message', state)
+            reason = str(status.get('webhooks', {}).get('state_message', state))
             if state in ('error', 'shutdown'):
-                raise ValueError('Klipper: ' + str(reason))
+                if reason.partition('\n')[0].strip() == "Can not update MCU 'mcu' config as it is shutdown":
+                    raise MCUConfigShutdown(state, reason)
+                raise ValueError('Klipper: ' + reason)
+            if state == 'ready':
+                if 'INVENTURE_DIAGNOSTICS' not in names:
+                    reason = 'the active config is missing INVENTURE_DIAGNOSTICS'
+                elif expected_revision is None:
+                    return names
+                else:
+                    board = request(base, '/printer/objects/query?inventure_mcu=host_revision')
+                    actual = board['status'].get('inventure_mcu', {}).get('host_revision')
+                    if actual == expected_revision:
+                        return names
+                    reason = 'running host revision %s, expected %s' % (actual, expected_revision)
         except urllib.error.HTTPError as exc:
             if exc.code not in (404, 502, 503):
                 raise
             reason = str(exc)
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             reason = str(exc)
         if time.monotonic() >= deadline:
             raise ValueError('Inventure dashboard macros are not ready: ' + str(reason))
         time.sleep(1)
 
 
-def setup(base, directory, apply=False, wait=0, rollback=None):
-    names = live_names(base, wait) if rollback is None else set()
+def setup(base, directory, apply=False, wait=0, rollback=None, *, installed_names=None,
+          expected_revision=None, expected_pid=None, english=False):
+    runtime = {}
+    names = set()
+    if rollback is None:
+        try:
+            names = live_names(base, wait, expected_revision, expected_pid)
+            runtime = dict(klipper_state='ready', macro_source='running_klipper')
+            if expected_revision is not None:
+                runtime['running_host_revision'] = expected_revision
+        except MCUConfigShutdown as exc:
+            if installed_names is None:
+                raise
+            names = installed_names()
+            if 'INVENTURE_DIAGNOSTICS' not in names:
+                raise ValueError('The installed configuration is missing INVENTURE_DIAGNOSTICS') from exc
+            runtime = dict(klipper_state=exc.state, klipper_message=exc.reason,
+                           macro_source='installed_klipper_config', firmware_restart_required=True)
     before = read_groups(base)
     if rollback is not None:
         backup = json.loads(rollback.read_text())
@@ -176,7 +216,7 @@ def setup(base, directory, apply=False, wait=0, rollback=None):
         after, assignments = backup['before'], {}
     else:
         after, assignments = merge_groups(before, names)
-    result = dict(status='ALREADY_GROUPED' if before == after else 'GROUPS_PLANNED',
+    result = dict(runtime, status='ALREADY_GROUPED' if before == after else 'GROUPS_PLANNED',
                   groups={g: sorted(k for k,v in assignments.items() if v==g) for g in GROUPS})
     if apply and before != after:
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
@@ -191,6 +231,13 @@ def setup(base, directory, apply=False, wait=0, rollback=None):
         if response.get('value') != after or read_groups(base) != after:
             raise ValueError('Moonraker did not confirm the groups. Backup: ' + str(path))
         result.update(status='GROUPS_INSTALLED', backup=str(path))
+    if english and apply and rollback is None:
+        try:
+            install_english(base)
+        except Exception:
+            if result.get('backup'):
+                setup(base, directory, apply=True, rollback=Path(result['backup']))
+            raise
     return result
 
 
@@ -204,8 +251,7 @@ if __name__ == '__main__':
     parser.add_argument('--rollback', type=Path)
     args = parser.parse_args()
     try:
-        if args.english and args.apply and args.rollback is None:
-            install_english(args.moonraker)
-        print(json.dumps(setup(args.moonraker, args.config_directory, args.apply, args.wait, args.rollback), indent=2))
+        print(json.dumps(setup(args.moonraker, args.config_directory, args.apply, args.wait,
+                               args.rollback, english=args.english), indent=2))
     except (OSError, ValueError, KeyError) as exc:
         raise SystemExit('Fluidd groups: ' + str(exc))

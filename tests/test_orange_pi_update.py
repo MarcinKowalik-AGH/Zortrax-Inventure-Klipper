@@ -19,6 +19,30 @@ update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
 
 
 class OrangePiInstallerCLITests(unittest.TestCase):
+    def test_shutdown_log_reads_two_separate_sessions_without_accessing_the_printer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)/'klippy.log'
+            path.write_text(
+                'Start printer at Sat Nov 21 20:00:00 2026 (0.0 10.0)\n'
+                'Stats 11.5: mcu: bytes_read=715 receive_seq=12 tool: bytes_read=999 '
+                'extruder: target=175 temp=25.5 pwm=0.400\n'
+                'Transition to shutdown state: Heater extruder not heating at expected rate\n'
+                "MCU 'mcu' shutdown: Command request\n"
+                'Start printer at Sat Nov 21 22:00:00 2026 (0.0 20.0)\n'
+                'Stats 22.5: mcu: bytes_read=842 bytes_retransmit=4 extruder: target=0 temp=33.0 pwm=0.000\n'
+                "Transition to shutdown state: Lost communication with MCU 'mcu'\n"
+                "MCU 'mcu' shutdown:\nLost communication with MCU 'mcu'\n")
+            with patch.object(sys, 'argv', ['install-orange-pi.py','--shutdown-log',str(path)]), \
+                    patch.object(update, 'update') as installer, patch.object(update.dashboard, 'request') as rpc, \
+                    patch('sys.stdout',new_callable=io.StringIO) as out:
+                update.main()
+            installer.assert_not_called()
+            rpc.assert_not_called()
+            first, second = json.loads(out.getvalue())['events']
+            self.assertIn('20:00:00', first['session_start'])
+            self.assertEqual(first['prior_stats'], ['Stats 11.5 extruder: target=175 temp=25.5 pwm=0.400 bytes_read=715 receive_seq=12'])
+            self.assertEqual(second['prior_stats'], ['Stats 22.5 extruder: target=0 temp=33.0 pwm=0.000 bytes_read=842 bytes_retransmit=4'])
+
     def test_help_lists_leveling_jam_and_filament_options(self):
         result = subprocess.run([sys.executable, str(ROOT/'install-orange-pi.py'), '--help'],
                                 capture_output=True, text=True, check=True)
@@ -130,6 +154,91 @@ class OrangePiUpdateTests(unittest.TestCase):
             '[extruder1]\nheater_pin: inventure_r5:HEATER_T1\nsensor_type: Inventure R5 ADC\n'
             'sensor_channel: 1\nmax_temp: 220\nmin_temp: 0\n')
         return heaters
+
+    def test_field_mcu_shutdown_completes_dashboard_then_verifies_ready_without_restart(self):
+        self.legacy_nozzle_config()
+        self.config.write_bytes((ROOT/'tests/fixtures/native_nozzles_r15_startup.cfg').read_bytes())
+        with self.config.open('a') as cfg:
+            cfg.write('\n[include operator/*.cfg]\n')
+        user_dir = self.config.parent/'operator'
+        user_dir.mkdir()
+        (user_dir/'extra.cfg').write_text('[gcode_macro INVENTURE_MY_TOOL]\ngcode: G4 P0\n')
+        (self.live/'docs').mkdir()
+        revision = json.loads((ROOT/'orange_pi/RELEASE.json').read_text())['host_revision']
+        shutdown = "Can not update MCU 'mcu' config as it is shutdown\nError configuring printer"
+        log = self.root/'logs/custom-klippy.log'
+        log.parent.mkdir()
+        log.write_text('Starting Klippy...\n'+shutdown+'\n')
+        record = "MCU 'mcu' shutdown: Missed scheduling of next digital out event"
+        log.with_suffix('.log.1').write_text(record+'\nDumping serial stats\n')
+        webhooks = {'state':'error', 'state_message':shutdown}
+        database = {'macros':{}, 'uiSettings.general.locale':'pl'}
+        posts = []
+        def request(base, endpoint, data=None):
+            if endpoint == '/printer/info':
+                return {'process_id':421, 'log_file':str(log)}
+            if endpoint == '/printer/objects/query?webhooks&configfile':
+                return {'status':{'webhooks':webhooks, 'configfile':{'config':
+                    {} if webhooks['state'] != 'ready' else {
+                        'gcode_macro ' + row['name']: {} for row in database['macros']['stored']}}}}
+            if endpoint == '/printer/objects/query?inventure_mcu=host_revision':
+                return {'status':{'inventure_mcu':{'host_revision':update.core.module_revision(self.dest.read_bytes())}}}
+            if endpoint.startswith('/server/database/item?namespace=fluidd&key='):
+                return {'value':database[endpoint.split('key=')[1]]}
+            if endpoint == '/server/database/item':
+                self.assertEqual(data['namespace'], 'fluidd')
+                database[data['key']] = data['value']
+                posts.append(data['key'])
+                return {'value':data['value']}
+            self.fail('Unexpected Moonraker request: '+endpoint)
+
+        def install():
+            with patch('sys.stdout',new_callable=io.StringIO) as out:
+                update.update_host(False, False, False, False, False, False, True, None, self.root/'web', True)
+            return out.getvalue()
+
+        with patch.object(update.dashboard, 'request', side_effect=request), patch('fluidd_web.activate', return_value=None):
+            first = install()
+            self.assertIn('HOST_INSTALLED_MCU_SHUTDOWN', first)
+            self.assertIn('installed_klipper_config', first)
+            self.assertIn(shutdown.splitlines()[0], first)
+            self.assertIn(record, first)
+            self.assertIn(str(log)+'.1', first)
+            self.assertNotIn('"running_host_revision"', first)
+            self.assertEqual(self.dest.read_bytes(), (ROOT/'orange_pi/inventure_mcu.py').read_bytes())
+            self.assertTrue(self.active)
+            rows = {row['name']: row for row in database['macros']['stored']}
+            self.assertEqual(rows['INVENTURE_HOME_ALL']['categoryId'], rows['INVENTURE_MY_TOOL']['categoryId'])
+            self.assertEqual(database['uiSettings.general.locale'], 'en')
+            self.calls.clear()
+            self.assertIn('HOST_INSTALLED_MCU_SHUTDOWN', install())
+            webhooks.update(state='ready', state_message='Printer is ready')
+            ready = install()
+            self.assertIn('HOST_ALREADY_CURRENT', ready)
+            self.assertIn('"running_host_revision": "'+revision+'"', ready)
+            self.assertFalse(any('stop' in call or 'start' in call for call in self.calls))
+            self.assertEqual(posts, ['macros', 'uiSettings.general.locale'])
+
+    def test_dashboard_config_error_restores_files_and_reports_the_restored_revision(self):
+        self.legacy_nozzle_config()
+        old_cfg = (ROOT/'tests/fixtures/native_nozzles_r15_startup.cfg').read_bytes()
+        self.config.write_bytes(old_cfg)
+        (self.live/'docs').mkdir()
+        error = "Option 'unknown_pin' is not valid in section 'printer'"
+        with patch.object(update.dashboard,'request',side_effect=[{'process_id':421}, {'status':{
+                'webhooks':{'state':'error','state_message':error}}}]) as request, \
+                patch('fluidd_web.activate') as activate, patch('sys.stdout',new_callable=io.StringIO) as out:
+            with self.assertRaisesRegex(ValueError, 'unknown_pin'):
+                update.update_host(False, False, False, False, False, False, True, None, self.root/'web', True)
+        self.assertEqual(request.call_count, 2)
+        activate.assert_not_called()
+        self.assertEqual(self.config.read_bytes(), old_cfg)
+        self.assertEqual(self.dest.read_bytes(), self.old)
+        self.assertFalse((self.config.parent/'inventure_services.cfg').exists())
+        restore = json.loads(out.getvalue()[out.getvalue().rfind('\n{')+1:])
+        self.assertEqual(restore['status'], 'ROLLED_BACK')
+        self.assertEqual(restore['host_revision'], update.core.module_revision(self.old))
+        self.assertTrue(self.active)
 
     def test_level_buttons_install_alongside_nozzle_updates_and_preserve_includes(self):
         heaters = self.legacy_nozzle_config()

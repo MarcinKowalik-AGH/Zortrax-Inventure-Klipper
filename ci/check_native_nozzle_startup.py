@@ -83,6 +83,15 @@ def check_loaded(printer, config):
     now = printer.get_reactor().monotonic()
     assert 'display_status' in printer.lookup_object('configfile').get_status(now)['config']
     native_gcode = printer.lookup_object('gcode')
+    expected_revision = json.loads((ROOT/'orange_pi/RELEASE.json').read_text())['host_revision']
+    installer_revision = json.loads((ROOT/'orange_pi/THERMAL_HOST_MANIFEST.json').read_text())['host_revision']
+    messages = []
+    command = native_gcode.create_gcode_command('INVENTURE_VERSION', 'INVENTURE_VERSION', {})
+    command.respond_info = messages.append
+    native_gcode.ready_gcode_handlers['INVENTURE_VERSION'](command)
+    label, result = messages[0].split(' ', 1)
+    assert label == 'INVENTURE_VERSION'
+    assert json.loads(result)['host_revision'] == board.get_status(now)['host_revision'] == expected_revision == installer_revision
     native_gcode.ready_gcode_handlers['M117'](native_gcode.create_gcode_command('M117', 'M117 Display test', {}))
     native_gcode.ready_gcode_handlers['M73'](native_gcode.create_gcode_command('M73', 'M73 P25', {'P':'25'}))
     assert display.get_status(now) == {'message': 'Display test', 'progress': .25}
