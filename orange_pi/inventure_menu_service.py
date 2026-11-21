@@ -356,6 +356,8 @@ class ZortraxMenuService:
                 target = float((params or {}).get('TARGET', self._obj('inventure_native_z').target))
                 reviews = ['Home '+axes+' with T0', 'T0 physically lowered', 'Tray seated, pad clear',
                            'Platform travel clear', 'Nozzle target: %g C' % target]
+                if axes == 'Z':
+                    reviews.insert(1, 'Home Y/X if XY unknown')
         elif action=='leveling':
             if self.capability(action)['backend'] == 'platform_level':
                 title = 'Start platform leveling?'

@@ -1,7 +1,7 @@
 {
-  "release": "RC8-CONTROL-R7-HOMING-R38.2",
+  "release": "RC8-CONTROL-R7-HOMING-R38.3",
   "baseline_sha256": "52a43e0b72785a0451b3bc63c88272ae40156808afbad90da86143cafd190d05",
-  "module_sha256": "21da3af73ae4111bc6de0c4e0a72d3dc78a9c1f35d8453d28bc7e7cf3c8cc466",
+  "module_sha256": "8e795fed42c98cb9795be87e4aa7f958f65b333eb74eb78e4ef876a9e088b2d2",
   "allowed_existing_sha256": [
     "78ab7817ba0ca07b484d225a299543adc734cc979c0d9ed797a42374c98fe440",
     "31130695402424a4cd76ef0c42e143fb9c7400a05592614624bc42307df3b849",
@@ -108,9 +108,10 @@
     "f19ae61aa3e4f190511070357b5c1c5672af27b694af9e536b0d4aeeb8cf9484",
     "7fbc7eb9654ed735fa5f84e138bd281933d2622d07ac865b3ec1ef84d083fc37",
     "791915f8603a850e21a7d8bea98019904870d6d19c6b03e5ae3825a493d033eb",
-    "824cfc10bf84a0ef78cba53da85efc365e3ba2fa04908513d83addae3d752327"
+    "824cfc10bf84a0ef78cba53da85efc365e3ba2fa04908513d83addae3d752327",
+    "21da3af73ae4111bc6de0c4e0a72d3dc78a9c1f35d8453d28bc7e7cf3c8cc466"
   ],
-  "host_revision": "RC8-CONTROL-R7-HOMING-R38.2",
+  "host_revision": "RC8-CONTROL-R7-HOMING-R38.3",
   "oled_baseline_sha256": "18237760110f008347482be53828c4d8f47f125267e97888ef965cc2058962c9",
   "oled_module_sha256": "1a87078dadf1cddc31223cade69fa7fa5356b96793f79005e81c51d973d7b5a9",
   "serialhdl_sha256": "59d23063e8e2865644c48fab93d60d8dcee1d70c4a6f678e454fe1bbf875d5cc",
@@ -415,7 +416,7 @@
       ]
     },
     "inventure_menu_service.py": {
-      "sha256": "31629f337805486533e0018d0b9281e3d21a8efb6a4472dddc8ce23cad07c310",
+      "sha256": "62c6a4df87819fe731e9f096a17c6ed0111adf9e7b51c987ae30d87e5fd6ccc0",
       "allowed_existing_sha256": [
         "37893ea0936ed758d733833255b3292ccd3ec57905e1b647942f9519d911bf63",
         "59a9978782df96c46033a77fde13f6448c223c1ba57eb2be96ae4381813bf34d",
@@ -433,7 +434,8 @@
         "e861b1d9c0b0d8762aaf5a70eac08e9baecefd9249435e974d3d353a84da33db",
         "54b95b3a7b88ab0838a58bb3bc0d2e05ec82586e7c2e6e660be23146e3f21e59",
         "aca64f5db2da9e4667f458aaa9942025d2721247532d1d113218462e86175149",
-        "48b374943e037c80bdf93bbb55b38cbcc575cb7a26c395bf1c06524d3cfcec7a"
+        "48b374943e037c80bdf93bbb55b38cbcc575cb7a26c395bf1c06524d3cfcec7a",
+        "31629f337805486533e0018d0b9281e3d21a8efb6a4472dddc8ce23cad07c310"
       ]
     },
     "inventure_oem_menu.py": {
@@ -476,14 +478,15 @@
       ]
     },
     "inventure_native_z.py": {
-      "sha256": "135856e1ad61b465e0e2c16d1479a506651322779a3b287afe0d46e4de7728ce",
+      "sha256": "26175c5c3fe7effb7f85e6e9626a8dc4e56e9261e7bf268c4ef4931ea53efc5d",
       "allowed_existing_sha256": [
         "a3399b18df7d7eecaf660ba49268c2b7b2dc13e0960c5e51cbc9f6218d4e620c",
         "3f73bb0d92b5f19bc6b9973f8a1f161486d68e23fde7ca5ad2a7d390c35d28e7",
         "5f33a5aaf309daeb137523181aeeedb4141441bddabff9ffbe99a7eaa8fe41fa",
         "58d6b156240cbe6aac6650b4743a56948723f475e74c00c6068487baaac687dc",
         "ff832a4dfa3fe0b46a693a58a9140a4f0678a6f03a5543e41e6b16f0ab662485",
-        "9ae0aedec80f14ef8ddd54de69e2e3c78b97b34ac6433aac246712a73b7856ef"
+        "9ae0aedec80f14ef8ddd54de69e2e3c78b97b34ac6433aac246712a73b7856ef",
+        "135856e1ad61b465e0e2c16d1479a506651322779a3b287afe0d46e4de7728ce"
       ]
     },
     "inventure_nozzle_xy.py": {

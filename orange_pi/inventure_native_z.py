@@ -563,7 +563,7 @@ class InventureNativeZ:
                 self._require_native()
             status = self.kin.get_status(now)['homed_axes']
             if hot:
-                if axes == 'Z' and not all(axis in status for axis in 'xy'):
+                if not operator and axes == 'Z' and not all(axis in status for axis in 'xy'):
                     raise FactoryError('Home both X and Y first or use INVENTURE_HOME_ALL')
                 z_command = self._z_macro_command(options)
                 heater, target = self._validate_z_macro(z_command, require_ack=not review)
@@ -581,6 +581,12 @@ class InventureNativeZ:
                 select_native_control(self.board, control)
             self.toolhead.wait_moves()
             self._require_native()
+            if operator and axes == 'Z':
+                # A restart or motor release may have invalidated XY since the dialog opened.
+                status = self.kin.get_status(self.reactor.monotonic())['homed_axes']
+                if not all(axis in status for axis in 'xy'):
+                    gcmd.respond_info('Homing Y and X before Z to locate the center pad')
+                    axes = 'XYZ'
             contact_known = ('z' in status and self.last_result is not None
                              and self.last_result.get('reference_established'))
             if hot or not contact_known:

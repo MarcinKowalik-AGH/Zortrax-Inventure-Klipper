@@ -664,9 +664,10 @@ class NativeZBridgeTests(unittest.TestCase):
 
 class HomeSequenceModel(Model):
     def __init__(self):
+        self.position = [50., 60., 145., 0.]
         super().__init__()
         self.axes = ''
-        self.position = [50., 60., 30., 0.]
+        self.z = 30.
         self.heater_target = 0.
         self.min_temp, self.max_temp = 0., 220.
         self.speeds = []
@@ -694,6 +695,14 @@ class HomeSequenceModel(Model):
     @property
     def rails(self):
         return self.axis_rails
+
+    @property
+    def z(self):
+        return self.position[2]
+
+    @z.setter
+    def z(self, value):
+        self.position[2] = value
 
     def lookup_object(self, name, default=None):
         if name == 'print_stats':
@@ -813,6 +822,57 @@ class NativeHomeSequenceTests(unittest.TestCase):
         lines = []
         board.gcode.register_output_handler(lines.append)
         return menu, lines
+
+    def use_mcu_reference(self):
+        # Run the production Z handler, including the guard and refinement requests.
+        del self.adapter.cmd_home
+        self.model.threshold = 1.  # Simulated contact below the 2 mm start of refinement.
+        self.adapter.guard_owner = None
+        self.adapter.stepper = self.model.stepper
+        self.adapter.fine_speed = .3117206982543641
+        self.model.on_shutdown = self.adapter._shutdown
+
+    def test_home_z_button_matches_native_sequence_for_current_xy_reference(self):
+        options = dict(ACK=Z_HOME_ACK, TARGET='205', PARK_Z='8')
+        for homed in ('', 'x', 'yz', 'xy', 'xyz'):
+            with self.subTest(homed=homed):
+                self.setUp()
+                self.use_mcu_reference()
+                self.model.axes = homed
+                expected_axes = 'Z' if 'x' in homed and 'y' in homed else 'XYZ'
+                self.adapter.cmd_home_axes(Command(AXES=expected_axes, **options))
+                expected_moves = list(self.model.calls)
+                expected_result = dict(self.adapter.last_result)
+
+                self.setUp()
+                self.use_mcu_reference()
+                self.model.axes = homed
+                self.model.native_mode = False
+                menu, _ = self.operator_menu()
+                self.adapter.cmd_request_home(Command(AXES='Z', TARGET='205', PARK_Z='8'))
+                self.assertEqual((self.model.calls, self.model.mode_requests), ([], []))
+                menu.choose(menu.view.token, confirm=True)
+                self.assertEqual(self.model.mode_requests, ['NATIVE'])
+                self.assertEqual(self.model.calls, expected_moves)
+                self.assertEqual(self.adapter.last_result, expected_result)
+                self.assertTrue(expected_result['coordinate_saved'])
+                self.assertTrue(expected_result['local_refinement'])
+                self.assertEqual(self.model.position, [82.8, 68., 8., 0.])
+
+    def test_home_z_rechecks_xy_at_confirmation_and_keeps_probe_failure(self):
+        self.use_mcu_reference()
+        self.model.axes = 'xy'
+        menu, _ = self.operator_menu()
+        self.adapter.cmd_request_home(Command(AXES='Z'))
+        self.model.clear_homing_state('xy')
+        self.model.refine_reply_overrides = dict(status=2)
+        with self.assertRaisesRegex(ValueError, 'no contact'):
+            menu.choose(menu.view.token, confirm=True)
+        self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'], ['Z','Y','X'])
+        self.assertIn('no contact', menu.last['reason'])
+        self.assertIsNone(self.adapter.last_result)
+        self.assertNotIn('z', self.model.axes)
+        self.assertEqual(self.model.heater_target, 0.)
 
     def test_bare_home_all_from_fluidd_or_oled_then_confirm(self):
         for mode in ('OFF', 'SERVICE', 'NATIVE'):

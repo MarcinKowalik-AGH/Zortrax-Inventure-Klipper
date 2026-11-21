@@ -4,6 +4,7 @@ import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 import shutil
 import sys
 from threading import Thread
@@ -154,7 +155,8 @@ def check(dist):
               card.sendGcode = cmd => testCommands.push(cmd)
               notify('inventure_mcu', {platform_level:{phase:'measuring', next_point:4, heights_steps:{0:401}}})
               const settings = {...app.$store.state.printer.printer.configfile.settings,
-                inventure_mcu:{}, 'gcode_macro inventure_home_xy':{}, 'gcode_macro inventure_home_all':{}}
+                inventure_mcu:{}, 'gcode_macro inventure_home_xy':{}, 'gcode_macro inventure_home_z':{},
+                'gcode_macro inventure_home_all':{}}
               notify('configfile',{settings})
               card.$mount()
               const section = document.createElement('article'); section.id = 'test-tune'
@@ -169,6 +171,23 @@ def check(dist):
             page.evaluate("testTune.homeAxes('XY','test-home')")
             page.evaluate("testTune.homeAll()")
             assert page.evaluate('testCommands') == ['INVENTURE_HOME_XY', 'INVENTURE_HOME_ALL']
+            page.evaluate("""async url => {
+              const app = document.querySelector('#app').__vue__.$root
+              const { ToolheadCard } = (await import(url)).default.options.components
+              const { Toolhead } = ToolheadCard.options.components
+              const controls = new Toolhead.options.components.ToolheadControlCross({ parent: app })
+              controls.sendGcode = cmd => testCommands.push(cmd)
+              controls.$mount()
+              const section = document.createElement('section')
+              section.id = 'test-home-buttons'
+              section.style.cssText = 'position:relative;z-index:25000;width:780px;background:#28292a'
+              section.appendChild(controls.$el)
+              document.body.prepend(section)
+            }""", dashboard)
+            controls = page.locator('#test-home-buttons')
+            controls.get_by_role('button', name='Home Z', exact=True).click()
+            controls.get_by_role('button', name=re.compile(r'^all$', re.I)).click()
+            assert page.evaluate('testCommands.slice(-2)') == ['INVENTURE_HOME_Z', 'INVENTURE_HOME_ALL']
             page.evaluate("notify('inventure_mcu',{platform_level:{phase:'saved', candidate_depth_um:138349,center_error_steps:25}})")
             expect(level).to_contain_text('Platform depth 138.349 mm')
             expect(level).to_contain_text('Center deviation 0.031 mm')
