@@ -231,5 +231,18 @@
         }
       ]
     }
+  },
+  "sleep_moon": {
+    "source_sha256": "11e2ea439d33436418bbeb51579cc7c12ef0a329019829bcf7e5eccbfc863b75",
+    "descriptor": "0x0801d908",
+    "width": 50,
+    "height": 50,
+    "period_ticks": 0,
+    "frames": [
+      {
+        "sha256": "56bd4351a045e02e673b0c0d53953f47eae010529b8d3c58e65a83a02e1b7bd1",
+        "zlib_b64": "eNpjYCAbrH3/73arABaJ2MOMpt2vA7DI1BUwMIidLcCUYD4NNIh5rwOmDOclIMF6E4theQZAQuogpgTrYxDZq4ApEwcSY7+IKcF+AUT2YLFlJYjgmoApIQtyLOMVLNYfAAcCFrOOgghuLN6PBofBBUwJPnD4bsWU4EqA60PzCdipcpjxwrIBbDtmtDCD3cvegCHBBHYQ6wYcOrC4F6KW8QEOVzF8wPRHAA4JiM+xGAXxMxbLtzFgdy4zxAwODA9CYwIzSHIhFEYgMj1GdgJyWkiA0OgRxXSCAbtrfQtQnAAHkrD0hJZ8NF5C3QJLcJDEzVL9EpbKYUn0/u2ZHTP3vp0K1wpL1HYtaeVlwQgvwbMB8zNUuxAZxxYl2SNlNcY9BkiRjpw52V7BdaNlZ4lX0HDGKADE9m13EsBaZDBG7sVVyBANAHnYUdw="
+      }
+    ]
   }
 }

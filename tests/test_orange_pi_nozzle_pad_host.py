@@ -1043,6 +1043,7 @@ class NozzlePadHostTests(unittest.TestCase):
     def native_sensor(self, host, tool, maximum):
         host.shared_adc_sensors = getattr(host, 'shared_adc_sensors', [[], []])
         config = SimpleNamespace(get_printer=lambda: host.printer,
+                                 get=lambda name, default: default,
                                  getint=lambda *args, **kwargs: tool)
         sensor = adapter.R5SharedSensor(config, host)
         sensor.setup_minmax(0., maximum)

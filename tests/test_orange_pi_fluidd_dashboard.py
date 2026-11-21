@@ -171,13 +171,17 @@ class DashboardRouteTests(unittest.TestCase):
         panel._service_display(901.)
         self.assertEqual(panel.sleep_phase, 'dim')
         panel._service_display(1190.)
-        self.assertEqual((panel.sleep_phase, panel.notice_level), ('notice', 4))
+        self.assertEqual((panel.sleep_phase, panel.notice_level), ('notice', 16))
         panel._render(1190.)
         bright = panel._render_wire
-        panel._service_display(1199.)
+        panel.stream.previous = bright
+        panel.stream.display_mode = 'dim'
+        panel._service_display(1190.)
+        panel._service_display(1199.5)
         self.assertEqual((panel.sleep_phase, panel.notice_level), ('notice', 1))
         panel._render(1199.)
-        self.assertLess(sum(panel._render_wire), sum(bright))
+        self.assertEqual(panel._render_wire, bright)
+        self.assertEqual(panel.stream.fade_step, 1)
         panel._service_display(1201.)
         self.assertEqual(panel.sleep_phase, 'off')
         panel._display_activity(1202.)

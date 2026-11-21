@@ -72,16 +72,39 @@ def _menu_text(atlas, labels, has_icon, notice):
 
 
 @lru_cache(maxsize=1)
+def _sprite_catalog():
+    return json.loads(Path(__file__).with_name('inventure_activity_sprites.json').read_text())
+
+
 def _activity_catalog():
-    return json.loads(Path(__file__).with_name('inventure_activity_sprites.json').read_text())['symbols']
+    return _sprite_catalog()['symbols']
+
+
+def _unpack(frame, name):
+    packed = zlib.decompress(base64.b64decode(frame['zlib_b64'], validate=True))
+    if len(packed) != 1250 or sha256(packed).hexdigest() != frame['sha256']:
+        raise ValueError('Invalid OLED activity frame: ' + name)
+    return packed
+
+
+@lru_cache(maxsize=1)
+def sleep_wire():
+    # The M300 sleep screen centers the text on the left and a 50x50 moon at
+    # (202,7). Its even X origin allows copying the original packed bytes.
+    message = 'Entering sleep mode'
+    frame = native.Frame()
+    frame.text((192 - (6 * len(message) - 1)) // 2, 24, message)
+    wire = bytearray(frame.wire_bytes())
+    packed = _unpack(_sprite_catalog()['sleep_moon']['frames'][0], 'sleep_moon')
+    for y in range(50):
+        offset = (y + 7) * STRIDE + 101
+        wire[offset:offset + 25] = packed[y * 25:(y + 1) * 25]
+    return bytes(wire)
 
 
 @lru_cache(maxsize=32)
 def _activity_rows(name, index):
-    frame = _activity_catalog()[name]['frames'][index]
-    packed = zlib.decompress(base64.b64decode(frame['zlib_b64'], validate=True))
-    if len(packed) != 1250 or sha256(packed).hexdigest() != frame['sha256']:
-        raise ValueError('Invalid OLED activity frame: ' + name)
+    packed = _unpack(_activity_catalog()[name]['frames'][index], name)
     # Repack each row at x=203, preserving its grayscale and blank edge nibbles.
     rows = []
     for start in range(0, len(packed), 25):

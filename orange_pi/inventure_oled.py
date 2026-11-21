@@ -11,8 +11,7 @@ import math
 import secrets
 from .inventure_mcu import HOST_REVISION
 from .inventure_oled_render import Frame
-from .inventure_oled_graphics import KlipperStatus, activity_index, menu_wire
-from . import inventure_oled_render as panel_render
+from .inventure_oled_graphics import KlipperStatus, activity_index, menu_wire, sleep_wire
 from .inventure_oem_menu import MENU, OEMMenu
 from .inventure_oled_uifast_transport import FastOledStream, OledStream
 
@@ -20,20 +19,13 @@ from .inventure_oled_uifast_transport import FastOledStream, OledStream
 # remain ahead of optional pixels, on the existing, separate OLED queue.
 BACKGROUND_PRIORITY_CLOCK=0x7fffffff00000000
 
-def sleep_wire():
-    renderer=getattr(panel_render,'sleep_wire',None)
-    if renderer is not None:return renderer()
-    # The immutable early RC7 renderer has no sleep artwork helper. Preserve
-    # current installed graphics; its compatible fallback is this text notice.
-    return Frame().status('Entering sleep mode','Press OK to wake').wire_bytes()
-
-@functools.lru_cache(maxsize=4)
+@functools.lru_cache(maxsize=16)
 def fading_sleep_frame(level):
     wire = sleep_wire()
-    if level == 4:
+    if level == 16:
         return wire
     # Each SSD1322 byte holds two independent four-bit grayscale pixels.
-    nibble = [round(value * level / 4.) for value in range(16)]
+    nibble = [round(value * level / 16.) for value in range(16)]
     palette = bytes((nibble[value >> 4] << 4) | nibble[value & 15] for value in range(256))
     return wire.translate(palette)
 
@@ -69,6 +61,13 @@ class InventureOLED:
             raise config.error('OLED sleep timers must be finite')
         self.configured_sleep = self.sleep_timeout
         self.configured_notice = self.sleep_notice
+        self.configured_dim_min = config.getint('dim_minutes', 5, minval=1, maxval=60)
+        self.configured_sleep_min = config.getint('sleep_minutes', 15, minval=1, maxval=60)
+        self.configured_brightness = config.getint('brightness', 16, minval=1, maxval=16)
+        legacy_timeout = config.get('sleep_timeout', None) is not None
+        self.configured_policy = config.get('timer_policy', 'inventure' if legacy_timeout else 'minutes')
+        if self.configured_policy not in ('minutes', 'inventure'):
+            raise config.error('OLED timer_policy must be minutes or inventure')
         self.minute_timers = False
         self.sleep_phase='awake'
         self.last_activity=0.
@@ -176,8 +175,7 @@ class InventureOLED:
     def _ready(self):
         if self.shutdown_latched:return
         self.connected=True;now=self.reactor.monotonic()
-        if getattr(self.board, 'zortrax', None) is not None:
-            self._apply_display_settings()
+        self._apply_display_settings()
         self.last_activity=now
         self._observe_external_activity()
         # On a fresh host Ready, choose the configured Klipper status page
@@ -446,14 +444,14 @@ class InventureOLED:
         if phase == 'off':
             self.preview.observe(self.reactor.monotonic(), ('off',), None)
         self.notice_at=None
-        self.notice_level = 4
+        self.notice_level = self.stream.fade_step = 16
         self.render_at=0.
         self._user_refresh_pending=True
 
     def _display_activity(self,now):
         if not self.connected or self.shutdown_latched:return
         self.last_activity=now
-        if self.sleep_phase in ('notice','off') or self.minute_timers and self.sleep_phase == 'dim':
+        if self.sleep_phase in ('notice','off'):
             self.wake_wait=True
         if self.sleep_phase!='awake':
             self._display_phase('awake')
@@ -474,9 +472,14 @@ class InventureOLED:
                 self._display_phase('off')
             elif remaining <= notice:
                 self._display_phase('notice')
-                level = math.ceil(4. * remaining / notice)
+                if self.stream.previous != sleep_wire():
+                    self.notice_at = None
+                elif self.notice_at is None and self.stream.display_mode == 'dim' and self.stream.operations is None:
+                    self.notice_at = now
+                elapsed = max(0., now - self.notice_at) if self.notice_at is not None else 0.
+                level = max(1, 16 - int(16 * elapsed / notice))
                 if self.notice_level != level:
-                    self.notice_level = level
+                    self.notice_level = self.stream.fade_step = level
                     self.render_at = 0.
             else:
                 self._display_phase('dim' if idle >= self.dim_timeout else 'awake')
@@ -639,9 +642,11 @@ class InventureOLED:
     def _render(self,now):
         if self.sleep_phase=='off':return
         if self.sleep_phase=='notice':
-            self._render_wire = fading_sleep_frame(self.notice_level) if self.minute_timers else sleep_wire()
-            self.stream.request(self._render_wire,urgent=True)
-            self.preview.observe(now, ('sleep_notice',), self._render_wire)
+            self._render_wire = sleep_wire()
+            if self.stream.latest != self._render_wire:
+                self.stream.request(self._render_wire, urgent=True)
+            preview = fading_sleep_frame(self.notice_level) if self.minute_timers else self._render_wire
+            self.preview.observe(now, ('sleep_notice',), preview)
             self._rendered_screen='sleep_notice'
             self._rendered_menu_page=None
             self._rendered_frames+=1
@@ -740,7 +745,7 @@ class InventureOLED:
         board=getattr(self,'board',None)
         if board is not None:
             current=self._input_receipt()
-            shown=bool(self.sleep_phase=='awake' and self.stream.ready
+            shown=bool(self.sleep_phase in ('awake', 'dim') and self.stream.display_mode != 'off' and self.stream.ready
                 and getattr(self,'_frame_receipt',None)==current
                 and self.stream.last_frame_bytes==getattr(self,'_render_wire',None))
             board._oled_input_receipt=current+(shown,)
@@ -870,6 +875,25 @@ class InventureOLED:
         fresh=(isinstance(received,(int,float)) and not isinstance(received,bool)
                and math.isfinite(received) and 0.<=now-received<=.750)
         self._button_sample_at=received if fresh else None
+        if (fresh and self.connected and (self.wake_wait or self.wake_gesture
+                or self.sleep_phase in ('notice', 'off'))):
+            # A dark panel has no selectable receipt. A physical OK still wakes
+            # it; its release must never accept the newly displayed selection.
+            menu = getattr(self.board, 'zortrax', None)
+            if menu is not None and not menu.observe_buttons(raw_mask, sequence):
+                return
+            if raw_mask != self.last_buttons:
+                self._display_activity(now)
+                self.wake_gesture = bool(raw_mask)
+                if not raw_mask & 4:
+                    self._ok_blocked_until_release = False
+                if raw_mask & 8 and not self.last_buttons & 8:
+                    self.pressed_at[3] = now
+                    self.power_fired = False
+                if self.last_buttons & 8 and not raw_mask & 8:
+                    self.pressed_at.pop(3, None)
+                self.last_buttons = raw_mask
+            return
         acknowledged=(receipt is None or len(receipt)<5 or receipt[4])
         if receipt is not None:receipt=receipt[:4]
         current=self._input_receipt() if receipt is not None else None
@@ -894,15 +918,6 @@ class InventureOLED:
         if not self.connected or mask==self.last_buttons:return
         pressed=mask&~self.last_buttons; released=self.last_buttons&~mask
         self._display_activity(now)
-        if self.wake_wait or self.wake_gesture:
-            # Consume the whole invisible gesture, including its release and
-            # repeats. A physical Power hold still reaches the stop path.
-            self.wake_gesture=bool(mask)
-            if pressed&8:
-                self.pressed_at[3]=now;self.power_fired=False
-            if released&8:self.pressed_at.pop(3,None)
-            self.last_buttons=mask
-            return
         if pressed & 3 == 3:pressed &= ~3  # simultaneous UP+DOWN: no selection movement
         for bit in range(4):
             key=1<<bit
@@ -988,17 +1003,26 @@ class InventureOLED:
         self._wake()
     def cmd_wake(self,gcmd):
         self._display_activity(self.reactor.monotonic())
+    def timer_preferences(self, values):
+        # Earlier minute-mode records could omit the other threshold. Keep the
+        # 5/10 effective pair those records used before the defaults changed.
+        if values.get('timer_policy') == 'minutes':
+            return values.get('dim_min', 5), values.get('sleep_min', 10)
+        return values.get('dim_min', self.configured_dim_min), values.get('sleep_min', self.configured_sleep_min)
+
     def _apply_display_settings(self):
-        values = self.board.zortrax.settings.value
+        menu = getattr(self.board, 'zortrax', None)
+        values = menu.settings.value if menu is not None else {}
         enabled = values.get('sleep_enabled', bool(self.configured_sleep))
         self.sleep_timeout = values.get('idle_s', self.configured_sleep or 300.) if enabled else 0.
-        self.minute_timers = values.get('timer_policy') == 'minutes'
+        policy = 'inventure' if 'idle_s' in values or 'notice_s' in values else self.configured_policy
+        self.minute_timers = values.get('timer_policy', policy) == 'minutes'
         if self.minute_timers:
-            sleep = values.get('sleep_min', 10)
-            self.dim_timeout = min(values.get('dim_min', 5), sleep) * 60
+            dim, sleep = self.timer_preferences(values)
+            self.dim_timeout = min(dim, sleep) * 60
             self.sleep_timeout = sleep * 60 if enabled else 0.
         self.sleep_notice = values.get('notice_s', self.configured_notice)
-        self.stream.awake_level = values.get('oled_level', 16) - 1
+        self.stream.awake_level = values.get('oled_level', self.configured_brightness) - 1
 
     def cmd_display_control(self, gcmd):
         menu = self.board.zortrax
@@ -1035,6 +1059,9 @@ class InventureOLED:
         if {'dim_min', 'sleep_min'} & updates.keys():
             if {'idle_s', 'notice_s'} & updates.keys():
                 raise gcmd.error('Use DIM/SLEEP minutes or IDLE/NOTICE seconds in one command')
+            dim, sleep = self.timer_preferences(menu.settings.value)
+            updates.setdefault('dim_min', dim)
+            updates.setdefault('sleep_min', sleep)
             updates['timer_policy'] = 'minutes'
         elif {'idle_s', 'notice_s'} & updates.keys():
             updates['timer_policy'] = 'inventure'
@@ -1048,9 +1075,9 @@ class InventureOLED:
             self._user_refresh_pending = True
             self._wake()
         if self.minute_timers:
-            values = menu.settings.value
+            dim, sleep = self.timer_preferences(menu.settings.value)
             gcmd.respond_info('OLED timers | preferred DIM %d min | effective DIM %d min | SLEEP %d min' %
-                              (values.get('dim_min', 5), self.dim_timeout // 60, values.get('sleep_min', 10)))
+                              (dim, self.dim_timeout // 60, sleep))
             return
         gcmd.respond_info('Inventure OLED | brightness %d/16 | sleep %s | idle %g s | notice %g s' % (
             self.stream.awake_level + 1, 'on' if self.sleep_timeout else 'off', self.sleep_timeout, self.sleep_notice))
@@ -1095,6 +1122,8 @@ class InventureOLED:
                 'rendered_screen':self._rendered_screen,
                 'display_sleep':{'phase':self.sleep_phase,'panel_mode':self.stream.display_mode,
                     'timeout_s':self.sleep_timeout,'notice_s':self.sleep_notice,
+                    'dim_after_s':self.dim_timeout if self.minute_timers else None,
+                    'brightness_level':self.stream.awake_level+1,'storage':'orange_pi',
                     'timer_policy':'minutes' if self.minute_timers else 'inventure',
                     'notice_acknowledged_at':self.notice_at,'wake_pending':self.wake_wait,
                     'work_status_error':self.display_work_error},

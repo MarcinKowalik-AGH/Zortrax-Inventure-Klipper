@@ -15,7 +15,7 @@ from zipfile import ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_config(klipper, config):
+def load_config(klipper, config, save_test_pid=False):
     # Read configuration only: do not identify/connect an MCU or run the reactor.
     sys.path.insert(0, str(klipper/'klippy'))
     import klippy
@@ -27,6 +27,17 @@ def load_config(klipper, config):
     try:
         printer._read_config()
         check_loaded(printer, config)
+        if save_test_pid:
+            board = printer.lookup_object('inventure_mcu')
+            assert board.temperature_map_source == 'printer_config'
+            saved = printer.lookup_object('configfile')
+            for heater in ('extruder', 'heater_generic inventure_t1', 'heater_generic chamber_l', 'heater_generic chamber_r'):
+                for key, value in dict(control='pid', pid_kp='18.125', pid_ki='0.718', pid_kd='110.5').items():
+                    saved.set(heater, key, value)
+            # Exercise the actual SAVE_CONFIG writer against the temporary field config.
+            from types import SimpleNamespace
+            printer.lookup_object('gcode').request_restart = lambda reason: None
+            saved.autosave.cmd_SAVE_CONFIG(SimpleNamespace(error=ValueError))
     finally:
         # virtual_sdcard starts an I/O thread before Klipper connects.
         # This configuration-only test must release it without entering the reactor.
@@ -187,9 +198,9 @@ def check():
                         '--klipper', str(klipper), '--output', str(root/'oled-navigation.json')],
                        check=True)
 
-        def run(config):
+        def run(config, *options):
             return subprocess.run([sys.executable,__file__,'--klipper',str(klipper),
-                                   '--config',str(config)],capture_output=True,text=True,timeout=90)
+                                   '--config',str(config),*options],capture_output=True,text=True,timeout=90)
 
         field = root/'printer.cfg'
         field.write_bytes((ROOT/'tests/fixtures/native_nozzles_r15_startup.cfg').read_bytes())
@@ -205,8 +216,8 @@ def check():
                 (field.parent/'hardware.cfg').write_bytes((ROOT/'config/INVENTURE_NATIVE_Z_TEST.cfg').read_bytes())
                 (field.parent/'fluidd.cfg').write_bytes((ROOT/'fluidd/inventure_01_diagnostyka.cfg').read_bytes())
                 field.write_text('[include hardware.cfg]\n[include fluidd.cfg]\n\n'
-                    '#*# <---------------------- SAVE_CONFIG ---------------------->\n'
-                    '#*# [stepper_z]\n#*# position_endstop = 139.35\n')
+                    +updater.klipper_config_module(klipper).AUTOSAVE_HEADER
+                    +'#*# [stepper_z]\n#*# position_endstop = 139.35\n')
             updates = updater.nozzle_limit_updates(klipper,field,True,True)
             updater.add_fluidd_controls(klipper,field,updates,dashboard=True)
             assert updates
@@ -220,6 +231,24 @@ def check():
             result = run(field)
             assert result.returncode == 0, result.stdout+result.stderr
             print(mode+': '+result.stdout.strip())
+            from importlib import import_module
+            sys.path.insert(0, str(ROOT))
+            layout = import_module('inventure_config_layout')
+            organized = {}
+            layout.organize_klipper(updater.klipper_config_module(klipper), field, organized)
+            for path, (before, after) in organized.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                updater.atomic_config_write(path, after, create=before is None)
+            assert not updater.nozzle_limit_updates(klipper, field, True, True)
+            again = {}
+            updater.add_fluidd_controls(klipper, field, again, dashboard=True)
+            layout.organize_klipper(updater.klipper_config_module(klipper), field, again)
+            assert again == {}, list(again)
+            for options in (('--save-test-pid',), ()):
+                result = run(field, *options)
+                assert result.returncode == 0, result.stdout+result.stderr
+            assert field.read_text().count('#*# pid_kp = 18.125') == 4
+            print(mode+': organized config loads and all four test PIDs survive SAVE_CONFIG and reload')
 
         # Check optional installation routes independently from the stock field hardware.
         tmpcfg = root/'optional.cfg'
@@ -243,9 +272,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--klipper',type=Path)
     parser.add_argument('--config',type=Path)
+    parser.add_argument('--save-test-pid', action='store_true')
     args = parser.parse_args()
     if args.klipper is not None and args.config is not None:
-        load_config(args.klipper,args.config)
+        load_config(args.klipper,args.config,args.save_test_pid)
     elif args.klipper is not None or args.config is not None:
         parser.error('--klipper and --config must be supplied together')
     else:

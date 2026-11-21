@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-THERMAL-OLED-R33.1'
+HOST_REVISION = 'RC8-CONTROL-R7-CONFIG-R34'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -196,6 +196,10 @@ class R5SharedSensor:
     def __init__(self,config,board):
         self.printer=config.get_printer();self.board=board
         self.channel=config.getint('sensor_channel',minval=0,maxval=7)
+        if config.get('control', None) == 'pid':
+            # A tune replaces watermark control in SAVE_CONFIG. Klipper keeps
+            # its old hysteresis option, which PID itself does not consume.
+            config.getfloat('max_delta', 2., above=0.)
         self.minimum=self.maximum=None;self.callback=None;self.failed=False
         board.shared_adc_sensors[self.channel].append(self)
     def setup_minmax(self,minimum,maximum):self.minimum,self.maximum=minimum,maximum
@@ -334,7 +338,24 @@ class InventureMCU:
         self.native_outputs = {}
 
         table_path = Path(__file__).with_name('inventure_lut.json')
-        self.lut = json.loads(table_path.read_text())
+        stock_lut = json.loads(table_path.read_text())
+        rows = config.get('thermistor_thresholds', None)
+        self.lut = stock_lut
+        self.temperature_map_source = 'bundled_r0323'
+        reference = config.getint('nozzle_reference_mv', self.ADC_REFERENCE_MV)
+        slope = config.getint('nozzle_mv_per_c', self.NOZZLE_MV_PER_C)
+        if (reference, slope) != (self.ADC_REFERENCE_MV, self.NOZZLE_MV_PER_C):
+            raise config.error('Inventure nozzle conversion must match the MCU (3300 mV, 5 mV/C)')
+        if rows is not None:
+            try:
+                table = [[int(n) for n in line.split(',')]
+                         for line in rows.splitlines() if line.strip()]
+            except ValueError as exc:
+                raise config.error('Invalid Inventure thermistor threshold row') from exc
+            if table != stock_lut:
+                raise config.error('Inventure thermistor thresholds differ from the r0323 MCU map')
+            self.lut = table
+            self.temperature_map_source = 'printer_config'
         self.thresholds = [row[0] for row in self.lut]
         if self.diag_adc:
             pins = self.printer.lookup_object('pins')
@@ -1582,6 +1603,7 @@ class InventureMCU:
                     material_service=self.material_service.status() if hasattr(self, 'material_service') else {},
                     filament_jam=self.filament_jam.get_status(eventtime) if hasattr(self, 'filament_jam') else {},
                     host_revision=HOST_REVISION, host_module=str(Path(__file__).resolve()),
+                    temperature_map_source=getattr(self, 'temperature_map_source', 'bundled_r0323'),
                     heat_test_abi=self.heat_test_abi,
                     motor_test_abi=getattr(self,'motor_test_abi',0),
                     door_policy_abi=getattr(self,'door_policy_abi',0),
@@ -1720,6 +1742,7 @@ class InventureMCU:
                     17:'InventureBoot 1.7'}.get(revision,'unknown')
         gcmd.respond_info('INVENTURE_VERSION '+json.dumps({
             'host_revision':HOST_REVISION, 'host_module':str(Path(__file__).resolve()),
+            'temperature_map_source':getattr(self, 'temperature_map_source', 'bundled_r0323'),
             'heartbeat_timeout_s':getattr(self,'heartbeat_timeout_s',None),
             'heat_test_abi':getattr(self,'heat_test_abi',0),
             'motor_test_abi':getattr(self,'motor_test_abi',0),

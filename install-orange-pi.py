@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -24,9 +25,9 @@ core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)
 
 
-def service(action):
+def service(action, name='klipper'):
     prefix = [] if os.geteuid() == 0 else ['sudo']
-    subprocess.run(prefix+['systemctl',action,'klipper'],check=True,timeout=45)
+    subprocess.run(prefix+['systemctl',action,name],check=True,timeout=45)
 
 
 def check_print_job():
@@ -447,22 +448,71 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
             updates[path] = (originals[path], staged)
 
 
-def atomic_config_write(path, data):
+def running_moonraker_config(printer_config):
+    """Resolve the service command line, including KIAUH's EnvironmentFile."""
+    try:
+        result = subprocess.run(['systemctl', 'show', 'moonraker', '--property=MainPID', '--value'],
+                                capture_output=True, check=True, text=True, timeout=10)
+        process = Path('/proc')/str(int(result.stdout.strip()))
+        args = [os.fsdecode(value) for value in (process/'cmdline').read_bytes().split(b'\0') if value]
+        parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+        parser.add_argument('-c', '--configfile')
+        parser.add_argument('-d', '--datapath')
+        options, _ = parser.parse_known_args(args)
+        try:
+            env = dict(item.split(b'=', 1) for item in (process/'environ').read_bytes().split(b'\0')
+                       if b'=' in item)
+        except PermissionError:
+            env = {}
+        home = Path(os.fsdecode(env[b'HOME'])) if b'HOME' in env else printer_config.parent.parent.parent
+        def resolve(value):
+            if value.startswith('~/'):
+                return (home/value[2:]).resolve()
+            path = Path(value)
+            return path.resolve() if path.is_absolute() else (process/'cwd'/path).resolve()
+        config_file = options.configfile or os.fsdecode(env.get(b'MOONRAKER_CONFIG_PATH', b''))
+        data_path = options.datapath or os.fsdecode(env.get(b'MOONRAKER_DATA_PATH', b''))
+        if config_file:
+            return resolve(config_file)
+        if data_path:
+            return resolve(data_path)/'config/moonraker.conf'
+        if b'HOME' in env:
+            return home/'printer_data/config/moonraker.conf'
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    fallback = printer_config.parent/'moonraker.conf'
+    return fallback if fallback.is_file() else None
+
+
+def moonraker_sections():
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:7125/server/config', timeout=2) as response:
+            value = json.load(response)['result']['orig']
+        return set(value) if isinstance(value, dict) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def atomic_config_write(path, data, *, create=False):
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.'+path.name+'.', delete=False) as handle:
         staged = Path(handle.name)
         try:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-            shutil.copymode(path, staged)
-            staged.replace(path)
+            if create:
+                os.chmod(staged, 0o644)
+                os.link(staged, path)
+            else:
+                shutil.copymode(path, staged)
+                staged.replace(path)
         finally:
             staged.unlink(missing_ok=True)
 
 
 def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=False,
            configure_leveling=False, configure_jam=False, configure_filament=False, configure_fluidd=False,
-           fluidd_root=None, fluidd_zip=None):
+           fluidd_root=None, fluidd_zip=None, organize_config=False, moonraker_config=None):
     with tempfile.TemporaryDirectory(prefix='inventure-fluidd-') as temp:
         source = root = None
         if configure_fluidd:
@@ -471,11 +521,13 @@ def update(check_only=False, upgrade_nozzle_limits=False, configure_nozzles=Fals
             if not check_only:
                 source = release_bundle(Path(temp), fluidd_zip)
         return update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_leveling,
-                           configure_jam, configure_filament, configure_fluidd, source, root)
+                           configure_jam, configure_filament, configure_fluidd, source, root,
+                           organize_config, moonraker_config)
 
 
 def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_leveling,
-                configure_jam, configure_filament, configure_fluidd, source, root):
+                configure_jam, configure_filament, configure_fluidd, source, root,
+                organize_config=False, moonraker_config=None):
     # Resolve the running stage before stopping it; ~/klipper can be another
     # checkout. Native nozzle changes are explicit installer options.
     target=core.running_klipper_target()
@@ -489,6 +541,37 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
                            dashboard=configure_fluidd)
     identity={'host_revision':plan['host_revision'],'klipper_root':str(target),
               'printer_config':str(config),'MCU_changed':False,'config_changed':False}
+    moon_paths = set()
+    expected_sections = None
+    if organize_config:
+        from inventure_config_layout import organize_klipper, organize_moonraker
+        paths = organize_klipper(klipper_config_module(target), config, config_updates)
+        chosen = moonraker_config or running_moonraker_config(config)
+        if chosen:
+            chosen = Path(chosen).expanduser().resolve()
+            moon_updates = {}
+            managed_web = root
+            if managed_web is None:
+                from fluidd_web import web_root
+                try:
+                    installed_web = web_root(None)
+                    if (installed_web/'.inventure-fluidd-build').is_file():
+                        managed_web = installed_web
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    pass
+            retired = organize_moonraker(chosen, paths, managed_web, moon_updates)
+            moon_paths = set(moon_updates)
+            if moon_paths and not check_only:
+                live = moonraker_sections()
+                if live is not None:
+                    expected_sections = live.difference(retired)
+            if moon_paths.intersection(config_updates):
+                raise ValueError('Klipper and Moonraker must use separate configuration files')
+            config_updates.update(moon_updates)
+            identity.update(moonraker_config=str(chosen), removed_stock_updaters=retired)
+        else:
+            identity['moonraker_config'] = None
+        identity['klipper_includes'] = [str(path) for path in dict.fromkeys(paths)]
     check_print_job()
     if check_only:
         print(json.dumps(dict(identity,status='CHECK_OK',
@@ -504,13 +587,30 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
         # Recheck module hashes after the service is stopped. The core owns
         # exact backups, atomic staging and rollback of a partial copy.
         result=core.install(target,apply=True)
-        for path,(before,after) in config_updates.items():
-            if path.read_bytes()!=before:
+        # Install new include targets before publishing any references to them.
+        for path, (before, after) in sorted(config_updates.items(), key=lambda item: item[1][0] is not None):
+            if before is None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_config_write(path, after, create=True)
+                config_backups[path] = None
+                continue
+            if path.read_bytes() != before:
                 raise ValueError('The active configuration changed during the update: '+str(path))
-            backup=path.with_name(path.name+'.pre-nozzle-limit-'+stamp+'.bak')
-            shutil.copy2(path,backup)
-            config_backups[path]=backup
-            atomic_config_write(path,after)
+            backup = path.with_name(path.name+'.pre-nozzle-limit-'+stamp+'.bak')
+            shutil.copy2(path, backup)
+            atomic_config_write(path, after)
+            config_backups[path] = backup
+        if moon_paths:
+            service('restart', 'moonraker')
+            subprocess.run(['systemctl','is-active','--quiet','moonraker'],check=True,timeout=10)
+            identity['moonraker_readback'] = 'systemd_active'
+            if expected_sections is not None:
+                deadline = time.monotonic() + 30
+                while moonraker_sections() != expected_sections:
+                    if time.monotonic() >= deadline:
+                        raise ValueError('Moonraker did not reload the expected configuration')
+                    time.sleep(.25)
+                identity['moonraker_readback'] = 'server_config_verified'
         service('start')
         subprocess.run(['systemctl','is-active','--quiet','klipper'],check=True,timeout=10)
         if configure_fluidd:
@@ -521,15 +621,21 @@ def update_host(check_only, upgrade_nozzle_limits, configure_nozzles, configure_
     except BaseException:
         if config_backups or result and result.get('status')=='INSTALLED':
             service('stop')
-            for path,backup in config_backups.items():
-                atomic_config_write(path,backup.read_bytes())
+            for path, backup in reversed(config_backups.items()):
+                if backup is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_config_write(path, backup.read_bytes())
             if result and result.get('status')=='INSTALLED':
                 core.install(target,apply=True,rollback=Path(result['backup']))
         service('start')
+        if moon_paths.intersection(config_backups):
+            service('restart', 'moonraker')
         raise
     status='HOST_RESTARTED' if result['status']=='ALREADY_INSTALLED' else 'HOST_UPDATED'
     identity.update(config_changed=bool(config_backups),
-                    config_backups={str(path):str(backup) for path,backup in config_backups.items()})
+                    created_files=[str(path) for path, backup in config_backups.items() if backup is None],
+                    config_backups={str(path):str(backup) for path,backup in config_backups.items() if backup is not None})
     print(json.dumps(dict(identity,status=status,backup=result.get('backup')),
                      indent=2))
     print('In Klipper console: INVENTURE_VERSION')
@@ -552,10 +658,15 @@ def main():
                         help='Install the Inventure dashboard and group its buttons in the active Fluidd instance')
     parser.add_argument('--fluidd-root', type=Path, help='Select the Inventure nginx web root on a multi-site host')
     parser.add_argument('--fluidd-zip', type=Path, help='Use the release web ZIP and adjacent SHA256SUMS offline')
+    parser.add_argument('--organize-config', action='store_true',
+                        help='Split the live Klipper configuration and clean matching Moonraker entries')
+    parser.add_argument('--moonraker-config', type=Path, help='Select the active Moonraker config for --organize-config')
     args=parser.parse_args()
+    if args.moonraker_config and not args.organize_config:
+        parser.error('--moonraker-config requires --organize-config')
     try:update(args.check,args.upgrade_nozzle_limits,args.configure_nozzles,
                args.configure_leveling,args.configure_jam,args.configure_filament,args.configure_fluidd,
-               args.fluidd_root,args.fluidd_zip)
+               args.fluidd_root,args.fluidd_zip,args.organize_config,args.moonraker_config)
     except (OSError,ValueError,AssertionError,configparser.Error,subprocess.SubprocessError) as exc:
         raise SystemExit('UPDATE FAILED: '+str(exc))
 

@@ -39,7 +39,7 @@ class OrangePiInstallerCLITests(unittest.TestCase):
             with self.subTest(args=args), patch.object(sys, 'argv', ['install-orange-pi.py', *args]), \
                     patch.object(update, 'update') as install:
                 update.main()
-                install.assert_called_once_with(*expected, False, None, None)
+                install.assert_called_once_with(*expected, False, None, None, False, None)
 
 
 class OrangePiUpdateTests(unittest.TestCase):

@@ -409,9 +409,10 @@ class ZortraxMenuService:
                 ('Back', ('close', {})), ('Currently ' + ('on' if current else 'off'), None),
                 ('Enable', ('display_save', {'ENABLED': 1})),
                 ('Disable', ('display_save', {'ENABLED': 0}))])
-        settings = {'oled_brightness': ('OLED brightness', 'LEVEL', 'oled_level', 16, 16, ''),
-                    'oled_dim': ('OLED dim time', 'DIM', 'dim_min', 5, 60, ' min'),
-                    'oled_sleep': ('OLED sleep time', 'SLEEP', 'sleep_min', 10, 60, ' min')}
+        dim, sleep = oled.timer_preferences(values)
+        settings = {'oled_brightness': ('OLED brightness', 'LEVEL', 'oled_level', oled.configured_brightness, 16, ''),
+                    'oled_dim': ('OLED dim time', 'DIM', 'dim_min', dim, 60, ' min'),
+                    'oled_sleep': ('OLED sleep time', 'SLEEP', 'sleep_min', sleep, 60, ' min')}
         title, option, key, default, high, unit = settings[action]
         value = values.get(key, default) if draft is None else draft
         return self._set_view('choice', title, [('Back', ('close', {})),

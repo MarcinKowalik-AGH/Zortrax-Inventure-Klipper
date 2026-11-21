@@ -176,25 +176,38 @@ class OledStream:
         self.pending_op=None
         self.display_mode='unknown';self.requested_mode='awake';self._mode_target=None
         self.awake_level=15
+        self.fade_step=16
+        self.display_contrast=159
+        self._contrast_target=159
+        self._wake_frames=None
         self.display_level=15
         self._level_target=15
 
     def set_display_mode(self,mode):
         if mode not in ('awake','dim','off'):
             raise ValueError('Invalid OLED display mode')
+        if self.requested_mode == 'off' and mode != 'off':
+            self._wake_frames = self.completed_frames
         self.requested_mode=mode
 
     def needs_mode_update(self):
-        return self.display_mode != self.requested_mode or (
-            self.requested_mode == 'awake' and self.display_level != self.awake_level)
+        if (self.display_mode == 'off' and self.requested_mode != 'off'
+                and self.completed_frames == self._wake_frames and self.previous != self.latest):
+            return False  # Send and acknowledge the new visible frame before DISPLAY ON.
+        if self.requested_mode != self.display_mode:
+            return True
+        return (self.requested_mode != 'off' and self.display_contrast !=
+                panel_contrast(self.requested_mode, self.awake_level, self.fade_step))
 
     def begin_mode_update(self, fast=False):
         self._mode_target = self.requested_mode
         self._level_target = self.awake_level
-        return iter(mode_operations(self.display_mode, self._mode_target, fast, self._level_target))
+        self._contrast_target = panel_contrast(self._mode_target, self._level_target, self.fade_step)
+        return iter(mode_operations(self.display_mode, self._mode_target, fast, self._level_target, self.fade_step))
 
     def finish_mode_update(self):
         self.display_mode = self._mode_target
+        self.display_contrast = self._contrast_target
         self.display_level = self._level_target
         self._mode_target = None
 
@@ -221,6 +234,8 @@ class OledStream:
         self.urgent_refresh=False
         self.display_mode='unknown';self._mode_target=None
         self.display_level=15
+        self.display_contrast=159
+        self._wake_frames=None
         self.operations=iter(init_operations(self.target))
         self.pending=None;self.pending_op=None;self.retry_at=None;self.retry_count=0
         self.ready_after=now;self.next_frame=now
@@ -313,12 +328,18 @@ class OledStream:
         self.sent+=1;return self.pending_op
 
 
-def mode_operations(previous,requested,fast=False,awake_level=15):
+def panel_contrast(mode, awake_level, fade_step=16):
+    maximum = 32 if mode == 'dim' else 159
+    value = max(1, round(maximum * (awake_level + 1) / 16))
+    return 1 + round((value - 1) * (fade_step - 1) / 15) if mode == 'dim' else value
+
+
+def mode_operations(previous,requested,fast=False,awake_level=15,fade_step=16):
     emit=fast_command if fast else command
     if requested=='off':
         yield from emit(0xae)
     else:
-        yield from emit(0xc7,bytes([min(1, awake_level) if requested=='dim' else awake_level]))
+        yield from emit(0xc1, bytes([panel_contrast(requested, awake_level, fade_step)]))
         if previous=='off':yield from emit(0xaf)
 
 

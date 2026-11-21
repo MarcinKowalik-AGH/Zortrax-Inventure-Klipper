@@ -69,7 +69,7 @@ def benchmark():
         pages.append(dict(language=language,page=page,transitions=len(subset),
             fixed_dirty_regions_uart_bytes=sum(r['fixed_dirty_regions']['uart_bytes'] for r in subset),
             encoded_window_plan_uart_bytes=sum(r['encoded_window_plan']['uart_bytes'] for r in subset)))
-    return dict(model='OFFLINE_UART_COST_ONLY',host_revision='RC8-CONTROL-R7-THERMAL-OLED-R33.1',
+    return dict(model='OFFLINE_UART_COST_ONLY',host_revision=json.loads((ROOT/'orange_pi/RELEASE.json').read_text())['host_revision'],
         reference='same reference OLED pixels, same single-pass PackBits; vary only window planning',
         m300_source_commit='6c359c8b301bf8dd3c0e3e4ec69382c6be324cad',
         mcu_dictionary_source_sha256=dictionary['source_sha256'],
