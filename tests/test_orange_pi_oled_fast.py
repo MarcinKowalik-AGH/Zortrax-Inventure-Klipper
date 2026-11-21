@@ -438,7 +438,7 @@ class AdapterTests(unittest.TestCase):
         p.reactor.now=10.002;p.reactor.flush()
         self.assertLessEqual(len(x._fast_tx),4)
         self.assertGreaterEqual(x.stream.recovered_acks,3)
-        self.assertEqual(x.timer.when,p.reactor.NOW)
+        self.assertEqual(x.timer.when,x._next_tick(p.reactor.now))
 
     def test_shutdown_cancels_pixels_and_disables_timer(self):
         p,x=oled();x._shutdown()

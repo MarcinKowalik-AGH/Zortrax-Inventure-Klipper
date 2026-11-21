@@ -53,6 +53,16 @@ def check_loaded(printer, config):
     assert len(board.shared_adc_sensors[2]) == len(board.shared_adc_sensors[3]) == 1
     assert 'inventure_chamber chamber' in heaters.available_sensors
     assert printer.lookup_object('inventure_oled_preview')
+    from extras.inventure_oled_graphics import status_footer
+    native = printer.lookup_object('inventure_oled').native_status
+    display = printer.lookup_object('display_status')
+    now = printer.get_reactor().monotonic()
+    for message in ('Ready', 'The selected nozzle is ready for the next calibration point.'):
+        display.message = None if message == 'Ready' else message
+        wire = native.render(now, board)
+        assert wire[48*128:] == status_footer(message)
+        assert wire[:48*128] == native._source_wire[:48*128] and any(wire[:48*128])
+    display.message = None
     for _, fan in printer.lookup_objects('heater_fan'):
         fan.handle_ready()
         assert fan.heaters == ([t0,t1,left,right] if fan.fan.mcu_fan.name in ('F2','F3') else [t0,t1])

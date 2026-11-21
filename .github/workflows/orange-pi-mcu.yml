@@ -13,7 +13,7 @@ on:
       - 'config/INVENTURE_CHAMBER.cfg'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_OLED_R32.md'
+      - 'docs/INVENTURE_OLED_R33.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -56,16 +56,16 @@ jobs:
         with:
           node-version: '24.22.3'
       - name: Build the Fluidd dashboard
-        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R32.zip"
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33.zip"
       - name: Test the compiled dashboard in Chrome
         run: |
           python -m pip install 'playwright==1.56.0'
           python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R32.zip"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_OLED_R32
+          name: INVENTURE_OLED_R33
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -76,7 +76,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-oled-r32-release
+      group: inventure-oled-r33-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_OLED_R32
+          name: INVENTURE_OLED_R33
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -99,8 +99,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R32 · Orange Pi OLED navigation and the M300 Fluidd layout" \
-              --notes-file docs/INVENTURE_OLED_R32.md
+              --title "Inventure R33 · Compact status text, cached Inventure icons and OLED timing" \
+              --notes-file docs/INVENTURE_OLED_R33.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

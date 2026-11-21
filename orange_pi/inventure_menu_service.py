@@ -9,6 +9,7 @@ import math
 import textwrap
 from pathlib import Path
 
+from .inventure_oem_menu import action_icon
 from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, MODEL_MATERIALS,
     NATIVE_ACTIONS, READ_ACTIONS, SERVICE_ACTIONS, SUPPORT_MATERIALS,
     MenuError, SettingsStore, View, source_identity)
@@ -173,7 +174,10 @@ class ZortraxMenuService:
                 options.append(('%s source: %s' % (tool, current), ('jam_source_menu', dict(tool=tool))))
         if run.get('message'):
             options.extend((line, None) for line in textwrap.wrap(run['message'], 25))
-        return self._set_view('choice', 'Filament recovery', options)
+        view = self._set_view('choice', 'Filament recovery', options, icon='activity:filament_jam')
+        view.option_icons = tuple('activity:filament_runout' if command and command[1].get('ACTION') == 'MISSING'
+                                  else view.icon for _, command in options)
+        return view
 
     def _close_menu_dialog(self):
         if self.menu_dialog_token is not None:
@@ -284,9 +288,11 @@ class ZortraxMenuService:
             self._xy_available(),xy.get('run_id'),xy.get('phase'),lines.get('X'),lines.get('Y'),repr(xy.get('candidate')),
             getattr(pre,'epoch',None),getattr(getattr(pre,'ticket',None),'token',None),
             tuple(getattr(self.board,'fan_manual_last',{}).get(k) for k in ('run','channel','phase')))
-    def _set_view(self,kind,title,options,*,data=None,binding=True):
+    def _set_view(self,kind,title,options,*,data=None,binding=True,icon=None,animated=False):
         self.view=View(self.reactor.monotonic(),kind,title,options,
             binding=self._binding() if binding else None,data=data)
+        self.view.icon = icon or action_icon(self.view.data.get('action'))
+        self.view.animated = animated
         # Retain the actual file object for this view; an id() reused after
         # close/reopen of the same filename cannot resurrect old authority.
         self.view.job_reference=getattr(self._obj('virtual_sdcard'),'current_file',None)
@@ -298,6 +304,7 @@ class ZortraxMenuService:
         if oled is not None:
             oled.message=None;oled.render_at=0.;oled._user_refresh_pending=True
             if hasattr(oled,'_display_activity'):oled._display_activity(self.reactor.monotonic())
+            if hasattr(oled,'_wake'):oled._wake()
     def _info(self,title,reason,**data):
         lines=[str(reason)[i:i+24] for i in range(0,len(str(reason)),24)] or ['']
         return self._set_view('info',title,[('Back',('close',{}))]+[(x,None) for x in lines],data=dict(data,reason=str(reason)))
@@ -367,9 +374,10 @@ class ZortraxMenuService:
         oled = self._obj('inventure_oled')
         navigation = oled.oem_menu
         page = navigation.view()
-        options = [(node.label, ('operator_item', {'index': i}))
-                   for i, node in enumerate(navigation.items())]
+        items = navigation.items()
+        options = [(node.label, ('operator_item', {'index': i})) for i, node in enumerate(items)]
         view = self._set_view('choice', page['title'], options)
+        view.option_icons = tuple(navigation.item_icon(node) for node in items)
         view.selected = navigation.selected
         self.menu_dialog_requested = True
         self._sync_menu_dialog()
@@ -411,7 +419,7 @@ class ZortraxMenuService:
             ('Decrease', ('display_edit', {'action': action, 'draft': max(1, value-1)})),
             ('Increase', ('display_edit', {'action': action, 'draft': min(high, value+1)})),
             ('Save', ('display_save', {option: value}))],
-            data={'oled_setting': option, 'value': value, 'max': high})
+            data={'oled_setting': option, 'value': value, 'max': high}, icon='activity:oled_brightness')
 
     def open(self,action,**params):
         if self.stopped:raise MenuError('Menu lifecycle ended; reconnect first')
@@ -566,7 +574,7 @@ class ZortraxMenuService:
         if name.lower().endswith('.json'):
             choices.append(('Check manifest (P15)',('request',dict(action='check_model',name=name,identity=identity))))
         else:choices.append(('Needs P15 manifest',None))
-        return self._set_view('preview',Path(name).name,choices,data=identity)
+        return self._set_view('preview',Path(name).name,choices,data=identity, icon='activity:sd_read')
 
     def _fan_page(self,channel):
         status=getattr(self.board,'fan_manual_last',{})
@@ -574,7 +582,8 @@ class ZortraxMenuService:
             ('Tach ON/OFF %s/%s'%(status.get('tach_on_edges','--'),status.get('tach_off_edges','--')),None)]
         return self._set_view('fan','Fan F%d'%channel,[('Back / end test',('fan_end',{}))]+[
             (label,('request',dict(action='fan_'+verb,channel=channel))) for label,verb in
-            [('Cold printer: ON','on'),('OFF','off'),('Observed PASS','pass'),('Observed FAIL','fail'),('Cancel test','cancel')]]+readings,data=dict(channel=channel,status=status))
+            [('Cold printer: ON','on'),('OFF','off'),('Observed PASS','pass'),('Observed FAIL','fail'),('Cancel test','cancel')]]+readings,data=dict(channel=channel,status=status),
+            icon={0:'activity:fan_lower',1:'activity:fan_upper'}.get(channel))
 
     def _end_fan(self):
         owned=self.fan_session;self.fan_session=None
@@ -854,7 +863,9 @@ class ZortraxMenuService:
                 if detail.get('token'):options.append(('Start checked model',('request',dict(action='print_model',owner_token=detail['token']))))
                 elif not detail.get('busy'):
                     self.active=None;self.last=detail;return self._info('File check ended',phase,result=detail)
-        key=(backend,phase,tuple((x[0],repr(x[1])) for x in options),self._binding())
+        modules = (detail.get('factory') or {}).get('module_stack') or ()
+        cleaning = 'clean' in modules
+        key=(backend,phase,cleaning,tuple((x[0],repr(x[1])) for x in options),self._binding())
         if key!=self.last_native_key:
             self.last_native_key=key
             title = (LEVEL_PHASE_TITLES[phase] if backend == 'platform_level' else
@@ -863,7 +874,19 @@ class ZortraxMenuService:
                 title = 'Please wait'
             if backend == 'jam':
                 title = self._jam_title(detail)
-            self._set_view('running',title,options,data=dict(backend=backend,phase=phase))
+            stage = str(phase).upper()
+            icon, animated = None, False
+            if cleaning or '_WIPE_' in stage or stage in ('CLEAN', 'WIPE', 'CLEANING'):
+                icon, animated = 'activity:clean_nozzle', True
+            elif stage in ('HEAT', 'HEATING', 'REHEATING', 'WAIT_HEAT', 'XYZ_HEAT'):
+                icon, animated = 'activity:heat_nozzle', True
+            elif stage.startswith('XYZ_COOL_') or stage in ('COOL', 'COOLING', 'COOLDOWN', 'WAIT_COOL'):
+                icon, animated = 'activity:cooling', True
+            elif backend == 'jam':
+                missing = detail.get('reason') in ('RUNOUT','MATERIAL_MISSING')
+                icon = 'activity:filament_runout' if missing else 'activity:filament_jam'
+            self._set_view('running',title,options,data=dict(backend=backend,phase=phase),
+                           icon=icon or action_icon(active.get('action')),animated=animated)
         return self.view
 
     def _cancel_active(self):

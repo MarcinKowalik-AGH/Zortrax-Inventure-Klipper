@@ -9,7 +9,8 @@ import json
 import logging
 import math
 import secrets
-from .inventure_oled_render import Frame, KlipperStatus
+from .inventure_oled_render import Frame
+from .inventure_oled_graphics import KlipperStatus, activity_index, menu_wire
 from . import inventure_oled_render as panel_render
 from .inventure_oem_menu import MENU, OEMMenu
 from .inventure_oled_uifast_transport import FastOledStream, OledStream
@@ -104,6 +105,9 @@ class InventureOLED:
         self.thermal_test_hold=False
         self._ack_pump_active=False;self._ack_pump_deferrals=0
         self._work_at=0.;self._button_sample_at=None;self._stale_button_events=0
+        self._navigation_event = self._navigation_frame = None
+        self._input_to_render_ms = collections.deque(maxlen=128)
+        self._input_to_ack_ms = collections.deque(maxlen=128)
         self._tick_count=0;self._render_wire=None
         self.mcu.register_config_callback(self._build_config)
         self.printer.register_event_handler('klippy:ready',self._ready)
@@ -195,6 +199,7 @@ class InventureOLED:
         self.stream.set_display_mode('awake')
         self.stream.start(now);self.recover_at=None;self.confirmed_since=None
         self._fast_tx.clear()
+        self._navigation_event = self._navigation_frame = None
         self._oled_session_sent=self.stream.sent
         self._oled_session_acked=self.stream.acked
         self.recovery_state='initializing' if reason=='initial_start' else 'recovering'
@@ -271,12 +276,16 @@ class InventureOLED:
                             self._ack_pump_deferrals+=1
                             self.reactor.update_timer(self.timer,self.reactor.NOW)
                         else:
+                            deferrals=self._ack_pump_deferrals
                             self._ack_pump_active=True
                             try:
                                 if getattr(self,'fast',False):self._pump(now)
                                 else:self._send_one(now)
                             finally:self._ack_pump_active=False
-                        self.reactor.update_timer(self.timer,self.reactor.NOW)
+                            if self.fast and self.stream.enabled and self._ack_pump_deferrals==deferrals:
+                                self.reactor.update_timer(self.timer,self._next_tick(now))
+                            else:
+                                self.reactor.update_timer(self.timer,self.reactor.NOW)
         self.reactor.register_async_callback(deliver)
 
     def _fast_state_response(self,params):
@@ -354,6 +363,22 @@ class InventureOLED:
         for _ in range(4 if self.fast else 1):
             if not self._send_one(now):break
         self._publish_input_receipt()
+        pending = self._navigation_frame
+        if pending is not None:
+            generation, wire, received, previous_count = pending
+            if generation != self.stream.generation or not self.stream.enabled:
+                self._navigation_frame = None
+            elif self.stream.completed_frames > previous_count and wire == self.stream.last_frame_bytes:
+                self._input_to_ack_ms.append(1000. * (self.stream.last_complete_at - received))
+                self._navigation_frame = None
+            elif wire != self.stream.latest and wire != self.stream.target:
+                self._navigation_frame = None
+
+    @staticmethod
+    def _timing_summary(samples):
+        return {'samples': len(samples),
+                'last': round(samples[-1], 2) if samples else None,
+                'p95': round(sorted(samples)[math.ceil(.95 * len(samples)) - 1], 2) if samples else None}
 
     def _active_work(self,now):
         if getattr(self.board,'load_test_context',None) is not None:return True
@@ -635,7 +660,8 @@ class InventureOLED:
         if self.oem_menu is not None and not measuring and not self.message:
             if procedure_view is not None:
                 menu_view=procedure_view
-                snapshot=('zortrax',menu_view['page'],menu_view['generation'],menu_view['selected'])
+                snapshot=('zortrax',menu_view['page'],menu_view['generation'],menu_view['selected'],
+                          menu_view.get('icon'),activity_index(menu_view, now))
             elif self.oem_display_mode=='status':
                 native_wire=self.native_status.render(now,self.board)
                 snapshot=('status',native_wire)
@@ -648,7 +674,7 @@ class InventureOLED:
                 self._render_cache_hits+=1
                 self._user_refresh_pending=False
                 return
-        frame=Frame() if native_wire is None else None
+        frame=Frame() if native_wire is None and menu_view is None else None
         if native_wire is not None:
             wire=native_wire
         elif measuring:
@@ -659,9 +685,10 @@ class InventureOLED:
         elif self.message:
             frame.status(self.message[0],self.message[1])
         elif menu_view is not None:
-            frame.oem_menu(menu_view)
+            wire=menu_wire(menu_view, index=activity_index(menu_view, now))
         elif self.oem_menu is not None:
-            frame.oem_menu(self.oem_menu.view())
+            wire=menu_wire(self.oem_menu.view())
+            frame=None
         else:
             title,rows=self._rows(now)
             self.selection=max(0,min(self.selection,len(rows)-1))
@@ -682,6 +709,12 @@ class InventureOLED:
         self._oem_render_cache=snapshot
         self._user_refresh_pending=False
         self._frame_receipt=self._input_receipt()
+        event, self._navigation_event = self._navigation_event, None
+        if event is not None and event[0] == self._frame_receipt:
+            rendered = self.reactor.monotonic()
+            if rendered >= event[1]:
+                self._input_to_render_ms.append(1000. * (rendered - event[1]))
+                self._navigation_frame = (self.stream.generation, wire, event[1], self.stream.completed_frames)
         self._publish_input_receipt()
         self.preview.observe(now, (self._rendered_screen, self._frame_receipt, self.sleep_phase), wire)
 
@@ -876,7 +909,11 @@ class InventureOLED:
                 self.pressed_at[bit]=now
                 if bit<2:
                     if now-self.last_nav_press>.030:
+                        previous_view = self._input_receipt()
                         self._navigate(-1 if bit==0 else 1,now);self.last_nav_press=now
+                        new_view = self._input_receipt()
+                        if new_view != previous_view:
+                            self._navigation_event = (new_view, received)
                     self.repeat_at[bit]=now+.300
                 elif bit==2:
                     if now-self.last_ok_press>.200:
@@ -1089,6 +1126,9 @@ class InventureOLED:
                     'recovered_acks':self.stream.recovered_acks if self.fast else 0,
                     'frame_p95_ms':(sorted(self.stream.frame_samples)[int(.95*(len(self.stream.frame_samples)-1))]
                         if self.fast and self.stream.frame_samples else None),
+                    'button_to_host_frame_ms':self._timing_summary(self._input_to_render_ms),
+                    'button_to_mcu_frame_ack_ms':self._timing_summary(self._input_to_ack_ms),
+                    'status_footer_font':'5x7',
                     'status_layout':KlipperStatus.layout,
                     'chunk_interval_s':self.interval,
                     'refresh_interval_s':self.stream.refresh_interval,

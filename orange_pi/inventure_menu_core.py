@@ -52,6 +52,9 @@ class View:
         self.kind=kind;self.title=title;self.options=tuple(options);self.selected=0
         self.binding=binding;self.data=dict(data or {});self.used=False;self.generation=0
         self.released=False
+        self.option_icons=()
+        self.icon=None
+        self.animated=False
 
     def move(self, delta):
         if delta not in (-1,1):raise MenuError('Direction must be -1 or 1')
@@ -70,7 +73,9 @@ class View:
         window = max(1, self.selected - 3) if pinned else max(0, self.selected - 4)
         return dict(page='zortrax:'+self.token,title=self.title,
             labels=[str(option[0]) for option in self.options],selected=self.selected,
-            window=window,icon=None,notice=None,language='en',generation=self.generation)
+            window=window,icon=self.option_icons[self.selected] if self.option_icons else self.icon,
+            animated=self.animated,
+            notice=None,language='en',generation=self.generation)
 
     def status(self):
         return dict(token=self.token,kind=self.kind,title=self.title,

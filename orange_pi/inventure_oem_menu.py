@@ -169,6 +169,21 @@ _BENCH_BRANCHES = {
 }
 
 
+# Prepared M300 artwork for the same operations on Inventure.
+_ACTION_ICONS = {
+    'heat': 'heat_nozzle', 'heat_t0': 'heat_nozzle', 'heat_t1': 'heat_nozzle',
+    'thermal_info': 'heat_nozzle', 'clean_t0': 'clean_nozzle', 'clean_t1': 'clean_nozzle',
+    'filament_jam': 'filament_jam', 'oled_brightness': 'oled_brightness',
+    'oled_dim': 'oled_brightness', 'oled_sleep': 'oled_brightness', 'oled_timers': 'oled_brightness',
+    'uart_info': 'link_status', 'sd_browser': 'sd_read',
+}
+
+
+def action_icon(action):
+    name = _ACTION_ICONS.get(action)
+    return 'activity:' + name if name else None
+
+
 class OEMMenu:
     """Navigation and explicit dispatch results for attended bench choices."""
     def __init__(self, language='en', root_back_to_status=True, root_page='root', bench=False, operational=False):
@@ -198,15 +213,15 @@ class OEMMenu:
         if self.page==self.root_page and not self.root_back_to_status:return list(nodes)
         return [Item('Back',action='back')]+list(nodes)
 
+    def item_icon(self, item):
+        if item.icon and (self.operational or self.page not in ('root', 'launcher')):
+            return item.icon
+        return (action_icon(item.action) if self.operational else None) or MENU[self.page][1]
+
     def view(self):
         items=self.items();selected=min(self.selected,max(0,len(items)-1))
         if selected!=self.selected:self.selected=selected
-        # In a fast root menu, do not redraw a 50x50 bitmap for every UP/DOWN.
-        # This is the largest source of 250000-baud navigation latency.
-        # Keep the OEM category icon on a submenu page instead.
-        icon=MENU[self.page][1]
-        if self.page not in ('root','launcher') and items and items[selected].icon:
-            icon=items[selected].icon
+        icon=self.item_icon(items[selected]) if items else None
         return {'page':self.page,'title':MENU[self.page][0],
                 'labels':[item.label for item in items],
                 'selected':self.selected,'window':self.window,

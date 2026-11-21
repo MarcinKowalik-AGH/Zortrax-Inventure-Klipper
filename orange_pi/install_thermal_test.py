@@ -73,7 +73,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
     extra_modules=meta.get('extra_modules',{})
     allowed_extras={'inventure_menu_core.py','inventure_menu_service.py','inventure_oem_menu.py',
                     'inventure_oled_uifast_transport.py','inventure_z_home.py',
-                    'inventure_chamber.py','inventure_oled_preview.py',
+                    'inventure_chamber.py','inventure_oled_preview.py','inventure_oled_graphics.py','inventure_activity_sprites.json',
                     'inventure_native_z.py','inventure_nozzle_xy.py','inventure_nozzle_xyz.py',
                     'inventure_platform_level.py','inventure_leveling_transport.py','inventure_fluidd.py',
                     'inventure_filament_jam.py','inventure_jam_motion.py','inventure_jam_monitor.py',
@@ -82,6 +82,11 @@ def install(target,apply=False,rollback=None,service='klipper'):
         raise ValueError('Unexpected optional module manifest')
     names.extend(extra_modules);optional.update(extra_modules)
     def dest_path(name):return target/'klippy/serialhdl.py' if name=='serialhdl.py' else extras/name
+    def validate_payload(name, data):
+        if name == 'inventure_activity_sprites.json':
+            json.loads(data)
+        else:
+            compile(data, str(dest_path(name)), 'exec')
     def digest(data):return None if data is None else sha(data)
     incoming={name:source_path(ROOT, name).read_bytes() for name in names}
     expected={'inventure_mcu.py':meta['module_sha256'],
@@ -118,7 +123,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
         if not dest.is_file() and name not in optional:
             raise ValueError('Missing verified Inventure module: '+str(dest))
         if sha(incoming[name])!=expected[name]:raise ValueError('Package module checksum differs: '+name)
-        compile(incoming[name],str(dest),'exec')
+        validate_payload(name, incoming[name])
         before[name]=dest.read_bytes() if dest.is_file() else None
         modes[name]=dest.stat().st_mode&0o777 if dest.is_file() else 0o644
         if before[name] is not None and sha(before[name]) not in accepted[name]:
@@ -150,7 +155,7 @@ def install(target,apply=False,rollback=None,service='klipper'):
             if data is None and name not in optional:raise ValueError('Missing rollback source: '+name)
             if data is not None and sha(data) not in accepted[name]:raise ValueError('Unexpected rollback source: '+name)
             if entry is not None and digest(data)!=entry.get('sha256'):raise ValueError('Backup checksum differs: '+name)
-            if data is not None:compile(data,str(dest_path(name)),'exec')
+            if data is not None:validate_payload(name, data)
             restore[name]=data
         incoming=restore
     elif all(digest(before[name])==expected[name] for name in names):

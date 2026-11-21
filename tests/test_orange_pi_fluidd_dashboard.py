@@ -134,6 +134,8 @@ class DashboardRouteTests(unittest.TestCase):
         lines = []
         board.gcode.register_output_handler(lines.append)
         menu.open_operator_page()
+        menu.view.move(1)
+        self.assertEqual(menu.view.render()['icon'], 'models')
         token = menu.view.token
         labels = menu.view.render()['labels']
         self.assertIn('Material', labels)
@@ -142,6 +144,7 @@ class DashboardRouteTests(unittest.TestCase):
             menu.choose(token, index=0)
         menu.choose(menu.view.token, index=menu.view.render()['labels'].index('OLED brightness'))
         token = menu.view.token
+        self.assertEqual(menu.view.render()['icon'], 'activity:oled_brightness')
         self.assertIn('// action:prompt_text INVENTURE_OLED_EDITOR LEVEL 16 '+token, lines)
         cmd = service_module.Command(menu, TOKEN=token, VALUE=7)
         menu.save_display_value(cmd)

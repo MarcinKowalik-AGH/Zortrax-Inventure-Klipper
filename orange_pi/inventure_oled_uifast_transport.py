@@ -48,29 +48,30 @@ def frame_operations(wire, first_row=0, last_row=63, first_col=0, last_col=63):
         yield ('write',(1,packed[offset:offset+32]),0.0)
 
 
-def diff_window(before,after):
-    """Return minimal rectangular changed area, aligned to 4-pixel columns.
+def _col_bounds(bits):
+    # In little-endian row order each group of 16 bits is one SSD1322 column.
+    return ((bits & -bits).bit_length() - 1) // 16, (bits.bit_length() - 1) // 16
 
-    None means no change. Input is SSD1322 row-major packed 4bpp, 8192B.
-    The bounding rectangle may contain some unchanged pixels, which is safe;
-    unlike the old implementation it does not resend the entire row width.
-    """
-    if len(before)!=8192 or len(after)!=8192:
+
+def _changes(before, after):
+    if len(before) != 8192 or len(after) != 8192:
         raise ValueError('Invalid OLED buffer for diff')
-    lo_y=64;hi_y=-1;lo_col=64;hi_col=-1
+    rows = []
+    columns = 0
     for y in range(64):
-        start=y*128
-        if before[start:start+128]==after[start:start+128]:
-            continue
-        lo_y=min(lo_y,y);hi_y=y
-        for c in range(64):
-            i=start+2*c
-            if before[i:i+2]!=after[i:i+2]:
-                lo_col=min(lo_col,c);hi_col=max(hi_col,c)
-    if hi_y<0:
-        return None
-    return (lo_y,hi_y,lo_col,hi_col)
+        start = y * 128
+        old, new = before[start:start + 128], after[start:start + 128]
+        if old != new:
+            bits = int.from_bytes(old, 'little') ^ int.from_bytes(new, 'little')
+            rows.append((y, bits))
+            columns |= bits
+    bounding = (rows[0][0], rows[-1][0], *_col_bounds(columns)) if rows else None
+    return bounding, rows
 
+
+def diff_window(before, after):
+    """Smallest changed rectangle, aligned to four physical pixels."""
+    return _changes(before, after)[0]
 
 
 def diff_regions(before, after, max_regions=16):
@@ -85,13 +86,13 @@ def diff_regions(before, after, max_regions=16):
     """
     if type(max_regions) is not int or not 1<=max_regions<=64:
         raise ValueError('Invalid maximum OLED dirty region count')
-    bounding=diff_window(before, after)
+    bounding, rows = _changes(before, after)
     if bounding is None:
         return ()
-    return _dirty_regions(before,after,bounding,max_regions)
+    return _dirty_regions(rows, bounding, max_regions)
 
 
-def _dirty_regions(before,after,bounding,max_regions):
+def _dirty_regions(rows, bounding, max_regions):
     def cost(w):
         y0,y1,c0,c1=w
         size=(y1-y0+1)*(c1-c0+1)*2
@@ -101,14 +102,12 @@ def _dirty_regions(before,after,bounding,max_regions):
     if y0//8==y1//8 and c0//8==c1//8:
         return (bounding,)
     # 8 column-address groups (32 visible px) by 8 row tiles; 64 tiles.
-    tile_dirty=[[False]*8 for _ in range(8)]
-    for ty in range(8):
-        for tc in range(8):
-            for y in range(ty*8,ty*8+8):
-                off=y*128+tc*16
-                if before[off:off+16]!=after[off:off+16]:
-                    tile_dirty[ty][tc]=True
-                    break
+    tile_bits = [0] * 8
+    for y, bits in rows:
+        tile_bits[y // 8] |= bits
+    tile_mask = (1 << 128) - 1
+    tile_dirty = [[(bits >> (col * 128)) & tile_mask for col in range(8)]
+                  for bits in tile_bits]
     # Coalesce horizontal runs on each tile row, then vertically merge runs
     # sharing precisely the same column span. No windows overlap.
     rects=[]
@@ -278,12 +277,12 @@ class OledStream:
             if self.previous is None:
                 window=(0,63,0,63)
             else:
-                window=diff_window(self.previous,self.target)
+                window, changed_rows = _changes(self.previous, self.target)
             if window is None:
                 self.urgent_refresh=False
                 return None
             self.window=window
-            self.windows=_dirty_regions(self.previous,self.target,window,16) if self.previous is not None else (window,)
+            self.windows=_dirty_regions(changed_rows, window, 16) if self.previous is not None else (window,)
             self.operations=itertools.chain.from_iterable(
                 frame_operations(self.target,*region) for region in self.windows)
             self.phase='updating'
@@ -380,39 +379,44 @@ def fast_frame_operations(wire, first_row=0, last_row=63, first_col=0, last_col=
     yield from fast_blocks(packed)
 
 
-def _gap_plans(before, after, window):
-    """Try only the widest untouched band in each axis."""
-    y0, y1, c0, c1 = window
-    points = []
-    for row in range(y0, y1 + 1):
-        offset = row * 128
-        if before[offset:offset + 128] == after[offset:offset + 128]:
-            continue
-        for col in range(c0, c1 + 1):
-            i = offset + col * 2
-            if before[i:i + 2] != after[i:i + 2]:
-                points.append((row, col))
-
+def _gap_plans(rows, bounding):
+    """Try the widest untouched band in each axis without revisiting the frame."""
     def bounds(group):
-        ys, cols = zip(*group)
-        return min(ys), max(ys), min(cols), max(cols)
+        columns = 0
+        for _, bits in group:
+            columns |= bits
+        return group[0][0], group[-1][0], *_col_bounds(columns)
 
-    for axis in (0, 1):
-        occupied = sorted({p[axis] for p in points})
-        gaps = ((right - left, left) for left, right in zip(occupied, occupied[1:]))
-        width, cut = max(gaps, default=(0, 0))
-        if width > 1:
-            yield (bounds(p for p in points if p[axis] <= cut),
-                   bounds(p for p in points if p[axis] > cut))
+    def cut_at_gap(occupied):
+        width, cut = max(((b - a, a) for a, b in zip(occupied, occupied[1:])), default=(0, 0))
+        return cut if width > 1 else None
+
+    cut = cut_at_gap([y for y, _ in rows])
+    if cut is not None:
+        yield bounds([r for r in rows if r[0] <= cut]), bounds([r for r in rows if r[0] > cut])
+
+    columns = 0
+    for _, bits in rows:
+        columns |= bits
+    cut = cut_at_gap([col for col in range(bounding[2], bounding[3] + 1)
+                      if (columns >> (col * 16)) & 0xffff])
+    if cut is not None:
+        mask = (1 << (16 * (cut + 1))) - 1
+        yield (bounds([(y, bits & mask) for y, bits in rows if bits & mask]),
+               bounds([(y, bits & ~mask) for y, bits in rows if bits & ~mask]))
 
 
 def optimized_frame_operations(before, after, regions):
-    """Choose up to four encoded plans with the existing OLED ABI."""
     if not regions:
         return ()
-    bounding = diff_window(before, after)
+    bounding, rows = _changes(before, after)
+    return _encoded_plan(after, regions, bounding, rows)
+
+
+def _encoded_plan(after, regions, bounding, rows):
+    """Compare the encoded cost of each candidate using the same dirty map."""
     plans = dict.fromkeys(itertools.chain((regions, (bounding,)),
-                                         _gap_plans(before, after, bounding)))
+                                         _gap_plans(rows, bounding)))
     encoded = {}
 
     def operations(plan):
@@ -584,10 +588,10 @@ class FastOledStream(OledStream):
                 self.frame_started_at=now;self._frame_payload=self.payload_bytes
                 self.next_interactive=now+(self.work_interval if self.active_work
                                             else self.interactive_interval)
-                self.window_rect=diff_window(self.previous,self.target)
-                self.windows=diff_regions(self.previous,self.target)
+                self.window_rect, changed_rows = _changes(self.previous, self.target)
+                self.windows = _dirty_regions(changed_rows, self.window_rect, 16)
                 if self.optimize_windows and self.urgent_refresh and not self.active_work:
-                    self.operations=iter(optimized_frame_operations(self.previous,self.target,self.windows))
+                    self.operations=iter(_encoded_plan(self.target, self.windows, self.window_rect, changed_rows))
                     self.optimized_frames+=1
                 else:
                     self.operations=itertools.chain.from_iterable(
