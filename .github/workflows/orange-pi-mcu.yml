@@ -61,16 +61,16 @@ jobs:
         with:
           node-version: '24.22.3'
       - name: Build the Fluidd dashboard
-        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38.zip"
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_1.zip"
       - name: Test the compiled dashboard in Chrome
         run: |
           python -m pip install 'playwright==1.56.0'
           python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38.zip"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_1.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_HOMING_R38
+          name: INVENTURE_HOMING_R38_1
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -81,7 +81,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-homing-r38-release
+      group: inventure-homing-r38.1-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +89,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_HOMING_R38
+          name: INVENTURE_HOMING_R38_1
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -104,7 +104,7 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R38 / MCU R14 · Operator procedures and homing" \
+              --title "Inventure R38.1 / MCU R14 · Operator procedures and homing" \
               --notes-file docs/INVENTURE_HOMING_R38.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber

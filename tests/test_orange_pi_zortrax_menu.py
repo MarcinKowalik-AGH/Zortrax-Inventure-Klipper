@@ -181,6 +181,90 @@ class MenuCoreTests(unittest.TestCase):
 
 
 class MenuServiceTests(unittest.TestCase,MenuFixture):
+    def fan_fixture(self, mode=2):
+        board, menu = self.host()
+        board.allow_actuators = True
+        board.control_reply.update(mode=mode, armed=int(mode == 1))
+        board.printer.objects['toolhead'] = types.SimpleNamespace(wait_moves=lambda: None)
+        reply = dict(run=0, channel=255, phase=0, reject=0, reason=0, required=0, applied=0,
+                     on_edges=65535, off_edges=65535, pcb_adc=100, pcb_temp=30, passed=0, failed=0)
+        packets = []
+        def send(params):
+            action, channel = params
+            packets.append((action, channel))
+            if action == 1:
+                reply.update(run=reply['run']+1, phase=1, channel=channel, applied=1 << channel)
+            elif action:
+                reply.update(phase=action, applied=0)
+            return reply.copy()
+        board.commands['fan_manual'] = types.SimpleNamespace(send=send)
+        return board, menu, packets, reply
+
+    def test_installed_manual_fan_menu_starts_all_channels_at_idle_and_cancels(self):
+        for channel in range(6):
+            mode = channel % 3
+            with self.subTest(channel=channel, mode=mode):
+                board, menu, packets, reply = self.fan_fixture(mode)
+                menu.open('fan_test')
+                menu.choose(menu.view.token, index=channel+1)
+                self.assertEqual(menu.view.kind, 'fan')
+                menu.choose(menu.view.token, index=1)
+                self.assertEqual(packets, [])
+                menu.choose(menu.view.token, confirm=True)
+                self.assertEqual(packets, [(0,255),(1,channel)])
+                self.assertEqual(board.control_reply['mode'], 2 if mode else 0)
+                self.assertFalse(board.control_reply['armed'] or board.control_reply['latched'])
+                self.assertEqual(menu.fan_session['channel'], channel)
+                menu.choose(menu.view.token, index=5)
+                menu.choose(menu.view.token, confirm=True)
+                self.assertEqual(packets[-1], (5,255))
+                self.assertIsNone(menu.fan_session)
+
+    def test_fan_start_refuses_residual_heat_stale_input_active_cooling_and_pause(self):
+        for condition in ('hot T0','hot chamber','stale T1','cooling','paused','fault'):
+            with self.subTest(condition=condition):
+                board, menu, packets, reply = self.fan_fixture()
+                if condition.startswith('hot'):
+                    board.temperatures[0 if condition == 'hot T0' else 4] = 40.01
+                elif condition.startswith('stale'):
+                    board.adc_received[1] = board.reactor.monotonic()-1.
+                elif condition == 'cooling':
+                    reply['applied'] = 13
+                elif condition == 'fault':
+                    board.control_reply['fault'] = 1
+                else:
+                    board.printer.objects['print_stats'] = types.SimpleNamespace(get_status=lambda now: {'state':'paused'})
+                with self.assertRaises((RuntimeError, ValueError)):
+                    board.cmd_fan_manual(Command(ACTION='ON', CHANNEL=1, ACK='COLD'))
+                self.assertNotIn((1,1), packets)
+                if condition != 'cooling':
+                    self.assertEqual(board.device.packets, [])
+
+    def test_running_manual_fan_returns_to_cooling_if_a_sensor_rises_or_expires(self):
+        for condition in ('rise','stale'):
+            with self.subTest(condition=condition):
+                board, menu, packets, reply = self.fan_fixture(0)
+                board.cmd_fan_manual(Command(ACTION='ON', CHANNEL=2, ACK='COLD'))
+                if condition == 'rise':
+                    board.temperatures[1] = 45.
+                else:
+                    board.adc_received[2] = None
+                board._watch_manual_fan_cooling(board.reactor.monotonic())
+                self.assertEqual(packets[-1], (5,255))
+                self.assertEqual(board.fan_manual_last['phase'], 'aborted')
+
+    def test_fan_observation_and_cancel_use_the_active_channel(self):
+        for final in ('PASS','FAIL'):
+            with self.subTest(final=final):
+                board, menu, packets, reply = self.fan_fixture()
+                board.cmd_fan_manual(Command(ACTION='ON', CHANNEL=3, ACK='COLD'))
+                with self.assertRaisesRegex(RuntimeError, 'selected channel'):
+                    board.cmd_fan_manual(Command(ACTION='CANCEL', CHANNEL=2))
+                board.cmd_fan_manual(Command(ACTION='OFF', CHANNEL=3))
+                board.cmd_fan_manual(Command(ACTION=final, CHANNEL=3, ACK='OBSERVED'))
+                self.assertEqual(board.fan_manual_last['phase'], final.lower())
+                self.assertNotIn((5,255), packets)
+
     def test_loading_menu_and_opening_confirmation_cannot_start_hardware(self):
         h,s=self.host();self.assertEqual(h.device.packets,[])
         for action in ('select_t0','select_t1','purge_t0','manual_unload_t1','heat_t0'):

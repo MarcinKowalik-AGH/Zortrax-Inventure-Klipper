@@ -2,6 +2,37 @@
 from unittest.mock import patch
 
 
+def exercise_home_confirmation(gcode):
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    sys.path[:0] = [str(root), str(root/'tests')]
+    from test_orange_pi_native_z import NativeHomeSequenceTests
+
+    def extended(method):
+        return lambda cmd: method(gcode._get_extended_params(cmd))
+
+    for mode in ('OFF', 'SERVICE', 'NATIVE'):
+        rig = NativeHomeSequenceTests()
+        rig.setUp()
+        rig.model.native_mode = mode == 'NATIVE'
+        rig.model.inactive_mode = mode
+        menu, lines = rig.operator_menu()
+        handlers = dict(gcode.ready_gcode_handlers,
+                        INVENTURE_HOME_REQUEST=extended(rig.adapter.cmd_request_home),
+                        INVENTURE_ZORTRAX=extended(menu.cmd))
+        with patch.object(gcode, 'gcode_handlers', handlers), patch.object(gcode, 'is_printer_ready', True):
+            gcode.run_script_from_command('INVENTURE_HOME_ALL')
+            assert rig.model.calls == [] and rig.model.mode_requests == []
+            accept, = [line.split('|', 1)[1] for line in lines if 'Yes / Start|' in line]
+            gcode.run_script_from_command(accept)
+            assert menu.view.title == 'Home XYZ complete'
+            assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == ['Z','Y','X']
+            assert len([entry for entry in rig.model.calls if entry[0] == 'reference']) == 1
+            assert rig.model.get_position()[2] == rig.adapter.park_z
+    print('Home All via installed macro and emitted confirmation: OFF, SERVICE and NATIVE, simulated hardware')
+
+
 def audit_routes(printer):
     gcode = printer.lookup_object('gcode')
     handlers = gcode.ready_gcode_handlers
@@ -105,6 +136,7 @@ def audit_routes(printer):
     print('Operator routes:', len(routed), 'installed macros,',
           len({cmd for cmds in routed.values() for cmd in cmds}), 'distinct command targets')
     print('Idle template guards:', ', '.join(sorted(idle_blocks)))
+    exercise_home_confirmation(gcode)
     from extras.inventure_oem_menu import MENU, OEMMenu
     nav = OEMMenu('en', root_page='launcher', bench=True, operational=True)
     actions = set()

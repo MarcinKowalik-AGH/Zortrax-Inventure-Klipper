@@ -789,10 +789,11 @@ class ZortraxMenuService:
             self.active=dict(backend='filament',object=filament,job=filament.job,action=action)
         elif action in ('door_lock','door_unlock'):
             self._call(self.board,'cmd_door_policy',ENABLE=int(action=='door_lock'))
+        elif action=='fan_cancel':
+            return self._end_fan()
         elif action.startswith('fan_'):
             self._call(self.board,'cmd_fan_manual',CHANNEL=params.get('channel',0),ACTION=action[4:].upper(),ACK='COLD' if action=='fan_on' else 'OBSERVED')
             if action=='fan_on':self.fan_session=dict(run=self.board.fan_manual_last['run'],channel=params.get('channel',0))
-            if action=='fan_cancel':self.fan_session=None
         elif action in HOME_ACTIONS:
             from .inventure_z_home import Z_HOME_ACK
             axes = HOME_ACTIONS[action]

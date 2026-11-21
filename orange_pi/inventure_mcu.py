@@ -345,6 +345,7 @@ class InventureMCU:
         self.thermal_display_held = False
         self.heat_test_abi = 0
         self.fan_manual_last = {}
+        self.manual_fan_starting = False
         self.motor_test_abi = 0
         self.motor_test_last = {}
         self.motor_test_token = int(self.reactor.monotonic()*1000000) & 0xffffffff
@@ -762,6 +763,7 @@ class InventureMCU:
         self.commands['heartbeat'].send([])
         self.commands['query'].send([])
         self.commands['inputs'].send([])
+        self._watch_manual_fan_cooling(eventtime)
         if 'fans_batch' in self.commands:
             self.commands['fans_batch'].send([self.fan_group])
             self.fan_group=(self.fan_group+1)%3
@@ -1469,24 +1471,72 @@ class InventureMCU:
                             for i in (0,1,2,3,5))
             gcmd.respond_info('FAN DIAG 100%% MCU pin levels: '+levels)
 
-    def _require_cold_idle_fan_test(self, gcmd):
+    def _fan_cooling_guard(self, now):
+        # R14 control_cooling_mask uses these five inputs and a 40 C threshold.
+        for index, name in enumerate(self.ADC_NAMES[:5]):
+            temp, state = self.panel_temperature(index, now)
+            if state != 'valid' or temp is None or not math.isfinite(temp):
+                return 'Fan test requires a fresh valid temperature for ' + name
+            if temp > 40.:
+                return 'Wait for %s to cool to 40 C (currently %.1f C)' % (name, temp)
+
+    def _watch_manual_fan_cooling(self, now):
+        if getattr(self, 'fan_manual_last', {}).get('phase') != 'on':
+            return
+        reason = self._fan_cooling_guard(now)
+        if reason:
+            cmd = self.gcode.create_gcode_command('INVENTURE_FAN_MANUAL_CANCEL',
+                                                 'INVENTURE_FAN_MANUAL_CANCEL', {})
+            try:
+                self.cmd_fan_manual_cancel(cmd)
+            except Exception:
+                logging.exception('Could not confirm fan test cancellation')
+            else:
+                self.gcode.respond_info('Inventure fan test stopped: ' + reason)
+
+    def _require_cold_idle_fan_test(self, gcmd, manual=False):
         if gcmd.get('ACK', '') != 'COLD':
             raise gcmd.error('Confirm a cold printer and heaters OFF with ACK=COLD')
-        if self.allow_actuators:
+        if self.allow_actuators and not manual:
             raise gcmd.error('Fan diagnostic requires [inventure_mcu] allow_actuators: False')
-        sd=self.printer.lookup_object('virtual_sdcard',None)
-        stats=self.printer.lookup_object('print_stats',None)
-        if ((sd is not None and sd.is_active()) or
-                (stats is not None and stats.state in ('printing','paused'))):
-            raise gcmd.error('Fan diagnostic requires an idle printer')
+        from .inventure_fluidd import require_idle
+        try:
+            require_idle(self)
+        except ValueError as exc:
+            raise gcmd.error(str(exc)) from exc
         heaters=self.printer.lookup_object('heaters',None)
         if heaters is not None and any(h.target_temp or h.last_pwm_value for h in heaters.heaters.values()):
             raise gcmd.error('Fan diagnostic requires all heater targets and outputs OFF')
+        reason = self._fan_cooling_guard(self.reactor.monotonic())
+        if reason:
+            raise gcmd.error(reason)
+
+    def _prepare_manual_fan(self, gcmd):
+        self._require_cold_idle_fan_test(gcmd, manual=True)
+        if 'fan_manual' not in self.commands:
+            raise gcmd.error('Manual fan diagnostics require the fan-manual MCU ABI')
+        if self.allow_actuators or 'control' in self.commands:
+            try:
+                state = self._operator_service_preflight(manual_fan=True)
+                if state['mode'] == 'NATIVE':
+                    self._enter_operator_service(manual_fan=True)
+                    state = self._operator_service_preflight(manual_fan=True)
+                if (state['mode'] not in ('OFF','SERVICE') or state['active'] or state['armed']
+                        or state['fault'] or state['latched'] or state['reject']):
+                    raise ValueError('Fan test requires a healthy idle, unarmed MCU')
+            except ValueError as exc:
+                raise gcmd.error(str(exc)) from exc
+        snapshot = self._fan_manual(gcmd, 'STATUS', report=False)
+        if snapshot['phase'] in ('on', 'off'):
+            raise gcmd.error('Finish the active fan test first')
+        if snapshot['on']:
+            raise gcmd.error('Wait for the MCU automatic cooling cycle to finish')
+        self._require_cold_idle_fan_test(gcmd, manual=True)
     def cmd_fan_diag_start(self,gcmd):
         self._require_cold_idle_fan_test(gcmd)
         self._fan_diag_state(gcmd,1)
 
-    def _fan_manual(self, gcmd, action, channel=255):
+    def _fan_manual(self, gcmd, action, channel=255, report=True):
         query = self.commands.get('fan_manual')
         if query is None:
             raise gcmd.error('Manual fan diagnostics require the R6 MCU application')
@@ -1512,17 +1562,33 @@ class InventureMCU:
             'passed': channels(state['passed']), 'failed': channels(state['failed']),
         }
         self.fan_manual_last = result
-        gcmd.respond_info('V9_FAN_MANUAL ' + json.dumps(result, sort_keys=True))
+        if report:
+            gcmd.respond_info('V9_FAN_MANUAL ' + json.dumps(result, sort_keys=True))
         if reject:
             raise gcmd.error(FAN_MANUAL_ERRORS[reject])
+        return result
 
     def cmd_fan_manual(self, gcmd):
         channel = gcmd.get_int('CHANNEL', minval=0, maxval=5)
         action = gcmd.get('ACTION', '').upper()
+        if action == 'CANCEL':
+            snapshot = self._fan_manual(gcmd, 'STATUS', report=False)
+            if snapshot['channel'] != channel or snapshot['phase'] not in ('on', 'off'):
+                raise gcmd.error('No active fan test on the selected channel')
+            return self.cmd_fan_manual_cancel(gcmd)
         if action not in ('ON', 'OFF', 'PASS', 'FAIL'):
-            raise gcmd.error('Use ACTION=ON, OFF, PASS or FAIL')
+            raise gcmd.error('Use ACTION=ON, OFF, PASS, FAIL or CANCEL')
         if action == 'ON':
-            self._require_cold_idle_fan_test(gcmd)
+            if getattr(self, 'manual_fan_starting', False):
+                raise gcmd.error('A fan test is already starting')
+            self.manual_fan_starting = True
+            try:
+                self._prepare_manual_fan(gcmd)
+                if not self.manual_fan_starting:
+                    raise gcmd.error('Fan test cancelled before start')
+                return self._fan_manual(gcmd, action, channel)
+            finally:
+                self.manual_fan_starting = False
         if action in ('PASS', 'FAIL') and gcmd.get('ACK', '') != 'OBSERVED':
             raise gcmd.error('Confirm the visual observation with ACK=OBSERVED')
         self._fan_manual(gcmd, action, channel)
@@ -1531,6 +1597,7 @@ class InventureMCU:
         self._fan_manual(gcmd, 'STATUS')
 
     def cmd_fan_manual_cancel(self, gcmd):
+        self.manual_fan_starting = False
         self._fan_manual(gcmd, 'CANCEL')
 
     def cmd_fan_diag_stop(self,gcmd):
@@ -1914,6 +1981,10 @@ class InventureMCU:
         return self.control_token
 
     def _control_query(self, action=0, mode=0):
+        if action == 2:
+            self.manual_fan_starting = False
+        elif action == 1 and mode == CONTROL_MODES.index('NATIVE') and getattr(self, 'manual_fan_starting', False):
+            raise ValueError('A fan test is starting')
         was_armed=bool(getattr(self,'control_last',{}).get('armed'))
         stop_requested = action == 2 or (action == 1 and mode == 0)
         if stop_requested and getattr(self, 'zortrax', None) is not None:
@@ -1958,6 +2029,8 @@ class InventureMCU:
         if mode is not None:
             mode=str(mode).upper()
             if mode not in CONTROL_MODES: raise gcmd.error('MODE must be OFF, SERVICE or NATIVE')
+            if mode == 'OFF':
+                self.manual_fan_starting = False
         if mode is not None and getattr(self,'nozzle_z_context',None) is not None:
             if mode!='OFF':raise gcmd.error('Nozzle Z test active; use INVENTURE_STOP first')
             self._nozzle_z_finish('stopped',reason='mode_off')
@@ -4797,7 +4870,11 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
-    def _operator_service_preflight(self):
+    def _operator_service_preflight(self, manual_fan=False):
+        if manual_fan and not getattr(self, 'manual_fan_starting', False):
+            raise ValueError('Fan test cancelled before start')
+        if getattr(self, 'manual_fan_starting', False) and not manual_fan:
+            raise ValueError('A fan test is starting')
         state = self._feeder_service_preflight(allow_off=True, allow_native=True)
         native = self.printer.lookup_object('inventure_native_z', None)
         if getattr(native, 'sequence_running', False) or getattr(native, 'running', False):
@@ -4807,15 +4884,15 @@ class InventureMCU:
             raise ValueError('Set native heater targets to zero before starting SERVICE heating or motion')
         return state
 
-    def _enter_operator_service(self):
-        state = self._operator_service_preflight()
+    def _enter_operator_service(self, manual_fan=False):
+        state = self._operator_service_preflight(manual_fan=manual_fan)
         if state['mode'] == 'SERVICE':
             return
         if state['mode'] == 'NATIVE':
             head = self.printer.lookup_object('toolhead', None)
             if head is not None:
                 head.wait_moves()
-            if self._operator_service_preflight()['mode'] != 'NATIVE':
+            if self._operator_service_preflight(manual_fan=manual_fan)['mode'] != 'NATIVE':
                 raise ValueError('Native control changed while waiting for motion to finish')
         try:
             state = self._control_query(1, CONTROL_MODES.index('SERVICE'))
