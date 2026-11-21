@@ -5,6 +5,7 @@ on:
     branches: [orange-pi-all-axis]
     paths:
       - '.github/workflows/orange-pi-mcu.yml'
+      - '.github/actions/check-oled-rpc/**'
       - 'service_mcu/control_r6/SOURCE_MCU/**'
       - 'service_mcu/control_r6/TESTS/**'
       - 'ci/**'
@@ -39,6 +40,8 @@ jobs:
         run: python -m unittest discover -s tests
       - name: Reproduce and repair the real Klipper startup failure
         run: python ci/check_native_nozzle_startup.py
+      - name: Check the Moonraker OLED WebSocket and Klipper socket
+        uses: ./.github/actions/check-oled-rpc
       - name: Prepare the pinned source kit
         run: python ci/prepare_kit.py --destination "$RUNNER_TEMP/inventure-kit"
       - name: Install GNU Arm 14.2.Rel1
@@ -56,16 +59,16 @@ jobs:
         with:
           node-version: '24.22.3'
       - name: Build the Fluidd dashboard
-        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33.zip"
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33_1.zip"
       - name: Test the compiled dashboard in Chrome
         run: |
           python -m pip install 'playwright==1.56.0'
           python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33.zip"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R33_1.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_OLED_R33
+          name: INVENTURE_OLED_R33_1
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -76,7 +79,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-oled-r33-release
+      group: inventure-oled-r33-1-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +87,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_OLED_R33
+          name: INVENTURE_OLED_R33_1
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -99,7 +102,7 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R33 · Compact status text, cached Inventure icons and OLED timing" \
+              --title "Inventure R33.1 · Compact status text, cached Inventure icons and OLED timing" \
               --notes-file docs/INVENTURE_OLED_R33.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber

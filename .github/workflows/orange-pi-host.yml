@@ -44,6 +44,7 @@ on:
       - 'tests/test_orange_pi_oled_fast.py'
       - 'tests/test_orange_pi_oled_graphics.py'
       - 'ci/check_oled_moonraker.py'
+      - '.github/actions/check-oled-rpc/**'
       - 'ci/benchmark_inventure_oled.py'
       - 'ci/check_native_nozzle_startup.py'
       - 'tests/fixtures/**'
@@ -67,9 +68,4 @@ jobs:
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json
       - name: Check the Moonraker OLED WebSocket and Klipper socket
-        run: |
-          git clone --quiet --depth 1 --branch v0.9.3 https://github.com/Arksine/moonraker.git "$RUNNER_TEMP/moonraker"
-          test "$(git -C "$RUNNER_TEMP/moonraker" rev-parse HEAD)" = 71f9e677b81afcc6b99dd5002f595025c38edc7b
-          python -m pip install 'tornado==6.4.1' 'distro==1.9.0'
-          python -c "import sys; from pathlib import Path; from ci.check_native_nozzle_startup import prepare_runtime; prepare_runtime(Path(sys.argv[1]))" "$RUNNER_TEMP/rpc"
-          PYTHONPATH="$RUNNER_TEMP/moonraker" python ci/check_oled_moonraker.py --klipper "$RUNNER_TEMP/rpc/klipper-inventure"
+        uses: ./.github/actions/check-oled-rpc

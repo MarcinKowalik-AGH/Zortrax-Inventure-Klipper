@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import secrets
+from .inventure_mcu import HOST_REVISION
 from .inventure_oled_render import Frame
 from .inventure_oled_graphics import KlipperStatus, activity_index, menu_wire
 from . import inventure_oled_render as panel_render
@@ -1110,7 +1111,7 @@ class InventureOLED:
                     'last_ack':self._oled_last_ack,
                     'attempt_sent':self.stream.sent-self._oled_session_sent,
                     'attempt_acked':self.stream.acked-self._oled_session_acked},
-                'ui_transport':{'host_release':'RC8-CONTROL-R7-UIFAST',
+                'ui_transport':{'host_release':HOST_REVISION,
                     'navigation_api':'INVENTURE-NAV-1',
                     'mode':'packbits_spi2_dma' if self.fast else 'legacy_abi2',
                     'spi_requested_hz':self.speed,

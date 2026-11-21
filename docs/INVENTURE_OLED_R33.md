@@ -1,10 +1,10 @@
-# Inventure R33 · OLED graphics and Orange Pi timing
+# Inventure R33.1 · OLED graphics and Orange Pi timing
 
-R33 uses the M300 v1.0.0 status typography and sprite caching technique on the Inventure. The physical OLED and Fluidd display the same 256 × 64 host framebuffer. Fluidd keeps the R32 thermal layout with Extruder 0, Extruder 1, Chamber and the OLED below the temperature graph.
+R33.1 uses the M300 v1.0.0 status typography and sprite caching technique on the Inventure. The physical OLED and Fluidd display the same 256 × 64 host framebuffer. Fluidd keeps the R32 thermal layout with Extruder 0, Extruder 1, Chamber and the OLED below the temperature graph.
 
 ## Display and transport
 
-| Area | Behaviour in R33 |
+| Area | Behaviour in R33.1 |
 |---|---|
 | Ready and M117 | The lower 16 rows use the small 5×7 font. A single line begins at (2, 52). Longer text wraps at 42 characters onto two lines. The visible “Ready” pixels occupy 29 × 7 pixels. In the R32 native 16-column layout they occupied 78 × 11. The top 48 rows come from the installed Inventure renderer. The browser zoom enlarges the whole framebuffer by an integer factor. |
 | Inventure artwork | Ten original r0323 icons keep their 50 × 50 size and original gray levels. Each icon is packed on its first use. The five Zortrax main branches show the selected category. Opening the menu from Fluidd and opening it on the panel use the same icon selection. |
@@ -20,11 +20,11 @@ The artwork and compact status strip were compared against the published M300 so
 | Check | Result |
 |---|---|
 | Status rendering | Both real pinned Klipper configurations render the compact Ready and a long display message. The native upper rows match byte for byte. |
-| Artwork and MCU packets | Compared all 10 Inventure sprites against the original pixel renderer and all 40 shared activity frames against their source nibbles. The modeled SSD1322 reconstructs the requested frame. For the same images, the R32 and R33 window planners produced identical bounds, regions and encoded packets on 520 navigation transitions and 40 additional frame pairs. |
-| Orange Pi code path on an x86-64 test host | On an identical, warm-cache cursor transition, median composition took 11.91 µs with R32 and 2.94 µs with R33. Window selection and packet preparation took 564.81 µs and 68.39 µs respectively. These are 500 interleaved samples per version. |
-| UART cost model | Across 520 menu transitions, encoded-window planning used 273,074 modeled UART bytes versus 314,858 for fixed dirty regions on the same R33 frames, a 13.27% reduction. Counts include both directions of the link. |
+| Artwork and MCU packets | Compared all 10 Inventure sprites against the original pixel renderer and all 40 shared activity frames against their source nibbles. The modeled SSD1322 reconstructs the requested frame. For the same images, the R32 and R33.1 window planners produced identical bounds, regions and encoded packets on 520 navigation transitions and 40 additional frame pairs. |
+| Orange Pi code path on an x86-64 test host | On an identical, warm-cache cursor transition, median composition took 11.91 µs with R32 and 2.94 µs with R33.1. Window selection and packet preparation took 564.81 µs and 68.39 µs respectively. These are 500 interleaved samples per version. |
+| UART cost model | Across 520 menu transitions, encoded-window planning used 273,074 modeled UART bytes versus 314,858 for fixed dirty regions on the same R33.1 frames, a 13.27% reduction. Counts include both directions of the link. |
 | Event delivery | The WebSocket test uses Moonraker v0.9.3's JSON-RPC dispatcher and KlippyConnection, a connected Unix socket pair, and the pinned Klipper reactor and webhooks. All 20 simulated key changes delivered the expected PNG. Cancellation released the waiting request. The local host-event-to-WebSocket-receipt p95 was 0.49 ms. The production Fluidd thermal component was separately exercised in Chromium. |
-| Upgrade | R32 to R33 installs the graphics module and artwork catalogue, keeps the operator's custom macro and is idempotent on reinstallation. The MCU remains R13. |
+| Upgrade | R32 to R33.1 installs the graphics module and artwork catalogue, keeps the operator's custom macro and is idempotent on reinstallation. The MCU remains R13. |
 
 The timings above were collected on a local test host. The USB/UART interface of the owner's printer, Orange Pi CPU load, Wi-Fi, browser paint and the optical response of the panel have their own timing. The model and the WebSocket test can be reproduced with the checked-in scripts. [UART and host benchmark](../ci/benchmark_inventure_oled.py) · [Moonraker bridge test](../ci/check_oled_moonraker.py) · [Chromium check](../ci/check_fluidd_browser.py)
 
@@ -33,12 +33,12 @@ The timings above were collected on a local test host. The USB/UART interface of
 Run the following in the **Orange Pi shell** while the printer is idle.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-oled-r33 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-oled-r33" refs/tags/inventure-oled-r33 &&
-python3 "$HOME/inventure-oled-r33/install-orange-pi.py" --configure-fluidd
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-oled-r33.1 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-oled-r33.1" refs/tags/inventure-oled-r33.1 &&
+python3 "$HOME/inventure-oled-r33.1/install-orange-pi.py" --configure-fluidd
 ```
 
-If that worktree already exists at the R33 tag, run its final installer command. Refresh Fluidd with a hard reload. The host revision ends in **THERMAL-OLED-R33** and uses the existing **PAD-THERMAL-R13** MCU. The update is confined to the Orange Pi.
+If that worktree already exists at the R33.1 tag, run its final installer command. Refresh Fluidd with a hard reload. The host revision ends in **THERMAL-OLED-R33.1** and uses the existing **PAD-THERMAL-R13** MCU. The update is confined to the Orange Pi. Version R33.1 includes the Moonraker transport test and its pinned Python dependencies in the build that publishes the release.
 
 In the **Fluidd console**, run `INVENTURE_VERSION`, then `INVENTURE_MAIN_MENU`. Use the printer's physical DOWN/UP keys several times. Compare the selection and icon on the physical OLED and the preview, then run `INVENTURE_OLED_STATUS`.
 
