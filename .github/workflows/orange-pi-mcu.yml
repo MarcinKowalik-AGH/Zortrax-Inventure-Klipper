@@ -17,7 +17,7 @@ on:
       - 'setup-fluidd.py'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_HOME_Z_R38_4.md'
+      - 'docs/INVENTURE_HEATER_HANDOFF_R15.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -71,7 +71,7 @@ jobs:
         run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_4.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_HOMING_R38_4
+          name: INVENTURE_HEATER_HANDOFF_R15
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-homing-r38.4-release
+      group: inventure-heater-handoff-r15-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_HOMING_R38_4
+          name: INVENTURE_HEATER_HANDOFF_R15
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -105,8 +105,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure R38.4 / MCU R14 · Read the retained Home Z shutdown result" \
-              --notes-file docs/INVENTURE_HOME_Z_R38_4.md
+              --title "Inventure MCU R15 · Restore native heating after nozzle cleaning" \
+              --notes-file docs/INVENTURE_HEATER_HANDOFF_R15.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false

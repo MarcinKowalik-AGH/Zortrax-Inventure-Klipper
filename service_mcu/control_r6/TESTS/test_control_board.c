@@ -204,6 +204,68 @@ static void temperature_stops(void) {
     control_reset(0);uint32_t guard[]={7,1,-20,100};command_inventure_control_guard(guard);
     output(1,6,64,20000,45,1);assert(!co[6].duty); // explicitly enabled bad PC4 prevents heating
 }
+static unsigned heater_pin_mode(unsigned h) {
+    unsigned shift = 2 * __builtin_ctz(th_heaters[h].bit);
+    return (th_heaters[h].port->MODER >> shift) & 3u;
+}
+
+static void service_to_native_heat(void) {
+    control_reset(0);
+    struct gpio_pwm native[4];
+    for (unsigned h = 0; h < 4; h++)
+        native[h] = gpio_pwm_setup(co_pins[2+h], co_cycles[2+h], 256);
+
+    // Klipper configured the pins once. CLEAN heats T0 in SERVICE, then
+    // releases the service outputs; Home XYZ reuses the same native handles.
+    output(1, 6, 102, 1500, 208, 101);
+    assert(heater_pin_mode(0) == 2 && TIM5->CCR1 == 154);
+    control_command(2, CT_OFF);
+    for (unsigned h = 0; h < 4; h++)
+        assert(heater_pin_mode(h) == 1);
+    assert(!co[6].duty && TIM5->CCR1 == 154);
+    TIM5->CNT = 71;
+    uint32_t shared_ccr = TIM5->CCR3;
+    control_command(1, CT_NATIVE);
+    assert(inventure_is_armed());
+    for (unsigned h = 0; h < 4; h++) {
+        assert(heater_pin_mode(h) == 2);
+        assert(*(volatile uint32_t *)native[h].reg == 256);
+        assert(!control_heater_duty[h]);
+        gpio_pwm_write(native[h], 154);
+        assert(*(volatile uint32_t *)native[h].reg == 154 && control_heater_duty[h] == 102);
+    }
+    assert(TIM5->CNT == 71 && TIM5->CCR3 == shared_ccr);
+    control_command(1, CT_NATIVE);
+    assert(TIM5->CCR1 == 154 && control_heater_duty[0] == 102);
+    control_command(2, CT_OFF);
+    assert(control_latched && heater_pin_mode(0) == 1);
+    gpio_pwm_write(native[0], 154);
+    assert(TIM5->CCR1 == 256 && !control_heater_duty[0]);
+    control_command(1, CT_NATIVE);
+    assert(!inventure_is_armed() && heater_pin_mode(0) == 1);
+
+    // Only T0 was configured by Klipper in this installation. A service-only
+    // T1 lease must expire before a handoff, and its pin must stay OFF.
+    control_reset(0);
+    native[0] = gpio_pwm_setup(co_pins[2], co_cycles[2], 256);
+    output(1, 7, 64, 500, 208, 102);
+    output(2, 6, 0, 0, 0, 0);
+    control_command(1, CT_NATIVE);
+    assert(control_mode == CT_SERVICE && heater_pin_mode(0) == 1 && co[7].duty == 64);
+    advance(500);
+    assert(!co[7].duty && heater_pin_mode(1) == 1);
+    control_set_door_policy(1);
+    GPIOB->IDR &= ~BIT(10);
+    control_command(1, CT_NATIVE);
+    assert(control_mode == CT_SERVICE && heater_pin_mode(0) == 1);
+    GPIOB->IDR |= BIT(10);
+    control_command(1, CT_NATIVE);
+    assert(inventure_is_armed() && heater_pin_mode(0) == 2);
+    for (unsigned h = 1; h < 4; h++)
+        assert(heater_pin_mode(h) == 1);
+    puts("PASS CLEAN to native Home heating: GPIO mode, safe first duty, existing PWM handles, shared timer and interlocks");
+}
+
 static void native_ownership(void) {
     control_reset(0);control_command(1,CT_NATIVE);assert(inventure_is_armed());
     assert(inventure_filter_gpio(GPIOE,BIT(10),1)==1);
@@ -314,7 +376,7 @@ static void global_door_policy(void) {
 int main(void) {
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
-    native_ownership();auxiliary_controls();global_door_policy();
+    service_to_native_heat();native_ownership();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }

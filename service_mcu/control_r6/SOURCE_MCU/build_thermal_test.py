@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-DISPLAY-R14'
+MCU_RELEASE = 'RC8-CONTROL-R7-HEATER-HANDOFF-R15'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -205,6 +205,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   fallback_baud=250000,forced_baud=0,boot17_abi=1,
                   compiler=env['gcc'], fan_manual_response=response,
                   heat_response=heat_response, sensor_response=sensor_response, sources_sha256=changes, local_oled_diagnostic_abi=1,
+                  native_heater_handoff_abi=c['INVENTURE_NATIVE_HEATER_HANDOFF_ABI'],
                   ivb_bytes=len(ivb), ivb_sha256=base.sha(ivb),
                   application_sha256=base.sha(app), tested_on_printer=False)
     (out / 'THERMAL_TEST_VERIFY.json').write_text(json.dumps(report, indent=2) + '\n')

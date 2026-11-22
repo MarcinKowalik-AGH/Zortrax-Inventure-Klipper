@@ -350,6 +350,7 @@ static void heat_adc(unsigned a, unsigned b) {
 }
 static void heat_reset(uint32_t now) {
     control_mode=control_latched=control_pwm_bypass=0;
+    memset((void*)native_heater_configured,0,sizeof(native_heater_configured));
     memset(&cm,0,sizeof(cm));memset(co,0,sizeof(co));
     memset((void*)control_heater_duty,0,sizeof(control_heater_duty));
     control_heat_seen=0;control_cooldown_ms=0;

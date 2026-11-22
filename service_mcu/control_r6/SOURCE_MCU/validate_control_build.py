@@ -209,8 +209,9 @@ def check_dictionary(path: Path) -> dict:
                   'INVENTURE_LOCAL_COOLING_ABI':1,
                   'INVENTURE_LOCAL_COOLING_ON_C':50,
                   'INVENTURE_LOCAL_COOLING_OFF_C':45,
-                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-DISPLAY-R14',
+                  'INVENTURE_MCU_RELEASE': 'RC8-CONTROL-R7-HEATER-HANDOFF-R15',
                   'INVENTURE_SERVICE_NOZZLE_TARGET_MAX': 310,
+                  'INVENTURE_NATIVE_HEATER_HANDOFF_ABI': 1,
                   'INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI': 1,
                   'INVENTURE_HEARTBEAT_TIMEOUT_MS': 5000}
     for name, value in new_config.items():

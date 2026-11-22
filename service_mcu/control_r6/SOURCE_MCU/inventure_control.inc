@@ -10,6 +10,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_HEATER_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
@@ -705,6 +706,26 @@ static void control_guard(uint32_t now) {
     zh_guard(now);
     fs_guard(now);
 }
+// Called with IRQs masked, after admission checks and before NATIVE is armed.
+static uint8_t control_take_native_heaters(void) {
+    if (sl.active)
+        return 0;
+    for (unsigned h = 0; h < ARRAY_SIZE(th_heaters); h++)
+        if (co[6+h].duty)
+            return 0;
+    for (unsigned h = 0; h < ARRAY_SIZE(th_heaters); h++) {
+        unsigned pin = co_pins[2+h];
+        unsigned mode = (th_heaters[h].port->MODER >> (2 * (pin % 16))) & 3u;
+        if (native_heater_configured[h] && mode != 2) {
+            // SERVICE stop physically disconnects the timer. Its old CCR
+            // can still demand heat. Fixed-PWM setup loads OFF immediately
+            // before restoring the pin's AF and preserves the shared timer.
+            gpio_pwm_setup(pin, co_cycles[2+h], 256);
+        }
+    }
+    return 1;
+}
+
 void command_inventure_control(uint32_t *args) {
     unsigned action=args[0],mode=args[1];irqstatus_t flags=irq_save();uint8_t reject=0;
     uint32_t now=timer_read_time();
@@ -719,6 +740,7 @@ void command_inventure_control(uint32_t *args) {
         else if(!control_ready(now))reject=3;
         else if(mode==CT_NATIVE && (!control_sensors_valid(control_guard_mask|31,now)
              || (door_policy_enabled()&&door_closed_mask()!=3)))reject=5;
+        else if(mode==CT_NATIVE && !control_take_native_heaters())reject=2;
         else control_mode=mode;
     }
     uint8_t selected=control_mode,armed=inventure_is_armed(),active=control_busy();

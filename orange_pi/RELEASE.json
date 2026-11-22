@@ -706,7 +706,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-DISPLAY-R14",
+    "mcu_release": "RC8-CONTROL-R7-HEATER-HANDOFF-R15",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -749,24 +749,25 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-DISPLAY-R14",
+      "mcu_release": "RC8-CONTROL-R7-HEATER-HANDOFF-R15",
       "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
       "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
-      "heartbeat_timeout_s": 5
+      "heartbeat_timeout_s": 5,
+      "native_heater_handoff_abi": 1
     },
     "measurement_band_c": [
       90,
       110
     ],
-    "package_filename": "INVENTURE_MCU_NATIVE_OLED_R14_BOOT17.zip",
-    "release_tag": "inventure-homing-r38.4",
-    "host_package_filename": "INVENTURE_ORANGE_PI_HOMING_R38_4.zip",
-    "ivb_sha256": "f4342f906793fe377a3a27112d84a3a2e82c154973031657d41e100e037d1035",
-    "audit_report": "docs/INVENTURE_HOME_Z_R38_4.md",
-    "release_notes": "docs/INVENTURE_NATIVE_UI_R35.md",
-    "application_sha256": "2c79550a30112e7a7255c1d164f9af26ca88160d25c4847101fae9ee215dc2a3",
-    "ivb_bytes": 106244,
+    "package_filename": "INVENTURE_MCU_HEATER_HANDOFF_R15_BOOT17.zip",
+    "release_tag": "inventure-heater-handoff-r15",
+    "host_package_filename": "INVENTURE_ORANGE_PI_HOMING_R38_4_MCU_R15.zip",
+    "ivb_sha256": "ad2473e8556e9d6327a5680558c605f67900e2a537b313417b00280713fc7d3d",
+    "audit_report": "docs/INVENTURE_HEATER_HANDOFF_R15.md",
+    "release_notes": "docs/INVENTURE_HEATER_HANDOFF_R15.md",
+    "application_sha256": "2b3cdacd1288d614196bb1f207458f8cc053bea6e6d7776714b4cd02771744cc",
+    "ivb_bytes": 106276,
     "default_z_clearance_mm": 1.0,
     "sweep_timeout_abi": 1,
     "full_procedure_timeout_s": 3600,
@@ -775,7 +776,7 @@
       "SWEEP",
       "TAP"
     ],
-    "zip_sha256": "f22468e25335349a43cc660b710467fddcec884ece812b67b4ccac537151a792"
+    "zip_sha256": "5069fd5672c010fc4aa64333c499fe552af61179d5c88ecee7c87b8ad29b63e4"
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",

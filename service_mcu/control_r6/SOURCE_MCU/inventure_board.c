@@ -44,6 +44,7 @@ static struct gpio_pwm locks[2], feeder_clock;
 static uint8_t auxiliary_ready;
 static volatile uint8_t control_mode,control_latched,control_pwm_bypass;
 static volatile uint16_t control_heater_duty[4];
+static volatile uint8_t native_heater_configured[4];
 static volatile uint8_t native_z_guard_active,native_z_guard_lost;
 static volatile uint8_t native_z_refine_held,native_z_refine_conflict;
 static uint8_t control_aux_allowed(void);
@@ -199,6 +200,10 @@ uint32_t inventure_filter_pwm(void *reg, uint32_t value, uint32_t maximum) {
     else if(reg==(void*)&TIM9->CCR1)hi=1;
     else if(reg==(void*)&TIM8->CCR4)hi=2;
     else if(reg==(void*)&TIM8->CCR3)hi=3;
+    // Klipper configures its hardware PWM before arming. SERVICE creates
+    // separate handles under control_pwm_bypass, even for service-only pins.
+    if (hi >= 0 && !control_pwm_bypass)
+        native_heater_configured[hi] = 1;
     if(inventure_is_armed() || control_pwm_bypass) {
         if(hi>=0)control_heater_duty[hi]=maximum-value;
         if(reg==(void*)&TIM5->CCR2 || reg==(void*)&TIM4->CCR2)
