@@ -4,7 +4,7 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 
 **MCU R15 restores native heater control after nozzle cleaning.** Install the MCU application on printers running Orange Pi host R38.4. [Release and installation](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-heater-handoff-r15) · [Failure trace and verification](docs/INVENTURE_HEATER_HANDOFF_R15.md)
 
-**Home Z shutdown readback in R38.4.** The Orange Pi can read the final native Z probe counters from a stopped MCU R14. A host-only update can recover the current incident while it is still in MCU memory. [R38.4 release and recovery instructions](docs/INVENTURE_HOME_Z_R38_4.md)
+**Home Z shutdown readback in R38.4.** The Orange Pi can read the final native Z probe counters from a stopped MCU R14. A host-only update can recover the current incident while it is still in MCU memory. [R38.4 release and recovery instructions](docs/INVENTURE_HOME_Z_R38_4.md) · [Home Z field results and safety audit](docs/INVENTURE_HOME_Z_SAFETY_AUDIT_2026-11-22.md)
 
 **R38.3 makes Home Z usable immediately after a restart.** Fluidd and the OLED use the full native homing sequence when XY is unknown and the Z-only sequence when both axes are referenced. [R38.3 release](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-homing-r38.3) · [Homing sequence and evidence](docs/INVENTURE_HOME_Z_R38_3.md)
 
