@@ -586,6 +586,48 @@ class InventureNativeZ:
             self.reactor.pause(min(deadline, now + .5))
         raise FactoryError('Inventure homing was interrupted while heating')
 
+    def _prepare_t0(self, gcmd, heaters, target):
+        from .inventure_fluidd import require_idle
+        self.toolhead.wait_moves()
+        heaters.turn_off_all_heaters()
+        deadline = self.reactor.monotonic() + PHASE_MARGIN_S
+        while any(h.last_pwm_value for h in heaters.heaters.values()):
+            now = self.reactor.monotonic()
+            if self.printer.is_shutdown() or now >= deadline:
+                raise FactoryError('Native heaters did not stop before T0 preparation')
+            require_idle(self.board)
+            self.reactor.pause(now + .1)
+        require_idle(self.board)
+        self.board._enter_operator_service(homing=self)
+        self._invalidate_native_homing()
+        command = self.printer.lookup_object('gcode').create_gcode_command('INVENTURE_PROCEDURE',
+            'INVENTURE_PROCEDURE ACTION=CLEAN TOOL=T0',
+            dict(ACTION='CLEAN', TOOL='T0', TARGET=target, SPEED_PROFILE='OEM'))
+        context = None
+        try:
+            gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(
+                dict(stage='T0 selection and cleaning')))
+            context = self.board._factory_start(command, operation='CLEAN')
+            factory = context['factory']
+            while self.board.load_test_context is context:
+                now = self.reactor.monotonic()
+                if self.printer.is_shutdown() or now >= factory['total_deadline']:
+                    raise FactoryError('T0 preparation was interrupted or expired')
+                self.reactor.pause(now + .1)
+            result = factory.get('result') or {}
+            if (self.board.load_test_context is not None or context['tool'] != 0
+                    or factory['operation'] != 'CLEAN' or not factory['selection_commanded']
+                    or not factory['cleaning_done'] or not result.get('success')
+                    or result.get('terminal') != 'CLEAN'):
+                reason = (getattr(self.board, 'load_test_last', {}) or {}).get('reason')
+                raise FactoryError('T0 selection and cleaning did not complete'
+                                   + (': ' + reason if reason else ''))
+            gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(
+                dict(stage='T0 selected and cleaned')))
+        except Exception:
+            self.board._control_abort()
+            raise
+
     def cmd_home_axes(self, gcmd):
         self._run_home_axes(gcmd, operator=False)
 
@@ -635,6 +677,7 @@ class InventureNativeZ:
         if motion[-1] > z_max:
             raise gcmd.error('Homing clearance exceeds the configured Z travel')
         temporary_z = heat_started = success = False
+        suspended_heaters = []
         try:
             now = self.reactor.monotonic()
             self._require_idle(now)
@@ -648,6 +691,9 @@ class InventureNativeZ:
                     raise FactoryError('Home both X and Y first or use INVENTURE_HOME_ALL')
                 z_command = self._z_macro_command(options)
                 heater, target = self._validate_z_macro(z_command, require_ack=not review)
+                if (operator and int(self.board.mcu.get_constants().get(
+                        'INVENTURE_NATIVE_HEATER_HANDOFF_ABI', 0)) != 1):
+                    raise FactoryError('Automatic T0 preparation requires MCU R15 heater handoff')
                 self.board._z_home_inputs({})
                 previous_target = heater.get_temp(now)[1]
                 heaters = self.printer.lookup_object('heaters')
@@ -659,6 +705,11 @@ class InventureNativeZ:
                     gcmd.respond_info('Confirm Home %s in Fluidd or on the OLED to start' % axes)
                     return
                 self.board.zortrax.cancel_motion_review()
+                if hot:
+                    suspended_heaters = [(h, h.get_temp(now)[1])
+                                         for h in heaters.heaters.values()]
+                    self._prepare_t0(gcmd, heaters, target)
+                    control = native_control_state(self.board)
                 select_native_control(self.board, control)
             self.toolhead.wait_moves()
             self._require_native()
@@ -701,11 +752,17 @@ class InventureNativeZ:
                 temporary_z = False
             success = True
         except Exception as exc:
+            if suspended_heaters and (not self.last_result or self.last_result.get('terminal') != 'failed'):
+                self.last_result = dict(reference_established=False, coordinate_saved=False,
+                                        terminal='failed', reason=str(exc))
             raise gcmd.error(str(exc)) from exc
         finally:
             if temporary_z:
                 self._discard_z_position()
-            if heat_started:
+            if suspended_heaters:
+                for saved_heater, saved_target in suspended_heaters:
+                    saved_heater.set_temp(saved_target if success and not self.printer.is_shutdown() else 0.)
+            elif heat_started:
                 heater.set_temp(previous_target if success and not self.printer.is_shutdown() else 0.)
         gcmd.respond_info('INVENTURE_HOME %s done%s' % (axes, ' Z=%.3f' % park_z if hot else ''))
 

@@ -31,19 +31,21 @@ def exercise_home_confirmation(gcode):
             accept, = [line.split('|', 1)[1] for line in lines if 'Yes / Start|' in line]
             gcode.run_script_from_command(accept)
             assert menu.view.title == ('Home XYZ complete' if button == 'ALL' else 'Home Z complete')
-            expected_axes = ['Z'] if button == 'Z' and homed == 'xy' else ['Z', 'Y', 'X']
+            assert rig.model.physical_tool == 0
+            assert rig.model.prepare_actions[-1]['cleaning_done']
+            expected_axes = ['Z', 'Y', 'X']
             assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == expected_axes
             assert len([entry for entry in rig.model.calls if entry[0] == 'refine' and entry[2]]) == 1
             assert rig.adapter.last_result['coordinate_saved']
             assert rig.model.get_position()[2] == rig.adapter.park_z
             if button == 'Z' and not homed:
-                # The preceding operation left valid XY. The physical menu uses that reference.
+                # Every hot operator home prepares T0, then reacquires the native reference.
                 rig.model.calls.clear()
                 menu.open('home_z')
                 menu.panel_move(1)
                 gcode.run_script_from_command(menu.panel_select_command(acknowledged=True))
                 assert menu.view.title == 'Home Z complete'
-                assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == ['Z']
+                assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == ['Z', 'Y', 'X']
                 assert rig.adapter.last_result['coordinate_saved']
     print('Home Z and All from installed macros through confirmation to STM32 refinement and park (simulated MCU)')
 

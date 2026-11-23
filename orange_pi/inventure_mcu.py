@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-HOMING-R38.4'
+HOST_REVISION = 'RC8-CONTROL-R7-HOMING-R38.5'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -3814,7 +3814,7 @@ class InventureMCU:
                     math.floor(PAD_MEASUREMENT_BAND_C[1])+1))
             context['factory']['pad_temperature_samples']=pad_run.setdefault('sample_temperatures_c',[])
         self._load_test_emit(context)
-        if nozzle_test:return context
+        return context
 
     def _z_home_inputs(self,expected):
         raw=self._fresh_inputs()['raw']
@@ -4870,29 +4870,30 @@ class InventureMCU:
         if self.connected:self.commands['heartbeat'].send([])
         self.commands['feeder'].send([i,direction,duration])
 
-    def _operator_service_preflight(self, manual_fan=False):
+    def _operator_service_preflight(self, manual_fan=False, homing=None):
         if manual_fan and not getattr(self, 'manual_fan_starting', False):
             raise ValueError('Fan test cancelled before start')
         if getattr(self, 'manual_fan_starting', False) and not manual_fan:
             raise ValueError('A fan test is starting')
         state = self._feeder_service_preflight(allow_off=True, allow_native=True)
         native = self.printer.lookup_object('inventure_native_z', None)
-        if getattr(native, 'sequence_running', False) or getattr(native, 'running', False):
+        if (getattr(native, 'running', False)
+                or getattr(native, 'sequence_running', False) and native is not homing):
             raise ValueError('Native homing is still running')
         heaters = self.printer.lookup_object('heaters', None)
         if heaters is not None and any(h.target_temp or h.last_pwm_value for h in heaters.heaters.values()):
             raise ValueError('Set native heater targets to zero before starting SERVICE heating or motion')
         return state
 
-    def _enter_operator_service(self, manual_fan=False):
-        state = self._operator_service_preflight(manual_fan=manual_fan)
+    def _enter_operator_service(self, manual_fan=False, homing=None):
+        state = self._operator_service_preflight(manual_fan=manual_fan, homing=homing)
         if state['mode'] == 'SERVICE':
             return
         if state['mode'] == 'NATIVE':
             head = self.printer.lookup_object('toolhead', None)
             if head is not None:
                 head.wait_moves()
-            if self._operator_service_preflight(manual_fan=manual_fan)['mode'] != 'NATIVE':
+            if self._operator_service_preflight(manual_fan=manual_fan, homing=homing)['mode'] != 'NATIVE':
                 raise ValueError('Native control changed while waiting for motion to finish')
         try:
             state = self._control_query(1, CONTROL_MODES.index('SERVICE'))

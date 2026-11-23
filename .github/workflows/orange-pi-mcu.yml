@@ -17,7 +17,7 @@ on:
       - 'setup-fluidd.py'
       - 'source/**'
       - 'orange_pi/RELEASE.json'
-      - 'docs/INVENTURE_HEATER_HANDOFF_R15.md'
+      - 'docs/INVENTURE_HOME_T0_R38_5.md'
       - 'docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md'
   workflow_dispatch:
 
@@ -62,16 +62,16 @@ jobs:
         with:
           node-version: '24.22.3'
       - name: Build the Fluidd dashboard
-        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_4.zip"
+        run: python ci/build_fluidd.py "$RUNNER_TEMP/fluidd" "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_5.zip"
       - name: Test the compiled dashboard in Chrome
         run: |
           python -m pip install 'playwright==1.56.0'
           python ci/check_fluidd_browser.py "$RUNNER_TEMP/fluidd/dist"
       - name: Package the host and MCU release
-        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_4.zip"
+        run: python ci/package_inventure_release.py "$RUNNER_TEMP/inventure-mcu" "$RUNNER_TEMP/inventure-release" --web "$RUNNER_TEMP/INVENTURE_FLUIDD_WEB_R38_5.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: INVENTURE_HEATER_HANDOFF_R15
+          name: INVENTURE_HOMING_R38_5
           path: ${{ runner.temp }}/inventure-release/
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: inventure-heater-handoff-r15-release
+      group: inventure-homing-r38-5-release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: INVENTURE_HEATER_HANDOFF_R15
+          name: INVENTURE_HOMING_R38_5
           path: ${{ runner.temp }}/inventure-release/
       - name: Publish the tested release
         env:
@@ -105,8 +105,8 @@ jobs:
             test "$(cat "$RUNNER_TEMP/inventure-release-target")" = "$GITHUB_SHA"
           else
             gh release create "$release_tag" --target "$GITHUB_SHA" --draft \
-              --title "Inventure MCU R15 · Restore native heating after nozzle cleaning" \
-              --notes-file docs/INVENTURE_HEATER_HANDOFF_R15.md
+              --title "Inventure host R38.5 · Select and clean T0 before homing" \
+              --notes-file docs/INVENTURE_HOME_T0_R38_5.md
           fi
           gh release upload "$release_tag" "$asset_dir/"*.zip "$asset_dir/"*.md "$asset_dir/SHA256SUMS" --clobber
           gh release edit "$release_tag" --draft=false
