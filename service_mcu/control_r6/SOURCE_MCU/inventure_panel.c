@@ -26,7 +26,7 @@ DECL_CONSTANT("INVENTURE_LOCAL_OLED_BUFFER_BYTES",128);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI", 1);
 extern uint8_t inventure_board_fault(void);
 extern uint8_t inventure_board_guard_input(void);
-DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-HEATER-HANDOFF-R15");
+DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-HOMING-R16");
 
 static const uint8_t input_pins[16] = {
     GPIO('B',11), GPIO('C',15), GPIO('E',12), GPIO('C',14),

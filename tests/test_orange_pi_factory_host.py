@@ -60,6 +60,16 @@ class FactoryDevice(support.Device):
         if args[0]==2 or args[0]==1 and args[1]==0:self.terminate(2)
         return super().control(args)
 
+    def native_handoff(self, args):
+        owner, run, token = args
+        assert self.session['active'] and self.session['token'] == owner
+        assert run == self.run and token == self.motion['token'] and not self.active_motion()
+        self.session['active'] = 0
+        self.h.control_reply.update(mode=1, armed=1)
+        for channel,row in list(self.outputs.items()):
+            self.outputs[channel] = dict(row, duty=0, reason=2)
+        return dict(owner=owner, run=run, token=token, mode=1, enabled=1, reject=0)
+
     def move(self,args):
         action,directions,a,b,z,e,rate,pulse,ms,mask,value,hold,token=args
         if action==1:

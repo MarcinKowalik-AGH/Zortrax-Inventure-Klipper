@@ -20,6 +20,10 @@ REFINE_COMMAND = ('inventure_native_z_refine action=%c owner=%u token=%u span=%h
 REFINE_RESPONSE = ('inventure_native_z_refine_state owner=%u token=%u active=%c status=%c '
                    'reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c '
                    'up_steps=%u down_steps=%u')
+CLEARANCE_COMMAND = ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
+                     'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu')
+CLEARANCE_RESPONSE = REFINE_RESPONSE.replace('inventure_native_z_refine_state',
+                                           'inventure_native_z_clearance_state') + ' clearance_steps=%hu'
 REFINE_STATUS = ('running', 'done', 'no contact', 'no release', 'guard dropped',
                  'cycle or time limit', 'stopped')
 PHASE_MARGIN_S = 10.
@@ -67,6 +71,7 @@ class InventureNativeZ:
         self.sequence_running = False
         self.guard = None
         self.refine = None
+        self.refine_clearance = None
         self.guard_owner = None
         self.last_result = None
         self.refine_identity = None
@@ -124,12 +129,14 @@ class InventureNativeZ:
         if (mcu._serial.get_serialqueue() is None or mcu.is_fileoutput()
                 or int(mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI', 0)) != 1):
             raise FactoryError('Native Z readback requires a connected MCU with refinement ABI 1')
-        command = mcu.lookup_command(REFINE_COMMAND)
+        clearance = int(mcu.get_constants().get('INVENTURE_NATIVE_Z_CLEARANCE_ABI', 0)) == 1
+        command = mcu.lookup_command(CLEARANCE_COMMAND if clearance else REFINE_COMMAND)
         # A shutdown interrupts the normal synchronous poll and disables ACK waits.
         # A host reconnect can also encounter shutdown before config callbacks run.
         # Install the receiver on the existing link and send only the read-only action.
-        mcu._serial.register_response(self._retained_reply, REFINE_RESPONSE.split()[0])
-        command.send([0, 0, 0, 0, 0, 0, 0])
+        response = CLEARANCE_RESPONSE if clearance else REFINE_RESPONSE
+        mcu._serial.register_response(self._retained_reply, response.split()[0])
+        command.send([0] * (9 if clearance else 7))
         request = self.retained_request = object()
         def check_reply(eventtime):
             if self.retained_request is request:
@@ -156,6 +163,8 @@ class InventureNativeZ:
                 'owner', 'token', 'net_steps', 'best_steps', 'cycles', 'non_improvements',
                 'up_steps', 'down_steps')}
             result['status'] = REFINE_STATUS[status]
+            if 'clearance_steps' in row:
+                result['clearance_steps'] = row['clearance_steps']
             result['matches_failed_run'] = None if self.refine_identity is None else (
                 self.refine_identity == (row['owner'], row['token'])
                 and bool(self.last_result and self.last_result.get('terminal') == 'failed'))
@@ -173,6 +182,8 @@ class InventureNativeZ:
         self.guard = self.board.mcu.lookup_query_command(GUARD_COMMAND, GUARD_RESPONSE)
         if int(constants.get('INVENTURE_NATIVE_Z_REFINE_ABI', 0)) == 1:
             self.refine = self.board.mcu.lookup_query_command(REFINE_COMMAND, REFINE_RESPONSE)
+        if int(constants.get('INVENTURE_NATIVE_Z_CLEARANCE_ABI', 0)) == 1:
+            self.refine_clearance = self.board.mcu.lookup_query_command(CLEARANCE_COMMAND, CLEARANCE_RESPONSE)
 
     def _verify_guard(self, action, token, active):
         row = self.board._thermal_query_send(self.guard, [action, token], start=action == 1)
@@ -183,6 +194,16 @@ class InventureNativeZ:
     def _identify(self):
         self.toolhead = self.printer.lookup_object('toolhead')
         self.kin = self.toolhead.get_kinematics()
+        for rail, step_pin, dir_pin, endstop_pin in zip(
+                self.kin.rails[:2], ('PA7', 'PA6'), ('PB2', 'PB1'), ('PB11', 'PC15')):
+            xy_stepper, = rail.get_steppers()
+            xy_endstop = rail.get_endstops()[0][0]
+            if (xy_stepper.get_mcu() is not self.board.mcu or xy_endstop.get_mcu() is not self.board.mcu
+                    or xy_stepper._step_pin != step_pin or xy_stepper._invert_step
+                    or xy_stepper._dir_pin != dir_pin or xy_stepper._invert_dir
+                    or xy_endstop._pin != endstop_pin or xy_endstop._invert
+                    or not math.isclose(1. / xy_stepper.get_step_dist(), 640., abs_tol=.01)):
+                raise self.printer.config_error('Native XY frame handoff requires the Inventure PA7/PA6 CoreXY wiring at 640 steps/mm')
         rail = self.kin.rails[2]
         steppers = rail.get_steppers()
         endstops = rail.get_endstops()
@@ -398,18 +419,27 @@ class InventureNativeZ:
         interval = round(1_000_000. / (self.fine_speed * Z_STEPS_PER_MM))
         args = [self.guard_owner, token, span, interval, math.ceil(self.reference_target - 10.),
                 math.ceil(self.reference_target + 8.)]
+        clearance_query = getattr(self, 'refine_clearance', None)
+        clearance = getattr(self, 'handoff_clearance_steps', Z_STEPS_PER_MM) if clearance_query else 0
+        if clearance:
+            speed = min(getattr(self, 'handoff_clearance_speed', self.park_speed),
+                        getattr(self.kin, 'max_z_velocity', self.park_speed))
+            args.extend([clearance, max(200, math.ceil(1_000_000. / (speed * Z_STEPS_PER_MM)))])
         self.refine_identity = (self.guard_owner, token)
         limits = dict(owner=(1, 0xffffffff), token=(1, 0xffffffff), active=(0, 1),
                       status=(0, len(REFINE_STATUS) - 1), reject=(0, 4),
                       net_steps=(-span, span), best_steps=(-span, span),
                       cycles=(0, Z_MAX_CYCLES), non_improvements=(0, Z_STABLE_CYCLES),
                       up_steps=(0, 0xffffffff), down_steps=(0, 0xffffffff))
+        if clearance:
+            limits['clearance_steps'] = (0, clearance)
         next_report = self.reactor.monotonic() + PROGRESS_INTERVAL_S
         last = None
         action = 1
         while True:
             self._stage('STM32 PC14 refinement status')
-            row = self.board._thermal_query_send(self.refine, [action] + args, start=action == 1)
+            row = self.board._thermal_query_send(clearance_query or self.refine,
+                                                [action] + args, start=action == 1)
             if row.get('reject'):
                 raise FactoryError('MCU rejected native Z refinement (%s)' % row['reject'])
             self.board._control_validate(row, limits)
@@ -439,7 +469,8 @@ class InventureNativeZ:
         if status != 'done':
             raise FactoryError('MCU native Z refinement failed: ' + status)
         if (not row['cycles'] or not row['up_steps'] or row['net_steps'] != row['best_steps']
-                or (row['non_improvements'] != Z_STABLE_CYCLES and row['up_steps'] < span)):
+                or (row['non_improvements'] != Z_STABLE_CYCLES and row['up_steps'] < span)
+                or clearance and row['clearance_steps'] != clearance):
             raise FactoryError('MCU did not settle on a valid native Z release')
         self._stage('STM32 PC14 refinement verification')
         self._check(0)
@@ -507,6 +538,7 @@ class InventureNativeZ:
                     local_refinement=local,
                     required_non_improvements=repeat_count if probe_cycles is None else None,
                     requested_cycles=probe_cycles,
+                    handoff_clearance_mm=telemetry.get('clearance_steps', 0) / Z_STEPS_PER_MM,
                     completion_basis=basis)
 
     def _check_available(self, gcmd):
@@ -586,8 +618,14 @@ class InventureNativeZ:
             self.reactor.pause(min(deadline, now + .5))
         raise FactoryError('Inventure homing was interrupted while heating')
 
-    def _prepare_t0(self, gcmd, heaters, target):
+    def _prepare_t0(self, gcmd, heaters, target, xy_factor=None, pad_speed=None):
         from .inventure_fluidd import require_idle
+        endstops = []
+        for rail in self.kin.rails[:2]:
+            info = rail.get_homing_info()
+            if info.positive_dir:
+                raise FactoryError('Inventure XY homing requires the negative-end PB11/PC15 limits')
+            endstops.append(info.position_endstop)
         self.toolhead.wait_moves()
         heaters.turn_off_all_heaters()
         deadline = self.reactor.monotonic() + PHASE_MARGIN_S
@@ -598,16 +636,25 @@ class InventureNativeZ:
             require_idle(self.board)
             self.reactor.pause(now + .1)
         require_idle(self.board)
+        # SERVICE drives the shared enable outside Klipper's stepper objects.
+        # Drain and clear their cached enable state before transferring control.
+        self.printer.lookup_object('stepper_enable').motor_off()
+        self.toolhead.wait_moves()
         self.board._enter_operator_service(homing=self)
         self._invalidate_native_homing()
+        params = dict(ACTION='CLEAN', TOOL='T0', TARGET=target, SPEED_PROFILE='OEM')
+        if xy_factor is not None:
+            params['HOME_SPEED'] = min(rail.homing_speed for rail in self.kin.rails[:2]) * xy_factor
         command = self.printer.lookup_object('gcode').create_gcode_command('INVENTURE_PROCEDURE',
             'INVENTURE_PROCEDURE ACTION=CLEAN TOOL=T0',
-            dict(ACTION='CLEAN', TOOL='T0', TARGET=target, SPEED_PROFILE='OEM'))
+            params)
         context = None
         try:
             gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(
                 dict(stage='T0 selection and cleaning')))
-            context = self.board._factory_start(command, operation='CLEAN')
+            context = self.board._factory_start(command, operation='CLEAN', native_homing=dict(
+                pad_xy=[self.pad_x, self.pad_y], endstops=endstops,
+                pad_speed=self.pad_speed if pad_speed is None else pad_speed))
             factory = context['factory']
             while self.board.load_test_context is context:
                 now = self.reactor.monotonic()
@@ -618,12 +665,15 @@ class InventureNativeZ:
             if (self.board.load_test_context is not None or context['tool'] != 0
                     or factory['operation'] != 'CLEAN' or not factory['selection_commanded']
                     or not factory['cleaning_done'] or not result.get('success')
-                    or result.get('terminal') != 'CLEAN'):
+                    or result.get('terminal') != 'HOME_PREPARE'
+                    or result.get('native_xy_mm') != [self.pad_x, self.pad_y]
+                    or result.get('service_xy_mm') != factory['position'][:2]):
                 reason = (getattr(self.board, 'load_test_last', {}) or {}).get('reason')
                 raise FactoryError('T0 selection and cleaning did not complete'
                                    + (': ' + reason if reason else ''))
             gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(
-                dict(stage='T0 selected and cleaned')))
+                dict(stage='T0 selected and cleaned', xy_frame=result)))
+            return result
         except Exception:
             self.board._control_abort()
             raise
@@ -694,6 +744,9 @@ class InventureNativeZ:
                 if (operator and int(self.board.mcu.get_constants().get(
                         'INVENTURE_NATIVE_HEATER_HANDOFF_ABI', 0)) != 1):
                     raise FactoryError('Automatic T0 preparation requires MCU R15 heater handoff')
+                if operator and (getattr(self, 'refine_clearance', None) is None
+                                 or not getattr(self.board, 'native_xy_handoff_abi', 0)):
+                    raise FactoryError('Operator Home Z and All require MCU R16 contact-clearance handoff')
                 self.board._z_home_inputs({})
                 previous_target = heater.get_temp(now)[1]
                 heaters = self.printer.lookup_object('heaters')
@@ -708,17 +761,25 @@ class InventureNativeZ:
                 if hot:
                     suspended_heaters = [(h, h.get_temp(now)[1])
                                          for h in heaters.heaters.values()]
-                    self._prepare_t0(gcmd, heaters, target)
+                    preparation = self._prepare_t0(gcmd, heaters, target, xy_factor, pad_speed)
                     control = native_control_state(self.board)
                 select_native_control(self.board, control)
             self.toolhead.wait_moves()
             self._require_native()
-            if operator and axes == 'Z':
-                # A restart or motor release may have invalidated XY since the dialog opened.
-                status = self.kin.get_status(self.reactor.monotonic())['homed_axes']
-                if not all(axis in status for axis in 'xy'):
-                    gcmd.respond_info('Homing Y and X before Z to locate the center pad')
-                    axes = 'XYZ'
+            if operator and hot:
+                # The MCU-confirmed release strokes locate the SERVICE origin
+                # relative to each configured native endstop. The final pad leg
+                # already used this measured translation. Adopt that position
+                # without commanding a second physical XY homing sequence.
+                position = self.toolhead.get_position()
+                position[:2] = preparation['native_xy_mm']
+                self.toolhead.set_position(position, homing_axes='xy')
+                gcode_move = self.printer.lookup_object('gcode_move')
+                gcode_move.base_position[:2] = gcode_move.homing_position[:2]
+                gcode_move.reset_last_position()
+                operations = self.printer.lookup_object('inventure_operations', None)
+                if operations is not None:
+                    operations.state.homed('xy')
             contact_known = ('z' in status and self.last_result is not None
                              and self.last_result.get('reference_established'))
             if hot or not contact_known:
@@ -729,7 +790,7 @@ class InventureNativeZ:
             if self._is_triggered(self.endstop):
                 raise FactoryError('PC14 must be open before moving X or Y')
             for axis in 'YX':
-                if axis in axes:
+                if axis in axes and not (operator and hot):
                     self._require_native()
                     self._home_limit(axis, xy_factor)
             self._require_native()
@@ -742,7 +803,12 @@ class InventureNativeZ:
                 heat_started = True
                 heaters.set_temperature(heater, target, wait=False)
                 self._wait_for_home_temperature(heater, target)
-                self.cmd_home(z_command)
+                self.handoff_clearance_steps = min(Z_STEPS_PER_MM, max(1, round(park_z * Z_STEPS_PER_MM)))
+                self.handoff_clearance_speed = park_speed
+                try:
+                    self.cmd_home(z_command)
+                finally:
+                    del self.handoff_clearance_steps, self.handoff_clearance_speed
                 self._require_native()
                 self._move_to([None, None, park_z], park_speed)
                 self._require_native()
@@ -837,11 +903,16 @@ class InventureNativeZ:
                 self._check(0)
                 if self._is_triggered(self.endstop) or not self.z_enable.is_motor_enabled():
                     raise FactoryError('Native Z lost the selected reference before assigning zero')
+                if result['handoff_clearance_mm']:
+                    self._verify_guard(2, token, False)
+                    self.guard_owner = None
+                    self._check(0)
                 position = self.toolhead.get_position()
-                position[2] = 0.
+                position[2] = result['handoff_clearance_mm']
                 self.toolhead.set_position(position, homing_axes='z')
-                self._verify_guard(2, token, False)
-                self.guard_owner = None
+                if self.guard_owner is not None:
+                    self._verify_guard(2, token, False)
+                    self.guard_owner = None
                 gm.base_position[2] = gm.homing_position[2] = 0.
                 gm.reset_last_position()
                 if operations is not None:

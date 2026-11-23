@@ -4,6 +4,7 @@
 DECL_CONSTANT("INVENTURE_Z_HOME_ABI",1);
 DECL_CONSTANT("INVENTURE_Z_EDGE_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_REFINE_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_Z_CLEARANCE_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_Z_TEST_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_Z_DUAL_ABI",1);
 #define ZH_MAX_SPAN 8020u
@@ -18,13 +19,14 @@ DECL_CONSTANT("INVENTURE_NOZZLE_Z_DUAL_ABI",1);
 #define ZH_HANDOFF_MS 10000u
 
 enum { ZH_RUNNING,ZH_DONE,ZH_NO_CONTACT,ZH_NO_RELEASE,ZH_GUARD,ZH_TIME,ZH_STOP };
-enum { ZH_START_UP,ZH_SEEK,ZH_START_DOWN,ZH_RELEASE,ZH_START_SETTLE,ZH_SETTLE };
+enum { ZH_START_UP,ZH_SEEK,ZH_START_DOWN,ZH_RELEASE,ZH_START_SETTLE,ZH_SETTLE,ZH_CLEARANCE };
 enum { ZH_EDGE_CLOSE,ZH_EDGE_OPEN,ZH_EDGE_SETTLE };
 static struct zh_state {
     uint64_t elapsed_ticks;
     uint32_t owner,token,stamp,interval,up_steps,down_steps,cycles,motion_run;
     int32_t net,best;
     uint16_t span,interval_us;
+    uint16_t clearance_requested,clearance_steps,clearance_us;
     int16_t native_min_c,native_max_c;
     uint8_t repeats,misses,phase,status,active,high,timer_added;
     uint8_t edge,operation,end_raw;
@@ -169,7 +171,8 @@ static uint_fast8_t zh_event(struct timer *t) {
     if(zh.high) {
         motor_test_write(mt_drivers[2].step_port,mt_drivers[2].step_bit,0);
         zh.high=0;
-        uint32_t wait=zh.interval-timer_from_us(ZH_HIGH_US);
+        uint32_t period=zh.phase==ZH_CLEARANCE ? timer_from_us(zh.clearance_us) : zh.interval;
+        uint32_t wait=period-timer_from_us(ZH_HIGH_US);
         if(zh.phase==ZH_RELEASE)return zh_sample_release(t,now,wait);
         return zh_wait(t,now,wait);
     }
@@ -206,6 +209,22 @@ static uint_fast8_t zh_event(struct timer *t) {
         if(zh.net>zh.best)return zh_step(t,now,0);
         if(zh.net!=zh.best || !zh_contact_open())return zh_fail(ZH_GUARD);
         if(zh.edge)return zh_edge_finish(ZH_DONE,1);
+        if(zh.clearance_requested) {
+            zh.phase=ZH_CLEARANCE;
+            return zh_wait(t,now,timer_from_us(zh.clearance_us));
+        }
+        zh_end(ZH_DONE);
+        return SF_DONE;
+    case ZH_CLEARANCE:
+        if(zh.clearance_steps<zh.clearance_requested) {
+            // Keep the measured release counters intact. These pulses only
+            // create the gap before native position ownership returns to host.
+            motor_test_write(mt_drivers[2].step_port,mt_drivers[2].step_bit,1);
+            zh.clearance_steps++;
+            zh.high=1;
+            return zh_wait(t,now,timer_from_us(ZH_HIGH_US));
+        }
+        if(!zh_contact_open())return zh_fail(ZH_NO_RELEASE);
         zh_end(ZH_DONE);
         return SF_DONE;
     }
@@ -346,15 +365,18 @@ void command_inventure_z_edge(uint32_t *args) {
 DECL_COMMAND_FLAGS(command_inventure_z_edge,HF_IN_SHUTDOWN,
     "inventure_z_edge action=%c owner=%u token=%u operation=%c steps=%hu interval_us=%hu");
 
-static uint8_t zh_native_start(uint32_t now,const uint32_t *args) {
+static uint8_t zh_native_start(uint32_t now,const uint32_t *args,
+                               unsigned clearance,unsigned clearance_us) {
     uint32_t owner=args[1],token=args[2],span=args[3],interval_us=args[4];
     int16_t min_c=args[5],max_c=args[6];
     if(!owner || !token || !span || span>ZH_MAX_SPAN || interval_us<ZH_MIN_INTERVAL_US
             || interval_us>ZH_MAX_INTERVAL_US || min_c<170 || min_c>240
-            || max_c<=min_c || max_c>250)return 1;
+            || max_c<=min_c || max_c>250 || clearance>802
+            || (clearance && (clearance_us<200 || clearance_us>ZH_MAX_INTERVAL_US)))return 1;
     if(owner==zh.owner && token==zh.token)
         return !zh.native || span!=zh.span || interval_us!=zh.interval_us
-            || min_c!=zh.native_min_c || max_c!=zh.native_max_c;
+            || min_c!=zh.native_min_c || max_c!=zh.native_max_c
+            || clearance!=zh.clearance_requested || clearance_us!=zh.clearance_us;
     if(owner!=native_z_guard_owner || owner==zh.owner)return 4;
     if(zh_start_busy() || fs.active || native_z_refine_held)return 2;
     if(!zh_native_guard_ok(now,owner,min_c,max_c) || !zh_contact_open()
@@ -363,6 +385,7 @@ static uint8_t zh_native_start(uint32_t now,const uint32_t *args) {
         .interval_us=interval_us,.interval=timer_from_us(interval_us),
         .repeats=ZH_MAX_REPEATS,.active=1,.timer_added=1,.native=1,
         .native_min_c=min_c,.native_max_c=max_c,
+        .clearance_requested=clearance,.clearance_us=clearance_us,
         .native_saved_dir=!!(mt_drivers[2].dir_port->ODR&mt_drivers[2].dir_bit)};
     native_z_refine_held=1;
     zh_schedule(now);
@@ -376,7 +399,7 @@ void command_inventure_native_z_refine(uint32_t *args) {
     uint32_t now=timer_read_time();
     zh_guard(now);
     uint8_t reject=0;
-    if(action==1)reject=zh_native_start(now,args);
+    if(action==1)reject=zh_native_start(now,args,0,0);
     else if(action>2)reject=1;
     else if(action==0 && !owner && !token){} // Read-only diagnostics.
     else if(!zh.native || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
@@ -392,3 +415,29 @@ void command_inventure_native_z_refine(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_native_z_refine,HF_IN_SHUTDOWN,
     "inventure_native_z_refine action=%c owner=%u token=%u span=%hu interval_us=%hu min_c=%hi max_c=%hi");
+
+void command_inventure_native_z_refine_clearance(uint32_t *args) {
+    unsigned action=args[0];
+    uint32_t owner=args[1],token=args[2];
+    irqstatus_t irq=irq_save();
+    uint32_t now=timer_read_time();
+    zh_guard(now);
+    uint8_t reject=0;
+    if(action==1) {
+        if(!args[7])reject=1;
+        else reject=zh_native_start(now,args,args[7],args[8]);
+    } else if(action>2)reject=1;
+    else if(action==0 && !owner && !token){} // Read-only retained diagnostics.
+    else if(!zh.native || !owner || !token || owner!=zh.owner || token!=zh.token)reject=4;
+    else if(action==2 && native_z_refine_held) {
+        zh.status=ZH_STOP;
+        control_stop_all();
+    }
+    struct zh_state state=zh.native ? zh : (struct zh_state){0};
+    irq_restore(irq);
+    sendf("inventure_native_z_clearance_state owner=%u token=%u active=%c status=%c reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c up_steps=%u down_steps=%u clearance_steps=%hu",
+        state.owner,state.token,state.active,state.status,reject,state.net,state.best,
+        state.cycles,state.misses,state.up_steps,state.down_steps,state.clearance_steps);
+}
+DECL_COMMAND_FLAGS(command_inventure_native_z_refine_clearance,HF_IN_SHUTDOWN,
+    "inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu");

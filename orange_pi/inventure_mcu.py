@@ -15,7 +15,7 @@ from .inventure_fans_core import fan_test_result, normalized_tach, validate_repo
 from .inventure_factory_core import LEGACY_SERVICE_TARGET_MAX_C, SERVICE_TARGET_MAX_C
 from .inventure_nozzle_xyz import PAD_MEASUREMENT_BAND_C, PAD_TEMPERATURE_C
 
-HOST_REVISION = 'RC8-CONTROL-R7-HOMING-R38.5'
+HOST_REVISION = 'RC8-CONTROL-R7-HOMING-R38.6'
 NOZZLE_XY_RELEASE = 'RC8-CONTROL-R7-NOZZLE-XY'
 NOZZLE_XY_TARGETS = (210., 215.)
 NOZZLE_PAD_RELEASE = 'RC8-CONTROL-R7-NOZZLE-PAD'
@@ -594,6 +594,12 @@ class InventureMCU:
             raise self.printer.config_error('Unexpected MCU service nozzle target limit')
         self.native_z_guard_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_GUARD_ABI',0))
         self.native_z_refine_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_REFINE_ABI',0))
+        self.native_z_clearance_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_Z_CLEARANCE_ABI',0))
+        self.native_xy_handoff_abi=int(self.mcu.get_constants().get('INVENTURE_NATIVE_XY_HANDOFF_ABI',0))
+        if self.native_xy_handoff_abi == 1:
+            self.commands['factory_native_handoff'] = self.mcu.lookup_query_command(
+                'inventure_factory_native_handoff owner=%u run=%u token=%u',
+                'inventure_factory_native_handoff_state owner=%u run=%u token=%u mode=%c enabled=%c reject=%c')
         if self.z_edge_abi==1:
             if self.control_abi!=1 or self.factory_abi!=1:
                 raise self.printer.config_error('MCU Z edge probing requires CONTROL and FACTORY ABI 1')
@@ -1915,6 +1921,8 @@ class InventureMCU:
             'native_nozzle_max_temp_c':{'T%d'%tool:self._native_nozzle_max_temp(tool) for tool in range(2)},
             'native_z_guard_abi':getattr(self,'native_z_guard_abi',0),
             'native_z_refine_abi':getattr(self,'native_z_refine_abi',0),
+            'native_z_clearance_abi':getattr(self,'native_z_clearance_abi',0),
+            'native_xy_handoff_abi':getattr(self,'native_xy_handoff_abi',0),
             'axis_motion_abi':getattr(self,'axis_motion_abi',0),
             **{attr:getattr(self,attr,0) for attr,_,_ in AXIS_MOTION_LIMITS},
             'control_state':getattr(self,'control_last',{}),
@@ -3663,7 +3671,7 @@ class InventureMCU:
                           max_target=getattr(self, 'nozzle_service_target_max', LEGACY_SERVICE_TARGET_MAX_C))
 
     def _factory_start(self,gcmd,read_only=False,operation='AUTO',nozzle_parameters=None,platform=None,
-                       enter_service=False, cassette_jog=False):
+                       enter_service=False, cassette_jog=False, native_homing=None):
         from .inventure_factory_core import (
             FactoryProgram, PROCEDURES, procedure_modules, require_heated_target,
         )
@@ -3754,8 +3762,15 @@ class InventureMCU:
                 elif nozzle_test:program=ZHomeProgram(p,z_settings).run_nozzle(prepare=True)
                 else:program=ZHomeProgram(p,z_settings).run(operation)
             else:
-                program=FactoryProgram(p, operation).run(
-                    operation, interactive=interactive, cassette_jog=cassette_jog)
+                if native_homing is not None:
+                    if operation != 'CLEAN' or p['tool'] != 0 or p['speed_profile'] != 'OEM':
+                        raise ValueError('Native homing preparation requires the T0 OEM cleaning modules')
+                    z_settings = z_home_parameters(gcmd, p)
+                    program = ZHomeProgram(p, z_settings).prepare_native_home(
+                        native_homing['pad_xy'], native_homing['pad_speed'])
+                else:
+                    program=FactoryProgram(p, operation).run(
+                        operation, interactive=interactive, cassette_jog=cassette_jog)
             if enter_service:
                 self._nozzle_service_cutoff(p['tool'], p['target'])
                 self._enter_operator_service()
@@ -3783,6 +3798,8 @@ class InventureMCU:
             cleaning_done=False,session=False,token=self._control_next_token(),sequence=-1,
             mode=0,monitor=0,total_deadline=now+timeout,heat_started=False,
             operation=operation,started=now,module_stack=[],module_history=[],selection_commanded=False)
+        if native_homing is not None:
+            context['factory']['native_homing'] = dict(native_homing, release_mm={})
         if interactive:
             saved = getattr(getattr(self, 'material_service', None), 'profiles', {}).get('T%d' % p['tool'], {})
             context['factory'].update(interactive_material=True, manual_speeds={
@@ -4037,7 +4054,7 @@ class InventureMCU:
         if probe:
             from .inventure_z_home import Z_BOTTOM, Z_STEPS_PER_MM
             dual='dual_heaters' in f or cold
-            clearance=(dual and action.get('stage')=='clearance' and not f['homed']
+            clearance=((dual or 'native_homing' in f) and action.get('stage')=='clearance' and not f['homed']
                        and -10*Z_STEPS_PER_MM<=action['steps']<0
                        and action['stop_mask']==action['stop_value']==Z_BOTTOM)
             coarse=dual and action.get('stage')=='coarse' and f['heat_started']
@@ -4066,7 +4083,7 @@ class InventureMCU:
                 mask|=16 if axis=='Z' else 24
                 stop_value|=16
         else:
-            xy_ready='dual_heaters' in f and not e and {'X','Y'}.issubset(f['homed'])
+            xy_ready=('dual_heaters' in f or 'native_homing' in f) and not e and {'X','Y'}.issubset(f['homed'])
             if not f['reference_valid'] and not xy_ready:
                 raise ValueError('Factory motion has no owned homing reference')
             if not p['min_x']<=x<=p['max_x'] or not p['min_y']<=y<=p['max_y']:
@@ -4351,6 +4368,14 @@ class InventureMCU:
             if not released_xy or a['axis']=='Z' or kind=='home_release':
                 f['homed'].append(a['axis']);f['position']['XYZ'.index(a['axis'])]=0.
                 f['reference_valid']=len(set(f['homed']))==3
+            if 'native_homing' in f and kind == 'home_release':
+                da, db = (row['drivers'][name] for name in ('A', 'B'))
+                if (row['hit'] != {'X': 1, 'Y': 2}[a['axis']]
+                        or not 0 < da['sent'] == db['sent'] <= round(a['max_mm'] * 640)
+                        or da['direction'] != 1 or db['direction'] != int(a['axis'] == 'X')
+                        or row['drivers']['Z']['sent'] or row['drivers']['E']['sent']):
+                    raise ValueError('Invalid XY limit-release step count for native homing')
+                f['native_homing']['release_mm'][a['axis']] = da['sent'] / 640.
             ok=True
         elif row['reason']=='completed':
             if any(row['drivers'][n]['sent']!=abs(m['counts'][i]) for i,n in enumerate(('A','B','Z','E'))):
@@ -4481,6 +4506,14 @@ class InventureMCU:
 
     def _factory_action(self,context,action):
         f=context['factory'];now=self.reactor.monotonic();kind=action['kind']
+        if kind == 'native_home_frame' and 'native_homing' in f:
+            frame = f['native_homing']
+            if (set(f['homed']) != {'X', 'Y'} or set(frame['release_mm']) != {'X', 'Y'}
+                    or not f['selection_commanded'] or not f['cleaning_done'] or f['move'] is not None):
+                raise ValueError('Native homing has no completed XY, selection and cleaning frame')
+            self._z_home_inputs({'nozzle_contact': 1})
+            return dict(native_xy_offsets_mm=[frame['endstops'][i] + frame['release_mm'][axis]
+                                             for i, axis in enumerate('XY')])
         if kind == 'material_wait' and f.get('interactive_material'):
             from .inventure_material_service import wait_for_operator
             return wait_for_operator(self, context, action)
@@ -4493,7 +4526,7 @@ class InventureMCU:
             elif action['state']=='done' and f['module_stack'] and f['module_stack'][-1]==name:
                 f['module_stack'].pop()
                 if name=='select_tool':
-                    if f['operation'] in ('NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT',
+                    if 'native_homing' in f or f['operation'] in ('NOZZLE_Z_PREPARE','NOZZLE_Z_MEASURE','NOZZLE_XY_PRINT',
                                           'NOZZLE_PAD_CALIBRATION','PLATFORM_LEVEL'):
                         stroke=f['motion_legs'].get('selector_press')
                         if stroke is None or stroke['reason']!='completed':
@@ -4636,10 +4669,19 @@ class InventureMCU:
                 if self.load_test_context is not context:return None
                 if state['reject'] or state['active'] or state['armed']:
                     raise ValueError('MCU did not confirm that nozzle calibration stopped')
+            if 'native_homing' in f:
+                motion = context['motion']
+                args = [f['token'], motion['run'], motion['token']]
+                row = self._control_send('factory_native_handoff', args, mutate=True, owner=context)
+                self._control_validate(row, dict(owner=(1,0xffffffff),run=(1,0xffffffff),
+                    token=(1,0xffffffff),mode=(0,2),enabled=(0,1),reject=(0,4)))
+                if ([row['owner'],row['run'],row['token']] != args or row['reject']
+                        or row['mode'] != 1 or row['enabled'] != 1):
+                    raise ValueError('MCU did not preserve the XY reference during native handoff')
             f['result']=dict(action);f['cleaning_done']=bool(action.get('cleaning_done'))
             self._load_test_cancel('factory_load_completed' if f['operation']=='AUTO'
                 else 'factory_procedure_completed',phase='done')
-            if not any(key in f for key in ('xy_budget','pad_budget','platform_level_run')):self._control_abort()
+            if not any(key in f for key in ('xy_budget','pad_budget','platform_level_run','native_homing')):self._control_abort()
             return None
         raise ValueError('Unknown factory action '+kind)
 

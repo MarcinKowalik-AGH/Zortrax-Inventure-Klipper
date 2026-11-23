@@ -36,7 +36,7 @@ static int64_t factory_guard_reply[18];
 static struct {
     uint32_t owner, token, active, status, reject;
     int32_t net, best;
-    uint32_t cycles, misses, up_steps, down_steps;
+    uint32_t cycles, misses, up_steps, down_steps, clearance_steps;
 } z_home_reply;
 static struct {
     uint32_t owner,token,operation,active,status,reject,sent,end_raw;
@@ -51,11 +51,15 @@ static uint32_t native_z_guard_reply[3];
 void sendf(const char*f,...){
 #ifdef TEST_Z_HOME_WIRE
     if (!strncmp(f, "inventure_z_home_state ", 23)
-            || !strncmp(f,"inventure_native_z_refine_state ",32)) {
+            || !strncmp(f,"inventure_native_z_refine_state ",32)
+            || !strncmp(f,"inventure_native_z_clearance_state ",34)) {
         const char *fields=strchr(f,' ')+1;
-        assert(!strcmp(fields, "owner=%u token=%u active=%c status=%c"
+        const char *base="owner=%u token=%u active=%c status=%c"
             " reject=%c net_steps=%i best_steps=%i cycles=%u non_improvements=%c"
-            " up_steps=%u down_steps=%u"));
+            " up_steps=%u down_steps=%u";
+        unsigned clearance=!!strstr(fields," clearance_steps=%hu");
+        assert(!strncmp(fields,base,strlen(base)));
+        assert(!strcmp(fields+strlen(base),clearance ? " clearance_steps=%hu" : ""));
         va_list args;
         va_start(args, f);
         z_home_reply.owner = va_arg(args, unsigned);
@@ -69,6 +73,7 @@ void sendf(const char*f,...){
         z_home_reply.misses = va_arg(args, unsigned);
         z_home_reply.up_steps = va_arg(args, unsigned);
         z_home_reply.down_steps = va_arg(args, unsigned);
+        z_home_reply.clearance_steps = clearance ? va_arg(args, unsigned) : 0;
         va_end(args);
         return;
     }

@@ -2,7 +2,7 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
-**R38.5 selects and cleans T0 before Home All and Home Z.** The host completes the existing T0 CLEAN procedure, then acquires the native XY/Z reference. MCU R15 supplies the required heater handoff. [Release and verification](docs/INVENTURE_HOME_T0_R38_5.md)
+**R38.6 performs one XY homing before T0 preparation and the native Z reference.** MCU R16 preserves the XY reference through the ownership handoff and lowers the table 1 mm locally after contact measurement. [Sequence, installation and verification](docs/INVENTURE_HOME_SEQUENCE_R38_6.md)
 
 **MCU R15 restores native heater control after nozzle cleaning.** Install the MCU application on printers running Orange Pi host R38.4. [Release and installation](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-heater-handoff-r15) · [Failure trace and verification](docs/INVENTURE_HEATER_HANDOFF_R15.md)
 
@@ -20,12 +20,12 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 
 ## Update an existing Orange Pi installation
 
-With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. The update requires MCU R15 for the native heater handoff after T0 cleaning.
+With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. Install MCU R16 from the same release for the continuous XY ownership transfer and local post-measurement retreat.
 
 ```bash
-git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-homing-r38.5 &&
-git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-homing-r38.5" refs/tags/inventure-homing-r38.5 &&
-python3 "$HOME/inventure-homing-r38.5/install-orange-pi.py" --configure-fluidd --organize-config
+git -C "$HOME/inventure-orange-pi" fetch origin tag inventure-homing-r38.6 &&
+git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-homing-r38.6" refs/tags/inventure-homing-r38.6 &&
+python3 "$HOME/inventure-homing-r38.6/install-orange-pi.py" --configure-fluidd --organize-config
 ```
 
 If the R38.5 worktree already exists at that tag, run its final installer command. If you see `HOST_INSTALLED_MCU_SHUTDOWN`, review the shutdown cause in `klippy.log`. After correcting the cause, issue `FIRMWARE_RESTART` once in Fluidd and wait for Ready. Once Klipper is ready, enter the following in the **Fluidd console**.
@@ -36,7 +36,7 @@ INVENTURE_MAIN_MENU
 INVENTURE_OLED_STATUS
 ```
 
-The host should report `RC8-CONTROL-R7-HOMING-R38.5` and the MCU `RC8-CONTROL-R7-HEATER-HANDOFF-R15`. Refresh the existing Fluidd page after the installer reports the active `fluidd_root`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
+The host should report `RC8-CONTROL-R7-HOMING-R38.6` and the MCU `RC8-CONTROL-R7-HOMING-R16`. Refresh the existing Fluidd page after the installer reports the active `fluidd_root`. The category editor can show additional diagnostic and recovery controls. [Setup, backup and recovery](docs/INVENTURE_FLUIDD_R30.md)
 
 ## Printer procedures
 

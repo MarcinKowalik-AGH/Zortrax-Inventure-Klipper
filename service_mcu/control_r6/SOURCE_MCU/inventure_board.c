@@ -47,6 +47,7 @@ static volatile uint16_t control_heater_duty[4];
 static volatile uint8_t native_heater_configured[4];
 static volatile uint8_t native_z_guard_active,native_z_guard_lost;
 static volatile uint8_t native_z_refine_held,native_z_refine_conflict;
+static uint8_t native_dir_levels,native_dir_seen;
 static uint8_t control_aux_allowed(void);
 static uint8_t control_busy(void);
 static uint8_t control_door_policy_busy(void);
@@ -119,6 +120,17 @@ void inventure_early_init(void) {
 
 uint8_t inventure_is_armed(void) { return control_mode==1 && !fault && !control_latched; }
 
+static void native_dir_observe(void *r,uint32_t bit,uint32_t value) {
+    unsigned dir_mask = r==GPIOB && bit==BIT(2) ? 1 : r==GPIOB && bit==BIT(1) ? 2
+        : r==GPIOE && bit==BIT(7) ? 4 : r==GPIOE && bit==BIT(8) ? 8 : 0;
+    if(dir_mask && !native_z_refine_held) {
+        // Only the native GPIO API enters this filter. SERVICE writes use
+        // raw outputs and must not change the native stepper DIR cache.
+        native_dir_seen|=dir_mask;
+        native_dir_levels=(native_dir_levels&~dir_mask)|(value?dir_mask:0);
+    }
+}
+
 /* Standard GPIO/software-PWM requests remain unable to energize while unarmed. */
 uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
     if (r == GPIOA && (bit == BIT(2) || bit == BIT(3)) && !door_policy_enabled())
@@ -152,6 +164,8 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
             if(!value)shutdown("Inventure heaters require hardware PWM");
             return 1;
         }
+        if((r==GPIOB && (bit==BIT(1) || bit==BIT(2)))
+                || (r==GPIOE && (bit==BIT(7) || bit==BIT(8))))native_dir_observe(r,bit,value);
         return value;
     }
     /* STEP is the frequent path. Keep E accounting exactly once; never run
@@ -162,6 +176,7 @@ uint32_t inventure_filter_gpio(void *r, uint32_t bit, uint32_t value) {
         if(r==GPIOB && bit==BIT(9))transport_gpio(r,bit,effective);
         return effective;
     }
+    native_dir_observe(r,bit,value);
     transport_gpio(r,bit,value);
     if (r == GPIOG && bit == BIT(4))
         return initialized && (!fault || t0_heat_busy() || control_cooling_mask());

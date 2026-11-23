@@ -191,7 +191,8 @@ class Model:
         return {'pos': counter}
 
     def _refine_reply(self, data, start):
-        action, owner, token, _, _, _, _ = data
+        action, owner, token = data[:3]
+        clearance = data[7] if len(data) == 9 else 0
         self.calls.append(('refine', tuple(data), start))
         if action == 1:
             assert self.guard and start
@@ -201,12 +202,16 @@ class Model:
             self.refine_polls += 1
         if self.refine_polls < 2:
             cycles = self.refine_polls
-            return dict(owner=owner, token=token, active=1, status=0, reject=0,
+            row = dict(owner=owner, token=token, active=1, status=0, reject=0,
                         net_steps=0, best_steps=0, cycles=cycles,
                         non_improvements=0, up_steps=cycles, down_steps=cycles)
+            if clearance:
+                row['clearance_steps'] = 0
+            return row
         self.refine_complete = True
         self.physical_z = self.threshold + 1. / Z_STEPS_PER_MM
         net = round((self.z - self.physical_z) * Z_STEPS_PER_MM)
+        self.physical_z += clearance / Z_STEPS_PER_MM
         if self.contact_stays_closed:
             self.physical_z = self.threshold
         row = dict(owner=owner, token=token, active=0, status=1, reject=0,
@@ -214,10 +219,12 @@ class Model:
                    non_improvements=self.refine_count,
                    up_steps=net + self.refine_count, down_steps=self.refine_count)
         row.update(self.refine_reply_overrides)
+        if clearance:
+            row.setdefault('clearance_steps', clearance)
         return row
 
     def _thermal_query_send(self, query, data, start=False):
-        if query is self.refine:
+        if query is self.refine or query is getattr(self, 'refine_clearance', None):
             return self._refine_reply(data, start)
         action, token = data
         self.calls.append(('guard', action, token, start))
@@ -668,6 +675,7 @@ class HomeSequenceModel(Model):
         super().__init__()
         self.axes = ''
         self.z = 30.
+        self.physical_z = self.z
         self.heater_target = 0.
         self.min_temp, self.max_temp = 0., 220.
         self.speeds = []
@@ -687,13 +695,18 @@ class HomeSequenceModel(Model):
         self.load_test_last = {}
         self.prepare_failure = None
         self.prepare_actions = []
-        self.mcu.get_constants = lambda: {'INVENTURE_NATIVE_HEATER_HANDOFF_ABI': 1}
+        self.refine_clearance = object()
+        self.native_xy_handoff_abi = 1
+        self.mcu.get_constants = lambda: {'INVENTURE_NATIVE_HEATER_HANDOFF_ABI': 1,
+                                         'INVENTURE_NATIVE_Z_CLEARANCE_ABI': 1}
         self.stats = types.SimpleNamespace(get_status=lambda _: {'state': self.print_state})
         self.axis_rails = [
             types.SimpleNamespace(homing_speed=5., second_homing_speed=2.,
-                                  homing_retract_speed=5., get_range=lambda: (0., 138.)),
+                                  homing_retract_speed=5., get_range=lambda: (0., 138.),
+                                  get_homing_info=lambda: types.SimpleNamespace(positive_dir=False, position_endstop=0.)),
             types.SimpleNamespace(homing_speed=5., second_homing_speed=2.,
-                                  homing_retract_speed=5., get_range=lambda: (0., 138.)),
+                                  homing_retract_speed=5., get_range=lambda: (0., 138.),
+                                  get_homing_info=lambda: types.SimpleNamespace(positive_dir=False, position_endstop=0.)),
             types.SimpleNamespace(homing_speed=8.2849, second_homing_speed=2.,
                                   homing_retract_speed=8.2849, get_range=lambda: (-.7, 145.),
                                   get_homing_info=lambda: types.SimpleNamespace(
@@ -719,7 +732,7 @@ class HomeSequenceModel(Model):
     def lookup_object(self, name, default=None):
         if name == 'print_stats':
             return self.stats
-        if name in ('gcode', 'gcode_move', 'heaters', 'homing', 'toolhead'):
+        if name in ('gcode', 'gcode_move', 'heaters', 'homing', 'toolhead', 'stepper_enable'):
             return self
         return default
 
@@ -738,6 +751,9 @@ class HomeSequenceModel(Model):
         for heater in self.heaters.values():
             heater.set_temp(0.)
 
+    def motor_off(self):
+        self.calls.append(('motor_off',))
+
     def _enter_operator_service(self, homing=None):
         assert homing is not None and homing.sequence_running and not homing.running
         if self.native_mode or self.inactive_mode != 'SERVICE':
@@ -745,12 +761,14 @@ class HomeSequenceModel(Model):
         self.native_mode = False
         self.inactive_mode = 'SERVICE'
 
-    def _factory_start(self, command, operation):
+    def _factory_start(self, command, operation, native_homing=None):
         from orange_pi.inventure_factory_core import FactoryProgram, parameters
+        from orange_pi.inventure_z_home import ZHomeProgram, z_home_parameters
         p = parameters(command, max_target=310.)
-        generator = FactoryProgram(p, operation).run(operation)
+        generator = (FactoryProgram(p, operation).run(operation) if native_homing is None else
+                     ZHomeProgram(p, z_home_parameters(command, p)).prepare_native_home(native_homing['pad_xy'], native_homing['pad_speed']))
         factory = dict(operation=operation, total_deadline=self.monotonic()+1800.,
-                       selection_commanded=False, cleaning_done=False, result=None)
+                       selection_commanded=False, cleaning_done=False, result=None, position=[0.,0.,0.])
         context = self.load_test_context = dict(factory=factory, tool=p['tool'])
         reply = None
         def advance(eventtime):
@@ -764,15 +782,37 @@ class HomeSequenceModel(Model):
                 self.load_test_last = dict(phase='failed', reason='Test preparation stopped')
                 self.load_test_context = None
                 return self.NEVER
+            if action['kind'] == 'home':
+                self.calls.append(('service_home', action['axis']))
+            if action['kind'] == 'heat':
+                self.calls.append(('service_heat', p['target']))
+            if action['kind'] == 'z_inputs':
+                reply = self._z_home_inputs(action['expected'])
+            if action['kind'] == 'z_contact_move':
+                factory['position'][2] += action['steps'] / Z_STEPS_PER_MM
+                self.physical_z -= action['steps'] / Z_STEPS_PER_MM
+                reply = dict(reason='completed', sent_steps=abs(action['steps']), hit=0,
+                             end_raw=self._z_home_inputs({}))
+            if action['kind'] == 'native_home_frame':
+                reply = dict(native_xy_offsets_mm=[.2,.3])
+            if action['kind'] == 'move':
+                factory['position'][:2] = [action['x'], action['y']]
+                self.calls.append(('service_move', action.get('leg'), action['x'], action['y']))
             if action.get('leg') == 'selector_press':
                 self.physical_tool = p['tool']
             if action['kind'] == 'module' and action['name'] == 'select_tool' and action['state'] == 'done':
                 factory['selection_commanded'] = True
             if action['kind'] == 'done':
+                if self.control_reject:
+                    self.load_test_last = dict(phase='failed', reason=self.control_reject)
+                    self.load_test_context = None
+                    return self.NEVER
                 factory['result'] = action
                 factory['cleaning_done'] = action['cleaning_done']
                 self.load_test_last = dict(phase='done')
                 self.load_test_context = None
+                self.native_mode = True
+                self.calls.append(('native_handoff',))
                 return self.NEVER
             return eventtime + .01
         self.register_timer(advance, self.monotonic()+.01)
@@ -853,6 +893,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter.endstop = model.endstop
         self.adapter.guard = object()
         self.adapter.refine = model.refine
+        self.adapter.refine_clearance = model.refine_clearance
         self.adapter.sequence_running = self.adapter.running = self.adapter.interrupted = False
         self.adapter.last_result = None
         self.adapter.pad_x, self.adapter.pad_y = 82.8, 68.
@@ -893,14 +934,15 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter.fine_speed = .3117206982543641
         self.model.on_shutdown = self.adapter._shutdown
 
-    def test_home_z_prepares_t0_then_repeats_the_native_xyz_reference(self):
+    def test_home_z_prepares_t0_once_then_runs_the_existing_native_reference(self):
         options = dict(ACK=Z_HOME_ACK, TARGET='205', PARK_Z='8')
         for homed in ('', 'x', 'yz', 'xy', 'xyz'):
             with self.subTest(homed=homed):
                 self.setUp()
                 self.use_mcu_reference()
                 self.model.axes = homed
-                self.adapter.cmd_home_axes(Command(AXES='XYZ', **options))
+                self.operator_menu()
+                self.adapter.cmd_request_home(Command(AXES='XYZ', **options))
                 expected_moves = list(self.model.calls)
                 expected_result = dict(self.adapter.last_result)
 
@@ -912,8 +954,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.adapter.cmd_request_home(Command(AXES='Z', TARGET='205', PARK_Z='8'))
                 self.assertEqual((self.model.calls, self.model.mode_requests), ([], []))
                 menu.choose(menu.view.token, confirm=True)
-                self.assertEqual(self.model.mode_requests, ['NATIVE'])
-                self.assertEqual(self.model.calls, [('clear', 'xyz')] + expected_moves)
+                self.assertEqual(self.model.mode_requests, [])
+                self.assertEqual(self.model.calls, expected_moves)
                 self.assertEqual(self.adapter.last_result, expected_result)
                 self.assertTrue(expected_result['coordinate_saved'])
                 self.assertTrue(expected_result['local_refinement'])
@@ -928,7 +970,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.refine_reply_overrides = dict(status=2)
         with self.assertRaisesRegex(ValueError, 'no contact'):
             menu.choose(menu.view.token, confirm=True)
-        self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'], ['Z','Y','X'])
+        self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'], ['Z'])
+        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'service_home'], ['Y','X'])
         self.assertIn('no contact', menu.last['reason'])
         self.assertEqual(self.adapter.last_result['terminal'], 'failed')
         self.assertIn('no contact', self.adapter.last_result['reason'])
@@ -950,7 +993,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK, TARGET='200'))
         moves = [a for a in self.model.prepare_actions if a.get('leg') == 'selector_press']
         self.assertEqual([(a['x'], a['y']) for a in moves], [(154.5, 154.5)])
-        self.assertEqual(self.model.mode_requests, ['SERVICE', 'NATIVE'])
+        self.assertEqual(self.model.mode_requests, ['SERVICE'])
         self.assertEqual(self.model.get_position()[2], 10.)
         self.assertTrue(self.adapter.last_result['reference_established'])
 
@@ -964,8 +1007,50 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.calls.clear()
         self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
         self.assertEqual(self.model.physical_tool, 0)
-        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z', 'Y', 'X'])
+        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z'])
         self.assertTrue(self.adapter.last_result['reference_established'])
+
+    def test_operator_order_is_one_xy_home_bin_heat_t0_wipe_pad_bottom_probe_and_retreat(self):
+        self.use_mcu_reference()
+        self.operator_menu()
+        self.model.base_position[:2] = [99., -44.]
+        self.model.homing_position[:2] = [.1, -.2]
+        self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK, PARK_SPEED='4'))
+        actions = self.model.prepare_actions
+        self.assertEqual([a['axis'] for a in actions if a['kind']=='home'], ['Y','X'])
+        self.assertEqual([a['axis'] for a in actions if a['kind']=='home_release'], ['Y','X'])
+        heat = next(i for i,a in enumerate(actions) if a['kind']=='heat')
+        bin_move = [a for a in actions[:heat] if a['kind']=='move'][-1]
+        self.assertEqual((bin_move['x'], bin_move['y']), (82.8,152.5))
+        select = next(i for i,a in enumerate(actions) if a.get('leg')=='selector_press')
+        wipe = next(i for i,a in enumerate(actions) if a.get('name')=='clean')
+        pad = next(i for i,a in enumerate(actions) if a.get('leg')=='z_contact_pad')
+        self.assertLess(heat, select)
+        self.assertLess(select, wipe)
+        self.assertLess(wipe, pad)
+        self.assertEqual((actions[pad]['x'],actions[pad]['y']), (82.6,67.7))
+        calls = self.model.calls
+        bottom = next(i for i,c in enumerate(calls) if c[:2]==('G28','Z'))
+        pad_call = next(i for i,c in enumerate(calls) if c[:2]==('service_move','z_contact_pad'))
+        self.assertLess(pad_call,bottom)
+        self.assertEqual([c[1] for c in calls if c[0]=='G28'], ['Z'])
+        start = next(c for c in calls if c[0]=='refine' and c[2])
+        self.assertEqual(start[1][7], 802)
+        self.assertGreaterEqual(start[1][8], 1_000_000/(4*802))
+        self.assertEqual(self.adapter.last_result['handoff_clearance_mm'], 1.)
+        self.assertEqual(self.model.position[2], 10.)
+        self.assertEqual(self.model.base_position[:2], [.1, -.2])
+        self.assertAlmostEqual(self.model.physical_z-self.model.threshold, 10.+1/802)
+
+    def test_incomplete_local_retreat_cannot_publish_a_native_zero(self):
+        self.use_mcu_reference()
+        self.operator_menu()
+        self.model.refine_reply_overrides['clearance_steps'] = 801
+        with self.assertRaisesRegex(ValueError, 'valid native Z release'):
+            self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+        self.assertNotIn('z', self.model.axes)
+        self.assertEqual(self.model.heater_target, 0.)
 
     def test_preparation_stop_or_failure_never_starts_native_motion(self):
         for stage in ('home', 'heat', 'move', 'done'):
@@ -1007,13 +1092,25 @@ class NativeHomeSequenceTests(unittest.TestCase):
             self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
         self.assertEqual((self.model.calls, self.model.mode_requests, self.model.prepare_actions),
                          ([], [], []))
+        for missing in ('native_xy_handoff_abi', 'refine_clearance'):
+            with self.subTest(missing=missing):
+                self.setUp()
+                self.operator_menu()
+                setattr(self.model if missing=='native_xy_handoff_abi' else self.adapter, missing, None)
+                with self.assertRaisesRegex(ValueError, 'MCU R16'):
+                    self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+                self.assertEqual((self.model.calls, self.model.mode_requests, self.model.prepare_actions),
+                                 ([], [], []))
 
     def test_prepare_t0_runs_the_production_factory_host_and_rejects_failed_release(self):
-        from test_orange_pi_factory_host import FactoryHostTests
+        from test_orange_pi_z_home_host import ZHomeHostTests
         for release_fail in (None, 1):
             with self.subTest(release_fail=release_fail):
                 self.setUp()
-                board, _, _ = FactoryHostTests().host(fast_motion=True)
+                board = ZHomeHostTests().host()
+                board.device.z = 2000
+                from test_orange_pi_load_test import Wire
+                board.commands['factory_native_handoff'] = Wire(board.device.native_handoff)
                 board.printer.objects['inventure_native_z'] = self.adapter
                 board.printer.objects['heaters'] = self.model
                 board.device.release_fail = release_fail
@@ -1028,6 +1125,9 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     factory = board.load_test_last['factory']
                     self.assertTrue(factory['cleaning_done'])
                     self.assertEqual(factory['motion_legs']['selector_press']['target'], [154.5,154.5])
+                    self.assertEqual(factory['result']['native_xy_offsets_mm'], [50/640,50/640])
+                    self.assertEqual(factory['motion_legs']['z_contact_pad']['target'],
+                                     [self.adapter.pad_x-50/640,self.adapter.pad_y-50/640])
                 self.assertIsNone(board.load_test_context)
                 self.assertFalse(board.device.active())
 
@@ -1063,7 +1163,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.lookup_object('gcode').respond_info = gcode.respond_info
         original_query = self.model._thermal_query_send
         def poll(command, data, **kwargs):
-            if command is self.model.refine and data[0] == 0:
+            if command in (self.model.refine, self.model.refine_clearance) and data[0] == 0:
                 self.model.invoke_shutdown('Inventure V9 local safety fault')
                 raise ValueError('No communication with MCU')
             return original_query(command, data, **kwargs)
@@ -1119,8 +1219,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     menu.choose(token, confirm=True)
                     self.assertEqual(menu.view.title, 'Home XYZ complete')
                     self.assertEqual(model.mode_requests,
-                                     ['NATIVE'] if mode == 'SERVICE' else ['SERVICE', 'NATIVE'])
-                    self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'], ['Z', 'Y', 'X'])
+                                     [] if mode == 'SERVICE' else ['SERVICE'])
+                    self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'], ['Z'])
                     reference, = [c[1] for c in model.calls if c[0] == 'reference']
                     self.assertEqual(reference['ACK'], Z_HOME_ACK)
                     self.assertEqual(float(reference.get('TARGET', self.adapter.target)),
@@ -1140,7 +1240,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 menu, lines = self.operator_menu()
                 options = {'ACK': Z_HOME_ACK} if 'Z' in axes else {}
                 self.adapter.cmd_request_home(Command(AXES=axes, **options))
-                self.assertEqual(self.model.mode_requests, ['NATIVE'])
+                self.assertEqual(self.model.mode_requests, [] if 'Z' in axes else ['NATIVE'])
                 self.assertEqual(menu.view, None)
                 self.assertFalse(any('prompt_begin' in line for line in lines))
                 self.assertEqual(any(c[0] == 'reference' for c in self.model.calls), 'Z' in axes)
@@ -1194,8 +1294,9 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.control_reject = 'sensor_or_door_guard'
         with self.assertRaisesRegex(ValueError, 'guard'):
             self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
-        self.assertEqual((self.model.calls, self.model.mode_requests),
-                         ([('clear', 'xyz')], ['NATIVE']))
+        self.assertFalse(any(c[0] in ('G28','reference','refine') for c in self.model.calls))
+        self.assertEqual(self.model.mode_requests, [])
+        self.model.calls.clear()
         self.model.control_reject = None
         home_bottom = self.adapter._home_bottom
         def lose_control():
@@ -1204,7 +1305,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter._home_bottom = lose_control
         with self.assertRaisesRegex(ValueError, 'NATIVE'):
             self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
-        self.assertEqual(self.model.mode_requests, ['NATIVE', 'NATIVE'])
+        self.assertEqual(self.model.mode_requests, [])
         self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z'])
 
     def test_xy_uses_y_then_x_with_temporary_clearance_and_scaled_speeds(self):

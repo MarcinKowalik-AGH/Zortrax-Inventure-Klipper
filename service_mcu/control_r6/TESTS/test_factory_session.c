@@ -1086,6 +1086,51 @@ static void pad_cold_center(unsigned tool) {
     printf("PASS cold pad center T%u: no heaters or tool change, absolute PE12 cap, held Z and guarded XY\n",tool);
 }
 
+static void native_xy_handoff(void) {
+    for(unsigned condition=0;condition<9;condition++) {
+        factory_reset(0,1);
+        native_xy_handoff_owner=native_xy_handoff_run=native_xy_handoff_token=0;
+        native_dir_seen=native_dir_levels=0;
+        inventure_filter_gpio(GPIOB,BIT(2),1);
+        inventure_filter_gpio(GPIOB,BIT(1),0);
+        inventure_filter_gpio(GPIOE,BIT(7),1);
+        assert(native_dir_seen==7 && native_dir_levels==5);
+        factory(1,0,IVT_STOP,0,1000,1500,501,0);
+        motion(1,3,10,10,0,0,1000,10,1000,0,0,0,601);
+        while(cm.active)factory_motion_tick();
+        GPIOE->ODR=BIT(10);
+        unsigned dir_cache=native_dir_levels;
+        assert(fs.active && cm.phase==CM_DONE && cm.reason==CR_COMPLETE);
+        uint32_t args[]={501,cm.run,cm.token};
+        if(condition==1)GPIOC->IDR|=BIT(13);
+        if(condition==2)GPIOC->IDR&=~BIT(14);
+        if(condition==3)cm.active=1;
+        if(condition==4)native_dir_seen=3;
+        if(condition==5)args[0]++;
+        if(condition==6)args[2]++;
+        if(condition==7)GPIOE->ODR=0;
+        if(condition==8)inventure_adc_observe(ADC1,10,4095);
+        command_inventure_factory_native_handoff(args);
+        assert(native_dir_levels==dir_cache && !cm.sent[2] && !cm.sent[3]);
+        if(condition) {
+            assert(control_mode==CT_SERVICE && fs.active);
+            continue;
+        }
+        assert(control_mode==CT_NATIVE && inventure_is_armed() && !fs.active);
+        assert(GPIOE->ODR&BIT(10));
+        assert(GPIOB->BSRR==(BIT(1)<<16) && GPIOE->BSRR==BIT(7));
+        assert(!transport_live && !TIM9->CCR2);
+        for(unsigned i=0;i<4;i++)assert(!control_heater_duty[i] && !co[i+6].duty);
+        uint32_t saved_b=GPIOB->BSRR,saved_e=GPIOE->BSRR;
+        command_inventure_factory_native_handoff(args);
+        assert(inventure_is_armed() && GPIOB->BSRR==saved_b && GPIOE->BSRR==saved_e);
+        control_command(2,0);
+        command_inventure_factory_native_handoff(args);
+        assert(!inventure_is_armed() && GPIOE->BSRR==(BIT(10)<<16));
+    }
+    puts("PASS native XY handoff: completed owner only, continuous enable, restored native DIR, heater release, replay and guard refusals");
+}
+
 int main(void) {
     cassette_print_demand(0, 20160, 1000);
     cassette_print_demand(1, 51840, 1500);
@@ -1098,5 +1143,6 @@ int main(void) {
     pad_xyz_owner(1918,310,PAD_TEMP_MIN_C,621);
     pad_100_adc_boundaries();pad_100_temperature_guard();pad_guard_diagnostic();pad_sweep_owner();
     pad_sweep_open_confirmation();pad_sweep_timeout_fallback();pad_cold_center(0);pad_cold_center(1);
+    native_xy_handoff();
     puts("PASS R7 FACTORY session register suite");return 0;
 }

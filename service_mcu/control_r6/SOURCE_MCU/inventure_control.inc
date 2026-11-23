@@ -11,6 +11,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI",1);
 DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_HEATER_HANDOFF_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_XY_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
@@ -1404,3 +1405,46 @@ void command_inventure_factory_guard(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_factory_guard,HF_IN_SHUTDOWN,
     "inventure_factory_guard_query token=%u sensor=%c");
+
+static uint32_t native_xy_handoff_owner,native_xy_handoff_run,native_xy_handoff_token;
+void command_inventure_factory_native_handoff(uint32_t *args) {
+    uint32_t owner=args[0],run=args[1],token=args[2];
+    irqstatus_t irq=irq_save();
+    uint32_t now=timer_read_time();
+    uint8_t reject=0;
+    if(!owner || !run || !token)reject=1;
+    else if(owner==native_xy_handoff_owner && run==native_xy_handoff_run
+            && token==native_xy_handoff_token) {
+        // A retry acknowledges the prior handoff without touching outputs.
+        if(control_mode!=CT_NATIVE || !control_ready(now) || !(GPIOE->ODR&BIT(10)))reject=4;
+    } else if(control_mode!=CT_SERVICE || !fs.active || fs.token!=owner || fs.tool || fs.mode
+            || fs.nozzle_pad || fs.dual_nozzle_z || fs.nozzle_xy || iv9_due(now,fs.deadline))reject=4;
+    else if(cm.run!=run || cm.token!=token || cm.active || cm.phase!=CM_DONE
+            || cm.reason!=CR_COMPLETE || cm.high || cm.fast_mask || cm.planned[2] || cm.planned[3]
+            || cm.sent[0]!=cm.planned[0] || cm.sent[1]!=cm.planned[1]
+            || zh_active() || sl.active || motor_test.running || xy_seek_busy()
+            || t0_heat_busy() || fan_manual_active() || (native_dir_seen&7)!=7)reject=2;
+    else if(!control_ready(now) || !(GPIOE->ODR&BIT(10)) || !zh_contact_open()
+            || (GPIOC->IDR&BIT(13)) || !control_sensors_valid(control_guard_mask|31,now)
+            || (door_policy_enabled() && door_closed_mask()!=3))reject=3;
+    else {
+        for(unsigned i=6;i<10;i++)control_output_off(i);
+        if(!control_take_native_heaters())reject=2;
+        else {
+            fs.active=0;fs.reason=2;transport_live=0;transport_selected=255;
+            for(unsigned i=0;i<2;i++)transport_stop_channel(i);
+            gpio_pwm_write(feeder_clock,0);
+            for(unsigned i=0;i<4;i++)if(native_dir_seen&BIT(i))
+                motor_test_write(mt_drivers[i].dir_port,mt_drivers[i].dir_bit,
+                                 !!(native_dir_levels&BIT(i)));
+            native_xy_handoff_owner=owner;native_xy_handoff_run=run;native_xy_handoff_token=token;
+            control_mode=CT_NATIVE; // Keep PE10 asserted through the ownership transfer.
+        }
+    }
+    unsigned mode=control_mode,enabled=!!(GPIOE->ODR&BIT(10));
+    irq_restore(irq);
+    sendf("inventure_factory_native_handoff_state owner=%u run=%u token=%u mode=%c enabled=%c reject=%c",
+          owner,run,token,mode,enabled,reject);
+}
+DECL_COMMAND_FLAGS(command_inventure_factory_native_handoff,HF_IN_SHUTDOWN,
+    "inventure_factory_native_handoff owner=%u run=%u token=%u");

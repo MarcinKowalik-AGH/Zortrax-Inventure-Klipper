@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-HEATER-HANDOFF-R15'
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -93,6 +93,10 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
     assert c['INVENTURE_MOTOR_TEST_RELEASE'] == MCU_RELEASE
     assert c['INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI'] == 1
+    assert c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'] == 1
+    assert c['INVENTURE_NATIVE_XY_HANDOFF_ABI'] == 1
+    assert ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
+            'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu') in dictionary['commands']
     assert 'inventure_local_oled_diag_query' in dictionary['commands']
     assert 'inventure_oled_sleep_light mode=%c' in dictionary['commands']
     assert 'inventure_local_oled_pref level=%c' in dictionary['commands']
@@ -182,6 +186,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   z_edge_abi=c['INVENTURE_Z_EDGE_ABI'],
                   native_z_guard_abi=c['INVENTURE_NATIVE_Z_GUARD_ABI'],
                   native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
+                  native_z_clearance_abi=c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'],
+                  native_xy_handoff_abi=c['INVENTURE_NATIVE_XY_HANDOFF_ABI'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],

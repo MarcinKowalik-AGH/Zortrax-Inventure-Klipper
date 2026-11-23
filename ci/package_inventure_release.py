@@ -24,6 +24,8 @@ def package(build, output, web):
     assert dictionary['config']['INVENTURE_NOZZLE_PAD_SWEEP_TIMEOUT_ABI'] == 1
     assert report['local_oled_diagnostic_abi'] == dictionary['config']['INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI'] == 1
     assert report['native_heater_handoff_abi'] == dictionary['config']['INVENTURE_NATIVE_HEATER_HANDOFF_ABI'] == 1
+    assert report['native_xy_handoff_abi'] == dictionary['config']['INVENTURE_NATIVE_XY_HANDOFF_ABI'] == 1
+    assert report['native_z_clearance_abi'] == dictionary['config']['INVENTURE_NATIVE_Z_CLEARANCE_ABI'] == 1
     assert 'inventure_local_oled_pref level=%c' in dictionary['commands']
     assert report['heartbeat_timeout_s'] == 5
     assert report['factory_guard_diagnostic_abi'] == 1

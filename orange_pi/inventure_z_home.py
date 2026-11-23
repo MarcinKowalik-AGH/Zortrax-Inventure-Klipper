@@ -167,6 +167,27 @@ class ZHomeProgram(FactoryProgram):
                       home_z_max=settings['z_bottom_max_mm'])
         self.z_steps = 0  # Table rises in positive Z; zero here is the PE12 trigger.
 
+    def prepare_native_home(self, pad_xy, pad_speed):
+        """Compose the tested modules once, then hand the measured XY frame to Klipper."""
+        yield from self._module('z_initial_clearance', self._nozzle_pre_xy_clearance())
+        yield from self._module('home_xy', self._home_steps(y_first=True, include_z=False))
+        yield from self.position_bin()
+        yield from self.heat()
+        yield from self.select_tool()
+        yield from self.clean()
+        yield from self.return_to_bin()
+        frame = yield dict(kind='native_home_frame')
+        offsets = frame['native_xy_offsets_mm']
+        service_xy = [pad_xy[i] - offsets[i] for i in (0, 1)]
+        if not (self.p['min_x'] <= service_xy[0] <= self.p['max_x']
+                and self.p['min_y'] <= service_xy[1] <= self.p['max_y']):
+            raise FactoryError('Native pad is outside the measured service XY frame')
+        yield from self._module('z_position_pad', self._move(*service_xy, speed=pad_speed,
+                                                           leg='z_contact_pad'))
+        yield dict(kind='done', success=True, terminal='HOME_PREPARE', cleaning_done=True,
+                   native_xy_mm=list(pad_xy), service_xy_mm=service_xy,
+                   native_xy_offsets_mm=offsets)
+
     def _z_move(self, steps, speed, stop_mask, stop_value, contact, bottom,
                 allow_contact_transient=False, stage=None):
         if not steps:

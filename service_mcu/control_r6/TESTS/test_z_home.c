@@ -636,6 +636,68 @@ static void native_refine_faults(void)
     assert(!inventure_is_armed() && control_latched && !native_z_refine_held && !zh.active);
 }
 
+static void native_clearance_handoff(void)
+{
+    for(unsigned fault_case=0;fault_case<4;fault_case++) {
+        native_refine_reset(1);
+        uint32_t args[]={1,OWNER,TOKEN,10,4000,200,240,802,250};
+        command_inventure_native_z_refine_clearance(args);
+        assert(!z_home_reply.reject && zh.active && zh.clearance_requested==802);
+        uint32_t wake=zh_timer.waketime;
+        command_inventure_native_z_refine_clearance(args);
+        assert(!z_home_reply.reject && zh_timer.waketime==wake);
+        args[7]=803;
+        command_inventure_native_z_refine_clearance(args);
+        assert(z_home_reply.reject==1 && zh_timer.waketime==wake);
+        args[7]=802;
+        unsigned n=0;
+        while(zh.active) {
+            switch(zh.phase) {
+            case ZH_START_UP: case ZH_SEEK: contact(zh.net>=4); break;
+            case ZH_START_DOWN: case ZH_RELEASE: contact(zh.net>0); break;
+            case ZH_START_SETTLE: case ZH_SETTLE: contact(0); break;
+            case ZH_CLEARANCE:
+                // Reclosure at the exact release may last into the retreat.
+                // The MCU continues downward and requires open at the gap.
+                contact(zh.clearance_steps<20);
+                if(zh.clearance_steps==100 && fault_case) {
+                    if(fault_case==1)GPIOC->IDR|=BIT(13);
+                    if(fault_case==2)heartbeat_live=0;
+                    if(fault_case==3)inventure_filter_gpio(GPIOB,BIT(8),1);
+                    expect_failure=1;
+                    if(!setjmp(failure)){zh_guard(mock_now);assert(!"retreat guard must stop");}
+                    expect_failure=0;
+                    assert(fault==8 && !native_z_refine_held && !zh.active);
+                    assert(zh.status==ZH_GUARD && zh.clearance_steps==100);
+                }
+                break;
+            default: assert(!"unexpected clearance phase");
+            }
+            if(!zh.active)break;
+            step_timer();
+            assert(++n<5000);
+        }
+        args[0]=0;args[1]=args[2]=0;
+        command_inventure_native_z_refine_clearance(args);
+        assert(!z_home_reply.reject && z_home_reply.owner==OWNER && z_home_reply.token==TOKEN);
+        assert(z_home_reply.cycles==102 && z_home_reply.misses==101);
+        assert(z_home_reply.net==z_home_reply.best && z_home_reply.net==0);
+        assert(z_home_reply.up_steps==z_home_reply.down_steps);
+        assert(z_home_reply.clearance_steps==(fault_case?100:802));
+        if(fault_case)continue;
+        assert(z_home_reply.status==ZH_DONE && native_z_refine_held && native_z_guard_active);
+        mock_now+=MS(300);command_inventure_heartbeat(NULL);z_home_adc();
+        zh_guard(mock_now); // Host verification can take time at a stable gap.
+        assert(inventure_is_armed() && zh.status==ZH_DONE);
+        uint32_t release[]={2,OWNER};
+        command_inventure_native_z_guard(release);
+        assert(!native_z_guard_reply[2] && !native_z_refine_held);
+        args[0]=1;args[1]=OWNER;args[2]=TOKEN;
+        command_inventure_native_z_refine_clearance(args);
+        assert(!z_home_reply.reject && !zh.active && zh.clearance_steps==802);
+    }
+}
+
 static void native_missing_first_contact_readback(void)
 {
     mock_probe_adc[0]=1276; // About 205 C with a 200 C native target.
@@ -1062,6 +1124,7 @@ int main(void)
     puts("PASS native Z tray guard: token ownership, PB8 interlock, latched PC13 fault and global STOP");
     native_refine_run();
     native_refine_faults();
+    native_clearance_handoff();
     native_missing_first_contact_readback();
     puts("PASS native Z refine: exact 101 misses, saved DIR, exclusive queue gate, handoff and fault stops");
     nozzle_test_both_tools(0,201,TOKEN);

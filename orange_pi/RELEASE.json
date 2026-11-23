@@ -1,10 +1,10 @@
 {
-  "host_revision": "RC8-CONTROL-R7-HOMING-R38.5",
-  "host_module_sha256": "7d0a8fdda0e2a1b1fb97413a4b22724291a1d439b4310530bbf7e6ed82b5ee07",
+  "host_revision": "RC8-CONTROL-R7-HOMING-R38.6",
+  "host_module_sha256": "4867f584076a041b29e58c01bcb457518cb49216f92264fa5366f75c23d755fa",
   "MCU_changed_by_updater": false,
   "config_changed_by_updater": false,
-  "verified_public_host_tests": 828,
-  "previous_host_commit": "5baed879b21ed4d05a43d8b2efbeaf8f0e509c9d",
+  "verified_public_host_tests": 830,
+  "previous_host_commit": "486a0738946c047c9546652988e2d08ff1489545",
   "firmware": {
     "release": "RC8-CONTROL-R7-Z-OEM-NATIVE",
     "bootloader": "InventureBoot 1.7",
@@ -349,7 +349,7 @@
     "T1_cassette_channel": 1,
     "T1_cassette_direction": 0
   },
-  "release": "RC8-CONTROL-R7-HOMING-R38.5",
+  "release": "RC8-CONTROL-R7-HOMING-R38.6",
   "factory_load": {
     "action": "INVENTURE_LOAD_TEST ACTION=AUTO",
     "tools": [
@@ -706,7 +706,7 @@
     "command": "INVENTURE_NOZZLE_PAD_CALIBRATE",
     "macro": "ZORTRAX_NOZZLE_PAD_CALIBRATE",
     "macro_config": "config/INVENTURE_NOZZLE_PAD.cfg",
-    "mcu_release": "RC8-CONTROL-R7-HEATER-HANDOFF-R15",
+    "mcu_release": "RC8-CONTROL-R7-HOMING-R16",
     "mcu_abi": 1,
     "modes": [
       "VERIFY_T0",
@@ -749,7 +749,7 @@
       "native_max_temp_c": 310,
       "legacy_service_target_max_c": 240,
       "service_target_max_c": 310,
-      "mcu_release": "RC8-CONTROL-R7-HEATER-HANDOFF-R15",
+      "mcu_release": "RC8-CONTROL-R7-HOMING-R16",
       "native_update_flag": "--configure-nozzles",
       "mcu_nozzle_cutoff_c": 310,
       "native_t1_config": "config/INVENTURE_NATIVE_T1_HEATER.cfg",
@@ -760,14 +760,14 @@
       90,
       110
     ],
-    "package_filename": "INVENTURE_MCU_HEATER_HANDOFF_R15_BOOT17.zip",
-    "release_tag": "inventure-homing-r38.5",
-    "host_package_filename": "INVENTURE_ORANGE_PI_HOMING_R38_5_MCU_R15.zip",
-    "ivb_sha256": "ad2473e8556e9d6327a5680558c605f67900e2a537b313417b00280713fc7d3d",
-    "audit_report": "docs/INVENTURE_HOME_T0_R38_5.md",
-    "release_notes": "docs/INVENTURE_HEATER_HANDOFF_R15.md",
-    "application_sha256": "2b3cdacd1288d614196bb1f207458f8cc053bea6e6d7776714b4cd02771744cc",
-    "ivb_bytes": 106276,
+    "package_filename": "INVENTURE_MCU_HOMING_R16_BOOT17.zip",
+    "release_tag": "inventure-homing-r38.6",
+    "host_package_filename": "INVENTURE_ORANGE_PI_HOMING_R38_6_MCU_R16.zip",
+    "ivb_sha256": "24ad949263b47358f67bbb7d32e63234c3b71950af733078997fe643ba6fb324",
+    "audit_report": "docs/INVENTURE_HOME_SEQUENCE_R38_6.md",
+    "release_notes": "docs/INVENTURE_HOME_SEQUENCE_R38_6.md",
+    "application_sha256": "42b61400edbc4bbb63329b5fd41fa5476709bd3f856fb6f465683b618a67c163",
+    "ivb_bytes": 107948,
     "default_z_clearance_mm": 1.0,
     "sweep_timeout_abi": 1,
     "full_procedure_timeout_s": 3600,
@@ -776,7 +776,7 @@
       "SWEEP",
       "TAP"
     ],
-    "zip_sha256": "5069fd5672c010fc4aa64333c499fe552af61179d5c88ecee7c87b8ad29b63e4"
+    "zip_sha256": "9cec15d54705bd282fefa04d05aa4c95b1eda8b114c2ed387352d3428c598e08"
   },
   "procedure_audit": {
     "report": "docs/AUDYT_MCU_R10_HOST_R14_2026-11-17.md",
@@ -962,9 +962,9 @@
     "reference": "M300 v1.0.0 c93868df931bbbccddbbe4a57abb83e8a1253da7",
     "hardware_validation": "New native OLED, RAM brightness and local fault pages await hardware verification.",
     "report": "docs/INVENTURE_HOMING_R38.md",
-    "web_package": "INVENTURE_FLUIDD_WEB_R38_5.zip",
+    "web_package": "INVENTURE_FLUIDD_WEB_R38_6.zip",
     "upstream_fluidd": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4",
-    "web_build_tag": "inventure-homing-r38.5"
+    "web_build_tag": "inventure-homing-r38.6"
   },
   "configuration_layout": {
     "install_option": "--organize-config",
@@ -997,14 +997,17 @@
   },
   "operator_procedure_audit": "docs/INVENTURE_HOMING_R38.md",
   "operator_homing": {
-    "documentation": "docs/INVENTURE_HOME_T0_R38_5.md",
-    "preparation": "CLEAN TOOL=T0 with OEM profile",
+    "documentation": "docs/INVENTURE_HOME_SEQUENCE_R38_6.md",
+    "preparation": "one Y/X seek and release, bin heat, T0 selection, clean, translated pad endpoint",
     "entrypoints": [
       "INVENTURE_HOME_ALL",
       "INVENTURE_HOME_Z"
     ],
     "requires_native_heater_handoff_abi": 1,
-    "native_xy_reference": "rehome after service preparation",
-    "physical_acceptance": "pending"
+    "native_xy_reference": "MCU-confirmed release-stroke translation with uninterrupted PE10 and native DIR restoration",
+    "physical_acceptance": "pending",
+    "requires_native_xy_handoff_abi": 1,
+    "requires_native_z_clearance_abi": 1,
+    "mcu_release": "RC8-CONTROL-R7-HOMING-R16"
   }
 }
