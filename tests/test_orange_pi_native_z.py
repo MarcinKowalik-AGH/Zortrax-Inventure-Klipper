@@ -21,7 +21,7 @@ def _load_r19_factory():
 def _load_restored_native_z():
     # Test the exact code that the bootstrap installs, never the pinned
     # historical R38.6 source in orange_pi/inventure_native_z.py.
-    path = Path(__file__).resolve().parents[1]/'restored/exclusive_service_r20/inventure_native_z.py'
+    path = Path(__file__).resolve().parents[1]/'restored/scheduler_r21/inventure_native_z.py'
     spec = importlib.util.spec_from_file_location('orange_pi.inventure_native_z_r20_test', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -29,7 +29,7 @@ def _load_restored_native_z():
 
 
 def _load_r20_mcu():
-    path = Path(__file__).resolve().parents[1]/'restored/exclusive_service_r20/inventure_mcu.py'
+    path = Path(__file__).resolve().parents[1]/'restored/scheduler_r21/inventure_mcu.py'
     spec = importlib.util.spec_from_file_location('orange_pi.inventure_mcu_r20_test', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
