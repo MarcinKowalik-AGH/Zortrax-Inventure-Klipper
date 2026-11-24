@@ -2,7 +2,7 @@ name: Verify Orange Pi host updater
 on:
   push:
     # R17 source candidates are tested without modifying the released R16 image.
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -15,6 +15,8 @@ on:
       - 'inventure_bootstrap*.py'
       - 'inventure_oled_restore.py'
       - 'inventure_native_z_restore.py'
+      - 'inventure_motion_owner_restore.py'
+      - 'restored/single_owner_r19/**'
       - 'restored/native_z_r18/**'
       - 'tests/test_orange_pi_native_z.py'
       - 'restored/oled_dual_thermal_v2/**'
