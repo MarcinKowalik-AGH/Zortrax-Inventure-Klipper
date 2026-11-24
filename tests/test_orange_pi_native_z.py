@@ -10,10 +10,18 @@ from unittest import mock
 from orange_pi.inventure_z_home import Z_HOME_ACK, Z_STEPS_PER_MM
 
 
+def _load_r19_factory():
+    path = Path(__file__).resolve().parents[1]/'restored/single_owner_r19/inventure_z_home.py'
+    spec = importlib.util.spec_from_file_location('orange_pi.inventure_z_home_r19_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_restored_native_z():
     # Test the exact code that the bootstrap installs, never the pinned
     # historical R38.6 source in orange_pi/inventure_native_z.py.
-    path = Path(__file__).resolve().parents[1]/'restored/native_z_r18/inventure_native_z.py'
+    path = Path(__file__).resolve().parents[1]/'restored/single_owner_r19/inventure_native_z.py'
     spec = importlib.util.spec_from_file_location('orange_pi.inventure_native_z_r18_test', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -774,10 +782,13 @@ class HomeSequenceModel(Model):
 
     def _factory_start(self, command, operation, native_homing=None):
         from orange_pi.inventure_factory_core import FactoryProgram, parameters
-        from orange_pi.inventure_z_home import ZHomeProgram, z_home_parameters
+        z_home = _load_r19_factory()
+        ZHomeProgram, z_home_parameters = z_home.ZHomeProgram, z_home.z_home_parameters
         p = parameters(command, max_target=310.)
         generator = (FactoryProgram(p, operation).run(operation) if native_homing is None else
-                     ZHomeProgram(p, z_home_parameters(command, p)).prepare_native_home(native_homing['pad_xy'], native_homing['pad_speed']))
+                     ZHomeProgram(p, z_home_parameters(command, p)).prepare_native_home(
+                         native_homing['pad_xy'], native_homing['pad_speed'],
+                         klipper_xy_prepared=bool(native_homing.get('klipper_xy_prepared'))))
         factory = dict(operation=operation, total_deadline=self.monotonic()+1800.,
                        selection_commanded=False, cleaning_done=False, result=None, position=[0.,0.,0.])
         context = self.load_test_context = dict(factory=factory, tool=p['tool'])
@@ -805,7 +816,8 @@ class HomeSequenceModel(Model):
                 reply = dict(reason='completed', sent_steps=abs(action['steps']), hit=0,
                              end_raw=self._z_home_inputs({}))
             if action['kind'] == 'native_home_frame':
-                reply = dict(native_xy_offsets_mm=[.2,.3])
+                reply = dict(native_xy_offsets_mm=([0.,0.] if
+                    native_homing.get('klipper_xy_prepared') else [.2,.3]))
             if action['kind'] == 'move':
                 factory['position'][:2] = [action['x'], action['y']]
                 self.calls.append(('service_move', action.get('leg'), action['x'], action['y']))
@@ -981,8 +993,9 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.refine_reply_overrides = dict(status=2)
         with self.assertRaisesRegex(ValueError, 'no contact'):
             menu.choose(menu.view.token, confirm=True)
-        self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'], ['Z'])
-        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'service_home'], ['Y','X'])
+        self.assertEqual([call[1] for call in self.model.calls if call[0] == 'G28'],
+                         ['Z','Y','X','Z'])
+        self.assertFalse([c for c in self.model.calls if c[0] == 'service_home'])
         self.assertIn('no contact', menu.last['reason'])
         self.assertEqual(self.adapter.last_result['terminal'], 'failed')
         self.assertIn('no contact', self.adapter.last_result['reason'])
@@ -1018,7 +1031,23 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.calls.clear()
         self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
         self.assertEqual(self.model.physical_tool, 0)
-        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z'])
+        self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'],
+                         ['Z','Y','X','Z'])
+        self.assertFalse([c for c in self.model.calls if c[0] == 'service_home'])
+        self.assertTrue(self.adapter.last_result['reference_established'])
+
+    def test_home_z_uses_known_native_xy_frame_without_second_yx_home(self):
+        self.model.axes = 'xy'
+        self.model.position[:2] = [46., 49.]
+        self.operator_menu()
+        self.adapter.cmd_request_home(Command(AXES='Z', ACK=Z_HOME_ACK))
+        # Only Klipper can move from an already-qualified XY origin. No
+        # SERVICE Y/X home is allowed, and XYZ still establishes native Z.
+        self.assertEqual([c[1] for c in self.model.calls if c[0]=='G28'], ['Z','Z'])
+        self.assertTrue(any(c[0]=='move' and c[1][:2]==(0.,0.)
+                            for c in self.model.calls))
+        self.assertFalse([a for a in self.model.prepare_actions
+                          if a['kind'] in ('home','home_release')])
         self.assertTrue(self.adapter.last_result['reference_established'])
 
     def test_operator_order_is_one_xy_home_bin_heat_t0_wipe_pad_bottom_probe_and_retreat(self):
@@ -1028,8 +1057,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.model.homing_position[:2] = [.1, -.2]
         self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK, PARK_SPEED='4'))
         actions = self.model.prepare_actions
-        self.assertEqual([a['axis'] for a in actions if a['kind']=='home'], ['Y','X'])
-        self.assertEqual([a['axis'] for a in actions if a['kind']=='home_release'], ['Y','X'])
+        self.assertEqual([a['axis'] for a in actions if a['kind']=='home'], [])
+        self.assertEqual([a['axis'] for a in actions if a['kind']=='home_release'], [])
         heat = next(i for i,a in enumerate(actions) if a['kind']=='heat')
         bin_move = [a for a in actions[:heat] if a['kind']=='move'][-1]
         self.assertEqual((bin_move['x'], bin_move['y']), (82.8,152.5))
@@ -1039,12 +1068,13 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.assertLess(heat, select)
         self.assertLess(select, wipe)
         self.assertLess(wipe, pad)
-        self.assertEqual((actions[pad]['x'],actions[pad]['y']), (82.6,67.7))
+        self.assertEqual((actions[pad]['x'],actions[pad]['y']), (82.8,68.))
         calls = self.model.calls
         bottom = next(i for i,c in enumerate(calls) if c[:2]==('G28','Z'))
         pad_call = next(i for i,c in enumerate(calls) if c[:2]==('service_move','z_contact_pad'))
-        self.assertLess(pad_call,bottom)
-        self.assertEqual([c[1] for c in calls if c[0]=='G28'], ['Z'])
+        self.assertLess(bottom,pad_call)
+        self.assertEqual([c[1] for c in calls if c[0]=='G28'], ['Z','Y','X','Z'])
+        self.assertFalse([c for c in calls if c[0]=='service_home'])
         start = next(c for c in calls if c[0]=='refine' and c[2])
         self.assertEqual(start[1][7], 802)
         self.assertGreaterEqual(start[1][8], 1_000_000/(4*802))
@@ -1064,14 +1094,16 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.assertEqual(self.model.heater_target, 0.)
 
     def test_preparation_stop_or_failure_never_starts_native_motion(self):
-        for stage in ('home', 'heat', 'move', 'done'):
+        for stage in ('phase', 'heat', 'move', 'done'):
             with self.subTest(stage=stage):
                 self.setUp()
                 self.operator_menu()
                 self.model.prepare_failure = stage
                 with self.assertRaisesRegex(ValueError, 'T0 selection and cleaning'):
                     self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
-                self.assertFalse(any(c[0] in ('G28', 'reference', 'refine') for c in self.model.calls))
+                self.assertFalse(any(c[0] in ('reference', 'refine') for c in self.model.calls))
+                self.assertEqual([c[1] for c in self.model.calls if c[0]=='G28'],
+                                 ['Z','Y','X'])
                 self.assertEqual(self.model.mode_requests, ['SERVICE'])
                 self.assertEqual(self.model.axes, '')
                 self.assertEqual(self.model.heater_target, 0.)
@@ -1079,7 +1111,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.assertFalse(self.adapter.sequence_running)
 
     def test_preparation_suspends_native_targets_and_restores_only_after_success(self):
-        for fail in (None, 'home'):
+        for fail in (None, 'heat'):
             with self.subTest(fail=fail):
                 self.setUp()
                 self.operator_menu()
