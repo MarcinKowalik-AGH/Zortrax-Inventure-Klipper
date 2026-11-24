@@ -1279,8 +1279,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     self.assertEqual(model.mode_requests,
                                      ['SERVICE'] if mode == 'NATIVE' else ['NATIVE','SERVICE'])
                     self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'],
-                                     ['Z','Y','X','Z'] if button == 'ALL' or
-                                     not all(axis in homed for axis in 'xy') else ['Z','Z'])
+                                     ['Z','Y','X','Z'])
                     self.assertFalse([c for c in model.calls if c[0] == 'service_home'])
                     reference, = [c[1] for c in model.calls if c[0] == 'reference']
                     self.assertEqual(reference['ACK'], Z_HOME_ACK)

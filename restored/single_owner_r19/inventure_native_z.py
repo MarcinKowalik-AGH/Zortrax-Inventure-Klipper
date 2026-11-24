@@ -716,10 +716,16 @@ class InventureNativeZ:
         """
         self._require_native()
         self._home_bottom()
+        # A cancelled/lost MCU ownership between axis homes must abort
+        # before issuing even one additional native STEP command.
+        self._require_native()
         xy_homed = self.kin.get_status(self.reactor.monotonic())['homed_axes']
         if axes == 'XYZ' or not all(axis in xy_homed for axis in 'xy'):
+            self._require_native()
             self._home_limit('Y', factor)
+            self._require_native()
             self._home_limit('X', factor)
+            self._require_native()
         else:
             endstops = [rail.get_homing_info().position_endstop
                         for rail in self.kin.rails[:2]]
