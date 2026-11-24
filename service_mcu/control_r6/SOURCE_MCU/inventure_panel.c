@@ -582,10 +582,3 @@ void command_inventure_rgb(uint32_t *args) {
 }
 // Not allowed in shutdown: a host cannot clear the local red fault indication.
 DECL_COMMAND(command_inventure_rgb,"inventure_rgb mask=%c");
-
-
-// Cooling uses a 2 ms tick while the OLED DMA queue has pending work.
-// This flag must not transfer bus ownership or start an SPI transaction.
-uint8_t inventure_panel_needs_service(void) {
-    return oled_fast_pending();
-}
