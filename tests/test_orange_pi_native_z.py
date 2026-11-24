@@ -957,6 +957,18 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter.fine_speed = .3117206982543641
         self.model.on_shutdown = self.adapter._shutdown
 
+    def test_normal_x_y_xy_have_only_klipper_stepper_planner(self):
+        for axes,expected in [('X',['Z','X']),('Y',['Z','Y']),('XY',['Z','Y','X'])]:
+            with self.subTest(axes=axes):
+                self.setUp()
+                self.operator_menu()
+                self.adapter.cmd_request_home(Command(AXES=axes))
+                self.assertEqual([c[1] for c in self.model.calls if c[0]=='G28'],expected)
+                self.assertFalse([c for c in self.model.calls if c[0]=='service_home'])
+                self.assertFalse([c for c in self.model.calls if c[0]=='service_move'])
+                self.assertFalse(self.model.prepare_actions)
+                self.assertNotIn('SERVICE',self.model.mode_requests)
+
     def test_home_z_prepares_t0_once_then_runs_the_existing_native_reference(self):
         options = dict(ACK=Z_HOME_ACK, TARGET='205', PARK_Z='8')
         for homed in ('', 'x', 'yz', 'xy', 'xyz'):
