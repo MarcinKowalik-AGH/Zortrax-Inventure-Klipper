@@ -15,7 +15,7 @@ def load_policy():
     body = ast.Module(body=[ast.Import(names=[ast.alias(name='math')]), function],
                       type_ignores=[])
     namespace = {}
-    exec(compile(body, str(path), 'exec'), namespace)
+    exec(compile(ast.fix_missing_locations(body), str(path), 'exec'), namespace)
     return namespace['validate_native_excursion_action']
 
 class ExclusiveServiceTests(unittest.TestCase):

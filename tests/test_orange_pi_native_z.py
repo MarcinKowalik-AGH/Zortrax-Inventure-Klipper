@@ -1228,7 +1228,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     self.assertEqual(factory['motion_legs']['selector_press']['target'], [154.5,154.5])
                     self.assertEqual(factory['motion_legs']['z_contact_pad']['target'],
                                      [self.adapter.pad_x,self.adapter.pad_y])
-                    self.assertFalse(any(row[0]=='home' for row in factory.get('module_history', [])))
+                    self.assertFalse(any(row.get('name') in ('home','home_xy','z_initial_clearance')
+                                         for row in factory.get('module_history', [])))
                 self.assertIsNone(board.load_test_context)
                 self.assertFalse(board.device.active())
 
