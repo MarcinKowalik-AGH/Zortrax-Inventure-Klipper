@@ -514,7 +514,8 @@ static void service_native_policy_telemetry(void) {
     expect_failure=0;
     assert(fault==7);
     command_inventure_policy_query(NULL);
-    assert(policy_reply[6]==7 && policy_reply[0]==CT_NATIVE);
+    assert(policy_reply[6]==7 && policy_reply[0]==CT_OFF);
+    assert(first_safety_trip.reason==7 && first_safety_trip.mode==CT_NATIVE);
     puts("PASS separated service/native policy telemetry: effective mask, hot/energized requirements, PC13 fail-closed");
 }
 
