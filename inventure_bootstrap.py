@@ -127,7 +127,7 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo, *, restore_oled=True, restore_native_z=True):
+def _plan(repo, *, restore_oled=True, restore_native_z=True, restore_motion_owner=True):
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -195,6 +195,16 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True):
         files[target] = (new_module, 0o644)
         metadata["files"][target] = dict(sha256=sha256(new_module).hexdigest(), mode=0o644)
         metadata.setdefault("runtime_restorations", {})["native_z_r18"] = provenance
+    if restore_motion_owner:
+        _require(restore_native_z and restore_oled,
+                 "R19 native motion owner requires both authenticated R18 and OLED restorations")
+        path = repo/"inventure_motion_owner_restore.py"
+        restoration = _module("inventure_bootstrap_motion_owner", path, _regular_bytes(path))
+        updates, provenance = restoration.restored_motion_owner(repo, files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata["files"][target] = dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault("runtime_restorations", {})["single_motion_owner_r19"] = provenance
     return source, files, metadata
 
 
@@ -210,7 +220,7 @@ def _write_files(root, files):
         Path(directory).chmod(0o755)
 
 
-def _core_check(target, source, temporary, *, native_restored=False):
+def _core_check(target, source, temporary, *, native_restored=False, single_owner=False):
     snapshot = temporary/"release-inputs"
     inputs = {name: (data, 0o644) for name, data in source.items()
               if PurePosixPath(name).parts[0] in ("host", "orange_pi")}
@@ -218,19 +228,19 @@ def _core_check(target, source, temporary, *, native_restored=False):
     path = snapshot/"orange_pi/install_thermal_test.py"
     core = _module("inventure_bootstrap_verifier", path, source["orange_pi/install_thermal_test.py"])
     verification_target = target
-    if native_restored:
-        # The pinned offline installer rightly expects the original R38.6
-        # NATIVE module. Verify all pinned modules in an isolated shadow; the
-        # new module is authenticated/compiled independently by _plan and
-        # covered by _verify_files and the offline Klipper validator. The real
-        # host and its live native Z code must NEVER be temporarily overwritten.
+    if native_restored or single_owner:
+        # The pinned offline installer validates the exact R38.6 input modules.
+        # Verify those in an isolated shadow, never mutate the installed
+        # runtime while Klipper owns a stepper or heater.
         verification_target = temporary/"core-compat-host"
         extras = verification_target/"klippy/extras"
         extras.parent.mkdir(parents=True)
         shutil.copytree(target/"klippy/extras", extras)
         shutil.copy2(target/"klippy/serialhdl.py",
                      verification_target/"klippy/serialhdl.py")
-        (extras/"inventure_native_z.py").write_bytes(source["orange_pi/inventure_native_z.py"])
+        for name in (("inventure_native_z.py","inventure_z_home.py","inventure_mcu.py")
+                     if single_owner else ("inventure_native_z.py",)):
+            (extras/name).write_bytes(source["orange_pi/"+name])
     with redirect_stdout(io.StringIO()):
         result = core.install(verification_target, apply=False)
     _require(result.get("status") == "ALREADY_INSTALLED"
@@ -315,7 +325,8 @@ def prepare_host(destination, repo=ROOT) -> Path:
         marker.chmod(0o644)
         _verify_files(stage, metadata)
         _core_check(stage, source, temporary,
-                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}))
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}),
+                    single_owner='single_motion_owner_r19' in metadata.get('runtime_restorations', {}))
         _publish_new(stage, destination)
     return destination
 
@@ -324,7 +335,8 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
     generated = _verify_files(target, metadata)
     with tempfile.TemporaryDirectory(prefix="inventure-host-verify-") as temp:
         _core_check(target, source, Path(temp),
-                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}))
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}),
+                    single_owner='single_motion_owner_r19' in metadata.get('runtime_restorations', {}))
     return dict(status="VERIFIED_LEGACY_HOST" if restoration_required else "VERIFIED_HOST",
                 path=str(target), host_revision=HOST_REVISION,
                 source_commit=SOURCE_COMMIT, source_tag=SOURCE_TAG,
@@ -333,6 +345,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 runtime_restorations=metadata.get("runtime_restorations", {}),
                 oled_restoration=metadata.get("runtime_restorations", {}).get("oled_dual_thermal_v2"),
                 native_z_restoration=metadata.get("runtime_restorations", {}).get("native_z_r18"),
+                single_motion_owner_restoration=metadata.get("runtime_restorations", {}).get("single_motion_owner_r19"),
                 generated_files=sorted(generated))
 
 
@@ -362,8 +375,10 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    for with_oled in (False, True):
-        source, _, metadata = _plan(repo, restore_oled=with_oled, restore_native_z=False)
+    for with_oled,with_native_z in ((False,False),(True,False),(True,True)):
+        source, _, metadata = _plan(
+            repo, restore_oled=with_oled, restore_native_z=with_native_z,
+            restore_motion_owner=False)
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -380,9 +395,10 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    for with_oled in (False, True):
+    for with_oled,with_native_z in ((False,False),(True,False),(True,True)):
         source, files, metadata = _plan(
-            repo, restore_oled=with_oled, restore_native_z=False)
+            repo, restore_oled=with_oled, restore_native_z=with_native_z,
+            restore_motion_owner=False)
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
@@ -394,7 +410,9 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     changed = {name for name in files.keys() | previous_files.keys()
                if files.get(name) != previous_files.get(name)}
     allowed = {"klippy/extras/inventure_oled_render.py",
-               "klippy/extras/inventure_native_z.py"}
+               "klippy/extras/inventure_native_z.py",
+               "klippy/extras/inventure_z_home.py",
+               "klippy/extras/inventure_mcu.py"}
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
@@ -411,4 +429,5 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     updates[manifest] = manifest_before, _metadata_bytes(metadata)
     return dict(files=updates, metadata=metadata,
                 restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"],
-                native_z_restoration=metadata["runtime_restorations"]["native_z_r18"])
+                native_z_restoration=metadata["runtime_restorations"]["native_z_r18"],
+                single_motion_owner_restoration=metadata["runtime_restorations"]["single_motion_owner_r19"])
