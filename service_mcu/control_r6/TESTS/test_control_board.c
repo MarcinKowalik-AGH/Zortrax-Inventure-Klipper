@@ -297,6 +297,12 @@ static void native_to_service_quiescent_handoff(void) {
     feeder_running[0]=1;
     control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
     feeder_running[0]=0;
+    locks_pulling[1]=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    locks_pulling[1]=0;
+    native_z_refine_conflict=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_refine_conflict=0;
     // Exact previously failing transition: idle native after X/Y/XY.
     control_command(1, CT_SERVICE);
     assert(control_mode==CT_SERVICE && !inventure_is_armed());

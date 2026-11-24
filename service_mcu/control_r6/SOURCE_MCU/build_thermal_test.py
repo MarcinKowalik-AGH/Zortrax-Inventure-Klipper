@@ -189,6 +189,7 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
                   native_z_clearance_abi=c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'],
                   native_xy_handoff_abi=c['INVENTURE_NATIVE_XY_HANDOFF_ABI'],
+                  native_service_handoff_abi=c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],

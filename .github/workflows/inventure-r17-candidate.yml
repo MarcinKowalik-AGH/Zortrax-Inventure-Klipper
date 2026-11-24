@@ -55,6 +55,7 @@ jobs:
           verify=json.loads((out/'THERMAL_TEST_VERIFY.json').read_text())
           assert verify['mcu_release']=='RC8-CONTROL-R7-HOMING-R17'
           assert verify['motor_release']=='RC8-CONTROL-R7-HOMING-R17'
+          assert verify['native_service_handoff_abi']==1
           assert verify['tested_on_printer'] is False
           assert (out/'INVENTUR.IVB').is_file()
           PY

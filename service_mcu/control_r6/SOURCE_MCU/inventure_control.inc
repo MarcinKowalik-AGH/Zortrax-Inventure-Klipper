@@ -736,10 +736,11 @@ static uint8_t control_take_native_heaters(void) {
 // native motion as an implicit side effect of this transition.
 static uint8_t native_service_quiescent(void) {
     if ((GPIOE->ODR & BIT(10)) || native_z_guard_active || native_z_refine_held
-        || native_z_refine_conflict || cm.active || fs.active || sl.active
+        || native_z_refine_conflict || zh_active() || cm.active || fs.active || sl.active
         || motor_test.running || xy_seek_busy() || t0_heat_busy()
         || fan_manual_active() || feeder_running[0] || feeder_running[1]
-        || locks_on[0] || locks_on[1]) return 0;
+        || locks_on[0] || locks_on[1] || locks_pulling[0]
+        || locks_pulling[1]) return 0;
     for (unsigned h = 0; h < ARRAY_SIZE(th_heaters); h++)
         if (control_heater_duty[h] || co[6+h].duty) return 0;
     return 1;
