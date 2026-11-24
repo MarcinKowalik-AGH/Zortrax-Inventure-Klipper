@@ -112,6 +112,7 @@ static void scheduler_native_service_stress(void) {
     control_reset(0);
     control_command(1,CT_NATIVE);
     guard_div=0;sample_calls=0;sample_guard_runs=0;
+    fan_sample_ticks=fan_detector_ticks=0;
     sample_timer.waketime=mock_now+SAMPLE_TICKS;
     mock_now=sample_timer.waketime;
     sample_event(&sample_timer);
