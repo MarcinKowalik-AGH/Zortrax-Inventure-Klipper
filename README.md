@@ -2,6 +2,8 @@
 
 This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
 
+**Current project branch: `orange-pi-all-axis`.** The `inventure-homing-r38.6` tag pins the latest published Home Z sequence and retains the accepted five-point platform-leveling implementation. `main` contains the older RC8 source kit. The current installer can also restore the accepted FULL pad calibration already published in this repository; it preserves an existing calibration file. [Published state, installation and known R38.6/R16 errors](docs/INVENTURE_FRESH_W2_R38_6.md)
+
 **R38.6 performs one XY homing before T0 preparation and the native Z reference.** MCU R16 preserves the XY reference through the ownership handoff and lowers the table 1 mm locally after contact measurement. [Sequence, installation and verification](docs/INVENTURE_HOME_SEQUENCE_R38_6.md)
 
 **Moving the printer to a new Orange Pi / W2:** use [`install-new-host.py`](install-new-host.py) and the [complete W2 installation procedure](docs/INVENTURE_FRESH_W2_R38_6.md). Fetching the R38.6 worktree alone does not switch the service. The old `kinematics: none` diagnostic skeleton needs an explicitly recovered machine profile and a separate pinned Klipper runtime; the ordinary updater below is for an existing native Inventure installation. The new installer verifies the actual running path, host version, MCU R16 and UART, and writes a deployment receipt.

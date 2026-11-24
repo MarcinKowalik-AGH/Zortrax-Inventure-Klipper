@@ -467,7 +467,9 @@ def run(args):
         process_id=final['process_id'], state=final['state'], state_message=final['state_message'],
         mcu=mcu_identity, mcu_flashed=False, serial=args.serial, baud=args.baud,
         recovery_profile_used=plan['recovery_profile_used'],
-        preserved_state_files=plan['copied_state_files'], missing_state_files=plan['missing_state_files'],
+        preserved_state_files=plan['copied_state_files'],
+        restored_state_files=plan.get('restored_state_files', {}),
+        missing_state_files=plan['missing_state_files'],
         fluidd_root=str(web_root), fluidd_build=fluidd_web.TAG, fluidd_groups=groups,
         retired_stock_web_updaters=retired, previous_fluidd_site=transaction.web_previous,
         report_directory=str(directory), firmware_restart_required=pending,
@@ -487,7 +489,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true', help='Activate after all offline checks; default only stages')
     parser.add_argument('--restore-field-profile', action='store_true',
-                        help='Explicitly recover the recorded Inventure machine profile from a diagnostic config')
+                        help='Recover the recorded machine profile and missing published, accepted pad calibration')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')
@@ -501,7 +503,8 @@ def main():
             print('R38.6 installed. The MCU configuration latch remains shut down. Review its reason, '
                   'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
         elif args.apply:
-            print('Installed and verified. In Fluidd run INVENTURE_VERSION. Home is an operator action; '
+            print('Host files, configuration and active service verified. '
+                  'In Fluidd run INVENTURE_VERSION. Hardware acceptance remains separate; '
                   'the installer has not moved or heated the printer.')
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         raise SystemExit('Inventure installation failed: '+str(exc))

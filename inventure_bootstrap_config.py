@@ -3,11 +3,14 @@
 The diagnostic RC7/RC8 skeleton contains no commissioned machine geometry.
 Replacing it with the recorded field profile therefore requires an explicit
 restore_field_profile=True. Existing native configurations keep their values,
-includes, SAVE_CONFIG footer and operator macros. Public CLI authorization,
-runtime validation, activation and rollback belong to the calling installer.
+includes, SAVE_CONFIG footer and operator macros. That explicit option also
+restores this printer's published, saved nozzle calibration when it is absent.
+Public CLI authorization, runtime validation, activation and rollback belong
+to the calling installer.
 """
 from hashlib import sha256
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -19,6 +22,10 @@ import inventure_config_layout as layout
 
 ROOT = Path(__file__).resolve().parent
 FIELD_PROFILE = ROOT / 'config/INVENTURE_R38_FIELD_RECOVERY.cfg'
+PUBLISHED_PAD_SOURCE = 'docs/acceptance/INVENTURE_PAD_R23_2026-11-19_PROBA_2.json'
+PUBLISHED_PAD_SOURCE_SHA256 = '75669f6ea0156dd500abe91de78007433889a852a8c4bc9b747ae17942c1afcf'
+PUBLISHED_PAD_RUN_ID = '4eed5e30be704a6ca57440e1e7f27b44'
+PUBLISHED_PAD_SHA256 = '23e7455115071b3f8500d94f658a8c87e40c25aee8abd6dff0b4ac6848b1d157'
 STATE_FILES = (
     'inventure_menu_settings.json',
     'inventure_filament_settings.json',
@@ -43,6 +50,32 @@ def _regular_bytes(path):
     if path.is_symlink() or not path.is_file():
         raise ValueError('Expected a regular configuration file: ' + str(path))
     return path.read_bytes()
+
+
+def _published_nozzle_pad_record():
+    """Reconstruct only the authenticated field run's production SAVE record."""
+    source = _regular_bytes(ROOT / PUBLISHED_PAD_SOURCE)
+    if sha256(source).hexdigest() != PUBLISHED_PAD_SOURCE_SHA256:
+        raise ValueError('Published nozzle calibration source checksum mismatch')
+    accepted = json.loads(source)
+    if (not isinstance(accepted, dict) or accepted.get('run_id') != PUBLISHED_PAD_RUN_ID
+            or accepted.get('phase') != 'saved' or accepted.get('mode') != 'FULL'):
+        raise ValueError('Published nozzle calibration is not the accepted saved FULL run')
+    # These are the fields written by InventureMCU.cmd_nozzle_pad_calibrate
+    # ACTION=SAVE. The acceptance status exposes prep/scan at its top level.
+    record = {key: accepted[key] for key in (
+        'run_id', 'measurement_target_c', 'sample_temperatures_c',
+        'measurements', 'candidate', 'retract_e_steps')}
+    record.update({key: accepted[key] for key in (
+        'xy_measurements', 'z_release_diagnostics', 'hot_targets_c',
+        'measurement_settings', 'elapsed_s') if key in accepted})
+    record.update(prep=accepted['prep'], scan=accepted['scan'], schema=1)
+    data = (json.dumps(record, sort_keys=True, indent=2) + '\n').encode('utf-8')
+    if sha256(data).hexdigest() != PUBLISHED_PAD_SHA256:
+        raise ValueError('Restored nozzle calibration record checksum mismatch')
+    return data, dict(source=PUBLISHED_PAD_SOURCE, run_id=PUBLISHED_PAD_RUN_ID,
+                      source_sha256=PUBLISHED_PAD_SOURCE_SHA256,
+                      sha256=PUBLISHED_PAD_SHA256)
 
 
 def _read_tree(module, main):
@@ -198,8 +231,10 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
     host's main config. A native CoreXY config is copied; a diagnostic ``none``
     config requires explicit field recovery. UART and G-code paths are always
     supplied by the caller, never copied from the historical log. Only this new
-    destination is written. Existing sidecar state is copied byte-for-byte; no
-    missing state file is synthesized. Config parsing does not connect a MCU.
+    destination is written. Existing sidecar state is copied byte-for-byte.
+    Explicit field recovery also restores the missing nozzle-pad file from
+    this printer's authenticated published SAVE result, including for a native
+    config. Other absent state stays absent. Parsing does not connect a MCU.
     """
     host = Path(host_path).expanduser().resolve()
     source = Path(source_config).expanduser().absolute()
@@ -243,6 +278,12 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
                      for name, data in sidecars.items()})
     snapshot.update({str(source.parent / name): None for name in missing})
 
+    restored, restored_provenance = {}, {}
+    pad_name = 'inventure_nozzle_pad.json'
+    if restore_field_profile and pad_name in missing:
+        restored[pad_name], restored_provenance[pad_name] = _published_nozzle_pad_record()
+        missing.remove(pad_name)
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix='.' + destination.name + '-', dir=destination.parent))
     try:
@@ -252,7 +293,7 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
         else:
             _copy_includes(originals, source.parent, temporary)
             main = temporary / source.name
-        for name, data in sidecars.items():
+        for name, data in (sidecars | restored).items():
             (temporary / name).write_bytes(data)
         _set_scalar(module, main, 'mcu', 'serial', serial)
         _set_scalar(module, main, 'mcu', 'baud', baud)
@@ -291,6 +332,7 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
             files=relative_files,
             loaded_configs=sorted({str(p.relative_to(temporary)) for p in loaded}),
             copied_state_files=sorted(sidecars), missing_state_files=missing,
+            restored_state_files=restored_provenance,
             source_snapshot=snapshot,
             macros=sorted(s.split(None, 1)[1] for s in effective.sections()
                           if s.lower().startswith('gcode_macro ')),

@@ -1,10 +1,12 @@
 """Recover the field setup without modifying the running diagnostic installation."""
 from hashlib import sha256
+import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -89,18 +91,132 @@ class BootstrapConfigTests(unittest.TestCase):
             self.assertEqual(dict(active[section]), dict(expected[section]))
         self.assertNotIn('START_PRINT', report['macros'])
         self.assertFalse(any(s.startswith('delayed_gcode ') for s in active.sections()))
-        self.assertEqual(set(report['missing_state_files']), set(bootstrap.STATE_FILES))
+        self.assertEqual(set(report['missing_state_files']),
+                         set(bootstrap.STATE_FILES) - {'inventure_nozzle_pad.json'})
         self.assertEqual(report['copied_state_files'], [])
         self.assertEqual(self.source.read_bytes(), original)
         self.assertEqual(report['source_snapshot'][str(self.source)], sha256(original).hexdigest())
-        self.assertEqual(set(report['files']), set(report['loaded_configs']))
+        self.assertEqual(set(report['files']),
+                         set(report['loaded_configs']) | {'inventure_nozzle_pad.json'})
         self.assertIn('inventure_services.cfg', report['files'])
         self.assertIn('inventure_display.cfg', report['files'])
         self.assertIn('inventure_heater_control.cfg', report['files'])
         self.assertIn(str(self.source.parent/'inventure_operations.cfg'), report['source_snapshot'])
         self.assertIsNone(report['source_snapshot'][str(self.source.parent/'inventure_operations.cfg')])
 
-    def test_existing_sidecar_bytes_are_copied_and_missing_state_is_not_invented(self):
+    def test_native_config_without_explicit_recovery_keeps_missing_state_absent(self):
+        self.source.write_bytes(bootstrap.FIELD_PROFILE.read_bytes())
+        report = self.stage(restore_field_profile=False)
+        self.assertEqual(report['restored_state_files'], {})
+        self.assertEqual(set(report['missing_state_files']), set(bootstrap.STATE_FILES))
+        self.assertEqual(report['copied_state_files'], [])
+        staged = Path(report['config_path']).parent
+        self.assertFalse(any((staged/name).exists() for name in bootstrap.STATE_FILES))
+
+    def test_explicit_recovery_restores_only_the_missing_published_pad_for_both_profiles(self):
+        for profile in ('diagnostic', 'native'):
+            with self.subTest(profile=profile):
+                if profile == 'native':
+                    text = bootstrap.FIELD_PROFILE.read_text().replace(
+                        'coarse_speed = 8', 'coarse_speed = 7')
+                    self.source.write_text(text)
+                original = self.source.read_bytes()
+                report = self.stage(profile)
+                name = 'inventure_nozzle_pad.json'
+                staged = Path(report['config_path']).parent
+                data = (staged/name).read_bytes()
+                self.assertEqual(sha256(data).hexdigest(),
+                                 '23e7455115071b3f8500d94f658a8c87e40c25aee8abd6dff0b4ac6848b1d157')
+                record = json.loads(data)
+                self.assertEqual(record['run_id'], '4eed5e30be704a6ca57440e1e7f27b44')
+                self.assertEqual(record['schema'], 1)
+                self.assertEqual(len(record), 12)
+                self.assertEqual(report['restored_state_files'], {name: {
+                    'source': 'docs/acceptance/INVENTURE_PAD_R23_2026-11-19_PROBA_2.json',
+                    'source_sha256': '75669f6ea0156dd500abe91de78007433889a852a8c4bc9b747ae17942c1afcf',
+                    'run_id': record['run_id'], 'sha256': sha256(data).hexdigest()}})
+                self.assertEqual(report['copied_state_files'], [])
+                self.assertEqual(set(report['missing_state_files']), set(bootstrap.STATE_FILES) - {name})
+                self.assertIsNone(report['source_snapshot'][str(self.source.parent/name)])
+                self.assertFalse((self.source.parent/name).exists())
+                self.assertEqual(self.source.read_bytes(), original)
+                for missing in report['missing_state_files']:
+                    self.assertFalse((staged/missing).exists())
+                self.assertEqual(report['recovery_profile_used'], profile == 'diagnostic')
+                if profile == 'native':
+                    self.assertEqual(self.effective(report).getfloat('inventure_native_z', 'coarse_speed'), 7.)
+
+    def test_existing_pad_is_preserved_even_when_published_recovery_source_is_unavailable(self):
+        name = 'inventure_nozzle_pad.json'
+        original = b'{\n "schema": 1, "run_id": "newer-local-calibration", "operator": true\n}\n'
+        path = self.source.parent/name
+        path.write_bytes(original)
+        with mock.patch.object(bootstrap, 'PUBLISHED_PAD_SOURCE', str(self.root/'not-present.json')):
+            report = self.stage()
+        staged = Path(report['config_path']).parent/name
+        self.assertEqual(staged.read_bytes(), original)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(report['copied_state_files'], [name])
+        self.assertEqual(report['restored_state_files'], {})
+        self.assertNotIn(name, report['missing_state_files'])
+        self.assertEqual(report['source_snapshot'][str(path)], sha256(original).hexdigest())
+
+    def test_modified_published_calibration_fails_before_creating_a_stage(self):
+        changed = self.root/'changed-published-pad.json'
+        changed.write_bytes((ROOT/bootstrap.PUBLISHED_PAD_SOURCE).read_bytes() + b'\n')
+        before = self.source.read_bytes()
+        with mock.patch.object(bootstrap, 'PUBLISHED_PAD_SOURCE', str(changed)):
+            with self.assertRaisesRegex(ValueError, 'source checksum mismatch'):
+                self.stage()
+        self.assertFalse((self.root/'staged').exists())
+        self.assertFalse((self.source.parent/'inventure_nozzle_pad.json').exists())
+        self.assertEqual(self.source.read_bytes(), before)
+
+    def test_restored_pad_matches_production_save_and_current_leveling_contract(self):
+        report = self.stage()
+        pad = Path(report['config_path']).with_name('inventure_nozzle_pad.json')
+        before = pad.read_bytes()
+        script = r'''
+from copy import deepcopy
+import json
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+sys.path.insert(0, str(Path(sys.argv[1])/'klippy'))
+from extras.inventure_mcu import InventureMCU
+from extras.inventure_leveling_transport import platform_reference
+from extras.inventure_factory_core import parameters
+from extras.inventure_nozzle_xyz import pad_xyz_candidate
+accepted = json.loads(Path(sys.argv[3]).read_text())
+restored = json.loads(Path(sys.argv[2]).read_text())
+board = InventureMCU.__new__(InventureMCU)
+board.nozzle_z_context = None
+board.nozzle_pad_run = deepcopy(accepted)
+board.nozzle_pad_run.update(phase='candidate', params={
+    'prep': accepted['prep'], 'scan': accepted['scan']})
+board.printer = SimpleNamespace(get_start_args=lambda: {'config_file': '/snapshot/printer.cfg'})
+saved = []
+board._write_calibration_file = lambda path, record: saved.append(record)
+board._nozzle_pad_emit = lambda command: None
+options = {'ACTION': 'SAVE', 'RUN_ID': accepted['run_id'], 'ACK': 'PAD_RESULT_REVIEWED'}
+board.cmd_nozzle_pad_calibrate(SimpleNamespace(get=options.get, error=ValueError))
+assert saved == [restored]
+preset = {'TOOL': 'T0', 'SPEED_PROFILE': 'OEM', 'TARGET': 200., 'PROCEDURE_TIMEOUT': 3600.}
+center, release = platform_reference(restored, parameters(SimpleNamespace(get=preset.get)))
+assert pad_xyz_candidate(restored['measurements'], {
+    'xy_repeat_mm': .08, 'z_repeat_mm': .05}) == restored['candidate']
+assert restored['measurements'] == accepted['measurements']
+print(json.dumps({'center': center, 'release_steps': release, 'fields': len(restored)}))
+'''
+        result = subprocess.run([sys.executable, '-c', script, str(self.host), str(pad),
+                                 str(ROOT/bootstrap.PUBLISHED_PAD_SOURCE)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout+'\n'+result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         {'center': [81.7, 68.34375], 'release_steps': 111802, 'fields': 12})
+        self.assertEqual(pad.read_bytes(), before)
+
+    def test_existing_sidecar_bytes_are_copied_and_other_missing_state_is_not_invented(self):
         data = b'{"schema":1,"tools":{"T0":{"load_speed":1.7},"T1":{}}}\n'
         sidecar = self.source.parent/'inventure_filament_settings.json'
         sidecar.write_bytes(data)

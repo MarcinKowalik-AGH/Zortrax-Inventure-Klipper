@@ -14,6 +14,19 @@ Przykład dotyczy użytkownika `klipper`, UART `/dev/ttyS5` i prędkości
 | Docelowy katalog działającego Klippera | `~/klipper-inventure-r38.6` |
 | Aktywna konfiguracja | dotychczasowy `~/printer_data/config/printer.cfg` |
 
+## Gdzie jest ostatni opublikowany stan projektu
+
+Bieżąca linia projektu Inventure jest na gałęzi `orange-pi-all-axis`.
+Tag `inventure-homing-r38.6` wskazuje kod procedur z commitu
+`ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f`: nowe Home Z oraz zachowane
+pięciopunktowe poziomowanie platformy. Kolejne commity instalatora na tej
+gałęzi nie zmieniają przypiętego kodu tych procedur. Gałąź `main` zawiera
+starszy zestaw źródłowy RC8 i nie jest źródłem bieżącej instalacji.
+
+Instalacja korzysta z opublikowanych plików repozytorium. Dostęp do starego
+Orange Pi nie jest wymagany do przeniesienia kodu ani zaakceptowanej
+kalibracji pada zapisanej w repozytorium.
+
 ## Kiedy użyć nowego instalatora
 
 Starszy katalog `klipper-inventure-candidate` może zawierać dodatki Inventure,
@@ -27,21 +40,32 @@ instrukcję. Stary tag źródeł R38.6 sam w sobie nie zawiera nowego instalator
 Przygotowanie dla działającego wcześniej wariantu diagnostycznego wymaga
 jawnego `--restore-field-profile`.
 
-Jeżeli masz już repozytorium `~/inventure-src` i pobrany worktree
-`~/inventure-homing-r38.6`, uzupełnij ten worktree o poprawiony instalator:
+Na nowym hoście bez katalogu `~/inventure-src` pobierz projekt zwykłym
+`git clone`, wskazując bieżącą gałąź:
 
 ```bash
-git -C "$HOME/inventure-src" fetch origin \
-  refs/heads/fix/w2-r38.6-installer:refs/remotes/origin/fix/w2-r38.6-installer &&
-git -C "$HOME/inventure-homing-r38.6" switch --detach \
-  refs/remotes/origin/fix/w2-r38.6-installer &&
-cd "$HOME/inventure-homing-r38.6"
+git clone --branch orange-pi-all-axis \
+  https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper.git \
+  "$HOME/inventure-src" &&
+cd "$HOME/inventure-src"
 ```
 
-Git odmówi przełączenia, jeśli nadpisałoby ono lokalne zmiany. Ten worktree
-zawiera źródła i narzędzia instalacyjne; nowy działający runtime będzie
-osobnym katalogiem wskazanym w tabeli. Źródła procedur R38.6 pozostają
-przypięte do `ee9cd2f`; dodatkowy commit dostarcza instalator migracji.
+Jeżeli `~/inventure-src` już istnieje jako klon tego repozytorium, zamiast
+ponownego klonowania wykonaj:
+
+```bash
+git -C "$HOME/inventure-src" fetch origin &&
+git -C "$HOME/inventure-src" switch orange-pi-all-axis &&
+git -C "$HOME/inventure-src" merge --ff-only origin/orange-pi-all-axis &&
+cd "$HOME/inventure-src"
+```
+
+Git odmówi przełączenia, jeśli nadpisałoby ono lokalne zmiany. Ten katalog
+zawiera źródła i narzędzia instalacyjne. Działający runtime znajduje się
+pod stałą ścieżką wskazaną w tabeli; instalator ponownie wykorzystuje
+istniejący runtime po sprawdzeniu wszystkich przypiętych plików. Źródła
+procedur R38.6 pozostają przypięte do `ee9cd2f`; dodatkowe commity
+dostarczają instalator migracji. Żadna z tych ścieżek nie wymaga worktree.
 
 ## 1. Przygotowanie i weryfikacja bez przełączenia usługi
 
@@ -88,7 +112,26 @@ Port UART, baud i katalog G-code są ustawiane na podstawie bieżącej
 instalacji i jawnych argumentów. Historyczny port `/dev/ttyS1` nie jest
 kopiowany na W2.
 
-### Dane, których nie ma w logu
+### Zaakceptowana kalibracja opublikowana w repozytorium
+
+Przy jawnym `--restore-field-profile` instalator uzupełnia brakujący
+`inventure_nozzle_pad.json` z zatwierdzonej drugiej próby FULL zapisanej w
+`docs/acceptance/INVENTURE_PAD_R23_2026-11-19_PROBA_2.json`.
+Dotyczy to także już uruchomionego profilu CoreXY na nowym Orange Pi.
+Istniejący plik kalibracji ma pierwszeństwo i pozostaje bez zmian.
+
+To zapis próby `4eed5e30be704a6ca57440e1e7f27b44`, wskazanej w wydaniu
+R38.6 jako `last_saved_hardware_run`. Instalator weryfikuje sumę źródła
+`75669f6ea0156dd500abe91de78007433889a852a8c4bc9b747ae17942c1afcf`
+i odtwarza format pliku dokładnie według produkcyjnego polecenia SAVE.
+Nie zmienia pomiarów ani wartości kandydata. Raport `restored_state_files`
+wskazuje źródło, identyfikator próby i sumy kontrolne.
+
+Ta kalibracja jest wymagana przez opublikowaną procedurę poziomowania.
+Jej brak w instalatorze `772ce750` stanowił brak przeniesienia danych
+dostępnych na GitHubie. Sam kod poziomowania był obecny.
+
+### Pozostałe dane operatora
 
 Zachowane pliki JSON z dotychczasowego katalogu konfiguracji są kopiowane
 bez zmiany ich zawartości. Instalator raportuje brakujące pliki:
@@ -99,11 +142,30 @@ bez zmiany ich zawartości. Instalator raportuje brakujące pliki:
 - `inventure_nozzle_pad.json` — zapisany wynik pomiaru padów/dysz;
 - `inventure_platform_level.json` — zapisany raport poziomowania.
 
-Nie tworzy zastępczych wyników kalibracji. Brak pliku korekty XY oznacza
+Poza jawnym odtworzeniem opublikowanej próby FULL nie tworzy zastępczych
+wyników kalibracji. Brak pliku korekty XY oznacza
 domyślny punkt wyjścia `X=0`, `Y=0` w procedurze kalibracji, a brak profili
 materiału oznacza użycie wartości domyślnych procedur. Sam log nie pozwala
 odtworzyć tych wyborów. Profil odzyskany z logu nie jest pełną kopią danych
 starego hosta ani całej bazy Moonrakera.
+
+### Zgłoszone błędy wydania R38.6/R16
+
+Odtworzenie kalibracji uzupełnia instalację. Nie zmienia procedury Home
+ani firmware. W próbie z 24 listopada 2026 r. potwierdzono osobno:
+
+- MCU R16 odrzuca przejście z NATIVE do SERVICE po Home X/Y, ponieważ
+  ogólny warunek `motor_test_busy()` uznaje sam tryb NATIVE za zajętość.
+  Komunikat to `another_owner_is_busy`. Ten sam warunek występuje w
+  niezmienionym opublikowanym kodzie MCU; ponowne sklonowanie tagu go
+  nie usuwa. STOP/OFF nie jest obejściem, ponieważ celowo zatrzaskuje
+  wyjście z natywnego sterowania.
+- W osobnej próbie Home Y MCU zgłosił `Timer too close`; przed zdarzeniem
+  wzrastała liczba retransmisji UART. Sam ten wyciąg nie rozstrzyga źródła
+  opóźnienia.
+
+Stan `ready` i poprawna identyfikacja wersji są sprawdzeniem uruchomienia
+usługi, nie potwierdzeniem wykonania tych procedur na drukarce.
 
 ## 2. Aplikacja MCU R16 dla istniejącego InventureBoot 1.7
 
