@@ -72,6 +72,27 @@ class PureGuardsTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
                 installer.require_mcu(broken)
 
+    def test_r23_display_requires_its_caps_and_all_r22_safety_caps(self):
+        modern=mcu_identity()
+        modern['mcu_constants'].update(
+            INVENTURE_MCU_RELEASE=installer.MCU_DISPLAY_RELEASE,
+            INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,INVENTURE_FAULT_REASON_ABI=1,
+            INVENTURE_SCHEDULER_ABI=1,INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+            INVENTURE_SCHEDULER_SERVICE_HZ=20000,INVENTURE_SCHEDULER_GUARD_MS=10,
+            INVENTURE_SERVICE_NATIVE_SPLIT_ABI=1,INVENTURE_POLICY_STATUS_ABI=1,
+            INVENTURE_DISPLAY_ERROR_ABI=1,INVENTURE_LOCAL_OLED_ANIMATION_ABI=1,
+            INVENTURE_LOCAL_OLED_NATIVE_GRAY4=1,INVENTURE_LOCAL_SPLASH_ABI=1,
+            INVENTURE_OLED_HOSTLINK_TIMEOUT_MS=1500)
+        self.assertEqual(installer.require_mcu(modern)['mcu_release'],installer.MCU_DISPLAY_RELEASE)
+        for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI',
+                    'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI','INVENTURE_DISPLAY_ERROR_ABI',
+                    'INVENTURE_LOCAL_OLED_ANIMATION_ABI','INVENTURE_LOCAL_OLED_NATIVE_GRAY4',
+                    'INVENTURE_LOCAL_SPLASH_ABI','INVENTURE_OLED_HOSTLINK_TIMEOUT_MS'):
+            broken=deepcopy(modern);broken['mcu_constants'].pop(key)
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,key):
+                installer.require_mcu(broken)
+
     def test_r22_service_native_policy_abi_required_and_r21_remains_compatible(self):
         modern = mcu_identity()
         modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SAFETY_POLICY_RELEASE

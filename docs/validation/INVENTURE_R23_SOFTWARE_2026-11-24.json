@@ -1,0 +1,64 @@
+{
+  "status": "SOFTWARE_VERIFIED_PHYSICAL_ACCEPTANCE_PENDING",
+  "date": "2026-11-24",
+  "mcu_release": "RC8-CONTROL-R7-HOMING-R23-OLED",
+  "base_commit": "2c40ce0d95d8a007a0533cfdf371db84195c2cf7",
+  "m300_source_commit": "20115e6b171c74a12a9578a3c95ec488c8ff6dd8",
+  "software_checks": {
+    "full_python_suite": {
+      "passed": 936,
+      "failed": 0,
+      "duration_s": 159.407,
+      "note": "Full suite before adding one installer capability test; final installer suite verified separately."
+    },
+    "final_installer_suite": {
+      "passed": 31,
+      "failed": 0
+    },
+    "m300_assets_and_actual_spi_pixels": {
+      "passed": 4,
+      "failed": 0
+    },
+    "mcu_register_programs": {
+      "passed": 9,
+      "failed": 0
+    },
+    "cortex_m3_rle_emulation": {
+      "fills_verified": 2048,
+      "performance_passed": true,
+      "hardware_cycles_measured": false
+    },
+    "firmware_build": {
+      "compiler": "arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119",
+      "ivb_integrity": true,
+      "elf_bin_vectors_and_address_bounds": true,
+      "compiled_dictionary_abi": true,
+      "source_sha256_matches_current_source": true
+    },
+    "workflow_yaml_and_shell_syntax": true
+  },
+  "local_animation": {
+    "gray_levels": 16,
+    "frames_per_icon": 4,
+    "frames_per_second": 2,
+    "spi_bytes_per_frame": 1307,
+    "full_frame_spi_bytes": 8199,
+    "uart_animation_bytes": 0,
+    "scanline_ram_bytes": 128,
+    "host_display_lease_ms": 1500
+  },
+  "build_identity": "RC8-CONTROL-R7-HOMING-R23-OLED-75cc39fe56c8",
+  "ivb_bytes": 125008,
+  "ivb_sha256": "ef83d8ca0c26c12ed11fbd27380b1ee014cb4baf977c7adebb178861df137645",
+  "application_sha256": "a7494efaf36f6082f6ca1f45f382ad9d8a3433392a30b3261e3dcac007834b65",
+  "physical_printer_tested": false,
+  "firmware_flashed": false,
+  "pending_physical_acceptance": [
+    "cold boot without host",
+    "connect during splash",
+    "disconnect and reconnect",
+    "OLED messages and animation readability",
+    "menu and Home with active OLED"
+  ],
+  "does_not_close_hardware_timer_issue_3": true
+}

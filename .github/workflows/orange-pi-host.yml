@@ -2,7 +2,7 @@ name: Verify Orange Pi host updater
 on:
   push:
     # R17 source candidates are tested without modifying the released R16 image.
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation, fix/inventure-r22-strict-service-broad-native-policy]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation, fix/inventure-r22-strict-service-broad-native-policy, test/inventure-r22-full-cycle-acceptance, feature/inventure-r23-m300-display-parity]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -21,6 +21,12 @@ on:
       - 'inventure_safety_policy_restore.py'
       - 'restored/safety_policy_r22/**'
       - 'tests/test_inventure_safety_policy_r22.py'
+      - 'tests/test_inventure_full_cycles.py'
+      - 'tests/test_inventure_display_r23.py'
+      - 'tests/mcu/**'
+      - 'ci/render_inventure_r23_preview.py'
+      - 'ci/benchmark_inventure_oled_rle.py'
+      - 'ci/check_inventure_full_cycles.py'
       - '.github/workflows/inventure-r22-policy.yml'
       - 'restored/scheduler_r21/**'
       - 'tests/test_inventure_timing_host_r21.py'
@@ -87,6 +93,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    env:
+      INVENTURE_CYCLE_REPORT: /tmp/inventure-r22-full-cycles.json
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,6 +107,14 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6'
       - run: python -m unittest discover -s tests -v
+      - name: Retain the simulated full-cycle acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: INVENTURE_R22_FULL_CYCLES_SIMULATED
+          path: /tmp/inventure-r22-full-cycles.json
+          if-no-files-found: error
+          retention-days: 14
       - run: python ci/check_native_nozzle_startup.py
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json

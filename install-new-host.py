@@ -44,6 +44,7 @@ MCU_SERVICE_HANDOFF_RELEASE = 'RC8-CONTROL-R7-HOMING-R17'
 MCU_NATIVE_PROFILE_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
 MCU_SCHEDULER_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
 MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
+MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
@@ -82,28 +83,36 @@ def require_mcu(mcu):
              if str(constants.get(key)) != str(value)}
     if release not in (MCU_RELEASE, MCU_SERVICE_HANDOFF_RELEASE,
                        MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
-                       MCU_SAFETY_POLICY_RELEASE):
+                       MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
         wrong['INVENTURE_MCU_RELEASE'] = release
     if release in (MCU_SERVICE_HANDOFF_RELEASE, MCU_NATIVE_PROFILE_RELEASE,
-                   MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE) and str(
+                   MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE) and str(
             constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')) != '1':
         wrong['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = constants.get(
             'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')
     if release in (MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
-                   MCU_SAFETY_POLICY_RELEASE):
+                   MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
         for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
             if str(constants.get(key)) != '1':
                 wrong[key] = constants.get(key)
-    if release in (MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE):
+    if release in (MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
         for key,value in (('INVENTURE_SCHEDULER_ABI',1),
                           ('INVENTURE_SCHEDULER_NATIVE_HZ',10000),
                           ('INVENTURE_SCHEDULER_SERVICE_HZ',20000),
                           ('INVENTURE_SCHEDULER_GUARD_MS',10)):
             if str(constants.get(key)) != str(value):
                 wrong[key] = constants.get(key)
-    if release == MCU_SAFETY_POLICY_RELEASE:
+    if release in (MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
         for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI'):
             if str(constants.get(key))!='1':
+                wrong[key]=constants.get(key)
+    if release == MCU_DISPLAY_RELEASE:
+        for key,value in (('INVENTURE_DISPLAY_ERROR_ABI',1),
+                          ('INVENTURE_LOCAL_OLED_ANIMATION_ABI',1),
+                          ('INVENTURE_LOCAL_OLED_NATIVE_GRAY4',1),
+                          ('INVENTURE_LOCAL_SPLASH_ABI',1),
+                          ('INVENTURE_OLED_HOSTLINK_TIMEOUT_MS',1500)):
+            if str(constants.get(key))!=str(value):
                 wrong[key]=constants.get(key)
     if wrong:
         raise ValueError('Install the compatible InventureBoot 1.7 MCU application. '

@@ -93,3 +93,6 @@ całego `Timer too close`. Ostateczna akceptacja wymaga serii
 powtarzalnych HOME X/Y/Z/All i testów temperatur oraz komunikacji
 na rzeczywistej Inventure. Nie instalować w stanie grzania/ruchu
 i nie podnosić parametrów prędkości bez takich prób.
+
+Powtarzalne testy całych cykli, ich granice oraz pozostałe próby fizyczne
+opisuje [punkt 5](INVENTURE_POINT5_FULL_CYCLE_ACCEPTANCE.md).

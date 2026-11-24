@@ -1,0 +1,22 @@
+{
+  "reference_repo": "MarcinKowalik-AGH/Zortrax-m300-Klipper",
+  "reference_commit": "20115e6b171c74a12a9578a3c95ec488c8ff6dd8",
+  "assets": {
+    "inventure_oled_activity.inc": {
+      "source": "mcu/SOURCE_MCU/overlay/src/stm32/m300_oled_activity.inc",
+      "sha256": "c70a7270fe91c31f05d1b55ac5fdb30666dd97c5c77c5bf775cbf30cda922125"
+    },
+    "inventure_oled_error_icons.inc": {
+      "source": "mcu/SOURCE_MCU/overlay/src/stm32/m300_error_icons.inc",
+      "sha256": "a688e126c13bdfdc5ca2381eb87bee517da468c87d691134c060c42ab01ef958"
+    },
+    "inventure_oled_startup_logo.inc": {
+      "source": "mcu/SOURCE_MCU/overlay/src/stm32/m300_oled_startup_logo.inc",
+      "sha256": "2f78ed41cc7b02ce314f61e131652ac6ac8515b42556875ad4fc6d812b7b7d11"
+    },
+    "inventure_oled_rle.h": {
+      "source": "mcu/SOURCE_MCU/overlay/src/stm32/m300_oled_rle.h",
+      "sha256": "ad483c89f727f7084767cf395f4ba307830e0bad58793acd35bd8fcd0cb832da"
+    }
+  }
+}

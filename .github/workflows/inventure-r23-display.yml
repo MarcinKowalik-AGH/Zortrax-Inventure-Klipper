@@ -1,0 +1,156 @@
+name: Publish Inventure MCU R23 OLED candidate
+on:
+  push:
+    branches: [feature/inventure-r23-m300-display-parity]
+    paths:
+      - 'service_mcu/control_r6/SOURCE_MCU/**'
+      - 'service_mcu/control_r6/TESTS/**'
+      - 'tests/mcu/**'
+      - 'tests/test_inventure_display_r23.py'
+      - 'ci/benchmark_inventure_oled_rle.py'
+      - 'ci/render_inventure_r23_preview.py'
+      - 'ci/package_inventure_r23.py'
+      - 'docs/validation/INVENTURE_R23*.json'
+      - 'docs/INVENTURE_R23_RELEASE.md'
+      - '.github/workflows/inventure-r23-display.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-and-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6' 'unicorn==2.1.4'
+      - name: Verify the complete installed Inventure host and operator cycles
+        env:
+          INVENTURE_CYCLE_REPORT: ${{ runner.temp }}/r23-full-cycles.json
+        run: python -m unittest discover -s tests -v
+      - name: Verify installed configuration and native startup
+        run: python ci/check_native_nozzle_startup.py
+      - name: Verify actual R23 SPI pixels and M300 asset identity
+        env:
+          INVENTURE_DISPLAY_CAPTURE_DIR: ${{ runner.temp }}/r23-captures
+        run: python -m unittest discover -s tests -p test_inventure_display_r23.py -v
+      - name: C register and timing regression tests
+        run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
+      - name: Fetch pinned GNU Arm 14.2.1 with SHA-256 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 --connect-timeout 20 --output toolchain.tar.xz \
+            'https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz'
+          printf '%s  %s\n' \
+            '62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823' toolchain.tar.xz | sha256sum --check
+          mkdir -p gcc-arm
+          tar -xf toolchain.tar.xz -C gcc-arm --strip-components=1
+          echo "$RUNNER_TEMP/gcc-arm/bin" >> "$GITHUB_PATH"
+      - name: Assemble the exact pinned RC8 source kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source/parts/part*.bin > "$RUNNER_TEMP/pinned-kit.zip"
+          printf '%s  %s\n' \
+            '1c3e388744159cb10d3e27750b598a4cf434abe0b5f8029d5a8dd3b1567de3f8' "$RUNNER_TEMP/pinned-kit.zip" | sha256sum --check
+          python ci/prepare_kit.py --destination "$RUNNER_TEMP/pinned-kit"
+      - name: Compile and validate InventureBoot 1.7 MCU application
+        shell: bash
+        run: |
+          set -euo pipefail
+          python service_mcu/control_r6/SOURCE_MCU/build_thermal_test.py \
+            "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r23-build"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          out=Path(os.environ['RUNNER_TEMP'])/'r23-build'
+          verify=json.loads((out/'THERMAL_TEST_VERIFY.json').read_text())
+          assert verify['mcu_release']=='RC8-CONTROL-R7-HOMING-R23-OLED'
+          assert verify['motor_release']=='RC8-CONTROL-R7-HOMING-R23-OLED'
+          assert verify['native_service_handoff_abi']==1
+          assert verify['native_thermal_profile_abi']==1
+          assert verify['fault_reason_abi']==1
+          assert verify['scheduler_abi']==1
+          assert verify['scheduler_native_hz']==10000
+          assert verify['scheduler_service_hz']==20000
+          assert verify['scheduler_guard_ms']==10
+          assert verify['service_native_split_abi']==1
+          assert verify['policy_status_abi']==1
+          dictionary=json.loads((out/'klipper.dict').read_text())
+          for key in ('INVENTURE_DISPLAY_ERROR_ABI','INVENTURE_LOCAL_OLED_ANIMATION_ABI',
+                      'INVENTURE_LOCAL_OLED_NATIVE_GRAY4','INVENTURE_LOCAL_SPLASH_ABI'):
+              assert dictionary['config'][key]==1
+          assert verify['tested_on_printer'] is False
+          assert (out/'INVENTUR.IVB').is_file()
+          PY
+          (cd "$RUNNER_TEMP/r23-build" && sha256sum INVENTUR.IVB klipper.bin klipper.dict > SHA256SUMS)
+          printf '%s\n' \
+            'R23-OLED CANDIDATE - NOT YET TESTED ON A PHYSICAL INVENTURE.' \
+            'Application file: INVENTUR.IVB for the existing InventureBoot 1.7.' \
+            'Software pixels/transport verified; physical OLED/reconnect/menu/Home acceptance pending.' \
+            > "$RUNNER_TEMP/r23-build/README_CANDIDATE.txt"
+      - name: Verify optimized Cortex-M3 RLE stores
+        run: python ci/benchmark_inventure_oled_rle.py --output "$RUNNER_TEMP/r23-build/RLE_BENCHMARK.json"
+      - name: Package the exact committed candidate
+        run: python ci/package_inventure_r23.py "$RUNNER_TEMP/r23-build" "$RUNNER_TEMP/r23-captures/preview" "$RUNNER_TEMP/INVENTURE_R23_MCU_OLED.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: INVENTURE_R23_OLED_CANDIDATE
+          path: |
+            ${{ runner.temp }}/r23-build/INVENTUR.IVB
+            ${{ runner.temp }}/r23-build/klipper.bin
+            ${{ runner.temp }}/r23-build/klipper.dict
+            ${{ runner.temp }}/r23-build/THERMAL_TEST_VERIFY.json
+            ${{ runner.temp }}/r23-build/BUILD_REPORT.json
+            ${{ runner.temp }}/r23-build/SHA256SUMS
+            ${{ runner.temp }}/r23-build/README_CANDIDATE.txt
+            ${{ runner.temp }}/r23-build/RLE_BENCHMARK.json
+            ${{ runner.temp }}/r23-captures/preview/*.png
+            ${{ runner.temp }}/INVENTURE_R23_MCU_OLED.zip
+            ${{ runner.temp }}/r23-full-cycles.json
+          if-no-files-found: error
+          retention-days: 14
+  publish-candidate:
+    needs: compile-and-validate
+    if: github.repository == 'MarcinKowalik-AGH/Zortrax-Inventure-Klipper' && github.ref == 'refs/heads/feature/inventure-r23-m300-display-parity'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: INVENTURE_R23_OLED_CANDIDATE
+          path: ${{ runner.temp }}/r23-release
+      - name: Publish the verified Inventure candidate and application files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_TAG: inventure-mcu-r23-oled-rc1
+          ARTIFACT_DIR: ${{ runner.temp }}/r23-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'MarcinKowalik-AGH/Zortrax-Inventure-Klipper'
+          # upload-artifact preserves the shared runner.temp directory tree.
+          cd "$ARTIFACT_DIR/r23-build"
+          sha256sum --check SHA256SUMS
+          cd "$GITHUB_WORKSPACE"
+          gh release create "$CANDIDATE_TAG" \
+            "$ARTIFACT_DIR/INVENTURE_R23_MCU_OLED.zip" \
+            "$ARTIFACT_DIR/r23-build/INVENTUR.IVB" \
+            "$ARTIFACT_DIR/r23-build/klipper.bin" \
+            "$ARTIFACT_DIR/r23-build/klipper.dict" \
+            "$ARTIFACT_DIR/r23-build/SHA256SUMS" \
+            --repo "$GH_REPO" --target "$GITHUB_SHA" \
+            --title 'Inventure MCU R23 OLED · points 1–5 candidate' \
+            --notes-file docs/INVENTURE_R23_RELEASE.md \
+            --prerelease --latest=false

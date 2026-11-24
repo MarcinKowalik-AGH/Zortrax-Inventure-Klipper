@@ -1,0 +1,509 @@
+{
+  "base_commit": "2c40ce0d95d8a007a0533cfdf371db84195c2cf7",
+  "date": "2026-11-24",
+  "host_unit_and_integration_tests": {
+    "count": 932,
+    "python": "3.12",
+    "status": "PASS"
+  },
+  "installed_operator_cycles": {
+    "config_unchanged": true,
+    "cycle_count": 36,
+    "firmware_flashed": false,
+    "hardware_tested": false,
+    "native_mesh_probe_configured": false,
+    "physical_interfaces": "simulated",
+    "refusals": [
+      {
+        "condition": "tray_absent",
+        "rejection": "Tray absent",
+        "status": "PASS"
+      },
+      {
+        "condition": "printing",
+        "rejection": "Inventure homing requires an idle printer",
+        "status": "PASS"
+      },
+      {
+        "condition": "paused",
+        "rejection": "Inventure homing requires an idle printer",
+        "status": "PASS"
+      },
+      {
+        "condition": "latched",
+        "rejection": "MCU blocked native control: fault=0 latched=1 reject=None",
+        "status": "PASS"
+      },
+      {
+        "condition": "disconnected",
+        "rejection": "MCU is disconnected",
+        "status": "PASS"
+      },
+      {
+        "condition": "cancel_and_replay",
+        "rejection": "No current menu view",
+        "status": "PASS"
+      },
+      {
+        "condition": "bad_handoff",
+        "rejection": "T0 selection and cleaning did not complete: MCU did not preserve the XY reference during native handoff",
+        "status": "PASS"
+      },
+      {
+        "condition": "contact_timeout",
+        "rejection": "Error during homing PE12 clearance: Communication timeout during homing",
+        "status": "PASS"
+      },
+      {
+        "condition": "shutdown",
+        "rejection": "No current menu view",
+        "status": "PASS"
+      }
+    ],
+    "runtime_sha256": {
+      "inventure_mcu.py": "310811cb4d0ccdcc1b854505f8179e859ad4a9a411dc597dec2a7f9f2b6477d9",
+      "inventure_menu_service.py": "2c4fc472ff007991dae72113be434f0e445f680028e99a1326bf4cce40571ad7",
+      "inventure_native_z.py": "3e82ecc981bcf2b6e009dd10d579c9b1c8de1084c3e63f7c5d15ab4af72425d2",
+      "inventure_z_home.py": "af63cead04eaca0e87ffde442d1df4150008a62a4f5c01d635c4239c35c0602e"
+    },
+    "serial_opened": false,
+    "sessions": [
+      {
+        "cycles": [
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "Y"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Y"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Y"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          }
+        ],
+        "handoffs": 6,
+        "initial_state": "COLD_OFF",
+        "repetitions": 3
+      },
+      {
+        "cycles": [
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "Y"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": false
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Y"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "oled",
+            "z_certified": true
+          },
+          {
+            "axes": "X",
+            "handoffs": 0,
+            "native_homes": [
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Y",
+            "handoffs": 0,
+            "native_homes": [
+              "Y"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XYZ",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Y",
+              "X",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "Z",
+            "handoffs": 1,
+            "native_homes": [
+              "Z",
+              "Z"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          },
+          {
+            "axes": "XY",
+            "handoffs": 0,
+            "native_homes": [
+              "Y",
+              "X"
+            ],
+            "origin": "fluidd",
+            "z_certified": true
+          }
+        ],
+        "handoffs": 6,
+        "initial_state": "HOT_NATIVE",
+        "repetitions": 3
+      }
+    ],
+    "status": "PASS_INSTALLED_R22_FULL_CYCLES"
+  },
+  "mcu_lifecycle": {
+    "clock_wraps": 13,
+    "consecutive_owner_cycles": 12,
+    "pc13_shutdown_and_replay_refusal": true,
+    "simulated_seconds": 500,
+    "status": "PASS"
+  },
+  "mcu_register_programs": [
+    {
+      "program": "test_control_board.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_t0_heat_board.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_motor_board.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_load_stream.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_factory_session.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_z_home.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_load15_joint.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_cassette_load_joint.c",
+      "status": "PASS"
+    },
+    {
+      "program": "test_r22_full_cycles.c",
+      "status": "PASS"
+    }
+  ],
+  "new_firmware_required": false,
+  "oled_uart_model": "PASS",
+  "physical_acceptance": {
+    "native_bed_mesh": "PROBE_NOT_CONFIGURED",
+    "status": "PENDING",
+    "timer_too_close_resolved": "NOT_HARDWARE_VERIFIED"
+  },
+  "production_sources_changed": false,
+  "startup_config_and_pid_save_reload": "PASS",
+  "status": "SOFTWARE_PASS_HARDWARE_PENDING"
+}

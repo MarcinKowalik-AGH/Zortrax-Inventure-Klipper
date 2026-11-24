@@ -97,10 +97,12 @@ class FastTransportTests(unittest.TestCase):
     def test_actual_compiled_MCU_decoder_accepts_every_host_packet(self):
         source=(ROOT/'service_mcu/control_r6/SOURCE_MCU/inventure_panel.c').read_text()
         body=source.split('oled_fast_decode(',1)[1].split('\nstatic void\noled_fast_fail',1)[0]
-        c='#include <stdint.h>\n#include <string.h>\n#define OLED_FAST_WIRE 256\nint decode('+body
+        c='#include <stdint.h>\n#include <string.h>\n#include "inventure_oled_rle.h"\n#define OLED_FAST_WIRE 256\nint decode('+body
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder);(path/'decode.c').write_text(c)
-            subprocess.run(['gcc','-std=c11','-shared','-fPIC','-O2',str(path/'decode.c'),'-o',str(path/'decode.so')],check=True,capture_output=True)
+            subprocess.run(['gcc','-std=c11','-shared','-fPIC','-O2',
+                '-I',str(ROOT/'service_mcu/control_r6/SOURCE_MCU'),
+                str(path/'decode.c'),'-o',str(path/'decode.so')],check=True,capture_output=True)
             library=ctypes.CDLL(str(path/'decode.so'))
             fn=library.decode;fn.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p,ctypes.c_uint]
             rnd=random.Random(44)
