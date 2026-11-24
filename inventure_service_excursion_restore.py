@@ -12,11 +12,11 @@ SOURCES = {
     "klippy/extras/inventure_mcu.py": (
         "restored/exclusive_service_r20/inventure_mcu.py",
         "c1d5c251762ed532c71bf7051c987a8e8a07b4cc",
-        "a9e26a6549913d8b2998655b3de1a7cb9be2302c"),
+        "a9a02476a34d194685ef74d091fdd3636e637cb7"),
     "klippy/extras/inventure_native_z.py": (
         "restored/exclusive_service_r20/inventure_native_z.py",
         "bded3a5db90fccdee9610edbe2e49df664eb2964",
-        "4d3fb413e0ceb3da70a300dfc2549798e9a7277d"),
+        "226a4041a3a118e98dc589cd5a01906586c56964"),
 }
 
 def git_blob(data):
