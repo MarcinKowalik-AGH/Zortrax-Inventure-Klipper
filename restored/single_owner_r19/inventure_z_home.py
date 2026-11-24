@@ -1,0 +1,674 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Bounded Inventure SERVICE reference and two-nozzle release measurements."""
+import math
+
+from .inventure_factory_core import FactoryError, FactoryProgram
+
+
+Z_STEPS_PER_MM = 802
+Z_BOTTOM = 1 << 2
+NOZZLE_CONTACT = 1 << 3
+Z_STABLE_CYCLES = 101
+Z_OPEN_CONFIRM_S = .025
+Z_RELEASE_RECOVERY_INCREMENT = 4
+Z_RELEASE_RECOVERY_MAX = 16
+Z_BOTTOM_RELEASE_STEPS = 5 * Z_STEPS_PER_MM
+Z_BOTTOM_BACKOFF_STEPS = Z_STEPS_PER_MM
+Z_HOME_ACK = 'PAD_AND_CLEARANCE_CHECKED'
+NOZZLE_Z_ACK = 'BOTH_NOZZLES_OVER_SAME_PAD'
+NOZZLE_Z_SAMPLES = (2, 3)
+NOZZLE_Z_CLEARANCE_STEPS = 10 * Z_STEPS_PER_MM
+OEM_Z_BOTTOM_SPEED = 2_000_000. / 301 / Z_STEPS_PER_MM
+OEM_Z_BOTTOM_RELEASE_SPEED = 2_000_000. / 2001 / Z_STEPS_PER_MM
+OEM_Z_BACKOFF_SPEED = 20.
+OEM_Z_CONTACT_INTERVAL_US = 4000
+OEM_Z_CONTACT_INTERVAL_MIN = 1250
+OEM_Z_CONTACT_INTERVAL_MAX = 25000
+OEM_Z_CONTACT_SPEED = 1_000_000. / OEM_Z_CONTACT_INTERVAL_US / Z_STEPS_PER_MM
+Z_MAX_CYCLES = 512
+
+Z_HOME_PROCEDURES = {
+    'Z_PREPARE': ('home', 'heat', 'select_tool', 'z_position_pad'),
+    'HOME_Z': ('home', 'heat', 'select_tool', 'z_position_pad',
+               'z_bottom_release', 'z_contact_reference'),
+}
+
+
+def z_home_parameters(gcmd, p, required=False, nozzle_test=False):
+    """Read SERVICE coordinates and bounds before sending any motion."""
+    if p['tool'] != 0 and not nozzle_test:
+        raise FactoryError('Z_PREPARE and HOME_Z use TOOL=T0')
+    oem = p['speed_profile'] == 'OEM'
+
+    def number(name, default, low, high):
+        value = gcmd.get(name, default)
+        if value is None and default is None:
+            return None
+        try:
+            result = float(value)
+        except (ValueError, TypeError, OverflowError):
+            result = math.nan
+        if isinstance(value, bool) or not math.isfinite(result) or not low <= result <= high:
+            raise FactoryError('%s must be %g..%g' % (name, low, high))
+        return result
+
+    def integer(name, default, low, high):
+        value = number(name, default, low, high)
+        if not value.is_integer():
+            raise FactoryError(name + ' must be an integer')
+        return int(value)
+
+    bottom_max = number('HOME_Z_MAX', min(p['home_z_max'], 150.) if oem
+                        else p['home_z_max'], 1., 150. if nozzle_test else 300.)
+    travel = min(250., bottom_max)
+    approach = number('Z_APPROACH_MM', None, 2., travel)
+    span = number('Z_PROBE_MM', 10. if oem else 1., .02, 10.)
+    if required and approach is None:
+        raise FactoryError('HOME_Z requires Z_APPROACH_MM measured from the PE12 trigger')
+    if required and gcmd.get('ACK', '') != Z_HOME_ACK:
+        raise FactoryError('HOME_Z requires ACK=' + Z_HOME_ACK)
+    if approach is not None:
+        if approach + span > travel:
+            raise FactoryError('Z_APPROACH_MM plus Z_PROBE_MM exceeds the Z travel bound')
+        if oem and approach - span < 1.:
+            raise FactoryError('OEM Z probe span extends into the bottom clearance')
+    approach_speed = number('Z_APPROACH_SPEED', OEM_Z_BACKOFF_SPEED if oem else 1.,
+                            .1, OEM_Z_BACKOFF_SPEED if oem else 2.)
+    if approach is not None and approach / approach_speed > 595.:
+        raise FactoryError('Z coarse approach exceeds 595 seconds at this speed')
+    stable_limit = 201 if nozzle_test else Z_STABLE_CYCLES
+    stable = integer('Z_STABLE_CYCLES', stable_limit, 1, stable_limit)
+    cycles = integer('Z_MAX_CYCLES', Z_MAX_CYCLES, stable + 1, Z_MAX_CYCLES)
+    default_bottom_speed = (OEM_Z_BOTTOM_SPEED if oem and gcmd.get('Z_SPEED', None) is None
+                            else p['z_speed'])
+    bottom_speed = number('Z_BOTTOM_SPEED', default_bottom_speed, .1,
+                          OEM_Z_BOTTOM_SPEED if oem else 5.)
+    if bottom_max / bottom_speed > 595.:
+        raise FactoryError('Z bottom seek exceeds 595 seconds at this speed')
+    probe_speed = number('Z_PROBE_SPEED', OEM_Z_CONTACT_SPEED if oem else .2, .05, 1.)
+    release_speed = number('Z_RELEASE_SPEED', probe_speed if oem else .2, .05, 1.)
+    interval = None
+    if oem:
+        if any(gcmd.get(name, None) is not None for name in (
+                'Z_RELEASE_RECOVERY_STEPS', 'Z_SAMPLE_CLEARANCE_MM',
+                'Z_TRANSIENT_BACKOFF_MM', 'Z_TRANSIENT_RETRIES', 'Z_TRANSIENT_TOTAL')):
+            raise FactoryError('OEM Z probing uses latched MCU edges; the Z_TRANSIENT_*, '
+                               'Z_RELEASE_RECOVERY_STEPS and Z_SAMPLE_CLEARANCE_MM '
+                               'parameters apply to the SERVICE profile')
+        interval = round(1_000_000. / (probe_speed * Z_STEPS_PER_MM))
+        if not OEM_Z_CONTACT_INTERVAL_MIN <= interval <= OEM_Z_CONTACT_INTERVAL_MAX:
+            raise FactoryError('OEM Z probe speed must fit an MCU interval of 1250..25000 µs')
+        if interval != round(1_000_000. / (release_speed * Z_STEPS_PER_MM)):
+            raise FactoryError('OEM Z probe uses the same speed for approach and release')
+    return dict(
+        z_contact_engine='host_mcu_edges' if oem else 'host',
+        z_contact_interval_us=interval,
+        z_approach_mm=approach,
+        z_probe_x=number('Z_PROBE_X', 82.8, p['min_x'], p['max_x']),
+        z_probe_y=number('Z_PROBE_Y', 68., p['min_y'], p['max_y']),
+        z_probe_mm=span,
+        z_release_mm=number('Z_RELEASE_MM', 1., .02, 2.),
+        z_bottom_max_mm=bottom_max,
+        z_bottom_speed=bottom_speed,
+        z_bottom_release_speed=number('Z_BOTTOM_RELEASE_SPEED',
+                                      OEM_Z_BOTTOM_RELEASE_SPEED if oem else 1.,
+                                      .1, OEM_Z_BOTTOM_RELEASE_SPEED if oem else 1.),
+        z_bottom_release_steps=5000 if oem else Z_BOTTOM_RELEASE_STEPS,
+        z_backoff_speed=number('Z_BACKOFF_SPEED', OEM_Z_BACKOFF_SPEED if oem else 1.,
+                               .1, OEM_Z_BACKOFF_SPEED if oem else 1.),
+        z_approach_speed=approach_speed,
+        z_probe_speed=probe_speed,
+        z_release_speed=release_speed,
+        z_release_recovery_steps=integer('Z_RELEASE_RECOVERY_STEPS', Z_RELEASE_RECOVERY_MAX,
+                                         0, Z_RELEASE_RECOVERY_MAX),
+        z_sample_clearance_mm=number('Z_SAMPLE_CLEARANCE_MM', .05, 0., .5),
+        z_stable_cycles=stable,
+        z_max_cycles=cycles,
+        z_transient_backoff_mm=number('Z_TRANSIENT_BACKOFF_MM', .2, .05, .5),
+        z_transient_retries=integer('Z_TRANSIENT_RETRIES', 3, 0, 10),
+        z_transient_total=integer('Z_TRANSIENT_TOTAL', 10, 0, 30),
+    )
+
+
+class ZReleaseTracker:
+    """Track the r0323 minimum until the configured run of unchanged minima."""
+
+    def __init__(self, span_steps, stable_cycles, max_cycles):
+        self.span = span_steps
+        self.stable_cycles = stable_cycles
+        self.max_cycles = max_cycles
+        self.best = None
+        self.cycles = 0
+        self.non_improvements = 0
+
+    def add(self, steps):
+        if type(steps) is not int or abs(steps) > self.span:
+            raise FactoryError('Z release outside the bounded probe window')
+        self.cycles += 1
+        if self.best is None or steps < self.best:
+            self.best = steps
+            self.non_improvements = 0
+        else:
+            self.non_improvements += 1
+        if self.non_improvements == self.stable_cycles:
+            return True
+        if self.max_cycles is not None and self.cycles >= self.max_cycles:
+            raise FactoryError('z_contact_cycle_limit', cycles=self.cycles)
+        return False
+
+
+class ZHomeProgram(FactoryProgram):
+    def __init__(self, p, settings):
+        super().__init__(p)
+        self.settings = settings
+        # Keep the shared XY/home sequence and validated factory settings.
+        # Replace only the lower seek's audited speed and travel for this program.
+        self.p = dict(self.p, z_speed=settings['z_bottom_speed'],
+                      home_z_max=settings['z_bottom_max_mm'])
+        self.z_steps = 0  # Table rises in positive Z; zero here is the PE12 trigger.
+
+    def prepare_native_home(self, pad_xy, pad_speed, *, klipper_xy_prepared=False):
+        """Prepare T0 while preserving Klipper's ownership of normal XY homing.
+
+        Legacy SERVICE home/release remains available only when explicitly
+        selected by its existing diagnostic caller. Operator R19 always
+        performs native G28 Y/X and supplies a verified origin first.
+        """
+        if not klipper_xy_prepared:
+            yield from self._module('z_initial_clearance', self._nozzle_pre_xy_clearance())
+            yield from self._module('home_xy', self._home_steps(y_first=True, include_z=False))
+        yield from self.position_bin()
+        yield from self.heat()
+        yield from self.select_tool()
+        yield from self.clean()
+        yield from self.return_to_bin()
+        frame = yield dict(kind='native_home_frame')
+        offsets = frame['native_xy_offsets_mm']
+        service_xy = [pad_xy[i] - offsets[i] for i in (0, 1)]
+        if not (self.p['min_x'] <= service_xy[0] <= self.p['max_x']
+                and self.p['min_y'] <= service_xy[1] <= self.p['max_y']):
+            raise FactoryError('Native pad is outside the measured service XY frame')
+        yield from self._module('z_position_pad', self._move(*service_xy, speed=pad_speed,
+                                                           leg='z_contact_pad'))
+        yield dict(kind='done', success=True, terminal='HOME_PREPARE', cleaning_done=True,
+                   native_xy_mm=list(pad_xy), service_xy_mm=service_xy,
+                   native_xy_offsets_mm=offsets)
+
+    def _z_move(self, steps, speed, stop_mask, stop_value, contact, bottom,
+                allow_contact_transient=False, stage=None):
+        if not steps:
+            raise FactoryError('Z reference move requires a nonzero step count')
+        initial_raw = dict(z_bottom=bottom)
+        if contact is not None:
+            initial_raw['nozzle_contact'] = contact
+        action = dict(kind='z_contact_move', steps=steps, speed=speed,
+                      stop_mask=stop_mask, stop_value=stop_value, initial_raw=initial_raw)
+        if stage is not None:
+            action['stage'] = stage
+        row = yield action
+        if not isinstance(row, dict):
+            raise FactoryError('Missing Z motion result')
+        sent, hit = row.get('sent_steps'), row.get('hit')
+        if (type(sent) is not int or not 0 <= sent <= abs(steps)
+                or type(hit) is not int or hit < 0 or hit & ~(Z_BOTTOM | NOZZLE_CONTACT)):
+            raise FactoryError('Invalid Z motion result')
+        reason = row.get('reason')
+        if not ((reason == 'completed' and sent == abs(steps) and not hit)
+                or (reason == 'stop_input' and hit and not hit & ~stop_mask)):
+            raise FactoryError('Unverified Z motion result', motion_reason=reason, hit=hit)
+        self.z_steps += sent if steps > 0 else -sent
+        raw = row.get('end_raw')
+        if (not isinstance(raw, dict) or type(raw.get('nozzle_contact')) is not int
+                or raw['nozzle_contact'] not in (0, 1) or type(raw.get('z_bottom')) is not int
+                or raw['z_bottom'] not in (0, 1)):
+            raise FactoryError('Missing fresh Z motion inputs', hit=hit, sent_steps=sent)
+        for bit, name in ((NOZZLE_CONTACT, 'nozzle_contact'), (Z_BOTTOM, 'z_bottom')):
+            if hit & bit and raw[name] != int(bool(stop_value & bit)):
+                if allow_contact_transient and hit == NOZZLE_CONTACT:
+                    continue
+                raise FactoryError('Z input changed after latched stop', input=name,
+                                   hit=hit, sent_steps=sent)
+        return sent, hit, raw
+
+    def _z_leave_bottom(self, stage=None):
+        p = self.settings
+        yield from self._phase('Z_BOTTOM_RELEASE')
+        sent, hit, raw = yield from self._z_move(p['z_bottom_release_steps'],
+                                                 p['z_bottom_release_speed'],
+                                                 Z_BOTTOM | NOZZLE_CONTACT, 0, 1, 1, stage=stage)
+        if not sent or hit != Z_BOTTOM or raw['nozzle_contact'] != 1:
+            raise FactoryError('z_bottom_did_not_release', hit=hit)
+        _, hit, raw = yield from self._z_move(Z_BOTTOM_BACKOFF_STEPS, p['z_backoff_speed'],
+                                              NOZZLE_CONTACT, 0, 1, 0, stage=stage)
+        if hit or raw['nozzle_contact'] != 1 or raw['z_bottom'] != 0:
+            raise FactoryError('z_contact_during_bottom_backoff', hit=hit)
+
+    def _z_open_contact(self, lower, progress=None, stage=None):
+        p = self.settings
+        start = self.z_steps
+        limit = max(lower, start - round(p['z_release_mm'] * Z_STEPS_PER_MM))
+        retry = progress is not None
+        while self.z_steps > limit:
+            # While descending, either initial PC14 level is safe. An open
+            # input still stops the MCU even before its first step.
+            sent, hit, raw = yield from self._z_move(
+                limit - self.z_steps, p['z_release_speed'], Z_BOTTOM | NOZZLE_CONTACT,
+                Z_BOTTOM | NOZZLE_CONTACT, None if retry else 0, 0,
+                allow_contact_transient=retry, stage=stage)
+            if hit != NOZZLE_CONTACT or raw['z_bottom'] != 0:
+                raise FactoryError('z_contact_did_not_release', hit=hit, sent_steps=sent)
+            if raw['nozzle_contact'] == 1:
+                if self.z_steps < start:
+                    return True
+                if retry:
+                    # r0323 can see PC14 open before its first down pulse.
+                    # Qualify it only after a second fresh reading at rest.
+                    verified = yield dict(kind='z_verify_open', delay_s=Z_OPEN_CONFIRM_S)
+                    if verified['nozzle_contact'] == 1:
+                        progress['zero_step_releases'] += 1
+                        return True
+            if not retry:
+                raise FactoryError('z_contact_did_not_release', hit=hit, sent_steps=sent)
+            if p['z_release_recovery_steps']:
+                recovered = yield from self._module('z_release_recovery', self._z_recover_release(limit, progress))
+                if recovered:
+                    return True
+                yield from self._z_record_transient(progress, 'transient_openings')
+                return False
+            yield from self._z_record_transient(progress, 'transient_openings')
+        raise FactoryError('z_contact_release_outside_bounds')
+
+    def _z_recover_release(self, limit, progress):
+        start = self.z_steps
+        limit = max(limit, start - self.settings['z_release_recovery_steps'])
+        while self.z_steps > limit:
+            steps = min(Z_RELEASE_RECOVERY_INCREMENT, self.z_steps - limit)
+            raw = yield from self._z_descend(steps)
+            if raw['nozzle_contact'] == 1:
+                verified = yield dict(kind='z_verify_open', delay_s=Z_OPEN_CONFIRM_S)
+                if verified['nozzle_contact'] == 1:
+                    # This is a verified open position below the uncertain
+                    # edge, with at most the configured extra downward steps.
+                    progress['release_recovery_samples'] += 1
+                    progress['release_recovery_max_steps'] = max(
+                        progress['release_recovery_max_steps'], start - self.z_steps)
+                    return True
+        return False
+
+    def _z_approach(self, approach, clearance, stage=None):
+        p = self.settings
+        if approach <= clearance:
+            raise FactoryError('z_approach_below_bottom_clearance', clearance_steps=clearance)
+        yield from self._phase('Z_APPROACH')
+        _, hit, raw = yield from self._z_move(approach - self.z_steps, p['z_approach_speed'],
+                                              NOZZLE_CONTACT, 0, 1, 0, stage=stage)
+        if raw['z_bottom'] != 0:
+            raise FactoryError('z_bottom_reasserted', hit=hit)
+        if hit or raw['nozzle_contact'] == 0:
+            yield from self._phase('Z_CONTACT_RELEASE')
+            yield from self._module('z_contact_open', self._z_open_contact(clearance, stage=stage))
+            raise FactoryError('z_contact_during_coarse_approach', release_steps=self.z_steps)
+
+    def _z_close_contact(self, lower, upper):
+        remaining = upper - self.z_steps
+        if remaining < 1:
+            raise FactoryError('z_contact_not_found', limit_steps=upper)
+        # The MCU stops on PC14 low before the first upward step. A reclosed
+        # contact during preflight must enter recovery as a zero-step stop.
+        sent, hit, raw = yield from self._z_move(remaining, self.settings['z_probe_speed'],
+                                                 NOZZLE_CONTACT, 0, None, 0,
+                                                 allow_contact_transient=True)
+        if raw['z_bottom'] != 0:
+            raise FactoryError('z_bottom_reasserted', hit=hit)
+        if hit == NOZZLE_CONTACT:
+            return sent > 0 and raw['nozzle_contact'] == 0
+        if raw['nozzle_contact'] == 0:
+            yield from self._module('z_contact_open', self._z_open_contact(lower))
+            raise FactoryError('z_contact_not_latched', release_steps=self.z_steps)
+        raise FactoryError('z_contact_not_found', limit_steps=upper)
+
+    def _z_down_open(self, steps):
+        _, hit, raw = yield from self._z_move(-steps, self.settings['z_release_speed'],
+                                              Z_BOTTOM | NOZZLE_CONTACT, Z_BOTTOM, 1, 0)
+        return hit, raw
+
+    def _z_retry_contact(self, lower):
+        backoff = round(self.settings['z_transient_backoff_mm'] * Z_STEPS_PER_MM)
+        yield from self._z_clearance(lower, backoff)
+
+    def _z_clearance(self, lower, steps):
+        allowed = min(self.z_steps - lower, steps)
+        if allowed < 1:
+            raise FactoryError('z_contact_retry_outside_bounds', position_steps=self.z_steps)
+        raw = yield from self._z_descend(allowed)
+        if raw['nozzle_contact'] != 1:
+            raise FactoryError('z_contact_changed_during_retry_backoff',
+                               position_steps=self.z_steps)
+
+    def _z_descend(self, steps):
+        # The table can move away from the nozzle under either PC14 level.
+        # PE12 and the tray still stop this bounded movement in the MCU.
+        _, hit, raw = yield from self._z_move(-steps, self.settings['z_release_speed'],
+                                              Z_BOTTOM, Z_BOTTOM, None, 0)
+        if hit or raw['z_bottom'] != 0:
+            raise FactoryError('z_contact_downward_limit', hit=hit, position_steps=self.z_steps)
+        return raw
+
+    def _z_settle(self, lower, best):
+        if self.z_steps != best:
+            # The minimum opening is lower than the last opening. Stop on PE12
+            # or on recontact, rather than replaying steps into a changed setup.
+            hit, raw = yield from self._z_down_open(self.z_steps - best)
+            if raw['z_bottom'] == 0 and raw['nozzle_contact'] == 0:
+                yield from self._module('z_contact_open', self._z_open_contact(lower))
+            if hit or raw['nozzle_contact'] != 1 or raw['z_bottom'] != 0:
+                raise FactoryError('z_contact_best_release_changed', hit=hit)
+
+    def _z_repeat_contact(self, lower, upper):
+        p = self.settings
+        clearance = round(p['z_sample_clearance_mm'] * Z_STEPS_PER_MM)
+        progress = dict(qualified_cycles=0, non_improvements=0, transient_closures=0,
+                        transient_openings=0, zero_step_releases=0,
+                        release_recovery_samples=0, release_recovery_max_steps=0,
+                        consecutive_transients=0, best_release_steps=None)
+        while progress['qualified_cycles'] < p['z_max_cycles']:
+            closed = yield from self._module('z_contact_close', self._z_close_contact(lower, upper))
+            if not closed:
+                yield from self._z_record_transient(progress, 'transient_closures')
+                yield from self._module('z_contact_retry', self._z_retry_contact(lower))
+                continue
+            opened = yield from self._module('z_contact_open', self._z_open_contact(lower, progress))
+            if not opened:
+                yield from self._module('z_contact_retry', self._z_retry_contact(lower))
+                continue
+            progress['consecutive_transients'] = 0
+            progress['qualified_cycles'] += 1
+            best = progress['best_release_steps']
+            if best is None or self.z_steps < best:
+                progress.update(best_release_steps=self.z_steps, non_improvements=0)
+            else:
+                progress['non_improvements'] += 1
+            yield self._z_progress(progress)
+            if progress['non_improvements'] == p['z_stable_cycles']:
+                return progress
+            if clearance and progress['qualified_cycles'] < p['z_max_cycles']:
+                yield from self._module('z_sample_clearance', self._z_clearance(lower, clearance))
+        raise FactoryError('z_contact_cycle_limit', cycles=progress['qualified_cycles'], **progress)
+
+    def _z_record_transient(self, progress, field):
+        progress[field] += 1
+        progress['consecutive_transients'] += 1
+        progress['non_improvements'] = 0
+        yield self._z_progress(progress)
+        total = progress['transient_closures'] + progress['transient_openings']
+        if (progress['consecutive_transients'] > self.settings['z_transient_retries']
+                or total > self.settings['z_transient_total']):
+            raise FactoryError('z_contact_retry_limit', position_steps=self.z_steps, **progress)
+
+    def _z_progress(self, progress):
+        return dict(kind='z_progress', position_steps=self.z_steps, **progress)
+
+    def _z_reference(self):
+        p = self.settings
+        approach = round(p['z_approach_mm'] * Z_STEPS_PER_MM)
+        span = round(p['z_probe_mm'] * Z_STEPS_PER_MM)
+        clearance = self.z_steps
+        lower, upper = max(clearance, approach - span), approach + span
+        oem = p['z_contact_engine'] == 'host_mcu_edges'
+        if oem and lower != approach - span:
+            raise FactoryError('OEM Z probe span reaches the measured bottom clearance',
+                               clearance_steps=clearance, lower_steps=approach - span)
+        yield from self._module('z_contact_approach', self._z_approach(approach, clearance))
+        yield from self._phase('Z_CONTACT_REFERENCE')
+        if oem:
+            return (yield from self._module('z_contact_repeat', self._z_oem_reference(span)))
+        progress = yield from self._module(
+            'z_contact_repeat', self._z_repeat_contact(lower, upper))
+        best = progress['best_release_steps']
+        yield from self._module('z_contact_settle', self._z_settle(lower, best))
+        return dict(method='minimum_release_%d_non_improvements' % p['z_stable_cycles'],
+                    release_steps_from_bottom=best,
+                    release_mm_from_bottom=round(best / Z_STEPS_PER_MM, 6),
+                    probe_lower_steps=lower, probe_upper_steps=upper,
+                    cycles=progress['qualified_cycles'], non_improvements=progress['non_improvements'],
+                    transient_closures=progress['transient_closures'],
+                    transient_openings=progress['transient_openings'],
+                    zero_step_releases=progress['zero_step_releases'],
+                    release_recovery_samples=progress['release_recovery_samples'],
+                    release_recovery_max_steps=progress['release_recovery_max_steps'],
+                    coordinate_saved=False)
+
+    def _z_edge(self, operation, steps):
+        if not 0 <= steps <= 16040 or (operation != 2 and not steps):
+            raise FactoryError('Invalid OEM Z edge travel')
+        row = yield dict(kind='z_contact_edge', operation=operation, steps=steps,
+                         start_steps=self.z_steps, interval_us=self.settings['z_contact_interval_us'])
+        if not isinstance(row, dict):
+            raise FactoryError('Missing MCU Z edge result')
+        status, sent, raw = row.get('status'), row.get('sent_steps'), row.get('end_raw')
+        if (type(sent) is not int or not 0 <= sent <= steps or status not in (1, 2)
+                or type(raw) is not int or raw not in (0, 1)
+                or status == 1 and (raw != int(operation != 0) or operation == 2 and sent != steps)
+                or status == 2 and (operation == 2 or sent != steps)):
+            raise FactoryError('Inconsistent MCU Z edge result')
+        self.z_steps += sent if operation == 0 else -sent
+        return status == 1, sent
+
+    def _z_oem_reference(self, span, upper_limit=None):
+        p = self.settings
+        start = self.z_steps
+        lower, upper = start - span, start + span
+        if upper_limit is not None:
+            upper = min(upper, upper_limit)
+        tracker = ZReleaseTracker(span, p['z_stable_cycles'], p['z_max_cycles'])
+        up_steps = down_steps = zero_releases = 0
+        while True:
+            if self.z_steps < upper:
+                closed, sent = yield from self._z_edge(0, upper - self.z_steps)
+                up_steps += sent
+            else:
+                closed = False
+            if not closed:
+                if tracker.best is None:
+                    raise FactoryError('z_contact_not_found', limit_steps=upper)
+                basis = 'upper_bound_with_best_release'
+                break
+            if not up_steps:
+                raise FactoryError('z_contact_active_before_first_step')
+            if self.z_steps <= lower:
+                raise FactoryError('z_contact_did_not_release', limit_steps=lower)
+            opened, sent = yield from self._z_edge(1, self.z_steps - lower)
+            down_steps += sent
+            zero_releases += int(not sent)
+            if not opened:
+                raise FactoryError('z_contact_did_not_release', limit_steps=lower)
+            stable = tracker.add(self.z_steps - start)
+            best = start + tracker.best
+            yield self._z_progress(dict(engine='host_mcu_edges', qualified_cycles=tracker.cycles,
+                non_improvements=tracker.non_improvements, best_release_steps=best,
+                zero_step_releases=zero_releases, up_steps=up_steps, down_steps=down_steps))
+            if stable:
+                basis = 'stable_repetitions'
+                break
+        best = start + tracker.best
+        _, sent = yield from self._module('z_contact_settle', self._z_edge(2, self.z_steps - best))
+        down_steps += sent
+        return dict(engine='host_mcu_edges', method='r0323_host_contact_release_minimum',
+                    completion_basis=basis,
+                    release_steps_from_bottom=best,
+                    release_mm_from_bottom=round(best / Z_STEPS_PER_MM, 6),
+                    probe_lower_steps=lower, probe_upper_steps=upper,
+                    cycles=tracker.cycles, non_improvements=tracker.non_improvements,
+                    interval_us=p['z_contact_interval_us'],
+                    zero_step_releases=zero_releases, up_steps=up_steps, down_steps=down_steps,
+                    coordinate_saved=False)
+
+    def run(self, operation='HOME_Z'):
+        if operation not in Z_HOME_PROCEDURES:
+            raise FactoryError('Unknown Z procedure ' + operation)
+        if operation == 'HOME_Z' and self.settings['z_approach_mm'] is None:
+            raise FactoryError('HOME_Z requires Z_APPROACH_MM measured from the PE12 trigger')
+        yield from self.home(y_first=True)
+        yield from self.heat()
+        yield from self.select_tool()
+        yield from self._position_contact_pad()
+        result = None
+        if operation == 'HOME_Z':
+            yield from self._module('z_bottom_release', self._z_leave_bottom())
+            result = yield from self._module('z_contact_reference', self._z_reference())
+        yield from self._phase('DONE')
+        yield dict(kind='done', success=True, terminal=operation, cleaning_done=False,
+                   z_home_result=result)
+
+    def _measure_nozzle(self, samples):
+        p = self.settings
+        start = round(p['z_approach_mm'] * Z_STEPS_PER_MM)
+        span = round(p['z_probe_mm'] * Z_STEPS_PER_MM)
+        if start - span <= self.z_steps:
+            raise FactoryError('Nozzle probe window reaches the lower clearance')
+        yield from self._z_approach(start, self.z_steps)
+        return (yield from self._measure_nozzle_samples(samples, start, span))
+
+    def _measure_nozzle_samples(self, samples, start, span):
+        p = self.settings
+        readings = []
+        for index in range(samples):
+            yield from self._phase('NOZZLE_Z_SAMPLE_%d' % (index + 1))
+            row = yield dict(kind='nozzle_z_refine', start_steps=start, span=span,
+                             interval_us=p['z_contact_interval_us'], repeats=p['z_stable_cycles'],
+                             max_cycles=p['z_max_cycles'])
+            rise = row['net_steps']
+            if type(rise) is not int or not 0 < rise < span:
+                raise FactoryError('Nozzle release outside the positive approach window')
+            self.z_steps += rise
+            readings.append(dict(release_steps_from_bottom=self.z_steps,
+                                 release_mm_from_bottom=round(self.z_steps / Z_STEPS_PER_MM, 6),
+                                 cycles=row['cycles'], non_improvements=row['non_improvements'],
+                                 up_steps=row['up_steps'], down_steps=row['down_steps']))
+            if index + 1 < samples:
+                _, hit, raw = yield from self._z_move(-rise, p['z_backoff_speed'],
+                                                      Z_BOTTOM, Z_BOTTOM, 1, 0)
+                if hit or raw['z_bottom'] or raw['nozzle_contact'] != 1 or self.z_steps != start:
+                    raise FactoryError('Failed to return to the shared nozzle approach height')
+        return readings
+
+    def _return_nozzle_bottom(self):
+        yield from self._phase('Z_RETURN_BOTTOM')
+        _, hit, raw = yield from self._z_move(-self.z_steps - Z_STEPS_PER_MM,
+                                              self.settings['z_bottom_speed'], Z_BOTTOM,
+                                              Z_BOTTOM, 1, 0)
+        if hit != Z_BOTTOM or not raw['z_bottom'] or raw['nozzle_contact'] != 1:
+            raise FactoryError('Nozzle test did not reach the PE12 bottom limit')
+
+    def run_nozzle(self, prepare):
+        operation = 'NOZZLE_Z_PREPARE' if prepare else 'NOZZLE_Z_MEASURE'
+        yield from self.home(y_first=True)
+        if not prepare:
+            yield from self.heat()
+        yield from self.select_tool()
+        yield from self._position_contact_pad()
+        readings = []
+        if not prepare:
+            yield from self._module('z_bottom_release', self._z_leave_bottom())
+            readings = yield from self._module(
+                'measure_nozzle', self._measure_nozzle(NOZZLE_Z_SAMPLES[self.p['tool']]))
+            yield from self._module('z_return_bottom', self._return_nozzle_bottom())
+        yield from self._phase('DONE')
+        yield dict(kind='done', success=True, terminal=operation, cleaning_done=False,
+                   tool='T%d' % self.p['tool'], readings=readings,
+                   pad_raw_xy=[self.settings['z_probe_x'], self.settings['z_probe_y']])
+
+    def _nozzle_pre_xy_clearance(self):
+        raw = yield dict(kind='z_inputs', expected={})
+        if not raw['z_bottom']:
+            # A non-contact signal alone cannot prove a gap under the tip.
+            # Retreat with a bottom stop before allowing lateral motion.
+            _, _, raw = yield from self._z_move(
+                -NOZZLE_Z_CLEARANCE_STEPS, self.settings['z_bottom_speed'],
+                Z_BOTTOM, Z_BOTTOM, None, 0, stage='clearance')
+        if raw['nozzle_contact'] != 1:
+            raise FactoryError('Nozzle contact is still closed after the initial Z retreat')
+
+    def _nozzle_dual_bottom(self):
+        yield from self._phase('Z_HOME_BOTTOM')
+        result = yield dict(kind='home', axis='Z', max_mm=self.p['home_z_max'],
+                            speed=self.p['z_speed'], dual_z_home=True)
+        if not isinstance(result, dict) or not result.get('ok'):
+            raise FactoryError('homing_z_failed')
+        # Discard the unreferenced retreat when PE12 establishes the shared Z zero.
+        self.z_steps = 0
+        yield from self._module('z_bottom_release', self._z_leave_bottom(stage='coarse'))
+
+    def _nozzle_dual_retreat(self):
+        if self.z_steps <= NOZZLE_Z_CLEARANCE_STEPS:
+            raise FactoryError('Nozzle test has insufficient Z travel for a 10 mm retreat')
+        _, hit, raw = yield from self._z_move(
+            -NOZZLE_Z_CLEARANCE_STEPS, self.settings['z_backoff_speed'],
+            Z_BOTTOM, Z_BOTTOM, 1, 0)
+        if hit or raw['z_bottom'] or raw['nozzle_contact'] != 1:
+            raise FactoryError('Nozzle test did not complete the 10 mm Z retreat')
+
+    def _position_contact_pad(self):
+        yield from self._phase('Z_POSITION_PAD')
+        yield from self._module('z_position_pad', self._move(
+            self.settings['z_probe_x'], self.settings['z_probe_y'], leg='z_contact_pad'))
+
+    def run_nozzle_dual(self, t1_p, t1_settings):
+        t1 = ZHomeProgram(t1_p, t1_settings)
+        start = round(self.settings['z_approach_mm'] * Z_STEPS_PER_MM)
+        if self.p['tool'] != 0 or t1.p['tool'] != 1:
+            raise FactoryError('Dual nozzle test requires ordered T0 and T1 plans')
+        if round(t1_settings['z_approach_mm'] * Z_STEPS_PER_MM) != start:
+            raise FactoryError('Dual nozzle test needs a shared approach position')
+        yield from self._phase('Z_INITIAL_CLEARANCE')
+        yield from self._module('z_initial_clearance', self._nozzle_pre_xy_clearance())
+        yield from self._module('home_xy', self._home_steps(y_first=True, include_z=False))
+        yield from self.select_tool()
+        yield from self._position_contact_pad()
+        yield dict(kind='dual_heat_start')
+        yield from self._module('home_z', self._nozzle_dual_bottom())
+        for tool, samples in enumerate(NOZZLE_Z_SAMPLES):
+            span = round(self.settings['z_probe_mm'] * Z_STEPS_PER_MM)
+            if start - span <= 0 or (tool == 0 and start - span <= self.z_steps):
+                raise FactoryError('Nozzle probe window reaches the lower clearance')
+            yield from self._z_approach(start, self.z_steps, stage='coarse')
+            yield from self._phase('HEAT_WAIT')
+            yield dict(kind='dual_heat_wait')
+            readings = yield from self._module(
+                'measure_nozzle', self._measure_nozzle_samples(samples, start, span))
+            record = dict(kind='nozzle_z_record', tool=tool, readings=readings,
+                          pad_raw_xy=[self.settings['z_probe_x'], self.settings['z_probe_y']])
+            if tool == 0:
+                yield record
+            yield from self._phase('Z_TOOL_CLEARANCE' if tool == 0 else 'Z_PARK_CLEARANCE')
+            yield from self._module('z_nozzle_clearance', self._nozzle_dual_retreat())
+            if tool == 0:
+                yield dict(kind='dual_switch_tool')
+                self.p, self.settings, self.stock_sequence = t1.p, t1.settings, t1.stock_sequence
+                yield from self.select_tool()
+                yield from self._position_contact_pad()
+            else:
+                yield record
+        yield from self._phase('DONE')
+        yield dict(kind='done', success=True, terminal='NOZZLE_Z_MEASURE',
+                   cleaning_done=False, table_at_bottom=False)
+
+
+def nozzle_z_comparison(results, max_spread_mm):
+    spreads = {}
+    releases = []
+    for tool, count in enumerate(NOZZLE_Z_SAMPLES):
+        name = 'T%d' % tool
+        readings = results[name]['readings']
+        if len(readings) != count:
+            raise FactoryError('Missing nozzle release samples', tool=name)
+        steps = [item['release_steps_from_bottom'] for item in readings]
+        spread = max(steps) - min(steps)
+        spreads[name] = round(spread / Z_STEPS_PER_MM, 6)
+        if spread / Z_STEPS_PER_MM > max_spread_mm:
+            raise FactoryError('Nozzle release spread exceeds MAX_SPREAD_MM', tool=name,
+                               spread_mm=spreads[name])
+        releases.append(steps[-1])  # r0323 uses the last successful sample in each group.
+    delta = releases[0] - releases[1]
+    return dict(delta_steps=delta, t1_lower_by_mm=round(delta / Z_STEPS_PER_MM, 6),
+                spread_mm=spreads, max_spread_mm=max_spread_mm, coordinate_saved=False)
