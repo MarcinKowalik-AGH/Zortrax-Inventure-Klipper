@@ -1,12 +1,23 @@
 """Exercise the opt-in native Z adapter with a pinned Klipper API model."""
 import importlib
 import json
+from pathlib import Path
 import sys
 import types
 import unittest
 from unittest import mock
 
 from orange_pi.inventure_z_home import Z_HOME_ACK, Z_STEPS_PER_MM
+
+
+def _load_restored_native_z():
+    # Test the exact code that the bootstrap installs, never the pinned
+    # historical R38.6 source in orange_pi/inventure_native_z.py.
+    path = Path(__file__).resolve().parents[1]/'restored/native_z_r18/inventure_native_z.py'
+    spec = importlib.util.spec_from_file_location('orange_pi.inventure_native_z_r18_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class Model:
@@ -331,7 +342,7 @@ class NativeZBridgeTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {
             'orange_pi.homing': types.SimpleNamespace(HomingMove=HomingMove),
         }):
-            self.module = importlib.import_module('orange_pi.inventure_native_z')
+            self.module = _load_restored_native_z()
         self.model = Model()
         self.adapter = self.module.InventureNativeZ.__new__(self.module.InventureNativeZ)
         for name in ('printer', 'reactor', 'board', 'toolhead', 'kin', 'z_enable'):
@@ -883,7 +894,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {
             'orange_pi.homing': types.SimpleNamespace(HomingMove=HomingMove),
         }):
-            module = importlib.import_module('orange_pi.inventure_native_z')
+            module = _load_restored_native_z()
         model = self.model = HomeSequenceModel()
         self.adapter = module.InventureNativeZ.__new__(module.InventureNativeZ)
         for name in ('printer', 'reactor', 'board', 'toolhead', 'kin', 'z_enable',
