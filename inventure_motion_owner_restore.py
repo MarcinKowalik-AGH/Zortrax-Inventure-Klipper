@@ -12,7 +12,7 @@ SOURCES = {
     "klippy/extras/inventure_native_z.py": (
         "restored/single_owner_r19/inventure_native_z.py",
         "d20e943a4e1b8556096ecfbe6c3c6c5d6c77bf13",
-        "cdf5fdcf70f874123f99673b8ad7baf532daaf24"),
+        "bded3a5db90fccdee9610edbe2e49df664eb2964"),
     "klippy/extras/inventure_z_home.py": (
         "restored/single_owner_r19/inventure_z_home.py",
         "6473c5473dec6b0889772ff10536390c6ad377c6",
