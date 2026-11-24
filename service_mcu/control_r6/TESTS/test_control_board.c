@@ -428,7 +428,7 @@ static void service_strict_native_broad_guards(void) {
     // NATIVE positioning. Independent absolute overtemperature stays enabled.
     control_reset(0);
     latest_adc[4]=4095;
-    assert(!control_sensors_valid(control_guard_mask|31,mock_now));
+    assert(!service_sensors_valid(control_guard_mask|31,mock_now));
     control_command(1,CT_NATIVE);
     assert(inventure_is_armed() && !fault && control_mode==CT_NATIVE);
     control_guard(mock_now);
