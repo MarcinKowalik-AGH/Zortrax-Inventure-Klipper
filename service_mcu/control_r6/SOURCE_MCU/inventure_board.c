@@ -418,12 +418,22 @@ static uint_fast8_t sample_event(struct timer *t) {
     uint32_t now=timer_read_time();
     uint32_t late=(int32_t)(now-t->waketime)>0 ? now-t->waketime : 0;
     if(late>sample_peak_late_ticks)sample_peak_late_ticks=late;
+    uint32_t previous_clock=sample_last_clock;
     sample_last_late=late;sample_last_clock=now;sample_calls++;
     // Do not downsample the SERVICE fan/P13 diagnostic path, any active
     // factory motion or native P13 transport, or the 100-ms local heater PWM.
     unsigned slots=native_sampler_can_reduce() ? SAMPLE_NATIVE_DIV : 1u;
     if(slots==SAMPLE_NATIVE_DIV)sample_native_calls++;
     else sample_service_calls++;
+    // Safety policies use elapsed *real* time, never only the number of
+    // successfully serviced IRQs. Late callbacks must not stretch the
+    // PC13/heartbeat/fan guard interval silently.
+    uint32_t elapsed_slots=slots;
+    if(sample_calls>1) {
+        uint32_t real_slots=(now-previous_clock)/SAMPLE_TICKS;
+        if(real_slots>elapsed_slots)
+            elapsed_slots=real_slots>20000u?20000u:real_slots;
+    }
 
     t0_heat_sample(now);
     control_fan_tick();
@@ -434,18 +444,19 @@ static uint_fast8_t sample_event(struct timer *t) {
         pulses[i]++;edge_time[i]=now;rising&=rising-1u;
     }
     for(unsigned i=0;i<2;i++) {
-        uint16_t quiet=quiet_ticks[i] + slots;
+        uint32_t quiet=quiet_ticks[i] + elapsed_slots;
         quiet_ticks[i]=quiet>401 ? 401 : quiet;
         if(changed & BIT(i+4)) {
             if(quiet_ticks[i]>=401) {pulses[i+4]++;edge_time[i+4]=now;}
             quiet_ticks[i]=0;
         }
     }
-    fan_sample(changed & value,now,slots);
+    fan_sample(changed & value,now,elapsed_slots);
     input_previous=value;
-    guard_div += slots;
-    if(guard_div >= GUARD_DIV) {
-        guard_div-=GUARD_DIV;sample_guard_runs++;
+    uint32_t guard_due=(uint32_t)guard_div + elapsed_slots;
+    guard_div=guard_due%GUARD_DIV;
+    if(guard_due >= GUARD_DIV) {
+        sample_guard_runs++;
         inventure_inputs_poll();guard_check(now);transport_sample(now);
     }
     uint32_t finished=timer_read_time();

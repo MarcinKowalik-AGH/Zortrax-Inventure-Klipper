@@ -57,7 +57,7 @@ static void fan_sample(uint8_t rising,uint32_t now,unsigned elapsed_slots) {
     }
     fan_sample_ticks += elapsed_slots;
     if(fan_sample_ticks>=20000) {
-        fan_sample_ticks-=20000;
+        fan_sample_ticks%=20000;
         for(unsigned i=0;i<4;i++) {
             uint32_t count=fan_edges[i]; fan_window_edges[i]=count; fan_edges[i]=0;
             fan_window_duty[i]=fan_pwm[i];
@@ -67,7 +67,7 @@ static void fan_sample(uint8_t rising,uint32_t now,unsigned elapsed_slots) {
         fan_window_clock=now; fan_sequence++;
     }
     fan_detector_ticks+=elapsed_slots;
-    if(fan_detector_ticks>=2020) {fan_detector_ticks-=2020;fan_evaluate();}
+    if(fan_detector_ticks>=2020) {fan_detector_ticks%=2020;fan_evaluate();}
 }
 void command_inventure_fan_query(uint32_t *args) {
     (void)args;

@@ -107,6 +107,21 @@ static void scheduler_native_service_stress(void) {
         if(!(i%250))command_inventure_heartbeat(NULL);
     }
 
+    // Delayed ISR cannot silently postpone the safety tick; physical elapsed
+    // time must advance the 10ms guard and fan tach window in one callback.
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    guard_div=0;sample_calls=0;sample_guard_runs=0;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime;
+    sample_event(&sample_timer);
+    assert(!sample_guard_runs);
+    mock_now=sample_timer.waketime+MS(13);
+    sample_event(&sample_timer);
+    assert(sample_guard_runs==1);
+    assert(fan_sample_ticks>=260 && fan_sample_ticks<20000);
+    assert((int32_t)(sample_timer.waketime-mock_now)>0);
+
     // Delayed callback MUST skip overdue polling slots, not run the same
     // GPIO twice for every missed 50 us and starve Klipper's step timers.
     control_reset(0);
