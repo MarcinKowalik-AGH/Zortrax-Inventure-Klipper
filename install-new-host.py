@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+"""Stage and activate the complete R38.6 host on an existing Inventure account.
+
+The diagnostic RC8 skeleton is not an upgradeable native printer profile.
+This entry point installs the pinned runtime separately, stages a complete
+configuration, validates it without an MCU, and switches the actual service.
+It never flashes firmware or issues movement, heating, or reset commands.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+from hashlib import sha256
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import inventure_bootstrap as bootstrap
+from inventure_bootstrap_config import stage_config
+import inventure_config_layout as layout
+import fluidd_web
+
+spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
+updater = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(updater)
+core, dashboard = updater.core, updater.dashboard
+
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
+DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
+UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
+SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
+DB_KEYS = ('macros', 'uiSettings.general.locale')
+
+
+def api(endpoint, data=None):
+    return dashboard.request(dashboard.BASE, endpoint, data)
+
+
+def regular_bytes(path):
+    path = Path(path)
+    if path.is_symlink() or path.parent.resolve() != path.parent:
+        raise ValueError('Refusing a symlink in an installation path: '+str(path))
+    if not path.exists():
+        return None
+    if not stat.S_ISREG(path.stat().st_mode):
+        raise ValueError('Expected a regular file: '+str(path))
+    return path.read_bytes()
+
+
+def verify_snapshot(snapshot):
+    for name, expected in snapshot.items():
+        data = regular_bytes(Path(name))
+        actual = None if data is None else sha256(data).hexdigest()
+        if actual != expected:
+            raise ValueError('Configuration changed during preparation: '+str(name))
+
+
+def require_mcu(mcu):
+    constants = mcu.get('mcu_constants', {})
+    expected = {'INVENTURE_MCU_RELEASE': MCU_RELEASE,
+                'INVENTURE_NATIVE_XY_HANDOFF_ABI': 1,
+                'INVENTURE_NATIVE_Z_CLEARANCE_ABI': 1}
+    wrong = {key: constants.get(key) for key, value in expected.items()
+             if str(constants.get(key)) != str(value)}
+    if wrong:
+        raise ValueError('Install the InventureBoot 1.7 MCU R16 application first. '
+                         'R38.6 requires the R16 XY handoff and Z clearance. Observed: '
+                         + json.dumps(wrong, sort_keys=True))
+    return dict(mcu_version=mcu.get('mcu_version'), mcu_release=MCU_RELEASE,
+                native_xy_handoff_abi=1, native_z_clearance_abi=1)
+
+
+def unit_text(argv):
+    def quote(value):
+        if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ValueError('Invalid control character in service argument')
+        # systemd performs its own specifier/environment expansion, not shell parsing.
+        return '"'+value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$')+'"'
+    if not argv or not Path(argv[0]).is_absolute():
+        raise ValueError('Use the absolute Python path of the running Klipper service')
+    return (UNIT_MARKER+'[Service]\nExecStart=\nExecStart='
+            +' '.join(map(quote, argv))+'\n').encode()
+
+
+def discover():
+    process, argv, index, script = core.running_service_script()
+    config = core.running_printer_config()
+    if process.stat().st_uid != os.geteuid():
+        raise ValueError('Run this installer as the account running klipper.service')
+    if not Path(argv[0]).is_absolute() or not Path(argv[0]).is_file():
+        raise ValueError('Cannot preserve the service Python interpreter')
+    pid = int(process.name)
+    info = api('/printer/info')
+    if (info.get('process_id') != pid
+            or Path(info.get('klipper_path', '')).resolve() != script.parent.parent
+            or Path(info.get('config_file', '')).resolve() != config):
+        raise ValueError('Moonraker and systemd do not identify the same Klipper instance')
+    if regular_bytes(config) is None:
+        raise ValueError('Missing active printer configuration')
+    return dict(pid=pid, argv=argv, script_index=index, host=script.parent.parent,
+                config=config, info=info)
+
+
+def idle_mcu():
+    info = api('/printer/info')
+    if info.get('state') != 'ready':
+        raise ValueError('The current host must be Ready before switching: '
+                         + str(info.get('state_message')))
+    names = api('/printer/objects/list')['objects']
+    wanted = [name for name in names if name in ('mcu', 'print_stats', 'idle_timeout')
+              or name == 'extruder' or name.startswith('heater_generic ')]
+    status = api('/printer/objects/query?'+ '&'.join(urllib.parse.quote(n, safe='') for n in wanted))['status']
+    if status.get('print_stats', {}).get('state') in ('printing', 'paused'):
+        raise ValueError('Finish or cancel the active print before installing')
+    if status.get('idle_timeout', {}).get('state') == 'Printing':
+        raise ValueError('Wait until motion and heater activity has finished before installing')
+    for name in wanted:
+        if float(status.get(name, {}).get('target', 0) or 0) > 0:
+            raise ValueError('Turn off heater targets before installing: '+name)
+    return status.get('mcu', {})
+
+
+def db_read(key):
+    try:
+        value = api('/server/database/item?namespace=fluidd&key='+urllib.parse.quote(key))['value']
+        return dict(exists=True, value=value)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        return dict(exists=False)
+
+
+def db_restore(key, saved):
+    if db_read(key) == saved:
+        return
+    if saved['exists']:
+        api('/server/database/item', dict(namespace='fluidd', key=key, value=saved['value']))
+    else:
+        headers = {}
+        if os.environ.get('MOONRAKER_API_KEY'):
+            headers['X-Api-Key'] = os.environ['MOONRAKER_API_KEY']
+        url = dashboard.BASE+'/server/database/item?namespace=fluidd&key='+urllib.parse.quote(key)
+        with urllib.request.urlopen(urllib.request.Request(url, method='DELETE', headers=headers), timeout=6):
+            pass
+    if db_read(key) != saved:
+        raise ValueError('Could not restore Fluidd setting '+key)
+
+
+def wait_api(seconds=30):
+    deadline = time.monotonic()+seconds
+    while True:
+        try:
+            return api('/server/info')
+        except (OSError, ValueError, KeyError) as exc:
+            if time.monotonic() >= deadline:
+                raise ValueError('Moonraker did not return after restart') from exc
+            time.sleep(.5)
+
+
+def wait_ready(host, config, seconds=90):
+    """Never accept the old process's cached Ready response during reconnection."""
+    deadline, reason = time.monotonic()+seconds, 'waiting for new Klipper'
+    while True:
+        try:
+            process, _, _, script = core.running_service_script()
+            info = api('/printer/info')
+            if (script.parent.parent != host or info.get('process_id') != int(process.name)
+                    or Path(info.get('klipper_path', '')).resolve() != host
+                    or Path(info.get('config_file', '')).resolve() != config
+                    or info.get('software_version') != bootstrap.VERSION):
+                raise ConnectionError('Waiting for the new service path, PID and release version')
+            state, message = info.get('state'), str(info.get('state_message', ''))
+            if state in ('error', 'shutdown'):
+                if message.partition('\n')[0].strip() == SHUTDOWN_LATCH:
+                    return dict(info, firmware_restart_required=True)
+                raise RuntimeError('New Klipper configuration failed: '+message)
+            if state == 'ready':
+                values = api('/printer/objects/query?inventure_mcu&configfile&mcu')['status']
+                board = values.get('inventure_mcu', {})
+                if board.get('host_revision') != bootstrap.HOST_REVISION:
+                    raise RuntimeError('Ready process has the wrong Inventure host revision')
+                require_mcu(values.get('mcu', {}))
+                return dict(info, firmware_restart_required=False, objects=values)
+            reason = message or state
+        except (OSError, ValueError, KeyError) as exc:
+            reason = str(exc)
+        if time.monotonic() >= deadline:
+            raise ValueError('The new Klipper did not become ready: '+str(reason))
+        time.sleep(.5)
+
+
+def write_unit(data, run_directory, dropin=DROPIN):
+    if data is None:
+        subprocess.run(['sudo', '--', 'rm', '-f', '--', str(dropin)], check=True, timeout=15)
+    else:
+        local = run_directory/'service-dropin.conf'
+        local.write_bytes(data)
+        subprocess.run(['sudo', '--', 'install', '-D', '-m', '0644', '--', str(local), str(dropin)],
+                       check=True, timeout=15)
+
+
+def reload_units():
+    subprocess.run(['sudo', '--', 'systemctl', 'daemon-reload'], check=True, timeout=30)
+
+
+def service_stopped():
+    result = subprocess.run(['systemctl', 'show', 'klipper', '--property=MainPID',
+                             '--property=ActiveState'], check=True, text=True,
+                            capture_output=True, timeout=10)
+    values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    return values.get('MainPID') == '0' and values.get('ActiveState') in ('inactive', 'failed')
+
+
+def restore_web(root, previous):
+    # No shell interpolation; only exchange the two known site directories.
+    code = ('import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); '
+            'from fluidd_web import exchange; exchange(Path(sys.argv[2]),Path(sys.argv[3]))')
+    subprocess.run(['sudo', '--', sys.executable, '-c', code, str(ROOT), str(root), str(previous)],
+                   check=True, timeout=30)
+
+
+def json_write(path, value):
+    path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str)+'\n')
+
+
+class InstallTransaction:
+    """Back up every affected file before stop; restore on any activation failure."""
+    def __init__(self, directory, updates, unit, moon_changed, root, dropin=DROPIN):
+        self.directory, self.updates, self.unit = directory, updates, unit
+        self.dropin, self.moon_changed, self.root = dropin, moon_changed, root
+        self.before_unit = regular_bytes(dropin)
+        if self.before_unit is not None and not self.before_unit.startswith(UNIT_MARKER.encode()):
+            raise ValueError('An unmanaged service override already exists: '+str(dropin))
+        self.settings = {key: db_read(key) for key in DB_KEYS}
+        self.written, self.unit_written, self.stopped, self.web_previous = [], False, False, None
+        self.settings_changed = False
+        self.backups = {}
+        files = directory/'before'
+        files.mkdir(mode=0o700)
+        for i, (path, (before, _)) in enumerate(updates.items()):
+            if regular_bytes(path) != before:
+                raise ValueError('File changed before backup: '+str(path))
+            saved = None
+            if before is not None:
+                saved = files/str(i)
+                shutil.copy2(path, saved)
+            self.backups[path] = saved
+        json_write(directory/'backup.json', dict(
+            files={str(p): str(b) if b else None for p,b in self.backups.items()},
+            service_dropin=str(dropin), service_dropin_existed=self.before_unit is not None,
+            fluidd_settings=self.settings))
+        if self.before_unit is not None:
+            (directory/'previous-service.conf').write_bytes(self.before_unit)
+
+    def activate_files(self):
+        for path, (before, _) in self.updates.items():
+            if regular_bytes(path) != before:
+                raise ValueError('File changed immediately before activation: '+str(path))
+        if regular_bytes(self.dropin) != self.before_unit:
+            raise ValueError('The service override changed during preparation')
+        for key, before in self.settings.items():
+            if db_read(key) != before:
+                raise ValueError('Fluidd settings changed during preparation: '+key)
+        # A timeout may be reported after systemd already stopped the process.
+        self.stopped = True
+        updater.service('stop')
+        # Include files first, then main files; Klipper is stopped for the whole copy.
+        for path, (before, after) in sorted(self.updates.items(), key=lambda item: item[0].name in ('printer.cfg','moonraker.conf')):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if regular_bytes(path) != before:
+                raise ValueError('File changed after stopping Klipper: '+str(path))
+            self.written.append(path)
+            try:
+                updater.atomic_config_write(path, after, create=before is None)
+            except FileExistsError:
+                # A concurrent creator owns this file; our no-replace write
+                # did not create it, so rollback must not remove it.
+                if before is None:
+                    self.written.remove(path)
+                raise
+        self.unit_written = True  # Restore even if install(1) fails after truncation.
+        write_unit(self.unit, self.directory, self.dropin)
+        reload_units()
+        if self.moon_changed:
+            updater.service('restart', 'moonraker')
+            wait_api()
+        updater.service('start')
+
+    def rollback(self):
+        errors = []
+        def attempt(label, action):
+            try:
+                action()
+            except BaseException as exc:
+                errors.append(label+': '+str(exc))
+        if self.stopped:
+            try:
+                updater.service('stop')
+            except BaseException as exc:
+                try:
+                    confirmed = service_stopped()
+                except BaseException:
+                    confirmed = False
+                if not confirmed:
+                    errors.append('Could not confirm that Klipper stopped; configuration left intact: '+str(exc))
+                    json_write(self.directory/'rollback.json', dict(
+                        status='ROLLBACK_NEEDS_ATTENTION', errors=errors,
+                        service_restart_attempted=False))
+                    return errors
+        if self.web_previous is not None:
+            attempt('Fluidd web', lambda: restore_web(self.root, self.web_previous))
+        for path in reversed(self.written):
+            saved = self.backups[path]
+            if saved is None:
+                attempt(str(path), lambda p=path: p.unlink(missing_ok=True))
+            else:
+                def restore(p=path, b=saved):
+                    updater.atomic_config_write(p, b.read_bytes(), create=not p.exists())
+                    shutil.copymode(b, p)
+                attempt(str(path), restore)
+        if self.unit_written:
+            attempt('service drop-in', lambda: write_unit(self.before_unit, self.directory, self.dropin))
+            attempt('systemd reload', reload_units)
+        if self.moon_changed and self.stopped:
+            attempt('Moonraker restart', lambda: updater.service('restart', 'moonraker'))
+            attempt('Moonraker API', wait_api)
+        if self.settings_changed:
+            for key, saved in self.settings.items():
+                attempt('Fluidd '+key, lambda k=key,s=saved: db_restore(k,s))
+        # Do not run a mixed configuration after a failed restore.
+        restart_attempted = self.stopped and not errors
+        if restart_attempted:
+            attempt('old Klipper start', lambda: updater.service('start'))
+        json_write(self.directory/'rollback.json', dict(
+            status='ROLLED_BACK' if not errors else 'ROLLBACK_NEEDS_ATTENTION', errors=errors,
+            service_restart_attempted=restart_attempted))
+        return errors
+
+
+def activate(transaction, host, config, web_source, macros, *, serial=None, baud=None):
+    try:
+        transaction.activate_files()
+        live = wait_ready(host, config)
+        transaction.settings_changed = True
+        groups = dashboard.setup(dashboard.BASE, config.parent, apply=True, wait=60, english=True,
+                                 installed_names=lambda: set(macros), expected_revision=bootstrap.HOST_REVISION,
+                                 expected_pid=live['process_id'])
+        transaction.web_previous = fluidd_web.activate(web_source, transaction.root)
+        if not fluidd_web.same_build(web_source, transaction.root):
+            raise ValueError('Installed Fluidd assets did not verify')
+        # Recheck after the dashboard readback, accepting only the new process.
+        final = wait_ready(host, config)
+        if not final.get('firmware_restart_required') and serial is not None:
+            options = final['objects']['configfile']['config']['mcu']
+            if options.get('serial') != serial or int(options.get('baud', 0)) != baud:
+                raise ValueError('Active UART differs from the requested connection')
+        return final, groups
+    except BaseException as exc:
+        errors = transaction.rollback()
+        detail = '; rollback needs attention: '+ '; '.join(errors) if errors else '; previous host/configuration restored'
+        raise RuntimeError(str(exc)+detail+'. Backup: '+str(transaction.directory)) from exc
+
+
+def run(args):
+    if os.geteuid() == 0:
+        raise ValueError('Run as the Klipper user without sudo; privileged service operations request sudo separately')
+    os.umask(0o077)
+    live = discover()
+    mcu = idle_mcu()
+    requirement = None
+    try:
+        mcu_identity = require_mcu(mcu)
+    except ValueError as exc:
+        mcu_identity, requirement = {'mcu_version': mcu.get('mcu_version')}, str(exc)
+    if args.apply and requirement:
+        raise ValueError(requirement)
+    installer_commit = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+    directory = Path.home()/'inventure-installations'/stamp
+    directory.mkdir(parents=True, mode=0o700)
+    print('Preparing verified runtime and configuration. Report directory: '+str(directory), flush=True)
+    host = args.destination.expanduser().absolute()
+    if host.exists() or host.is_symlink():
+        provenance = bootstrap.verify_host(host)
+    else:
+        host = bootstrap.prepare_host(host)
+        provenance = bootstrap.verify_host(host)
+    config = live['config']
+    gcodes = config.parent.parent/'gcodes'
+    if not gcodes.is_dir():
+        raise ValueError('Expected the existing G-code directory: '+str(gcodes))
+    plan = stage_config(host, directory/'config', config, serial=args.serial, baud=args.baud,
+                        gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
+    staged = Path(plan['config_path'])
+    if staged.name != config.name:
+        raise ValueError('Recovery requires the active main config to be named printer.cfg')
+    validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
+                                 '--klipper', str(host), '--config', str(staged)],
+                                check=False, text=True, capture_output=True, timeout=120)
+    (directory/'offline-validation.log').write_text(validation.stdout+validation.stderr)
+    if validation.returncode:
+        raise ValueError('Offline Klipper validation failed: '+validation.stdout.strip()
+                         + '. Details: '+str(directory/'offline-validation.log'))
+    json_write(directory/'plan.json', dict(runtime=provenance, config=plan, mcu=mcu_identity,
+                                         firmware_requirement=requirement, active_before=live))
+    if not args.apply:
+        result = dict(status='PREPARED_NOT_ACTIVATED', runtime=provenance, config=plan,
+                      mcu=mcu_identity, firmware_requirement=requirement,
+                      report_directory=str(directory), mcu_flashed=False)
+        json_write(directory/'result.json', result)
+        return result
+
+    subprocess.run(['sudo', '-v'], check=True, timeout=120)
+    web_root = fluidd_web.web_root(args.fluidd_root)
+    web_source = fluidd_web.release_bundle(directory, args.fluidd_zip)
+    updates = {}
+    for relative in plan['files']:
+        target = config.parent/relative
+        before, after = regular_bytes(target), (staged.parent/relative).read_bytes()
+        if before != after:
+            updates[target] = before, after
+    moon_config = updater.running_moonraker_config(config)
+    if moon_config is None:
+        raise ValueError('Cannot identify the active Moonraker configuration')
+    moon_updates = {}
+    retired = layout.organize_moonraker(moon_config,
+        [config.parent/name for name in plan['loaded_configs']], web_root, moon_updates)
+    if set(moon_updates).intersection(updates):
+        raise ValueError('Klipper and Moonraker unexpectedly share a modified file')
+    updates.update(moon_updates)
+    argv = list(live['argv'])
+    argv[live['script_index']] = str(host/'klippy/klippy.py')
+    argv[live['script_index']+1] = str(config)
+    # The selective rollback below owns only touched files. Keep a full private
+    # copy as well, including operator JSON and inactive configuration files.
+    shutil.copytree(config.parent, directory/'before-config', symlinks=True)
+    transaction = InstallTransaction(directory, updates, unit_text(argv), bool(moon_updates), web_root)
+    verify_snapshot(plan['source_snapshot'])
+    bootstrap.verify_host(host)
+    current = discover()
+    if current['pid'] != live['pid'] or current['argv'] != live['argv']:
+        raise ValueError('Klipper changed during preparation; no service switch performed')
+    mcu_identity = require_mcu(idle_mcu())
+    print('Activating R38.6; original files and service override are backed up.', flush=True)
+    final, groups = activate(transaction, host, config, web_source, plan['macros'],
+                             serial=args.serial, baud=args.baud)
+    pending = final.get('firmware_restart_required', False)
+    result = dict(
+        status='INSTALLED_MCU_RESTART_REQUIRED' if pending else 'INSTALLED_INVENTURE_R38_6',
+        host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
+        source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
+        installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
+        active_klipper_path=final['klipper_path'], active_config=final['config_file'],
+        process_id=final['process_id'], state=final['state'], state_message=final['state_message'],
+        mcu=mcu_identity, mcu_flashed=False, serial=args.serial, baud=args.baud,
+        recovery_profile_used=plan['recovery_profile_used'],
+        preserved_state_files=plan['copied_state_files'], missing_state_files=plan['missing_state_files'],
+        fluidd_root=str(web_root), fluidd_build=fluidd_web.TAG, fluidd_groups=groups,
+        retired_stock_web_updaters=retired, previous_fluidd_site=transaction.web_previous,
+        report_directory=str(directory), firmware_restart_required=pending,
+        hardware_acceptance='pending_operator', automatic_motion_or_heating=False)
+    if not pending:
+        result['mcu'] = require_mcu(final['objects']['mcu'])
+    # This is informative: a source snapshot deliberately has no upstream git updater.
+    try:
+        result['moonraker_klipper_updater'] = api('/machine/update/status').get('version_info', {}).get('klipper')
+    except (OSError, ValueError, KeyError) as exc:
+        result['moonraker_updater_readback'] = str(exc)
+    json_write(directory/'result.json', result)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--apply', action='store_true', help='Activate after all offline checks; default only stages')
+    parser.add_argument('--restore-field-profile', action='store_true',
+                        help='Explicitly recover the recorded Inventure machine profile from a diagnostic config')
+    parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
+    parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
+    parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')
+    parser.add_argument('--fluidd-root', type=Path, help='Existing nginx Fluidd root if more than one is present')
+    parser.add_argument('--fluidd-zip', type=Path, help='Verified local web ZIP with adjacent SHA256SUMS')
+    args = parser.parse_args()
+    try:
+        result = run(args)
+        print(json.dumps(result, indent=2, sort_keys=True, default=str))
+        if result.get('firmware_restart_required'):
+            print('R38.6 installed. The MCU configuration latch remains shut down. Review its reason, '
+                  'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
+        elif args.apply:
+            print('Installed and verified. In Fluidd run INVENTURE_VERSION. Home is an operator action; '
+                  'the installer has not moved or heated the printer.')
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise SystemExit('Inventure installation failed: '+str(exc))
+
+
+if __name__ == '__main__':
+    main()

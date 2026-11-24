@@ -4,6 +4,8 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 
 **R38.6 performs one XY homing before T0 preparation and the native Z reference.** MCU R16 preserves the XY reference through the ownership handoff and lowers the table 1 mm locally after contact measurement. [Sequence, installation and verification](docs/INVENTURE_HOME_SEQUENCE_R38_6.md)
 
+**Moving the printer to a new Orange Pi / W2:** use [`install-new-host.py`](install-new-host.py) and the [complete W2 installation procedure](docs/INVENTURE_FRESH_W2_R38_6.md). Fetching the R38.6 worktree alone does not switch the service. The old `kinematics: none` diagnostic skeleton needs an explicitly recovered machine profile and a separate pinned Klipper runtime; the ordinary updater below is for an existing native Inventure installation. The new installer verifies the actual running path, host version, MCU R16 and UART, and writes a deployment receipt.
+
 **MCU R15 restores native heater control after nozzle cleaning.** Install the MCU application on printers running Orange Pi host R38.4. [Release and installation](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-heater-handoff-r15) · [Failure trace and verification](docs/INVENTURE_HEATER_HANDOFF_R15.md)
 
 **Home Z shutdown readback in R38.4.** The Orange Pi can read the final native Z probe counters from a stopped MCU R14. A host-only update can recover the current incident while it is still in MCU memory. [R38.4 release and recovery instructions](docs/INVENTURE_HOME_Z_R38_4.md) · [Home Z field results and safety audit](docs/INVENTURE_HOME_Z_SAFETY_AUDIT_2026-11-22.md)
@@ -18,7 +20,7 @@ This port runs Klipper on the Orange Pi with the original Zortrax Inventure cont
 
 <a id="aktualizacja-orange-pi"></a>
 
-## Update an existing Orange Pi installation
+## Update an existing native Inventure installation
 
 With Klipper idle, run the following in the Orange Pi shell. The installer updates the host, installs the printer macros and assigns their Fluidd categories in Moonraker, and restarts Klipper. Install MCU R16 from the same release for the continuous XY ownership transfer and local post-measurement retreat.
 
@@ -28,7 +30,7 @@ git -C "$HOME/inventure-orange-pi" worktree add --detach "$HOME/inventure-homing
 python3 "$HOME/inventure-homing-r38.6/install-orange-pi.py" --configure-fluidd --organize-config
 ```
 
-If the R38.5 worktree already exists at that tag, run its final installer command. If you see `HOST_INSTALLED_MCU_SHUTDOWN`, review the shutdown cause in `klippy.log`. After correcting the cause, issue `FIRMWARE_RESTART` once in Fluidd and wait for Ready. Once Klipper is ready, enter the following in the **Fluidd console**.
+If the R38.6 worktree already exists at that tag, run its final installer command. If you see `HOST_INSTALLED_MCU_SHUTDOWN`, review the shutdown cause in `klippy.log`. After correcting the cause, issue `FIRMWARE_RESTART` once in Fluidd and wait for Ready. Once Klipper is ready, enter the following in the **Fluidd console**.
 
 ```gcode
 INVENTURE_VERSION

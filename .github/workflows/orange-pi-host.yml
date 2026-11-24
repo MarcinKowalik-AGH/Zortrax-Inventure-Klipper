@@ -1,7 +1,7 @@
 name: Verify Orange Pi host updater
 on:
   push:
-    branches: [orange-pi, orange-pi-all-axis]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -10,6 +10,12 @@ on:
       - 'host/inventure_cycle_core.py'
       - 'service_mcu/control_r6/**'
       - 'install-orange-pi.py'
+      - 'install-new-host.py'
+      - 'inventure_bootstrap*.py'
+      - 'ci/validate_bootstrap_config.py'
+      - 'tests/test_inventure_bootstrap*.py'
+      - 'tests/test_install_new_host.py'
+      - 'tests/test_validate_bootstrap_config.py'
       - 'inventure_config_layout.py'
       - 'tests/test_inventure_config_layout.py'
       - 'ci/check_moonraker_config.py'
@@ -62,6 +68,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # The bootstrap compares every production input with the R38.6
+          # source commit, which predates the installer commit under test.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
