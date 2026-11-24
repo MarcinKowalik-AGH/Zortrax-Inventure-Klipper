@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -98,6 +98,15 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] == 1
     assert c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] == 1
     assert c['INVENTURE_FAULT_REASON_ABI'] == 1
+    assert c['INVENTURE_SCHEDULER_ABI'] == 1
+    assert c['INVENTURE_SCHEDULER_SERVICE_HZ'] == 20000
+    assert c['INVENTURE_SCHEDULER_NATIVE_HZ'] == 10000
+    assert c['INVENTURE_SCHEDULER_GUARD_MS'] == 10
+    assert 'inventure_scheduler_query' in dictionary['commands']
+    assert ('inventure_scheduler_state clock=%u calls=%u native=%u service=%u'
+            ' guards=%u skipped=%u resync=%u peak_late=%u peak_work=%u'
+            ' last_clock=%u last_late=%u last_work=%u mode=%c fault=%c'
+            ) in dictionary['responses']
     assert 'inventure_fault_detail_query' in dictionary['commands']
     assert ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
             'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu') in dictionary['commands']
@@ -195,6 +204,10 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_service_handoff_abi=c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'],
                   native_thermal_profile_abi=c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'],
                   fault_reason_abi=c['INVENTURE_FAULT_REASON_ABI'],
+                  scheduler_abi=c['INVENTURE_SCHEDULER_ABI'],
+                  scheduler_native_hz=c['INVENTURE_SCHEDULER_NATIVE_HZ'],
+                  scheduler_service_hz=c['INVENTURE_SCHEDULER_SERVICE_HZ'],
+                  scheduler_guard_ms=c['INVENTURE_SCHEDULER_GUARD_MS'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],

@@ -72,6 +72,25 @@ class PureGuardsTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
                 installer.require_mcu(broken)
 
+    def test_r21_scheduler_release_requires_scheduler_abi_and_clock_profiles(self):
+        modern = mcu_identity()
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SCHEDULER_RELEASE
+        modern['mcu_constants'].update(
+            INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,
+            INVENTURE_FAULT_REASON_ABI=1,
+            INVENTURE_SCHEDULER_ABI=1,
+            INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+            INVENTURE_SCHEDULER_SERVICE_HZ=20000,
+            INVENTURE_SCHEDULER_GUARD_MS=10)
+        self.assertEqual(installer.require_mcu(modern)['scheduler_abi'],1)
+        for field in ('INVENTURE_SCHEDULER_ABI', 'INVENTURE_SCHEDULER_NATIVE_HZ',
+                      'INVENTURE_SCHEDULER_SERVICE_HZ','INVENTURE_SCHEDULER_GUARD_MS'):
+            damaged = deepcopy(modern)
+            damaged['mcu_constants'][field] = 0
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,field):
+                installer.require_mcu(damaged)
+
     def test_mcu_release_and_both_abis_are_required(self):
         good = mcu_identity()
         self.assertEqual(installer.require_mcu(good)['native_z_clearance_abi'], 1)

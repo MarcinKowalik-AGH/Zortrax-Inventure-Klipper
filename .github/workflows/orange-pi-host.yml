@@ -2,7 +2,7 @@ name: Verify Orange Pi host updater
 on:
   push:
     # R17 source candidates are tested without modifying the released R16 image.
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -17,8 +17,14 @@ on:
       - 'inventure_native_z_restore.py'
       - 'inventure_motion_owner_restore.py'
       - 'inventure_service_excursion_restore.py'
+      - 'inventure_scheduler_restore.py'
+      - 'restored/scheduler_r21/**'
+      - 'tests/test_inventure_timing_host_r21.py'
       - 'restored/exclusive_service_r20/**'
       - 'tests/test_inventure_service_excursion_r20.py'
+      - '.github/workflows/inventure-r21-scheduler.yml'
+      - 'tools/inventure_fault_analyzer.py'
+      - 'tests/test_inventure_fault_analyzer.py'
       - 'restored/single_owner_r19/**'
       - 'restored/native_z_r18/**'
       - 'tests/test_orange_pi_native_z.py'

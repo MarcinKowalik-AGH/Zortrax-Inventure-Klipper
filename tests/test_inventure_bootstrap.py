@@ -104,6 +104,12 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.r19/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.r19_metadata))
         (cls.r19/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _,cls.r20_files,cls.r20_metadata=bootstrap._plan(ROOT,restore_scheduler=False)
+        cls.r20=cls.root/'r20-host'
+        bootstrap._write_files(cls.r20,cls.r20_files)
+        (cls.r20/bootstrap.MANIFEST_NAME).write_bytes(
+            bootstrap._metadata_bytes(cls.r20_metadata))
+        (cls.r20/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -119,6 +125,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_native_z_restore.py', source/'inventure_native_z_restore.py')
             shutil.copyfile(ROOT/'inventure_motion_owner_restore.py', source/'inventure_motion_owner_restore.py')
             shutil.copyfile(ROOT/'inventure_service_excursion_restore.py', source/'inventure_service_excursion_restore.py')
+            shutil.copyfile(ROOT/'inventure_scheduler_restore.py', source/'inventure_scheduler_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -153,7 +160,13 @@ class RealHostBootstrapTests(unittest.TestCase):
             if target not in service['files']:
                 self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                                  record['sha256'])
+        scheduler=self.metadata['runtime_restorations']['scheduler_r21']
+        self.assertEqual(scheduler['release'],'RC8-STM32-SCHEDULER-DIAGNOSTICS-R21')
         for target,record in service['files'].items():
+            if target not in scheduler['files']:
+                self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
+                                 record['sha256'])
+        for target,record in scheduler['files'].items():
             self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                              record['sha256'])
         self.assertEqual(restoration['source_sha256'],
@@ -174,6 +187,8 @@ class RealHostBootstrapTests(unittest.TestCase):
                          self.metadata['runtime_restorations']['single_motion_owner_r19'])
         self.assertEqual(result['exclusive_service_restoration'],
                          self.metadata['runtime_restorations']['exclusive_service_r20'])
+        self.assertEqual(result['scheduler_restoration'],
+                         self.metadata['runtime_restorations']['scheduler_r21'])
         self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
 
     def test_legacy_recognition_matches_the_previously_generated_runtime_manifest(self):
@@ -299,6 +314,48 @@ class RealHostBootstrapTests(unittest.TestCase):
                 dest.write_bytes(old)
             self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
                              'VERIFIED_LEGACY_HOST')
+
+    def test_r20_runtime_updates_only_scheduler_readonly_and_audit_modules(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage=Path(temp)/'host'
+            shutil.copytree(self.r20,stage)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+            oled=(stage/'klippy/extras/inventure_oled_render.py').read_bytes()
+            old_z_program=(stage/'klippy/extras/inventure_z_home.py').read_bytes()
+            plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            changed={p.relative_to(stage) for p in plan['files']}
+            self.assertEqual(changed,{
+                Path('klippy/extras/inventure_mcu.py'),
+                Path('klippy/extras/inventure_native_z.py'),
+                Path(bootstrap.MANIFEST_NAME)})
+            self.assertEqual(plan['scheduler_restoration'],
+                             self.metadata['runtime_restorations']['scheduler_r21'])
+            for path,(before,after) in plan['files'].items():
+                self.assertEqual(path.read_bytes(),before)
+                path.write_bytes(after)
+            self.assertEqual((stage/'klippy/extras/inventure_oled_render.py').read_bytes(),oled)
+            self.assertEqual((stage/'klippy/extras/inventure_z_home.py').read_bytes(),old_z_program)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path,(before,after) in plan['files'].items():
+                path.write_bytes(before)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+
+    def test_r21_restoration_source_tamper_is_detected_before_writing(self):
+        with self.source_copy() as source,tempfile.TemporaryDirectory() as temp:
+            for relative in ('restored/scheduler_r21/inventure_mcu.py',
+                             'restored/scheduler_r21/inventure_native_z.py'):
+                path=source/relative
+                original=path.read_bytes()
+                try:
+                    path.write_bytes(original+b'\n# unreviewed scheduler or handoff change\n')
+                    with self.subTest(relative=relative),self.assertRaisesRegex(
+                            ValueError,'R21 scheduler module integrity mismatch'):
+                        bootstrap.prepare_host(Path(temp)/'host',repo=source)
+                    self.assertFalse((Path(temp)/'host').exists())
+                finally:
+                    path.write_bytes(original)
 
     def test_r20_source_integrity_rejects_unverified_service_changes(self):
         with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
