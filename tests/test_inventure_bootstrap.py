@@ -78,6 +78,11 @@ class RealHostBootstrapTests(unittest.TestCase):
         with patch.object(subprocess, "run", side_effect=read_only_git):
             bootstrap.prepare_host(cls.stage, repo=ROOT)
         cls.metadata = json.loads((cls.stage/bootstrap.MANIFEST_NAME).read_text())
+        _, cls.legacy_files, cls.legacy_metadata = bootstrap._plan(ROOT, restore_oled=False)
+        cls.legacy = cls.root/"legacy-host"
+        bootstrap._write_files(cls.legacy, cls.legacy_files)
+        (cls.legacy/bootstrap.MANIFEST_NAME).write_bytes(bootstrap._metadata_bytes(cls.legacy_metadata))
+        (cls.legacy/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -87,8 +92,9 @@ class RealHostBootstrapTests(unittest.TestCase):
     def source_copy(self):
         with tempfile.TemporaryDirectory(prefix="inventure-input-test-") as temp:
             source = Path(temp)
-            for name in ("host", "orange_pi", "source"):
+            for name in ("host", "orange_pi", "source", "restored"):
                 shutil.copytree(ROOT/name, source/name, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copyfile(ROOT/'inventure_oled_restore.py', source/'inventure_oled_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -108,6 +114,14 @@ class RealHostBootstrapTests(unittest.TestCase):
         util_spec.loader.exec_module(util)
         self.assertEqual(util.get_git_version()['version'], bootstrap.VERSION)
         self.assertFalse((self.stage/'.version').exists())
+        renderer = self.stage/'klippy/extras/inventure_oled_render.py'
+        restoration = self.metadata['runtime_restorations']['oled_dual_thermal_v2']
+        self.assertEqual(sha256(renderer.read_bytes()).hexdigest(), restoration['adapted_sha256'])
+        self.assertEqual(restoration['release'], 'RC8-OLED-DUAL-THERMAL-V2')
+        self.assertEqual(restoration['source_sha256'],
+                         'c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437')
+        self.assertEqual(self.metadata['files']['klippy/extras/inventure_mcu.py'],
+                         self.legacy_metadata['files']['klippy/extras/inventure_mcu.py'])
 
     def test_explicit_verification_reads_existing_runtime_without_repairing_it(self):
         path = self.stage/'klippy/extras/inventure_mcu.py'
@@ -115,7 +129,95 @@ class RealHostBootstrapTests(unittest.TestCase):
         result = bootstrap.verify_host(self.stage, repo=ROOT)
         self.assertEqual(result['status'], 'VERIFIED_HOST')
         self.assertEqual(result['software_version'], bootstrap.VERSION)
+        self.assertFalse(result['runtime_restoration_required'])
+        self.assertEqual(result['oled_restoration'], self.metadata['runtime_restorations']['oled_dual_thermal_v2'])
         self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
+
+    def test_legacy_recognition_matches_the_previously_generated_runtime_manifest(self):
+        # Recorded from the actual pre-restoration R38.6 bootstrap, before this
+        # change.  It independently freezes the whole previous file map.
+        self.assertEqual(sha256(bootstrap._metadata_bytes(self.legacy_metadata)).hexdigest(),
+                         '0d4db8e73a5dd9dabefbb7b6e85e51b76077d68bcf33884849bf654a08b63c5c')
+        before = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in (
+            self.legacy/bootstrap.MANIFEST_NAME,
+            self.legacy/'klippy/extras/inventure_oled_render.py')}
+        with self.assertRaisesRegex(ValueError, 'metadata differs'):
+            bootstrap.verify_host(self.legacy, repo=ROOT)
+        for result in (bootstrap.verify_legacy_host(self.legacy, repo=ROOT),
+                       bootstrap.verify_host(self.legacy, repo=ROOT, allow_legacy=True)):
+            self.assertEqual(result['status'], 'VERIFIED_LEGACY_HOST')
+            self.assertTrue(result['runtime_restoration_required'])
+            self.assertIsNone(result['oled_restoration'])
+        self.assertEqual(before, {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in before})
+        with self.assertRaisesRegex(ValueError, 'metadata differs'):
+            bootstrap.verify_legacy_host(self.stage, repo=ROOT)
+
+    def test_legacy_update_plan_writes_nothing_and_only_changes_renderer_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.legacy, stage)
+            before = {p.relative_to(stage): (p.stat().st_mtime_ns, p.read_bytes())
+                      for p in stage.rglob('*') if p.is_file()}
+            plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
+            expected_names = {Path('klippy/extras/inventure_oled_render.py'), Path(bootstrap.MANIFEST_NAME)}
+            self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected_names)
+            self.assertEqual(plan['metadata'], self.metadata)
+            self.assertEqual(plan['restoration'], self.metadata['runtime_restorations']['oled_dual_thermal_v2'])
+            self.assertEqual(before, {p.relative_to(stage): (p.stat().st_mtime_ns, p.read_bytes())
+                                      for p in stage.rglob('*') if p.is_file()})
+            for path, (old, new) in plan['files'].items():
+                self.assertEqual(path.read_bytes(), old)
+                path.write_bytes(new)
+            result = bootstrap.verify_host(stage, repo=ROOT)
+            self.assertFalse(result['runtime_restoration_required'])
+            changed = {p.relative_to(stage) for p in stage.rglob('*') if p.is_file()
+                       and p.read_bytes() != before[p.relative_to(stage)][1]}
+            self.assertEqual(changed, expected_names)
+            with self.assertRaisesRegex(ValueError, 'metadata differs'):
+                bootstrap.prepare_runtime_update(stage, repo=ROOT)
+            # The transaction's saved bytes are sufficient for exact rollback.
+            for path, (old, _) in plan['files'].items():
+                path.write_bytes(old)
+            self.assertTrue(bootstrap.verify_legacy_host(stage, repo=ROOT)['runtime_restoration_required'])
+
+    def test_partial_or_modified_legacy_runtime_never_becomes_a_restoration_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.legacy, stage)
+            renderer = stage/'klippy/extras/inventure_oled_render.py'
+            original = renderer.read_bytes()
+            for replacement in (original + b'\n# unexpected edit\n',
+                                (self.stage/'klippy/extras/inventure_oled_render.py').read_bytes()):
+                renderer.write_bytes(replacement)
+                for call in (lambda: bootstrap.verify_host(stage, repo=ROOT, allow_legacy=True),
+                             lambda: bootstrap.prepare_runtime_update(stage, repo=ROOT)):
+                    with self.assertRaisesRegex(ValueError, 'Installed host file differs'):
+                        call()
+                self.assertEqual(renderer.read_bytes(), replacement)
+            renderer.write_bytes(original)
+            mcu = stage/'klippy/extras/inventure_mcu.py'
+            mcu.write_bytes(mcu.read_bytes()+b'\n# unexpected edit\n')
+            with self.assertRaisesRegex(ValueError, 'Installed host file differs'):
+                bootstrap.prepare_runtime_update(stage, repo=ROOT)
+
+    def test_altered_or_symlinked_restoration_source_is_rejected_before_staging(self):
+        with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp)/'host'
+            for name in ('restored/oled_dual_thermal_v2/inventure_oled_render.py',
+                         'restored/oled_dual_thermal_v2/provenance.json'):
+                path = source/name
+                original = path.read_bytes()
+                path.write_bytes(original+b'\n')
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'OLED source checksum mismatch'):
+                    bootstrap.prepare_host(dest, repo=source)
+                self.assertFalse(dest.exists())
+                path.unlink()
+                path.symlink_to(ROOT/name)
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'Symlink in restored OLED source'):
+                    bootstrap.prepare_host(dest, repo=source)
+                self.assertFalse(dest.exists())
+                path.unlink()
+                path.write_bytes(original)
 
     def test_preparation_refuses_existing_directory_file_and_broken_symlink(self):
         with tempfile.TemporaryDirectory() as temp:

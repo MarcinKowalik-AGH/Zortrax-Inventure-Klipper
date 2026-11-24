@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -120,16 +121,38 @@ def idle_mcu():
         raise ValueError('The current host must be Ready before switching: '
                          + str(info.get('state_message')))
     names = api('/printer/objects/list')['objects']
-    wanted = [name for name in names if name in ('mcu', 'print_stats', 'idle_timeout')
+    wanted = [name for name in names if name in ('mcu', 'inventure_mcu', 'print_stats', 'idle_timeout',
+                                               'inventure_native_z', 'inventure_oled')
               or name == 'extruder' or name.startswith('heater_generic ')]
     status = api('/printer/objects/query?'+ '&'.join(urllib.parse.quote(n, safe='') for n in wanted))['status']
     if status.get('print_stats', {}).get('state') in ('printing', 'paused'):
         raise ValueError('Finish or cancel the active print before installing')
     if status.get('idle_timeout', {}).get('state') == 'Printing':
         raise ValueError('Wait until motion and heater activity has finished before installing')
+    if (status.get('inventure_native_z', {}).get('running')
+            or (status.get('inventure_oled', {}).get('ui_transport') or {}).get('active_work')):
+        raise ValueError('Finish or cancel the active Inventure service procedure before installing')
     for name in wanted:
         if float(status.get(name, {}).get('target', 0) or 0) > 0:
             raise ValueError('Turn off heater targets before installing: '+name)
+    board = status.get('inventure_mcu', {})
+    age = board.get('status_age')
+    if (board.get('connected') is not True
+            or type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 1
+            or type(board.get('armed')) is not int or board['armed'] not in (0, 1)
+            or type(board.get('fault')) is not int or not 0 <= board['fault'] <= 255):
+        raise ValueError('A fresh Inventure MCU status with armed/fault fields is required. '
+                         'Check the MCU connection before installing; the active installation '
+                         'has not been changed.')
+    if board.get('fault'):
+        raise ValueError('The Inventure MCU reports an active safety fault. '
+                         'Inspect its cause before resetting or installing.')
+    if board.get('armed'):
+        raise ValueError('The Inventure MCU remains armed after a previous operation. '
+                         'A service stop can expire its heartbeat. With the printer idle '
+                         'and heater targets off, run FIRMWARE_RESTART once in Fluidd, '
+                         'wait for Ready, then install before any Home or heating command. '
+                         'The active installation has not been changed.')
     return status.get('mcu', {})
 
 
@@ -238,9 +261,11 @@ def json_write(path, value):
 
 class InstallTransaction:
     """Back up every affected file before stop; restore on any activation failure."""
-    def __init__(self, directory, updates, unit, moon_changed, root, dropin=DROPIN):
+    def __init__(self, directory, updates, unit, moon_changed, root, dropin=DROPIN,
+                 before_start=None):
         self.directory, self.updates, self.unit = directory, updates, unit
         self.dropin, self.moon_changed, self.root = dropin, moon_changed, root
+        self.before_start = before_start
         self.before_unit = regular_bytes(dropin)
         if self.before_unit is not None and not self.before_unit.startswith(UNIT_MARKER.encode()):
             raise ValueError('An unmanaged service override already exists: '+str(dropin))
@@ -297,6 +322,8 @@ class InstallTransaction:
         if self.moon_changed:
             updater.service('restart', 'moonraker')
             wait_api()
+        if self.before_start is not None:
+            self.before_start()
         updater.service('start')
 
     def rollback(self):
@@ -374,6 +401,26 @@ def activate(transaction, host, config, web_source, macros, *, serial=None, baud
         raise RuntimeError(str(exc)+detail+'. Backup: '+str(transaction.directory)) from exc
 
 
+def stage_runtime(host, directory):
+    """Validate the complete renderer without changing a running runtime.
+
+    A recognized first-generation R38.6 bootstrap is the only in-place
+    migration input. Its two runtime files join the configuration transaction
+    after the service stops. Offline validation uses a complete isolated copy.
+    """
+    if host.exists() or host.is_symlink():
+        before = bootstrap.verify_host(host, allow_legacy=True)
+        if before.get('runtime_restoration_required'):
+            update = bootstrap.prepare_runtime_update(host)
+            validation_host = bootstrap.prepare_host(directory/'validated-runtime')
+            provenance = bootstrap.verify_host(validation_host)
+            return validation_host, provenance, update['files'], before
+        return host, before, {}, before
+    prepared = bootstrap.prepare_host(host)
+    provenance = bootstrap.verify_host(prepared)
+    return prepared, provenance, {}, None
+
+
 def run(args):
     if os.geteuid() == 0:
         raise ValueError('Run as the Klipper user without sudo; privileged service operations request sudo separately')
@@ -393,31 +440,32 @@ def run(args):
     directory.mkdir(parents=True, mode=0o700)
     print('Preparing verified runtime and configuration. Report directory: '+str(directory), flush=True)
     host = args.destination.expanduser().absolute()
-    if host.exists() or host.is_symlink():
-        provenance = bootstrap.verify_host(host)
-    else:
-        host = bootstrap.prepare_host(host)
-        provenance = bootstrap.verify_host(host)
+    validation_host, provenance, runtime_updates, runtime_before = stage_runtime(host, directory)
     config = live['config']
     gcodes = config.parent.parent/'gcodes'
     if not gcodes.is_dir():
         raise ValueError('Expected the existing G-code directory: '+str(gcodes))
-    plan = stage_config(host, directory/'config', config, serial=args.serial, baud=args.baud,
+    plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
                         gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
     staged = Path(plan['config_path'])
     if staged.name != config.name:
         raise ValueError('Recovery requires the active main config to be named printer.cfg')
     validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
-                                 '--klipper', str(host), '--config', str(staged)],
+                                 '--klipper', str(validation_host), '--config', str(staged)],
                                 check=False, text=True, capture_output=True, timeout=120)
     (directory/'offline-validation.log').write_text(validation.stdout+validation.stderr)
     if validation.returncode:
         raise ValueError('Offline Klipper validation failed: '+validation.stdout.strip()
                          + '. Details: '+str(directory/'offline-validation.log'))
-    json_write(directory/'plan.json', dict(runtime=provenance, config=plan, mcu=mcu_identity,
+    json_write(directory/'plan.json', dict(runtime=provenance, runtime_before=runtime_before,
+                                         runtime_target=str(host),
+                                         runtime_files_to_restore=sorted(str(p) for p in runtime_updates),
+                                         config=plan, mcu=mcu_identity,
                                          firmware_requirement=requirement, active_before=live))
     if not args.apply:
         result = dict(status='PREPARED_NOT_ACTIVATED', runtime=provenance, config=plan,
+                      runtime_target=str(host),
+                      runtime_files_to_restore=sorted(str(p) for p in runtime_updates),
                       mcu=mcu_identity, firmware_requirement=requirement,
                       report_directory=str(directory), mcu_flashed=False)
         json_write(directory/'result.json', result)
@@ -426,7 +474,7 @@ def run(args):
     subprocess.run(['sudo', '-v'], check=True, timeout=120)
     web_root = fluidd_web.web_root(args.fluidd_root)
     web_source = fluidd_web.release_bundle(directory, args.fluidd_zip)
-    updates = {}
+    updates = dict(runtime_updates)
     for relative in plan['files']:
         target = config.parent/relative
         before, after = regular_bytes(target), (staged.parent/relative).read_bytes()
@@ -447,9 +495,10 @@ def run(args):
     # The selective rollback below owns only touched files. Keep a full private
     # copy as well, including operator JSON and inactive configuration files.
     shutil.copytree(config.parent, directory/'before-config', symlinks=True)
-    transaction = InstallTransaction(directory, updates, unit_text(argv), bool(moon_updates), web_root)
+    transaction = InstallTransaction(directory, updates, unit_text(argv), bool(moon_updates), web_root,
+                                     before_start=lambda: bootstrap.verify_host(host))
     verify_snapshot(plan['source_snapshot'])
-    bootstrap.verify_host(host)
+    bootstrap.verify_host(host, allow_legacy=True)
     current = discover()
     if current['pid'] != live['pid'] or current['argv'] != live['argv']:
         raise ValueError('Klipper changed during preparation; no service switch performed')
@@ -463,6 +512,8 @@ def run(args):
         host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
         source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
         installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
+        restored_runtime_files=sorted(str(p) for p in runtime_updates),
+        oled_restoration=provenance.get('oled_restoration'),
         active_klipper_path=final['klipper_path'], active_config=final['config_file'],
         process_id=final['process_id'], state=final['state'], state_message=final['state_message'],
         mcu=mcu_identity, mcu_flashed=False, serial=args.serial, baud=args.baud,
@@ -503,9 +554,8 @@ def main():
             print('R38.6 installed. The MCU configuration latch remains shut down. Review its reason, '
                   'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
         elif args.apply:
-            print('Host files, configuration and active service verified. '
-                  'In Fluidd run INVENTURE_VERSION. Hardware acceptance remains separate; '
-                  'the installer has not moved or heated the printer.')
+            print('Complete R38.6 host with the dual-thermal OLED installed and verified. '
+                  'In Fluidd run INVENTURE_VERSION and INVENTURE_OLED_STATUS.')
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         raise SystemExit('Inventure installation failed: '+str(exc))
 

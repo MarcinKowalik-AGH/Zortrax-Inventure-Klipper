@@ -126,6 +126,9 @@ class TransactionTests(unittest.TestCase):
         self.http_calls, self.service_calls, self.start_snapshots = [], [], []
         self.state, self.message = 'ready', 'Printer is ready'
         self.mcu = mcu_identity()
+        self.board = {'host_revision': installer.bootstrap.HOST_REVISION, 'armed': 0, 'fault': 0,
+                      'connected': True, 'status_age': 0.1}
+        self.native_z, self.oled = {'running': False}, {'ui_transport': {'active_work': False}}
         self.serial, self.baud = '/dev/ttyS5', 750000
         self.macros = {'INVENTURE_DIAGNOSTICS', 'INVENTURE_HOME_ALL', 'PAUSE'}
         self.fail_locale_once = self.fail_web = self.fail_after_web = False
@@ -159,14 +162,16 @@ class TransactionTests(unittest.TestCase):
         if path == '/server/info':
             return {'klippy_connected': True}
         if path == '/printer/objects/list':
-            return {'objects': ['mcu', 'print_stats', 'idle_timeout', 'extruder']}
+            return {'objects': ['mcu', 'inventure_mcu', 'print_stats', 'idle_timeout', 'extruder',
+                                'inventure_native_z', 'inventure_oled']}
         if path == '/printer/objects/query':
             values = {
                 'webhooks': {'state': self.state, 'state_message': self.message},
                 'configfile': {'config': dict(
                     [('gcode_macro '+name, {}) for name in self.macros]
                     + [('mcu', {'serial': self.serial, 'baud': str(self.baud)})])},
-                'inventure_mcu': {'host_revision': installer.bootstrap.HOST_REVISION},
+                'inventure_mcu': self.board,
+                'inventure_native_z': self.native_z, 'inventure_oled': self.oled,
                 'mcu': self.mcu, 'print_stats': {'state': 'complete'},
                 'idle_timeout': {'state': 'Ready'}, 'extruder': {'target': 0},
             }
@@ -211,15 +216,16 @@ class TransactionTests(unittest.TestCase):
             self.state, self.message = 'error', 'Injected final configuration failure'
         return str(previous) if previous else None
 
-    def transaction(self, moon_changed=True):
+    def transaction(self, moon_changed=True, runtime_updates=None, before_start=None):
         updates = {
             self.config: (self.before_config, b'[include inventure_services.cfg]\n[printer]\nkinematics: corexy\n'),
             self.include: (None, b'[gcode_macro INVENTURE_DIAGNOSTICS]\ngcode: INVENTURE_VERSION\n'),
         }
         if moon_changed:
             updates[self.moon] = self.before_moon, b'[server]\n# selected Inventure web\n'
+        updates.update(runtime_updates or {})
         return installer.InstallTransaction(self.report, updates, self.unit, moon_changed,
-                                             self.web, dropin=self.dropin)
+                                             self.web, dropin=self.dropin, before_start=before_start)
 
     def activate(self, transaction, **kwargs):
         return installer.activate(transaction, self.host, self.config, self.source, self.macros, **kwargs)
@@ -261,6 +267,93 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual((self.web/'config.json').read_bytes(), b'{"operator": "retained"}')
         self.assertFalse((self.report/'rollback.json').exists())
         self.assertEqual(self.service_calls.count(('start', 'klipper')), 1)
+
+    def test_armed_controller_is_rejected_before_staging_and_service_stop(self):
+        self.board['armed'] = 1
+        with patch.object(installer.os, 'geteuid', return_value=1000), \
+             patch.object(Path, 'home', side_effect=AssertionError('No staging while armed')), \
+             self.assertRaisesRegex(ValueError, 'remains armed'):
+            installer.run(SimpleNamespace(apply=True))
+        self.assertEqual(self.service_calls, [])
+        self.assertEqual(self.config.read_bytes(), self.before_config)
+        self.assertFalse(any(data for _, data in self.http_calls))
+
+    def test_active_safety_fault_is_not_treated_as_a_restart_instruction(self):
+        self.board.update(armed=1, fault=1)
+        with self.assertRaisesRegex(ValueError, 'Inspect its cause'):
+            installer.idle_mcu()
+        self.assertEqual(self.service_calls, [])
+        self.assertFalse(any('gcode' in endpoint for endpoint, _ in self.http_calls))
+
+    def test_missing_or_stale_board_status_does_not_permit_a_service_stop(self):
+        healthy = dict(self.board)
+        cases = [{}, dict(healthy, connected=False), dict(healthy, status_age=2),
+                 dict(healthy, status_age=-1), dict(healthy, status_age=float('nan')),
+                 dict(healthy, status_age=float('inf')), dict(healthy, armed=None),
+                 dict(healthy, fault=None)]
+        for state in cases:
+            with self.subTest(state=state):
+                self.board = state
+                with patch.object(installer.os, 'geteuid', return_value=1000), \
+                     patch.object(Path, 'home', side_effect=AssertionError('No staging before MCU check')), \
+                     self.assertRaisesRegex(ValueError, 'fresh Inventure MCU status'):
+                    installer.run(SimpleNamespace(apply=True))
+        self.assertEqual(self.service_calls, [])
+        self.assertEqual(self.config.read_bytes(), self.before_config)
+
+    def test_service_home_or_clean_is_blocked_even_with_native_targets_off_and_unarmed(self):
+        for native, oled in ((True, False), (False, True)):
+            with self.subTest(native_z=native, oled_service=oled):
+                self.native_z['running'] = native
+                self.oled['ui_transport']['active_work'] = oled
+                with self.assertRaisesRegex(ValueError, 'active Inventure service procedure'):
+                    installer.idle_mcu()
+        self.assertEqual(self.service_calls, [])
+
+    def runtime_update_files(self):
+        renderer = self.host/'klippy/extras/inventure_oled_render.py'
+        renderer.parent.mkdir()
+        marker = self.host/installer.bootstrap.MANIFEST_NAME
+        before = {renderer: b'# original generic renderer\n', marker: b'{"original": true}\n'}
+        after = {renderer: b'# authenticated dual thermal renderer\n', marker: b'{"restored": true}\n'}
+        for path, data in before.items():
+            path.write_bytes(data)
+            path.chmod(0o644)
+        return before, after, {path: (before[path], after[path]) for path in before}
+
+    def test_runtime_files_are_verified_after_stop_and_before_new_process_starts(self):
+        before, after, changes = self.runtime_update_files()
+        verified = []
+        def verify_runtime():
+            self.assertIn(('stop', 'klipper'), self.service_calls)
+            self.assertNotIn(('start', 'klipper'), self.service_calls)
+            self.assertEqual({path: path.read_bytes() for path in after}, after)
+            verified.append(True)
+        transaction = self.transaction(runtime_updates=changes, before_start=verify_runtime)
+        self.activate(transaction)
+        self.assertEqual(verified, [True])
+        self.assertEqual({path: transaction.backups[path].read_bytes() for path in before}, before)
+        self.assertEqual({path: path.read_bytes() for path in after}, after)
+
+    def test_failed_runtime_verification_restores_renderer_manifest_and_configuration(self):
+        before, _, changes = self.runtime_update_files()
+        def reject_runtime():
+            raise ValueError('Injected complete runtime verification failure')
+        transaction = self.transaction(runtime_updates=changes, before_start=reject_runtime)
+        with self.assertRaisesRegex(RuntimeError, 'complete runtime verification failure'):
+            self.activate(transaction)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assert_restored()
+        self.assertEqual(self.service_calls.count(('start', 'klipper')), 1)  # Restored host only.
+
+    def test_unclassified_mcu_safety_fault_rolls_back_the_renderer_as_well(self):
+        before, _, changes = self.runtime_update_files()
+        transaction = self.transaction(runtime_updates=changes)
+        self.state, self.message = 'shutdown', "MCU 'mcu' shutdown: Inventure V9 local safety fault"
+        with self.assertRaisesRegex(RuntimeError, 'local safety fault'):
+            self.activate(transaction)
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assert_restored()
 
     def test_first_ready_failure_restores_real_config_and_removes_new_service_override(self):
         transaction = self.transaction()

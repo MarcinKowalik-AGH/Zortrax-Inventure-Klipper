@@ -126,7 +126,7 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo):
+def _plan(repo, *, restore_oled=True):
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -171,6 +171,19 @@ def _plan(repo):
         source_inputs_sha256={name: sha256(data).hexdigest() for name, data in sorted(source.items())},
         files={name: dict(sha256=sha256(data).hexdigest(), mode=mode)
                for name, (data, mode) in sorted(files.items())})
+    if restore_oled:
+        # The historical incremental updater retained this independent OLED
+        # patch.  It was absent from the pinned Home/MCU snapshot, so a fresh
+        # installation must restore it explicitly with its own provenance.
+        path = repo/"inventure_oled_restore.py"
+        restoration = _module("inventure_bootstrap_oled_restore", path, _regular_bytes(path))
+        renderer, provenance = restoration.restored_renderer(repo)
+        target = restoration.TARGET
+        _require(sha256(files[target][0]).hexdigest() == restoration.LEGACY_SHA256,
+                 "Unexpected base OLED renderer before restoration")
+        files[target] = (renderer, 0o644)
+        metadata["files"][target] = dict(sha256=sha256(renderer).hexdigest(), mode=0o644)
+        metadata["runtime_restorations"] = {"oled_dual_thermal_v2": provenance}
     return source, files, metadata
 
 
@@ -281,18 +294,69 @@ def prepare_host(destination, repo=ROOT) -> Path:
     return destination
 
 
-def verify_host(destination, repo=ROOT) -> dict:
-    """Explicitly verify an existing runtime; do not repair or overwrite it.
-
-    Compiled c_helper.so and Python bytecode may exist after a startup check.
-    Their presence is reported; every installed source file is verified again.
-    """
-    target = Path(destination).expanduser().absolute()
-    source, _, metadata = _plan(Path(repo).expanduser().resolve(strict=True))
+def _verify_runtime(target, source, metadata, *, restoration_required):
     generated = _verify_files(target, metadata)
     with tempfile.TemporaryDirectory(prefix="inventure-host-verify-") as temp:
         _core_check(target, source, Path(temp))
-    return dict(status="VERIFIED_HOST", path=str(target), host_revision=HOST_REVISION,
+    return dict(status="VERIFIED_LEGACY_HOST" if restoration_required else "VERIFIED_HOST",
+                path=str(target), host_revision=HOST_REVISION,
                 source_commit=SOURCE_COMMIT, source_tag=SOURCE_TAG,
                 upstream_commit=UPSTREAM_COMMIT, software_version=VERSION,
+                runtime_restoration_required=restoration_required,
+                runtime_restorations=metadata.get("runtime_restorations", {}),
+                oled_restoration=metadata.get("runtime_restorations", {}).get("oled_dual_thermal_v2"),
                 generated_files=sorted(generated))
+
+
+def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
+    """Verify the complete runtime without repairing or overwriting anything.
+
+    With explicit allow_legacy, the exact earlier R38.6 bootstrap is also
+    recognized and reported as requiring restoration.  Modified or unknown
+    runtimes are never accepted.  Normal generated C/Python caches are allowed.
+    """
+    target = Path(destination).expanduser().absolute()
+    repo = Path(repo).expanduser().resolve(strict=True)
+    source, _, metadata = _plan(repo)
+    if allow_legacy:
+        recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
+        if recorded != metadata:
+            return verify_legacy_host(target, repo=repo)
+    return _verify_runtime(target, source, metadata, restoration_required=False)
+
+
+def verify_legacy_host(destination, repo=ROOT) -> dict:
+    """Read-only recognition of the exact pre-restoration R38.6 bootstrap."""
+    target = Path(destination).expanduser().absolute()
+    source, _, metadata = _plan(Path(repo).expanduser().resolve(strict=True), restore_oled=False)
+    return _verify_runtime(target, source, metadata, restoration_required=True)
+
+
+def prepare_runtime_update(destination, repo=ROOT) -> dict:
+    """Plan the two-file OLED restoration of a verified legacy runtime.
+
+    No runtime file is written.  The caller must stop the service, recheck the
+    current bytes, apply the plan transactionally and call strict verify_host
+    before starting Klipper.  Existing file modes are the verified 0644 modes.
+    """
+    target = Path(destination).expanduser().absolute()
+    repo = Path(repo).expanduser().resolve(strict=True)
+    source, previous_files, previous_metadata = _plan(repo, restore_oled=False)
+    _verify_runtime(target, source, previous_metadata, restoration_required=True)
+    _, files, metadata = _plan(repo)
+    changed = {name for name in files.keys() | previous_files.keys()
+               if files.get(name) != previous_files.get(name)}
+    renderer_name = "klippy/extras/inventure_oled_render.py"
+    _require(changed == {renderer_name}, "Unexpected runtime files in OLED restoration")
+    renderer = target/renderer_name
+    before = _regular_bytes(renderer)
+    _require(before == previous_files[renderer_name][0],
+             "OLED renderer changed while preparing restoration")
+    manifest = target/MANIFEST_NAME
+    manifest_before = _regular_bytes(manifest)
+    _require(json.loads(manifest_before) == previous_metadata,
+             "Host metadata changed while preparing restoration")
+    return dict(files={renderer: (before, files[renderer_name][0]),
+                       manifest: (manifest_before, _metadata_bytes(metadata))},
+                metadata=metadata,
+                restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"])

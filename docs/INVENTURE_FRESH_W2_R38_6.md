@@ -10,6 +10,7 @@ Przykład dotyczy użytkownika `klipper`, UART `/dev/ttyS5` i prędkości
 | Źródła hosta R38.6 | `ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f` |
 | Wersja hosta w `INVENTURE_VERSION` | `RC8-CONTROL-R7-HOMING-R38.6` |
 | Wersja MCU dla Home R38.6 | `RC8-CONTROL-R7-HOMING-R16` |
+| Bazowy ekran OLED | oryginalny `RC8-OLED-DUAL-THERMAL-V2`, z dodatkami R33–R38 |
 | Bootloader dla pakietu aplikacji | istniejący InventureBoot 1.7 |
 | Docelowy katalog działającego Klippera | `~/klipper-inventure-r38.6` |
 | Aktywna konfiguracja | dotychczasowy `~/printer_data/config/printer.cfg` |
@@ -65,7 +66,47 @@ zawiera źródła i narzędzia instalacyjne. Działający runtime znajduje się
 pod stałą ścieżką wskazaną w tabeli; instalator ponownie wykorzystuje
 istniejący runtime po sprawdzeniu wszystkich przypiętych plików. Źródła
 procedur R38.6 pozostają przypięte do `ee9cd2f`; dodatkowe commity
-dostarczają instalator migracji. Żadna z tych ścieżek nie wymaga worktree.
+dostarczają instalator migracji oraz brakującą zależność renderera OLED.
+Żadna z tych ścieżek nie wymaga worktree.
+
+## Odtworzony OLED z dwoma dyszami i dwiema strefami komory
+
+Na poprzednim Orange Pi osobna poprawka `RC8-OLED-DUAL-THERMAL-V2`
+instalowała `klippy/extras/inventure_oled_render.py`. Późniejszy aktualizator
+R33–R38 nie nadpisywał tego pliku: dodawał optymalizacje i grafikę nad
+istniejącym rendererem. Pierwszy instalator nowego hosta odtwarzał natomiast
+ogólny renderer z podstawowego pakietu. Numer hosta R38.6 był prawidłowy,
+lecz w kompletnej instalacji brakowało wcześniej opracowanego ekranu.
+
+Oryginalny plik został odzyskany z
+`INVENTURE_RC8_OLED_DUAL_THERMAL_V2_HOST.zip` i znajduje się teraz bajtowo
+bez zmian w `restored/oled_dual_thermal_v2/inventure_oled_render.py`.
+Jego suma SHA-256 to
+`c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437`.
+Sąsiedni `provenance.json` identyfikuje pakiet, jego sumę i oryginalną
+ścieżkę. Dzięki temu pełne odtworzenie nie wymaga starego urządzenia.
+
+Instalator dostosowuje wyłącznie wyszukiwanie istniejącej grzałki T1:
+preferuje bieżące `inventure_t1`, z zachowaniem historycznego `extruder1`
+jako nazwy zapasowej. Suma zainstalowanego renderera wynosi
+`8156c957c6d5f646c5ff34b547a1b02630ad75abbb794a62867492065a96cb0f`.
+Geometria ikon, fonty i cztery pola temperatur pochodzą z oryginału.
+Aktualne dodatki R38.6 zachowują mały napis Ready 5×7, cache, grafikę
+menu, częściowe odświeżanie i zoptymalizowany transport SPI/DMA.
+
+Wcześniejszy, dokładnie rozpoznany runtime R38.6 jest uzupełniany pod
+dotychczasową ścieżką. Zmiana obejmuje renderer i jego manifest
+`.inventure-bootstrap.json`, w tej samej transakcji co konfiguracja:
+kopia przed zatrzymaniem, zapis po zatrzymaniu usługi, sprawdzenie sum
+przed uruchomieniem, wspólne przywrócenie przy błędzie. Nierozpoznane
+lub ręcznie zmodyfikowane pliki nie są nadpisywane. Raport instalacji
+zawiera `oled_restoration` i `restored_runtime_files`.
+
+Test integracyjny ładuje kompletny runtime i konfigurację nowego hosta.
+Porównuje 47 klatek z oryginalnym V2, niezależne animacje czterech
+grzałek, odrzucanie nieświeżych temperatur, mały footer oraz tożsamość
+bufora wysyłanego do fizycznego OLED-u i do PNG w Fluidd. Dane w teście
+są symulowane; oryginał stanowi niezależny wzorzec pikseli.
 
 ## 1. Przygotowanie i weryfikacja bez przełączenia usługi
 
@@ -229,6 +270,16 @@ historyczny wpis nie potwierdza aktualizacji obecnie podłączonego MCU.
 Gdy przygotowanie zakończy się poprawnie i MCU ma odpowiadające wydanie
 R16, uruchom ten sam instalator z `--apply` przy bezczynnej drukarce:
 
+Po wcześniejszych ruchach lub grzaniu MCU może pozostać uzbrojone
+(`armed=1`) mimo wyzerowanych targetów. Przerwa w heartbeat podczas
+zatrzymania usługi może wtedy wywołać lokalny błąd bezpieczeństwa.
+Instalator odczytuje świeży status i odmawia przełączenia uzbrojonego
+MCU przed zmianą aktywnej instalacji. Gdy drukarka jest bezczynna,
+targety grzałek są wyłączone i nie ma aktywnego błędu, wykonaj raz
+`FIRMWARE_RESTART` w Fluidd, poczekaj na Ready i uruchom instalator
+przed kolejnym Home lub grzaniem. Instalator nie wykonuje resetu
+automatycznie i nie omija aktywnego `Inventure V9 local safety fault`.
+
 ```bash
 python3 install-new-host.py \
   --restore-field-profile \
@@ -285,18 +336,28 @@ dolne Z, szybkie i wolne podejście do kontaktu oraz odjazd. Pełna kolejność
 i warunki przejęcia sterowania są opisane w
 [instrukcji Home R38.6/MCU R16](INVENTURE_HOME_SEQUENCE_R38_6.md).
 
-Testy oprogramowania i odczyt konfiguracji offline sprawdzają instalację
-oraz wywołania makr. Nie potwierdzają mechanicznego przełączenia dyszy ani
-ukończenia tej sekwencji na fizycznej drukarce. Raport pakietu R16 ma
-`tested_on_printer: false`; fizyczna akceptacja pary R38.6/R16 pozostaje
-do wykonania i zapisania.
+W logu z drukarki dostarczonym przez operatora 24 listopada 2026 r.
+Home All zakończyło się o **12:59:01**: ostatnia akcja `home_xyz` ma
+`result: completed`. O 12:58:59 MCU zgłosiło 275 cykli pomiaru,
+101 kolejnych niepoprawiających wyniku powtórzeń,
+`completion_basis: stable_repetitions`, `coordinate_saved: true`,
+`reference_established: true` i lokalny odjazd `1.0 mm`.
+To zapis wykonania na drukarce, odrębny od historycznego pola
+`tested_on_printer: false` w raporcie z budowania pakietu R16.
+Nie zmienia on opisanej wyżej odmowy przejścia NATIVE → SERVICE
+po osobnym Home X/Y; dotyczy konkretnego ukończonego Home All.
+
+Testy instalatora i renderera nie uruchamiają ruchu ani grzania.
+Log potwierdza ukończenie poleceń i pomiarów MCU; nie stanowi
+optycznego pomiaru położenia dyszy ani wyglądu fizycznego OLED-u.
 
 ## Weryfikacja instalatora z 24 listopada 2026 r.
 
-Cały zestaw `python -m unittest discover -s tests -q` przeszedł **871
-testów**. W tym poprawka instalacji wnosi 41 testów: 13 budowy i
-pochodzenia runtime, 6 migracji konfiguracji, 3 rzeczywistego loadera
-Klippera i 19 transakcji aktywacji.
+Weryfikacja obejmuje cały zestaw `python -m unittest discover -s tests -q`,
+budowę i pochodzenie runtime, migrację konfiguracji, rzeczywisty loader
+Klippera, transakcje aktywacji oraz renderowanie kompletnego ekranu OLED.
+Workflow `Verify Orange Pi host updater` uruchamia te testy także dla
+zmian odzyskanego renderera i jego instalatora.
 
 Testy awarii obejmują odtworzenie plików, jednostki systemd, ustawień
 Fluidd i jego katalogu web. Potwierdzają również odmowę aktywacji na MCU

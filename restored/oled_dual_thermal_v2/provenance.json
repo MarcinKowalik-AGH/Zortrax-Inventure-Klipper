@@ -1,0 +1,28 @@
+{
+  "adaptation": "Prefer the native inventure_t1 heater for the existing T1 animation; retain the original extruder1 fallback. All bitmap geometry and rendering are unchanged.",
+  "adapted_sha256": "8156c957c6d5f646c5ff34b547a1b02630ad75abbb794a62867492065a96cb0f",
+  "archive_filename": "INVENTURE_RC8_OLED_DUAL_THERMAL_V2_HOST.zip",
+  "archive_member": "HOST/host/inventure_oled_render.py",
+  "archive_sha256": "cfd69216dfb0f70d1f0cffa9f465cfa72ddd625a175bd856a9523082a5bef342",
+  "archive_size": 121568,
+  "original_validation": {
+    "cold_and_both_heating_phases_symmetric": "PASS",
+    "host_release": "RC8-OLED-DUAL-THERMAL-V2",
+    "klippy_native_status_render": "PASS",
+    "physical_printer_test": "NOT_RUN",
+    "pinned_upstream_suite": {
+      "acceptance_checks_passed": 28,
+      "passed": 591,
+      "private_oem_flash_comparison_skipped": 1
+    },
+    "release_unit_tests_passed": 57,
+    "release_unit_tests_scope": "Current installer and source tests. The legacy RC7.4 installer needs its separate fixture directory and matching RC7.4 payload.",
+    "status": "PASS_OFFLINE_ONLY",
+    "upgrade_from_V1_two_host_files_and_exact_rollback": "PASS"
+  },
+  "release": "RC8-OLED-DUAL-THERMAL-V2",
+  "restored_path": "klippy/extras/inventure_oled_render.py",
+  "schema_version": 1,
+  "source_sha256": "c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437",
+  "source_size": 19618
+}
