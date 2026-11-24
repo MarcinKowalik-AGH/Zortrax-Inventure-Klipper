@@ -97,6 +97,13 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.r18/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.r18_metadata))
         (cls.r18/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _, cls.r19_files, cls.r19_metadata = bootstrap._plan(
+            ROOT, restore_service_excursion=False)
+        cls.r19 = cls.root/"r19-host"
+        bootstrap._write_files(cls.r19, cls.r19_files)
+        (cls.r19/bootstrap.MANIFEST_NAME).write_bytes(
+            bootstrap._metadata_bytes(cls.r19_metadata))
+        (cls.r19/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -111,6 +118,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_oled_restore.py', source/'inventure_oled_restore.py')
             shutil.copyfile(ROOT/'inventure_native_z_restore.py', source/'inventure_native_z_restore.py')
             shutil.copyfile(ROOT/'inventure_motion_owner_restore.py', source/'inventure_motion_owner_restore.py')
+            shutil.copyfile(ROOT/'inventure_service_excursion_restore.py', source/'inventure_service_excursion_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -138,7 +146,14 @@ class RealHostBootstrapTests(unittest.TestCase):
         self.assertEqual(native['release'], 'RC8-NATIVE-Z-POLICY-R18')
         owner = self.metadata['runtime_restorations']['single_motion_owner_r19']
         self.assertEqual(owner['release'], 'RC8-KLIPPER-SINGLE-MOTION-OWNER-R19')
-        for target, record in owner['files'].items():
+        self.assertEqual(owner['release'], 'RC8-KLIPPER-SINGLE-MOTION-OWNER-R19')
+        service = self.metadata['runtime_restorations']['exclusive_service_r20']
+        self.assertEqual(service['release'], 'RC8-EXCLUSIVE-SERVICE-HANDOFF-R20')
+        for target,record in owner['files'].items():
+            if target not in service['files']:
+                self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
+                                 record['sha256'])
+        for target,record in service['files'].items():
             self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                              record['sha256'])
         self.assertEqual(restoration['source_sha256'],
@@ -157,6 +172,8 @@ class RealHostBootstrapTests(unittest.TestCase):
         self.assertEqual(result['native_z_restoration'], self.metadata['runtime_restorations']['native_z_r18'])
         self.assertEqual(result['single_motion_owner_restoration'],
                          self.metadata['runtime_restorations']['single_motion_owner_r19'])
+        self.assertEqual(result['exclusive_service_restoration'],
+                         self.metadata['runtime_restorations']['exclusive_service_r20'])
         self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
 
     def test_legacy_recognition_matches_the_previously_generated_runtime_manifest(self):
@@ -257,6 +274,46 @@ class RealHostBootstrapTests(unittest.TestCase):
                 dest.write_bytes(old)
             self.assertEqual(bootstrap.verify_legacy_host(stage, repo=ROOT)['status'],
                              'VERIFIED_LEGACY_HOST')
+
+    def test_r19_host_updates_only_two_service_excursion_modules_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.r19, stage)
+            self.assertEqual(bootstrap.verify_legacy_host(stage, repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+            oled = (stage/'klippy/extras/inventure_oled_render.py').read_bytes()
+            factory = (stage/'klippy/extras/inventure_z_home.py').read_bytes()
+            plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
+            expected = {Path('klippy/extras/inventure_native_z.py'),
+                        Path('klippy/extras/inventure_mcu.py'), Path(bootstrap.MANIFEST_NAME)}
+            self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected)
+            self.assertEqual(plan['exclusive_service_restoration'],
+                             self.metadata['runtime_restorations']['exclusive_service_r20'])
+            for dest,(old,new) in plan['files'].items():
+                self.assertEqual(dest.read_bytes(),old)
+                dest.write_bytes(new)
+            self.assertEqual((stage/'klippy/extras/inventure_oled_render.py').read_bytes(),oled)
+            self.assertEqual((stage/'klippy/extras/inventure_z_home.py').read_bytes(),factory)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for dest,(old,new) in plan['files'].items():
+                dest.write_bytes(old)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+
+    def test_r20_source_integrity_rejects_unverified_service_changes(self):
+        with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
+            for relative in ('restored/exclusive_service_r20/inventure_native_z.py',
+                             'restored/exclusive_service_r20/inventure_mcu.py'):
+                path = source/relative
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(original + b'\n# unreviewed MCU handoff change\n')
+                    with self.subTest(relative=relative), self.assertRaisesRegex(
+                            ValueError, 'R20 SERVICE excursion source integrity mismatch'):
+                        bootstrap.prepare_host(Path(temp)/'host', repo=source)
+                    self.assertFalse((Path(temp)/'host').exists())
+                finally:
+                    path.write_bytes(original)
 
     def test_r19_source_integrity_blocks_unverified_motion_changes(self):
         with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
