@@ -212,6 +212,18 @@ static uint8_t service_sensors_valid(uint8_t mask,uint32_t now) {
 // still-hot heaters; inactive/unrelated missing sensors do not abort homing.
 // Also used at SERVICE->NATIVE admission so the *end* of normal Home Z/All
 // cannot be refused by an unrelated strict SERVICE sensor min/max setting.
+// Hot SERVICE nozzles remain mandatory inputs when ownership is handed back.
+// Never forget the most recent verified hot temperature when service PWM goes
+// OFF. The 10-ms guard already supervises SERVICE; track only four heaters.
+static void service_native_hot_history(uint32_t now) {
+    if(control_mode!=CT_SERVICE)return;
+    for(unsigned i=0;i<4;i++) {
+        uint8_t valid;int16_t temperature=control_temp(i,now,&valid);
+        if(co[6+i].duty || (valid && temperature>=45))native_hot_mask|=BIT(i);
+        else if(valid && temperature<=40 && !control_heater_duty[i])
+            native_hot_mask&=~BIT(i);
+    }
+}
 static uint8_t native_sensors_valid(uint32_t now) {
     static const int16_t hard_max[8]={310,310,150,150,150,100,100,190};
     uint8_t powered=0;
@@ -680,6 +692,7 @@ static void control_guard(uint32_t now) {
     sl_guard(now);
     zh_guard(now);
     fs_guard(now);
+    service_native_hot_history(now);
     if(control_cooldown_ms) {
         uint32_t ms=(uint32_t)(now-control_cooldown_tick)/MS(1);
         if(ms){control_cooldown_tick+=ms*MS(1);control_cooldown_ms=ms>=control_cooldown_ms?0:control_cooldown_ms-ms;}
@@ -1096,7 +1109,10 @@ void command_inventure_output(uint32_t *args) {
                 co[i].initialized=1;gpio_pwm_write(co[i].pwm,i>=6?256-duty:duty);
                 control_pwm_bypass=0;
             }
-            if(i>=6 && duty)control_heat_seen=1;
+            if(i>=6 && duty) {
+                control_heat_seen=1;
+                native_hot_mask|=BIT(i-6); // SERVICE -> NATIVE thermal history
+            }
             if(!duty)control_output_off(i);
         }
     }
