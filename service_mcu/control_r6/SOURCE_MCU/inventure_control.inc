@@ -13,6 +13,8 @@ DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_HEATER_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_XY_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_SERVICE_HANDOFF_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_THERMAL_PROFILE_ABI",1);
+DECL_CONSTANT("INVENTURE_FAULT_REASON_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
@@ -127,6 +129,8 @@ static uint8_t factory_transport_allowed(void) {
     return fs.active && control_mode==CT_SERVICE;
 }
 static uint8_t control_guard_mask=127,control_fan_phase,control_heat_seen;
+// NATIVE heater history independent of strict SERVICE profile windows.
+static uint8_t native_hot_mask;
 static uint32_t control_cooldown_ms,control_cooldown_tick;
 static uint8_t control_tach_watch[4];
 static int16_t control_min[8]={-20,-20,-20,-20,-20,-20,-20,-20};
@@ -190,6 +194,25 @@ static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
     for(unsigned i=0;i<8;i++)if(mask&BIT(i)) {
         uint8_t valid;int16_t t=control_temp(i,now,&valid);
         if(!valid || t<control_min[i] || t>=control_max[i])return 0;
+    }
+    return 1;
+}
+// Ordinary NATIVE operation cannot inherit the SERVICE calibration/diagnostic
+// sensor mask. Preserve independent hard limits and freshness for powered or
+// still-hot heaters; inactive/unrelated missing sensors do not abort homing.
+static uint8_t native_sensors_valid(uint32_t now) {
+    static const int16_t hard_max[8]={310,310,150,150,150,100,100,190};
+    uint8_t powered=0;
+    for(unsigned h=0;h<4;h++)if(control_heater_duty[h])powered=1;
+    for(unsigned i=0;i<8;i++) {
+        uint8_t valid;int16_t temperature=control_temp(i,now,&valid);
+        if(valid && (temperature< -30 || temperature>=hard_max[i]))return 0;
+        if(i<4) {
+            uint8_t bit=BIT(i), heating=!!control_heater_duty[i];
+            if(heating || (valid && temperature>=45)) native_hot_mask|=bit;
+            if(valid && temperature<=40 && !heating)native_hot_mask&=~bit;
+            if((native_hot_mask&bit) && !valid)return 0;
+        } else if((i==5 || i==6) && powered && !valid)return 0;
     }
     return 1;
 }
@@ -661,7 +684,7 @@ static void control_guard(uint32_t now) {
         if(native_z_guard_active && (native_z_guard_lost || (GPIOC->IDR&BIT(13))))
             trip(7);
         if(door_policy_enabled()&&door_closed_mask()!=3)trip(6);
-        if(!control_sensors_valid(control_guard_mask|31,now))trip(4);
+        if(!native_sensors_valid(now))trip(4);
         for(unsigned h=0;h<4;h++)if(control_heater_duty[h])control_heat_seen=1;
         uint8_t needed=control_cooling_mask();
         if(control_heater_duty[0]||control_heater_duty[1])needed|=1;
@@ -763,7 +786,7 @@ void command_inventure_control(uint32_t *args) {
         else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active
                 || (cm.active && cm.fast_direct))reject=2;
         else if(!control_ready(now))reject=3;
-        else if(mode==CT_NATIVE && (!control_sensors_valid(control_guard_mask|31,now)
+        else if(mode==CT_NATIVE && (!native_sensors_valid(now)
              || (door_policy_enabled()&&door_closed_mask()!=3)))reject=5;
         else if(mode==CT_NATIVE && !control_take_native_heaters())reject=2;
         else control_mode=mode;

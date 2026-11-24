@@ -306,20 +306,66 @@ static void force_safe(void) {
 }
 
 static uint8_t guard_input_at_trip;
+// First safety trip snapshot.  Flags: PC13 open, PC14 open, PE12 on,
+// head-cable open, active native-Z guard, blocked native-Z STEP.
+static struct {
+    uint32_t clock;
+    uint16_t flags;
+    uint8_t reason,mode,sensor_seen,heater_mask;
+} first_safety_trip;
 uint8_t inventure_board_fault(void) { return fault; }
 uint8_t inventure_board_guard_input(void) { return guard_input_at_trip; }
+void command_inventure_fault_detail_query(uint32_t *args) {
+    (void)args;
+    irqstatus_t irq=irq_save();
+    uint32_t clock=first_safety_trip.clock;
+    unsigned reason=first_safety_trip.reason,mode=first_safety_trip.mode;
+    unsigned flags=first_safety_trip.flags,seen=first_safety_trip.sensor_seen;
+    unsigned heaters=first_safety_trip.heater_mask,guard=guard_input_at_trip;
+    irq_restore(irq);
+    sendf("inventure_fault_detail reason=%c mode=%c flags=%hu sensor_seen=%c heaters=%c guard_input=%c clock=%u",
+          reason,mode,flags,seen,heaters,guard,clock);
+}
+DECL_COMMAND_FLAGS(command_inventure_fault_detail_query,HF_IN_SHUTDOWN,
+                   "inventure_fault_detail_query");
 
 static void trip(uint8_t reason) {
     if (!fault) {
+        uint32_t now=timer_read_time();
         fault=reason;
         if (reason==1) {
             if (GPIOD->IDR & BIT(11)) guard_input_at_trip=1;
-            else if (!heartbeat_live || iv9_due(timer_read_time(),heartbeat_deadline))
+            else if (!heartbeat_live || iv9_due(now,heartbeat_deadline))
                 guard_input_at_trip=2;
         }
+        uint16_t flags=!!(GPIOC->IDR&BIT(13));
+        flags|=(!!(GPIOC->IDR&BIT(14)))<<1;
+        flags|=(!!(GPIOE->IDR&BIT(12)))<<2;
+        flags|=(!!(GPIOD->IDR&BIT(11)))<<3;
+        flags|=(!!native_z_guard_active)<<4;
+        flags|=(!!native_z_guard_lost)<<5;
+        unsigned heaters=0;
+        for(unsigned h=0;h<4;h++)if(control_heater_duty[h])heaters|=BIT(h);
+        first_safety_trip.clock=now;
+        first_safety_trip.reason=reason;
+        first_safety_trip.mode=control_mode;
+        first_safety_trip.flags=flags;
+        first_safety_trip.sensor_seen=cool_native_claimed?cool_native_seen:cool_local_seen;
+        first_safety_trip.heater_mask=heaters;
     }
     force_safe();
-    shutdown("Inventure V9 local safety fault");
+    // Distinct shutdown strings make the first failure visible in klippy.log.
+    switch(fault) {
+    case 1:
+        if(guard_input_at_trip==1)shutdown("Inventure V9 extruder cable interlock");
+        shutdown("Inventure V9 host heartbeat interlock");
+    case 4:shutdown("Inventure V9 thermal sensor guard");
+    case 5:shutdown("Inventure V9 cooling tach feedback guard");
+    case 6:shutdown("Inventure V9 door or lid interlock");
+    case 7:shutdown("Inventure V9 build tray PC13 interlock");
+    case 8:shutdown("Inventure V9 native Z reference guard");
+    default:shutdown("Inventure V9 local safety fault");
+    }
 }
 
 static void guard_check(uint32_t now) {
