@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import stat
+import shutil
 import subprocess
 import tempfile
 import types
@@ -126,7 +127,7 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo, *, restore_oled=True):
+def _plan(repo, *, restore_oled=True, restore_native_z=True):
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -184,6 +185,16 @@ def _plan(repo, *, restore_oled=True):
         files[target] = (renderer, 0o644)
         metadata["files"][target] = dict(sha256=sha256(renderer).hexdigest(), mode=0o644)
         metadata["runtime_restorations"] = {"oled_dual_thermal_v2": provenance}
+    if restore_native_z:
+        # R18 is a post-release NATIVE policy fix, not a change to the
+        # cryptographically pinned R38.6 source tree.
+        path = repo/"inventure_native_z_restore.py"
+        restoration = _module("inventure_bootstrap_native_z", path, _regular_bytes(path))
+        target = restoration.TARGET
+        new_module, provenance = restoration.restored_native_z(repo, files[target][0])
+        files[target] = (new_module, 0o644)
+        metadata["files"][target] = dict(sha256=sha256(new_module).hexdigest(), mode=0o644)
+        metadata.setdefault("runtime_restorations", {})["native_z_r18"] = provenance
     return source, files, metadata
 
 
@@ -199,15 +210,29 @@ def _write_files(root, files):
         Path(directory).chmod(0o755)
 
 
-def _core_check(target, source, temporary):
+def _core_check(target, source, temporary, *, native_restored=False):
     snapshot = temporary/"release-inputs"
     inputs = {name: (data, 0o644) for name, data in source.items()
               if PurePosixPath(name).parts[0] in ("host", "orange_pi")}
     _write_files(snapshot, inputs)
     path = snapshot/"orange_pi/install_thermal_test.py"
     core = _module("inventure_bootstrap_verifier", path, source["orange_pi/install_thermal_test.py"])
+    verification_target = target
+    if native_restored:
+        # The pinned offline installer rightly expects the original R38.6
+        # NATIVE module. Verify all pinned modules in an isolated shadow; the
+        # new module is authenticated/compiled independently by _plan and
+        # covered by _verify_files and the offline Klipper validator. The real
+        # host and its live native Z code must NEVER be temporarily overwritten.
+        verification_target = temporary/"core-compat-host"
+        extras = verification_target/"klippy/extras"
+        extras.parent.mkdir(parents=True)
+        shutil.copytree(target/"klippy/extras", extras)
+        shutil.copy2(target/"klippy/serialhdl.py",
+                     verification_target/"klippy/serialhdl.py")
+        (extras/"inventure_native_z.py").write_bytes(source["orange_pi/inventure_native_z.py"])
     with redirect_stdout(io.StringIO()):
-        result = core.install(target, apply=False)
+        result = core.install(verification_target, apply=False)
     _require(result.get("status") == "ALREADY_INSTALLED"
              and result.get("host_revision") == HOST_REVISION,
              "Prepared host does not match the complete release manifest")
@@ -289,7 +314,8 @@ def prepare_host(destination, repo=ROOT) -> Path:
         marker.write_bytes(_metadata_bytes(metadata))
         marker.chmod(0o644)
         _verify_files(stage, metadata)
-        _core_check(stage, source, temporary)
+        _core_check(stage, source, temporary,
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}))
         _publish_new(stage, destination)
     return destination
 
@@ -297,7 +323,8 @@ def prepare_host(destination, repo=ROOT) -> Path:
 def _verify_runtime(target, source, metadata, *, restoration_required):
     generated = _verify_files(target, metadata)
     with tempfile.TemporaryDirectory(prefix="inventure-host-verify-") as temp:
-        _core_check(target, source, Path(temp))
+        _core_check(target, source, Path(temp),
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}))
     return dict(status="VERIFIED_LEGACY_HOST" if restoration_required else "VERIFIED_HOST",
                 path=str(target), host_revision=HOST_REVISION,
                 source_commit=SOURCE_COMMIT, source_tag=SOURCE_TAG,
@@ -305,6 +332,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 runtime_restoration_required=restoration_required,
                 runtime_restorations=metadata.get("runtime_restorations", {}),
                 oled_restoration=metadata.get("runtime_restorations", {}).get("oled_dual_thermal_v2"),
+                native_z_restoration=metadata.get("runtime_restorations", {}).get("native_z_r18"),
                 generated_files=sorted(generated))
 
 
@@ -326,37 +354,61 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
-    """Read-only recognition of the exact pre-restoration R38.6 bootstrap."""
-    target = Path(destination).expanduser().absolute()
-    source, _, metadata = _plan(Path(repo).expanduser().resolve(strict=True), restore_oled=False)
-    return _verify_runtime(target, source, metadata, restoration_required=True)
+    """Recognize only the two authenticated predecessor runtime layouts.
 
-
-def prepare_runtime_update(destination, repo=ROOT) -> dict:
-    """Plan the two-file OLED restoration of a verified legacy runtime.
-
-    No runtime file is written.  The caller must stop the service, recheck the
-    current bytes, apply the plan transactionally and call strict verify_host
-    before starting Klipper.  Existing file modes are the verified 0644 modes.
+    Original R38.6 had generic OLED and native Z. Current Orange Pi hosts
+    already have the restored dual-thermal OLED but not the R18 Z policy.
     """
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
-    source, previous_files, previous_metadata = _plan(repo, restore_oled=False)
-    _verify_runtime(target, source, previous_metadata, restoration_required=True)
+    recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
+    for with_oled in (False, True):
+        source, _, metadata = _plan(repo, restore_oled=with_oled, restore_native_z=False)
+        if recorded == metadata:
+            return _verify_runtime(target, source, metadata, restoration_required=True)
+    raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
+
+
+def prepare_runtime_update(destination, repo=ROOT) -> dict:
+    """Plan atomic restoration of OLED and/or R18 NATIVE Z without stopping service.
+
+    Accept only a byte-for-byte verified pre-OLED R38.6 or current OLED-only
+    host. No unexpected runtime edits are permitted; the caller owns the
+    service/rollback transaction.
+    """
+    target = Path(destination).expanduser().absolute()
+    repo = Path(repo).expanduser().resolve(strict=True)
+    recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
+    previous = None
+    for with_oled in (False, True):
+        source, files, metadata = _plan(
+            repo, restore_oled=with_oled, restore_native_z=False)
+        if recorded == metadata:
+            _verify_runtime(target, source, metadata, restoration_required=True)
+            previous = files, metadata
+            break
+    _require(previous is not None,
+             "Installed host metadata differs from every verified R38.6 predecessor")
+    previous_files, previous_metadata = previous
     _, files, metadata = _plan(repo)
     changed = {name for name in files.keys() | previous_files.keys()
                if files.get(name) != previous_files.get(name)}
-    renderer_name = "klippy/extras/inventure_oled_render.py"
-    _require(changed == {renderer_name}, "Unexpected runtime files in OLED restoration")
-    renderer = target/renderer_name
-    before = _regular_bytes(renderer)
-    _require(before == previous_files[renderer_name][0],
-             "OLED renderer changed while preparing restoration")
+    allowed = {"klippy/extras/inventure_oled_render.py",
+               "klippy/extras/inventure_native_z.py"}
+    _require(bool(changed) and changed <= allowed,
+             "Unexpected runtime files in R18 restoration")
+    updates = {}
+    for name in changed:
+        destination_file = target/name
+        before = _regular_bytes(destination_file)
+        _require(before == previous_files[name][0],
+                 "Runtime module changed while preparing restoration: " + name)
+        updates[destination_file] = before, files[name][0]
     manifest = target/MANIFEST_NAME
     manifest_before = _regular_bytes(manifest)
     _require(json.loads(manifest_before) == previous_metadata,
              "Host metadata changed while preparing restoration")
-    return dict(files={renderer: (before, files[renderer_name][0]),
-                       manifest: (manifest_before, _metadata_bytes(metadata))},
-                metadata=metadata,
-                restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"])
+    updates[manifest] = manifest_before, _metadata_bytes(metadata)
+    return dict(files=updates, metadata=metadata,
+                restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"],
+                native_z_restoration=metadata["runtime_restorations"]["native_z_r18"])

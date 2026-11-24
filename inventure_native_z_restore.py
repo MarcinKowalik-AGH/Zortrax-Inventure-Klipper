@@ -13,7 +13,7 @@ BASE_BLOB = "9355e8f2de8880f80c5302f4270f34fbc7d5cf93"
 RESTORED_BLOB = "d20e943a4e1b8556096ecfbe6c3c6c5d6c77bf13"
 
 def git_blob(data):
-    return sha1(b"blob " + str(len(data)).encode("ascii") + b"\\0" + data).hexdigest()
+    return sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
 
 def restored_native_z(repo, base_source):
     path=Path(repo)/SOURCE
