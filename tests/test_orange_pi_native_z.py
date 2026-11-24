@@ -989,8 +989,11 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.adapter.cmd_request_home(Command(AXES='Z', TARGET='205', PARK_Z='8'))
                 self.assertEqual((self.model.calls, self.model.mode_requests), ([], []))
                 menu.choose(menu.view.token, confirm=True)
-                self.assertEqual(self.model.mode_requests, [])
-                self.assertEqual(self.model.calls, expected_moves)
+                self.assertEqual(self.model.mode_requests, ['NATIVE', 'SERVICE'])
+                self.assertFalse([c for c in self.model.calls if c[0]=='service_home'])
+                self.assertEqual([c[1] for c in self.model.calls if c[0]=='G28'],
+                                 ['Z','Z'] if all(a in homed for a in 'xy')
+                                 else ['Z','Y','X','Z'])
                 self.assertEqual(self.adapter.last_result, expected_result)
                 self.assertTrue(expected_result['coordinate_saved'])
                 self.assertTrue(expected_result['local_refinement'])
@@ -1274,8 +1277,11 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     menu.choose(token, confirm=True)
                     self.assertEqual(menu.view.title, 'Home XYZ complete')
                     self.assertEqual(model.mode_requests,
-                                     [] if mode == 'SERVICE' else ['SERVICE'])
-                    self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'], ['Z'])
+                                     ['SERVICE'] if mode == 'NATIVE' else ['NATIVE','SERVICE'])
+                    self.assertEqual([c[1] for c in model.calls if c[0] == 'G28'],
+                                     ['Z','Y','X','Z'] if button == 'ALL' or
+                                     not all(axis in homed for axis in 'xy') else ['Z','Z'])
+                    self.assertFalse([c for c in model.calls if c[0] == 'service_home'])
                     reference, = [c[1] for c in model.calls if c[0] == 'reference']
                     self.assertEqual(reference['ACK'], Z_HOME_ACK)
                     self.assertEqual(float(reference.get('TARGET', self.adapter.target)),
@@ -1295,7 +1301,8 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 menu, lines = self.operator_menu()
                 options = {'ACK': Z_HOME_ACK} if 'Z' in axes else {}
                 self.adapter.cmd_request_home(Command(AXES=axes, **options))
-                self.assertEqual(self.model.mode_requests, [] if 'Z' in axes else ['NATIVE'])
+                self.assertEqual(self.model.mode_requests,
+                                 ['NATIVE','SERVICE'] if 'Z' in axes else ['NATIVE'])
                 self.assertEqual(menu.view, None)
                 self.assertFalse(any('prompt_begin' in line for line in lines))
                 self.assertEqual(any(c[0] == 'reference' for c in self.model.calls), 'Z' in axes)
@@ -1350,8 +1357,9 @@ class NativeHomeSequenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'guard'):
             self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
         self.assertFalse(any(c[0] in ('G28','reference','refine') for c in self.model.calls))
-        self.assertEqual(self.model.mode_requests, [])
+        self.assertEqual(self.model.mode_requests, ['NATIVE'])
         self.model.calls.clear()
+        self.model.mode_requests.clear()
         self.model.control_reject = None
         home_bottom = self.adapter._home_bottom
         def lose_control():
@@ -1360,7 +1368,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
         self.adapter._home_bottom = lose_control
         with self.assertRaisesRegex(ValueError, 'NATIVE'):
             self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
-        self.assertEqual(self.model.mode_requests, [])
+        self.assertEqual(self.model.mode_requests, ['NATIVE'])
         self.assertEqual([c[1] for c in self.model.calls if c[0] == 'G28'], ['Z'])
 
     def test_xy_uses_y_then_x_with_temporary_clearance_and_scaled_speeds(self):
