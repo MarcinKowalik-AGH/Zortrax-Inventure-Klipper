@@ -90,6 +90,13 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.oled_only/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.oled_only_metadata))
         (cls.oled_only/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _, cls.r18_files, cls.r18_metadata = bootstrap._plan(
+            ROOT, restore_motion_owner=False)
+        cls.r18 = cls.root/"r18-host"
+        bootstrap._write_files(cls.r18, cls.r18_files)
+        (cls.r18/bootstrap.MANIFEST_NAME).write_bytes(
+            bootstrap._metadata_bytes(cls.r18_metadata))
+        (cls.r18/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -103,6 +110,7 @@ class RealHostBootstrapTests(unittest.TestCase):
                 shutil.copytree(ROOT/name, source/name, ignore=shutil.ignore_patterns("__pycache__"))
             shutil.copyfile(ROOT/'inventure_oled_restore.py', source/'inventure_oled_restore.py')
             shutil.copyfile(ROOT/'inventure_native_z_restore.py', source/'inventure_native_z_restore.py')
+            shutil.copyfile(ROOT/'inventure_motion_owner_restore.py', source/'inventure_motion_owner_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -128,12 +136,15 @@ class RealHostBootstrapTests(unittest.TestCase):
         self.assertEqual(restoration['release'], 'RC8-OLED-DUAL-THERMAL-V2')
         native = self.metadata['runtime_restorations']['native_z_r18']
         self.assertEqual(native['release'], 'RC8-NATIVE-Z-POLICY-R18')
-        self.assertEqual(sha256((self.stage/'klippy/extras/inventure_native_z.py').read_bytes()).hexdigest(),
-                         native['restored_sha256'])
+        owner = self.metadata['runtime_restorations']['single_motion_owner_r19']
+        self.assertEqual(owner['release'], 'RC8-KLIPPER-SINGLE-MOTION-OWNER-R19')
+        for target, record in owner['files'].items():
+            self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
+                             record['sha256'])
         self.assertEqual(restoration['source_sha256'],
                          'c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437')
-        self.assertEqual(self.metadata['files']['klippy/extras/inventure_mcu.py'],
-                         self.legacy_metadata['files']['klippy/extras/inventure_mcu.py'])
+        self.assertNotEqual(self.metadata['files']['klippy/extras/inventure_mcu.py'],
+                            self.legacy_metadata['files']['klippy/extras/inventure_mcu.py'])
 
     def test_explicit_verification_reads_existing_runtime_without_repairing_it(self):
         path = self.stage/'klippy/extras/inventure_mcu.py'
@@ -144,6 +155,8 @@ class RealHostBootstrapTests(unittest.TestCase):
         self.assertFalse(result['runtime_restoration_required'])
         self.assertEqual(result['oled_restoration'], self.metadata['runtime_restorations']['oled_dual_thermal_v2'])
         self.assertEqual(result['native_z_restoration'], self.metadata['runtime_restorations']['native_z_r18'])
+        self.assertEqual(result['single_motion_owner_restoration'],
+                         self.metadata['runtime_restorations']['single_motion_owner_r19'])
         self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
 
     def test_legacy_recognition_matches_the_previously_generated_runtime_manifest(self):
@@ -173,7 +186,10 @@ class RealHostBootstrapTests(unittest.TestCase):
                       for p in stage.rglob('*') if p.is_file()}
             plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
             expected_names = {Path('klippy/extras/inventure_oled_render.py'),
-                              Path('klippy/extras/inventure_native_z.py'), Path(bootstrap.MANIFEST_NAME)}
+                              Path('klippy/extras/inventure_native_z.py'),
+                              Path('klippy/extras/inventure_z_home.py'),
+                              Path('klippy/extras/inventure_mcu.py'),
+                              Path(bootstrap.MANIFEST_NAME)}
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected_names)
             self.assertEqual(plan['metadata'], self.metadata)
             self.assertEqual(plan['restoration'], self.metadata['runtime_restorations']['oled_dual_thermal_v2'])
@@ -201,7 +217,10 @@ class RealHostBootstrapTests(unittest.TestCase):
             self.assertTrue(bootstrap.verify_legacy_host(stage, repo=ROOT)['runtime_restoration_required'])
             before_oled = (stage/'klippy/extras/inventure_oled_render.py').read_bytes()
             plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
-            expected_names = {Path('klippy/extras/inventure_native_z.py'), Path(bootstrap.MANIFEST_NAME)}
+            expected_names = {Path('klippy/extras/inventure_native_z.py'),
+                              Path('klippy/extras/inventure_z_home.py'),
+                              Path('klippy/extras/inventure_mcu.py'),
+                              Path(bootstrap.MANIFEST_NAME)}
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected_names)
             self.assertEqual(plan['native_z_restoration'],
                              self.metadata['runtime_restorations']['native_z_r18'])
@@ -213,6 +232,47 @@ class RealHostBootstrapTests(unittest.TestCase):
             for path, (original, updated) in plan['files'].items():
                 path.write_bytes(original)
             self.assertEqual(bootstrap.verify_legacy_host(stage, repo=ROOT)['status'], 'VERIFIED_LEGACY_HOST')
+
+    def test_r18_host_migrates_exact_motion_owner_modules_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.r18, stage)
+            self.assertEqual(bootstrap.verify_legacy_host(stage, repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+            oled = (stage/'klippy/extras/inventure_oled_render.py').read_bytes()
+            plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
+            expected = {Path('klippy/extras/inventure_native_z.py'),
+                        Path('klippy/extras/inventure_z_home.py'),
+                        Path('klippy/extras/inventure_mcu.py'),
+                        Path(bootstrap.MANIFEST_NAME)}
+            self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected)
+            self.assertEqual(plan['single_motion_owner_restoration'],
+                             self.metadata['runtime_restorations']['single_motion_owner_r19'])
+            for dest,(old,new) in plan['files'].items():
+                self.assertEqual(dest.read_bytes(), old)
+                dest.write_bytes(new)
+            self.assertEqual((stage/'klippy/extras/inventure_oled_render.py').read_bytes(),oled)
+            self.assertEqual(bootstrap.verify_host(stage, repo=ROOT)['status'], 'VERIFIED_HOST')
+            for dest,(old,new) in plan['files'].items():
+                dest.write_bytes(old)
+            self.assertEqual(bootstrap.verify_legacy_host(stage, repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+
+    def test_r19_source_integrity_blocks_unverified_motion_changes(self):
+        with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
+            for relative in ('restored/single_owner_r19/inventure_native_z.py',
+                             'restored/single_owner_r19/inventure_z_home.py',
+                             'restored/single_owner_r19/inventure_mcu.py'):
+                path = source/relative
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(original+b'\n# unexpected motion change\n')
+                    with self.subTest(relative=relative), self.assertRaisesRegex(
+                            ValueError,'R19 motion-owner source integrity mismatch'):
+                        bootstrap.prepare_host(Path(temp)/'host',repo=source)
+                    self.assertFalse((Path(temp)/'host').exists())
+                finally:
+                    path.write_bytes(original)
 
     def test_altered_native_z_restoration_is_not_silently_installed(self):
         with self.source_copy() as source, tempfile.TemporaryDirectory() as temp:
