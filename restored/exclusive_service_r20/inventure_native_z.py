@@ -675,13 +675,6 @@ class InventureNativeZ:
                     raise FactoryError('T0 preparation was interrupted or expired')
                 self.reactor.pause(now + .1)
             result = factory.get('result') or {}
-            receipt = result.get('native_handoff')
-            if (not isinstance(receipt, dict) or receipt.get('mode') != 'NATIVE'
-                    or receipt.get('tool') != 0 or receipt.get('enabled') != 1
-                    or receipt.get('verified') is not True
-                    or not all(type(receipt.get(k)) is int and receipt[k] > 0
-                               for k in ('owner', 'run', 'token'))):
-                raise FactoryError('Missing verified MCU-to-Klipper handoff receipt')
             if (self.board.load_test_context is not None or context['tool'] != 0
                     or factory['operation'] != 'CLEAN' or not factory['selection_commanded']
                     or not factory['cleaning_done'] or not result.get('success')
@@ -691,6 +684,18 @@ class InventureNativeZ:
                 reason = (getattr(self.board, 'load_test_last', {}) or {}).get('reason')
                 raise FactoryError('T0 selection and cleaning did not complete'
                                    + (': ' + reason if reason else ''))
+            receipt = result.get('native_handoff')
+            if (not isinstance(receipt, dict) or receipt.get('mode') != 'NATIVE'
+                    or receipt.get('tool') != 0 or receipt.get('enabled') != 1
+                    or receipt.get('verified') is not True
+                    or not all(type(receipt.get(k)) is int and receipt[k] > 0
+                               for k in ('owner', 'run', 'token'))):
+                raise FactoryError('Missing verified MCU-to-Klipper handoff receipt')
+            motion = context.get('motion')
+            if ('token' in factory and isinstance(motion, dict)
+                    and [receipt[k] for k in ('owner','run','token')] !=
+                        [factory['token'],motion.get('run'),motion.get('token')]):
+                raise FactoryError('MCU-to-Klipper handoff identity mismatch')
             gcmd.respond_info('V9_NATIVE_Z_PROGRESS ' + json.dumps(
                 dict(stage='T0 selected and cleaned', xy_frame=result)))
             return result

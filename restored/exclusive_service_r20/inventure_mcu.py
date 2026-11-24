@@ -4598,7 +4598,9 @@ class InventureMCU:
             if (set(f['homed']) != {'X', 'Y'} or set(frame['release_mm']) != {'X', 'Y'}
                     or not f['selection_commanded'] or not f['cleaning_done'] or f['move'] is not None):
                 raise ValueError('Native homing has no completed XY, selection and cleaning frame')
-            self._z_home_inputs({'nozzle_contact': 1})
+            self._z_home_inputs(
+                {'nozzle_contact':1,'z_bottom':1}
+                if frame.get('klipper_xy_prepared') else {'nozzle_contact':1})
             offsets = [frame['endstops'][i] + frame['release_mm'][axis]
                        for i, axis in enumerate('XY')]
             if frame.get('klipper_xy_prepared'):
