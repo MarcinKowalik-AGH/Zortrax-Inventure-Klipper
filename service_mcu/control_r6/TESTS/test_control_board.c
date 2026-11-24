@@ -20,7 +20,7 @@ static void control_reset(uint32_t now) {
     memset(transport,0,sizeof(transport));memset(assist_pending,0,sizeof(assist_pending));
     transport_live=0;auxiliary_ready=0;
     memset(&motor_test,0,sizeof(motor_test));memset(&xy_seek,0,sizeof(xy_seek));
-    control_guard_mask=127;memset(control_tach_watch,0,sizeof(control_tach_watch));
+    control_guard_mask=127;native_hot_mask=0;memset(control_tach_watch,0,sizeof(control_tach_watch));
     const int16_t caps[]={310,310,150,150,150,100,100,190};
     for(unsigned i=0;i<8;i++){control_min[i]=-20;control_max[i]=caps[i];}
     heat_reset(now);control_adc();
@@ -317,6 +317,66 @@ static void native_to_service_quiescent_handoff(void) {
     puts("PASS guarded NATIVE->SERVICE after X/Y/XY: no active motors, heaters, Z guard, feeder or STOP bypass");
 }
 
+static void service_strict_native_broad_guards(void) {
+    // Unrelated failed chamber-center ADC blocks strict SERVICE, not cold
+    // NATIVE positioning. Independent absolute overtemperature stays enabled.
+    control_reset(0);
+    latest_adc[4]=4095;
+    assert(!control_sensors_valid(control_guard_mask|31,mock_now));
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed() && !fault && control_mode==CT_NATIVE);
+    control_guard(mock_now);
+    assert(!fault && inventure_is_armed());
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    control_heater_duty[0]=64;
+    latest_adc[0]=4095;
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"powered native heater missing ADC");}
+    expect_failure=0;
+    assert(fault==4 && first_safety_trip.reason==4);
+    assert(strstr(last_failure,"thermal sensor guard"));
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    inventure_adc_observe(ADC1,10,1250);
+    assert(native_sensors_valid(mock_now) && (native_hot_mask&1));
+    control_heater_duty[0]=0;
+    latest_adc[0]=4095;
+    assert(!native_sensors_valid(mock_now)); // still-hot heater kept guarded
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    latest_adc[5]=4095;
+    assert(native_sensors_valid(mock_now)); // idle PSU ADC is not a homing veto
+    control_heater_duty[0]=64;
+    assert(!native_sensors_valid(mock_now)); // powered requires PSU telemetry
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    latest_adc[0]=1918;
+    assert(native_sensors_valid(mock_now)); // 309C < absolute 310C limit
+    latest_adc[0]=1930;
+    assert(!native_sensors_valid(mock_now)); // >310C always rejected
+    puts("PASS SERVICE strict and NATIVE broad: unrelated sensor fault tolerated, hot heaters monitored");
+}
+
+static void first_fault_cause_snapshotted(void) {
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    GPIOC->IDR |= BIT(13);
+    native_z_guard_active=1;
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"tray interlock failure");}
+    expect_failure=0;
+    assert(fault==7 && first_safety_trip.reason==7);
+    assert((first_safety_trip.flags & (BIT(0)|BIT(4))) == (BIT(0)|BIT(4)));
+    assert(strstr(last_failure,"build tray PC13 interlock"));
+    assert(!inventure_is_armed());
+    puts("PASS first fault identifies PC13 tray and snapshots raw inputs before safe shutdown");
+}
+
 static void native_ownership(void) {
     control_reset(0);control_command(1,CT_NATIVE);assert(inventure_is_armed());
     assert(inventure_filter_gpio(GPIOE,BIT(10),1)==1);
@@ -427,7 +487,7 @@ static void global_door_policy(void) {
 int main(void) {
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
-    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();auxiliary_controls();global_door_policy();
+    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();service_strict_native_broad_guards();first_fault_cause_snapshotted();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }
