@@ -27,6 +27,10 @@ CLEARANCE_RESPONSE = REFINE_RESPONSE.replace('inventure_native_z_refine_state',
 REFINE_STATUS = ('running', 'done', 'no contact', 'no release', 'guard dropped',
                  'cycle or time limit', 'stopped')
 PHASE_MARGIN_S = 10.
+# NATIVE Home Z has a wider T0 band than SERVICE pad/nozzle calibration.
+# MCU still protects absolute temperature, heater integrity and physical tray.
+NATIVE_Z_TEMP_BELOW_TARGET_C = 20.
+NATIVE_Z_TEMP_ABOVE_TARGET_C = 15.
 PROGRESS_INTERVAL_S = 5.
 
 
@@ -309,7 +313,7 @@ class InventureNativeZ:
             raise FactoryError('Native Z reference uses the physically selected T0')
         temperature, valid = self.board.panel_temperature(0, self.reactor.monotonic())
         if (valid != 'valid' or temperature is None
-                or not self.reference_target - 10. <= temperature <= self.reference_target + 8.):
+                or not self.reference_target - NATIVE_Z_TEMP_BELOW_TARGET_C <= temperature < self.reference_target + NATIVE_Z_TEMP_ABOVE_TARGET_C):
             raise FactoryError('T0 left the native Z temperature band')
 
     def _edge(self, pin, target, speed, triggered, bottom_expected, check_triggered, phase):
@@ -417,8 +421,8 @@ class InventureNativeZ:
         native_steps = self._native_step_position()
         token = self.board._control_next_token()
         interval = round(1_000_000. / (self.fine_speed * Z_STEPS_PER_MM))
-        args = [self.guard_owner, token, span, interval, math.ceil(self.reference_target - 10.),
-                math.ceil(self.reference_target + 8.)]
+        args = [self.guard_owner, token, span, interval, math.ceil(self.reference_target - NATIVE_Z_TEMP_BELOW_TARGET_C),
+                math.ceil(self.reference_target + NATIVE_Z_TEMP_ABOVE_TARGET_C)]
         clearance_query = getattr(self, 'refine_clearance', None)
         clearance = getattr(self, 'handoff_clearance_steps', Z_STEPS_PER_MM) if clearance_query else 0
         if clearance:
@@ -612,7 +616,7 @@ class InventureNativeZ:
             self.board._z_home_inputs({'z_bottom': 1, 'nozzle_contact': 1})
             temperature, valid = self.board.panel_temperature(0, now)
             if (valid == 'valid' and temperature is not None
-                    and target - 10. <= temperature < math.ceil(target + 8.)
+                    and target - NATIVE_Z_TEMP_BELOW_TARGET_C <= temperature < math.ceil(target + NATIVE_Z_TEMP_ABOVE_TARGET_C)
                     and not heater.check_busy(now)):
                 return
             self.reactor.pause(min(deadline, now + .5))
@@ -845,8 +849,8 @@ class InventureNativeZ:
         if extruder.get_name() != 'extruder':
             raise gcmd.error('Native Z reference requires extruder T0')
         heater = extruder.get_heater()
-        if not heater.min_temp <= target <= heater.max_temp - 8.:
-            raise gcmd.error('TARGET requires an 8 C margin below the configured T0 maximum')
+        if not heater.min_temp <= target <= heater.max_temp - NATIVE_Z_TEMP_ABOVE_TARGET_C:
+            raise gcmd.error('TARGET requires a 15 C margin below the configured T0 maximum')
         return heater, target
 
     def cmd_home(self, gcmd):

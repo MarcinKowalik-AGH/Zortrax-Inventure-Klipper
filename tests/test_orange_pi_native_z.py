@@ -591,7 +591,7 @@ class NativeZBridgeTests(unittest.TestCase):
         span = round(self.command['Z_PROBE_MM'] * Z_STEPS_PER_MM)
         interval = round(1_000_000 / (self.adapter.fine_speed * Z_STEPS_PER_MM))
         self.assertEqual([call[1][1:] for call in refine],
-                         [(23, 24, span, interval, 190, 208)] * 3)
+                         [(23, 24, span, interval, 180, 215)] * 3)
         self.assertEqual([call[2] for call in refine], [True, False, False])
         counter_positions = [index for index, call in enumerate(self.model.calls)
                              if call[0] == 'native_counter']
@@ -642,7 +642,7 @@ class NativeZBridgeTests(unittest.TestCase):
         self.adapter.cmd_home(self.command)
         self.assertTrue(self.adapter.last_result['coordinate_saved'])
         refine_start = next(call for call in self.model.calls if call[0] == 'refine')
-        self.assertEqual(refine_start[1][-2:], (195, 213))
+        self.assertEqual(refine_start[1][-2:], (185, 220))
         self.assertEqual(self.adapter.target, 200.)
 
     def test_mcu_refinement_lost_handoff_invalidates_xyz_without_gcode_reset(self):

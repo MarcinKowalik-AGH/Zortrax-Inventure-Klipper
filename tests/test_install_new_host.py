@@ -59,6 +59,19 @@ class PureGuardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'R17'):
             installer.require_mcu(modern)
 
+    def test_r18_requires_independent_native_thermal_profile_and_fault_reason(self):
+        modern = mcu_identity()
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_NATIVE_PROFILE_RELEASE
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 1
+        modern['mcu_constants']['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] = 1
+        modern['mcu_constants']['INVENTURE_FAULT_REASON_ABI'] = 1
+        self.assertEqual(installer.require_mcu(modern)['native_thermal_profile_abi'], 1)
+        for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
+            broken = deepcopy(modern)
+            broken['mcu_constants'].pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                installer.require_mcu(broken)
+
     def test_mcu_release_and_both_abis_are_required(self):
         good = mcu_identity()
         self.assertEqual(installer.require_mcu(good)['native_z_clearance_abi'], 1)
