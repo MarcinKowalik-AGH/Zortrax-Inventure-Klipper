@@ -21,8 +21,16 @@ def _load_r19_factory():
 def _load_restored_native_z():
     # Test the exact code that the bootstrap installs, never the pinned
     # historical R38.6 source in orange_pi/inventure_native_z.py.
-    path = Path(__file__).resolve().parents[1]/'restored/single_owner_r19/inventure_native_z.py'
-    spec = importlib.util.spec_from_file_location('orange_pi.inventure_native_z_r18_test', path)
+    path = Path(__file__).resolve().parents[1]/'restored/exclusive_service_r20/inventure_native_z.py'
+    spec = importlib.util.spec_from_file_location('orange_pi.inventure_native_z_r20_test', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_r20_mcu():
+    path = Path(__file__).resolve().parents[1]/'restored/exclusive_service_r20/inventure_mcu.py'
+    spec = importlib.util.spec_from_file_location('orange_pi.inventure_mcu_r20_test', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -713,6 +721,7 @@ class HomeSequenceModel(Model):
         self.load_test_context = None
         self.load_test_last = {}
         self.prepare_failure = None
+        self.omit_native_handoff_receipt = False
         self.prepare_actions = []
         self.refine_clearance = object()
         self.native_xy_handoff_abi = 1
@@ -830,7 +839,11 @@ class HomeSequenceModel(Model):
                     self.load_test_last = dict(phase='failed', reason=self.control_reject)
                     self.load_test_context = None
                     return self.NEVER
-                factory['result'] = action
+                factory['result'] = dict(action)
+                if not self.omit_native_handoff_receipt:
+                    factory['result']['native_handoff'] = dict(
+                        owner=21, run=22, token=23, mode='NATIVE', enabled=1,
+                        tool=0, verified=True)
                 factory['cleaning_done'] = action['cleaning_done']
                 self.load_test_last = dict(phase='done')
                 self.load_test_context = None
@@ -999,6 +1012,15 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.assertTrue(expected_result['local_refinement'])
                 self.assertEqual(self.model.position, [82.8, 68., 8., 0.])
 
+    def test_no_native_position_is_imported_without_mcu_handoff_receipt(self):
+        self.model.omit_native_handoff_receipt = True
+        self.operator_menu()
+        with self.assertRaisesRegex(ValueError, 'handoff receipt'):
+            self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
+        self.assertFalse(any(c[0]=='reference' for c in self.model.calls))
+        self.assertTrue(any(c[0]=='native_handoff' for c in self.model.calls))
+        self.assertFalse(self.adapter.last_result['coordinate_saved'])
+
     def test_home_z_rechecks_xy_at_confirmation_and_keeps_probe_failure(self):
         self.use_mcu_reference()
         self.model.axes = 'xy'
@@ -1160,32 +1182,46 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.assertEqual((self.model.calls, self.model.mode_requests, self.model.prepare_actions),
                                  ([], [], []))
 
-    def test_prepare_t0_runs_the_production_factory_host_and_rejects_failed_release(self):
+    def test_prepare_t0_uses_real_r20_factory_and_requires_mcu_handoff(self):
         from test_orange_pi_z_home_host import ZHomeHostTests
-        for release_fail in (None, 1):
-            with self.subTest(release_fail=release_fail):
+        from test_orange_pi_load_test import Wire
+        r20 = _load_r20_mcu()
+        for deny_handoff in (False, True):
+            with self.subTest(deny_handoff=deny_handoff):
                 self.setUp()
+                self.model.axes = 'xy'
+                self.model.position[:2] = [0., 0.]
                 board = ZHomeHostTests().host()
-                board.device.z = 2000
-                from test_orange_pi_load_test import Wire
-                board.commands['factory_native_handoff'] = Wire(board.device.native_handoff)
+                board.device.z = 0  # native Klipper has reached PE12
+                real_handoff = board.device.native_handoff
+                def handoff(args):
+                    row = real_handoff(args)
+                    return dict(row, reject=2) if deny_handoff else row
+                board.commands['factory_native_handoff'] = Wire(handoff)
+                board._factory_start = types.MethodType(r20.InventureMCU._factory_start, board)
+                board._factory_action = types.MethodType(r20.InventureMCU._factory_action, board)
                 board.printer.objects['inventure_native_z'] = self.adapter
                 board.printer.objects['heaters'] = self.model
-                board.device.release_fail = release_fail
                 self.adapter.board = board
                 self.adapter.reactor = board.reactor
                 self.adapter.sequence_running = True
-                if release_fail:
-                    with self.assertRaisesRegex(ValueError, 'T0 selection and cleaning'):
-                        self.adapter._prepare_t0(Command(), self.model, 200.)
+                if deny_handoff:
+                    with self.assertRaisesRegex(ValueError, 'T0 selection and cleaning|handoff'):
+                        self.adapter._prepare_t0(Command(), self.model, 200.,
+                                                 prehomed_xy=True)
                 else:
-                    self.adapter._prepare_t0(Command(), self.model, 200.)
+                    result = self.adapter._prepare_t0(Command(), self.model, 200.,
+                                                      prehomed_xy=True)
+                    self.assertEqual(result['native_xy_offsets_mm'], [0.,0.])
+                    self.assertEqual(result['service_xy_mm'], [self.adapter.pad_x,self.adapter.pad_y])
+                    self.assertEqual(result['native_handoff']['mode'], 'NATIVE')
+                    self.assertTrue(result['native_handoff']['verified'])
                     factory = board.load_test_last['factory']
                     self.assertTrue(factory['cleaning_done'])
                     self.assertEqual(factory['motion_legs']['selector_press']['target'], [154.5,154.5])
-                    self.assertEqual(factory['result']['native_xy_offsets_mm'], [50/640,50/640])
                     self.assertEqual(factory['motion_legs']['z_contact_pad']['target'],
-                                     [self.adapter.pad_x-50/640,self.adapter.pad_y-50/640])
+                                     [self.adapter.pad_x,self.adapter.pad_y])
+                    self.assertFalse(any(row[0]=='home' for row in factory.get('module_history', [])))
                 self.assertIsNone(board.load_test_context)
                 self.assertFalse(board.device.active())
 
