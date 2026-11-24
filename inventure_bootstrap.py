@@ -127,9 +127,12 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo, *, restore_oled=True, restore_native_z=True, restore_motion_owner=None):
+def _plan(repo, *, restore_oled=True, restore_native_z=True,
+          restore_motion_owner=None, restore_service_excursion=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
+    if restore_service_excursion is None:
+        restore_service_excursion = restore_motion_owner
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -207,6 +210,15 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True, restore_motion_owne
         for target,(data,mode) in updates.items():
             metadata["files"][target] = dict(sha256=sha256(data).hexdigest(),mode=mode)
         metadata.setdefault("runtime_restorations", {})["single_motion_owner_r19"] = provenance
+    if restore_service_excursion:
+        _require(restore_motion_owner, "R20 service handoff requires authenticated R19")
+        path = repo/"inventure_service_excursion_restore.py"
+        restoration = _module("inventure_bootstrap_service_excursion", path, _regular_bytes(path))
+        updates, provenance = restoration.restored_service_excursion(repo, files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata["files"][target] = dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault("runtime_restorations", {})["exclusive_service_r20"] = provenance
     return source, files, metadata
 
 
@@ -348,6 +360,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 oled_restoration=metadata.get("runtime_restorations", {}).get("oled_dual_thermal_v2"),
                 native_z_restoration=metadata.get("runtime_restorations", {}).get("native_z_r18"),
                 single_motion_owner_restoration=metadata.get("runtime_restorations", {}).get("single_motion_owner_r19"),
+                exclusive_service_restoration=metadata.get("runtime_restorations", {}).get("exclusive_service_r20"),
                 generated_files=sorted(generated))
 
 
@@ -377,10 +390,11 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    for with_oled,with_native_z in ((False,False),(True,False),(True,True)):
+    for with_oled,with_native_z,with_motion in (
+            (False,False,False),(True,False,False),(True,True,False),(True,True,True)):
         source, _, metadata = _plan(
             repo, restore_oled=with_oled, restore_native_z=with_native_z,
-            restore_motion_owner=False)
+            restore_motion_owner=with_motion, restore_service_excursion=False)
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -397,10 +411,11 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    for with_oled,with_native_z in ((False,False),(True,False),(True,True)):
+    for with_oled,with_native_z,with_motion in (
+            (False,False,False),(True,False,False),(True,True,False),(True,True,True)):
         source, files, metadata = _plan(
             repo, restore_oled=with_oled, restore_native_z=with_native_z,
-            restore_motion_owner=False)
+            restore_motion_owner=with_motion, restore_service_excursion=False)
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
@@ -432,4 +447,5 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     return dict(files=updates, metadata=metadata,
                 restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"],
                 native_z_restoration=metadata["runtime_restorations"]["native_z_r18"],
-                single_motion_owner_restoration=metadata["runtime_restorations"]["single_motion_owner_r19"])
+                single_motion_owner_restoration=metadata["runtime_restorations"]["single_motion_owner_r19"],
+                exclusive_service_restoration=metadata["runtime_restorations"]["exclusive_service_r20"])
