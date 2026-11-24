@@ -632,14 +632,13 @@ class InventureNativeZ:
                 raise FactoryError('Inventure XY homing requires the negative-end PB11/PC15 limits')
             endstops.append(info.position_endstop)
         self.toolhead.wait_moves()
-        if not prehomed_xy:
-            raise FactoryError('R19 operator HOME requires a verified Klipper XY origin')
-        native_position = self.toolhead.get_position()
-        if ('x' not in self.kin.get_status(self.reactor.monotonic())['homed_axes']
-                or 'y' not in self.kin.get_status(self.reactor.monotonic())['homed_axes']
-                or any(abs(native_position[i]-endstops[i]) > .05 for i in (0,1))):
-            raise FactoryError('Klipper XY must be homed and at both native endstops before SERVICE handoff')
-        self.board._z_home_inputs({'z_bottom':1,'nozzle_contact':1})
+        if prehomed_xy:
+            native_position = self.toolhead.get_position()
+            homed = self.kin.get_status(self.reactor.monotonic())['homed_axes']
+            if (not all(a in homed for a in 'xy')
+                    or any(abs(native_position[i]-endstops[i]) > .05 for i in (0,1))):
+                raise FactoryError('Klipper XY must be homed and at both native endstops before SERVICE handoff')
+            self.board._z_home_inputs({'z_bottom':1,'nozzle_contact':1})
         heaters.turn_off_all_heaters()
         deadline = self.reactor.monotonic() + PHASE_MARGIN_S
         while any(h.last_pwm_value for h in heaters.heaters.values()):
@@ -668,7 +667,7 @@ class InventureNativeZ:
             context = self.board._factory_start(command, operation='CLEAN', native_homing=dict(
                 pad_xy=[self.pad_x, self.pad_y], endstops=endstops,
                 pad_speed=self.pad_speed if pad_speed is None else pad_speed,
-                klipper_xy_prepared=True))
+                klipper_xy_prepared=bool(prehomed_xy)))
             factory = context['factory']
             while self.board.load_test_context is context:
                 now = self.reactor.monotonic()
