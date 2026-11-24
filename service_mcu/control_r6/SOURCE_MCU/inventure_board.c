@@ -67,6 +67,7 @@ static uint8_t control_busy(void);
 static uint8_t control_door_policy_busy(void);
 static void control_guard(uint32_t now);
 static void control_fan_tick(void);
+static uint8_t native_sampler_can_reduce(void);
 static uint8_t control_service_fan(unsigned i);
 uint8_t inventure_panel_needs_service(void); // Declared by inventure_panel.c
 static uint8_t control_cooling_mask(void);
@@ -420,9 +421,7 @@ static uint_fast8_t sample_event(struct timer *t) {
     sample_last_late=late;sample_last_clock=now;sample_calls++;
     // Do not downsample the SERVICE fan/P13 diagnostic path, any active
     // factory motion or native P13 transport, or the 100-ms local heater PWM.
-    unsigned slots=(control_mode==CT_NATIVE && !transport_live
-                    && !fs.active && !cm.active && !sl.active && !t0_heat_busy())
-                    ? SAMPLE_NATIVE_DIV : 1u;
+    unsigned slots=native_sampler_can_reduce() ? SAMPLE_NATIVE_DIV : 1u;
     if(slots==SAMPLE_NATIVE_DIV)sample_native_calls++;
     else sample_service_calls++;
 
@@ -455,7 +454,7 @@ static uint_fast8_t sample_event(struct timer *t) {
     sample_last_work=work;
     uint32_t next=t->waketime+slots*SAMPLE_TICKS;
     uint32_t earliest=finished+timer_from_us(SAMPLE_MARGIN_US);
-    if(!timer_is_before(earliest,next)) {
+    if((int32_t)(earliest-next)>=0) {
         // Never reschedule from the old, now-past deadline. Skip only the
         // missed *polling slots*; thermal/door/heartbeat guards above still
         // evaluate the real MCU clock, not a synthetic catch-up clock.

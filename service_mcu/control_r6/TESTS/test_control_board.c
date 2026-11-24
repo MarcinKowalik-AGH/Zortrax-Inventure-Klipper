@@ -55,6 +55,7 @@ static void scheduler_native_service_stress(void) {
     sample_skipped_slots=sample_reschedules=0;
     sample_peak_late_ticks=sample_peak_work_ticks=0;
     guard_div=0;fan_sample_ticks=fan_detector_ticks=0;
+    quiet_ticks[0]=quiet_ticks[1]=0;
     sample_timer.waketime=mock_now+SAMPLE_TICKS;
     uint32_t previous=sample_timer.waketime;
     for(unsigned i=0;i<1800;i++) {

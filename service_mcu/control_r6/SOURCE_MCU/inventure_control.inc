@@ -128,6 +128,10 @@ static void zh_shutdown(void);
 static uint8_t factory_transport_allowed(void) {
     return fs.active && control_mode==CT_SERVICE;
 }
+static uint8_t native_sampler_can_reduce(void) {
+    return control_mode==CT_NATIVE && !transport_live && !fs.active
+        && !cm.active && !sl.active && !t0_heat_busy();
+}
 static uint8_t control_guard_mask=127,control_fan_phase,control_heat_seen;
 // NATIVE heater history independent of strict SERVICE profile windows.
 static uint8_t native_hot_mask;
