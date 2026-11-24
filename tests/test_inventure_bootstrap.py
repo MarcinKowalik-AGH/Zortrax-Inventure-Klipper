@@ -110,6 +110,12 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.r20/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.r20_metadata))
         (cls.r20/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _,cls.r21_files,cls.r21_metadata=bootstrap._plan(ROOT,restore_safety_policy=False)
+        cls.r21=cls.root/'r21-host'
+        bootstrap._write_files(cls.r21,cls.r21_files)
+        (cls.r21/bootstrap.MANIFEST_NAME).write_bytes(
+            bootstrap._metadata_bytes(cls.r21_metadata))
+        (cls.r21/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -126,6 +132,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_motion_owner_restore.py', source/'inventure_motion_owner_restore.py')
             shutil.copyfile(ROOT/'inventure_service_excursion_restore.py', source/'inventure_service_excursion_restore.py')
             shutil.copyfile(ROOT/'inventure_scheduler_restore.py', source/'inventure_scheduler_restore.py')
+            shutil.copyfile(ROOT/'inventure_safety_policy_restore.py', source/'inventure_safety_policy_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -166,9 +173,14 @@ class RealHostBootstrapTests(unittest.TestCase):
             if target not in scheduler['files']:
                 self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                                  record['sha256'])
+        policy=self.metadata['runtime_restorations']['safety_policy_r22']
+        self.assertEqual(policy['release'],'RC8-SERVICE-NATIVE-POLICY-R22')
         for target,record in scheduler['files'].items():
-            self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
-                             record['sha256'])
+            if target!=policy['target']:
+                self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
+                                 record['sha256'])
+        self.assertEqual(sha256((self.stage/policy['target']).read_bytes()).hexdigest(),
+                         policy['sha256'])
         self.assertEqual(restoration['source_sha256'],
                          'c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437')
         self.assertNotEqual(self.metadata['files']['klippy/extras/inventure_mcu.py'],
@@ -189,6 +201,8 @@ class RealHostBootstrapTests(unittest.TestCase):
                          self.metadata['runtime_restorations']['exclusive_service_r20'])
         self.assertEqual(result['scheduler_restoration'],
                          self.metadata['runtime_restorations']['scheduler_r21'])
+        self.assertEqual(result['safety_policy_restoration'],
+                         self.metadata['runtime_restorations']['safety_policy_r22'])
         self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
 
     def test_legacy_recognition_matches_the_previously_generated_runtime_manifest(self):
