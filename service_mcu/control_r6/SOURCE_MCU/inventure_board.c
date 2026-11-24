@@ -54,6 +54,7 @@ static uint8_t control_door_policy_busy(void);
 static void control_guard(uint32_t now);
 static void control_fan_tick(void);
 static uint8_t control_service_fan(unsigned i);
+uint8_t inventure_panel_needs_service(void); // Declared by inventure_panel.c
 static uint8_t control_cooling_mask(void);
 static void control_shutdown(void);
 static void control_motion_cancel(void);
