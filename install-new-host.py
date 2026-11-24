@@ -41,6 +41,7 @@ core, dashboard = updater.core, updater.dashboard
 
 MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
 MCU_SERVICE_HANDOFF_RELEASE = 'RC8-CONTROL-R7-HOMING-R17'
+MCU_NATIVE_PROFILE_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
@@ -77,12 +78,16 @@ def require_mcu(mcu):
                 'INVENTURE_NATIVE_Z_CLEARANCE_ABI': 1}
     wrong = {key: constants.get(key) for key, value in expected.items()
              if str(constants.get(key)) != str(value)}
-    if release not in (MCU_RELEASE, MCU_SERVICE_HANDOFF_RELEASE):
+    if release not in (MCU_RELEASE, MCU_SERVICE_HANDOFF_RELEASE, MCU_NATIVE_PROFILE_RELEASE):
         wrong['INVENTURE_MCU_RELEASE'] = release
-    if release == MCU_SERVICE_HANDOFF_RELEASE and str(
+    if release in (MCU_SERVICE_HANDOFF_RELEASE, MCU_NATIVE_PROFILE_RELEASE) and str(
             constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')) != '1':
         wrong['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = constants.get(
             'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')
+    if release == MCU_NATIVE_PROFILE_RELEASE:
+        for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
+            if str(constants.get(key)) != '1':
+                wrong[key] = constants.get(key)
     if wrong:
         raise ValueError('Install the compatible InventureBoot 1.7 MCU application. '
                          'R38.6 requires MCU R16+ with XY handoff and Z clearance; '
@@ -91,7 +96,11 @@ def require_mcu(mcu):
     return dict(mcu_version=mcu.get('mcu_version'), mcu_release=release,
                 native_xy_handoff_abi=1, native_z_clearance_abi=1,
                 native_service_handoff_abi=int(
-                    str(constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI', 0)) == '1'))
+                    str(constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI', 0)) == '1'),
+                native_thermal_profile_abi=int(
+                    str(constants.get('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 0)) == '1'),
+                fault_reason_abi=int(
+                    str(constants.get('INVENTURE_FAULT_REASON_ABI', 0)) == '1'))
 
 
 def unit_text(argv):

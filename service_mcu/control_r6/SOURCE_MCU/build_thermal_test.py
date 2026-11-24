@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R17'
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -96,6 +96,9 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'] == 1
     assert c['INVENTURE_NATIVE_XY_HANDOFF_ABI'] == 1
     assert c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] == 1
+    assert c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] == 1
+    assert c['INVENTURE_FAULT_REASON_ABI'] == 1
+    assert 'inventure_fault_detail_query' in dictionary['commands']
     assert ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
             'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu') in dictionary['commands']
     assert 'inventure_local_oled_diag_query' in dictionary['commands']
@@ -190,6 +193,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_z_clearance_abi=c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'],
                   native_xy_handoff_abi=c['INVENTURE_NATIVE_XY_HANDOFF_ABI'],
                   native_service_handoff_abi=c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'],
+                  native_thermal_profile_abi=c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'],
+                  fault_reason_abi=c['INVENTURE_FAULT_REASON_ABI'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],
