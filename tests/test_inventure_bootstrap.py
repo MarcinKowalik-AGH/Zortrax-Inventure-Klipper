@@ -356,6 +356,45 @@ class RealHostBootstrapTests(unittest.TestCase):
             self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
                              'VERIFIED_LEGACY_HOST')
 
+    def test_r21_to_r22_upgrades_only_mcu_policy_module_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage=Path(temp)/'host'
+            shutil.copytree(self.r21,stage)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+            oled=(stage/'klippy/extras/inventure_oled_render.py').read_bytes()
+            z=(stage/'klippy/extras/inventure_native_z.py').read_bytes()
+            factory=(stage/'klippy/extras/inventure_z_home.py').read_bytes()
+            plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            self.assertEqual({p.relative_to(stage) for p in plan['files']},
+                             {Path('klippy/extras/inventure_mcu.py'),
+                              Path(bootstrap.MANIFEST_NAME)})
+            self.assertEqual(plan['safety_policy_restoration'],
+                             self.metadata['runtime_restorations']['safety_policy_r22'])
+            for path,(old,new) in plan['files'].items():
+                self.assertEqual(path.read_bytes(),old)
+                path.write_bytes(new)
+            self.assertEqual((stage/'klippy/extras/inventure_oled_render.py').read_bytes(),oled)
+            self.assertEqual((stage/'klippy/extras/inventure_native_z.py').read_bytes(),z)
+            self.assertEqual((stage/'klippy/extras/inventure_z_home.py').read_bytes(),factory)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path,(old,new) in plan['files'].items():
+                path.write_bytes(old)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+
+    def test_r22_refuses_unaudited_policy_module_before_install(self):
+        with self.source_copy() as source,tempfile.TemporaryDirectory() as temp:
+            path=source/'restored/safety_policy_r22/inventure_mcu.py'
+            original=path.read_bytes()
+            try:
+                path.write_bytes(original+b'\n# unreviewed NATIVE safety change\n')
+                with self.assertRaisesRegex(ValueError,'R22 safety policy module integrity mismatch'):
+                    bootstrap.prepare_host(Path(temp)/'host',repo=source)
+                self.assertFalse((Path(temp)/'host').exists())
+            finally:
+                path.write_bytes(original)
+
     def test_r21_restoration_source_tamper_is_detected_before_writing(self):
         with self.source_copy() as source,tempfile.TemporaryDirectory() as temp:
             for relative in ('restored/scheduler_r21/inventure_mcu.py',
