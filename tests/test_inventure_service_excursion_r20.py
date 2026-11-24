@@ -12,8 +12,17 @@ def load_policy():
     function, = [node for node in tree.body if
                  isinstance(node, ast.FunctionDef)
                  and node.name == 'validate_native_excursion_action']
-    body = ast.Module(body=[ast.Import(names=[ast.alias(name='math')]), function],
-                      type_ignores=[])
+    # Include the three immutable policy tables from the same production
+    # module. Extract them rather than copying literals into test fixtures.
+    wanted = {'_NATIVE_EXCURSION_KINDS','_NATIVE_EXCURSION_MODULES',
+              '_NATIVE_EXCURSION_LEGS'}
+    constants = [node for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id in wanted
+                         for target in node.targets)]
+    if len(constants) != len(wanted):
+        raise AssertionError('R20 production policy constants are missing')
+    body = ast.Module(body=[ast.Import(names=[ast.alias(name='math')]),
+                            *constants, function], type_ignores=[])
     namespace = {}
     exec(compile(ast.fix_missing_locations(body), str(path), 'exec'), namespace)
     return namespace['validate_native_excursion_action']
