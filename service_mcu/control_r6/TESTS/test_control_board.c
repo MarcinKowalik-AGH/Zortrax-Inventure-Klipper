@@ -397,7 +397,7 @@ static void native_ownership(void) {
         if(cause==2)control_set_door_policy(1);
         control_command(1,CT_NATIVE);assert(inventure_is_armed());
         if(cause==0)heartbeat_live=0;
-        if(cause==1)latest_adc[2]=4095;
+        if(cause==1){control_heater_duty[0]=64;latest_adc[0]=4095;} // powered heater, not unused chamber ADC
         if(cause==2)GPIOB->IDR&=~BIT(10);
         expect_failure=1;
         if(!setjmp(failure)){control_guard(mock_now);assert(!"native guard failed to trip");}
