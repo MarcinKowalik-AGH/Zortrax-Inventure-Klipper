@@ -105,8 +105,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert 'inventure_scheduler_query' in dictionary['commands']
     assert ('inventure_scheduler_state clock=%u calls=%u native=%u service=%u'
             ' guards=%u skipped=%u resync=%u peak_late=%u peak_work=%u'
-            ' last_clock=%u last_late=%u last_work=%u mode=%c fault=%c')
-            in dictionary['responses']
+            ' last_clock=%u last_late=%u last_work=%u mode=%c fault=%c'
+            ) in dictionary['responses']
     assert 'inventure_fault_detail_query' in dictionary['commands']
     assert ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
             'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu') in dictionary['commands']
