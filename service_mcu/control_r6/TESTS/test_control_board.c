@@ -45,6 +45,92 @@ static void output(unsigned action,unsigned channel,unsigned duty,uint32_t ms,in
 static void advance(unsigned ms) {
     mock_now+=MS(ms);command_inventure_heartbeat(NULL);control_adc();guard_check(mock_now);cooling_update();
 }
+// Stress the actual production sampler with both scheduler phases, synthetic
+// interrupt blackouts, packet-rate bursts and wrapping 32-bit MCU clock.
+static void scheduler_native_service_stress(void) {
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed());
+    sample_calls=sample_native_calls=sample_service_calls=sample_guard_runs=0;
+    sample_skipped_slots=sample_reschedules=0;
+    sample_peak_late_ticks=sample_peak_work_ticks=0;
+    guard_div=0;fan_sample_ticks=fan_detector_ticks=0;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    uint32_t previous=sample_timer.waketime;
+    for(unsigned i=0;i<1800;i++) {
+        mock_now=sample_timer.waketime; // on-time callback
+        assert(sample_event(&sample_timer)==SF_RESCHEDULE);
+        assert((uint32_t)(sample_timer.waketime-previous)==2*SAMPLE_TICKS);
+        assert((int32_t)(sample_timer.waketime-mock_now)>=
+               (int32_t)timer_from_us(SAMPLE_MARGIN_US));
+        previous=sample_timer.waketime;
+        if((i%250)==0)command_inventure_heartbeat(NULL);
+    }
+    assert(sample_native_calls==1800 && !sample_service_calls);
+    assert(sample_guard_runs==18); // preserved 10 ms independent safety cadence
+    assert(fan_sample_ticks==3600); // preserves 1-second tach window in NATIVE
+    assert(!sample_reschedules && !sample_skipped_slots);
+    // 20 ms noise suppression is expressed in 20 kHz-equivalent slots even
+    // though normal XY/Z has only 10 kHz callbacks.
+    assert(quiet_ticks[0]==401 && quiet_ticks[1]==401);
+
+    // Native feeder transport still gets the full 20 kHz physical sampler.
+    transport_live=1;
+    mock_now=sample_timer.waketime;
+    previous=sample_timer.waketime;
+    sample_event(&sample_timer);
+    assert(sample_timer.waketime-previous==SAMPLE_TICKS);
+    assert(sample_service_calls==1);
+    transport_live=0;
+
+    // SERVICE diagnostics and all manual calibrated fan PWM stay at 20 kHz.
+    control_reset(0);
+    assert(control_mode==CT_SERVICE);
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    for(unsigned i=0;i<100;i++) {
+        mock_now=sample_timer.waketime;previous=sample_timer.waketime;
+        sample_event(&sample_timer);
+        assert(sample_timer.waketime-previous==SAMPLE_TICKS);
+    }
+
+    // MCU wrap is not a special timer epoch. The same signed comparator is
+    // valid for any short delta crossing ffffffff -> 00000000.
+    control_reset(0xffffe000u);
+    control_command(1,CT_NATIVE);
+    mock_now=0xffffe000u;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    for(unsigned i=0;i<1200;i++) {
+        mock_now=sample_timer.waketime;
+        sample_event(&sample_timer);
+        assert((int32_t)(sample_timer.waketime-mock_now)>0);
+        if(!(i%250))command_inventure_heartbeat(NULL);
+    }
+
+    // Delayed callback MUST skip overdue polling slots, not run the same
+    // GPIO twice for every missed 50 us and starve Klipper's step timers.
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime+2*SAMPLE_TICKS; // emulate ISR contention
+    uint32_t old_skipped=sample_skipped_slots,old_resync=sample_reschedules;
+    sample_event(&sample_timer);
+    assert(sample_skipped_slots>old_skipped && sample_reschedules==old_resync+1);
+    assert((int32_t)(sample_timer.waketime-mock_now)>=
+           (int32_t)timer_from_us(SAMPLE_MARGIN_US));
+    // A long callback taking more than the 100 us NATIVE period must also
+    // resynchronize to the end of the callback, not its already-past start.
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime;
+    mock_read_cycles=timer_from_us(70);
+    old_resync=sample_reschedules;
+    sample_event(&sample_timer);
+    mock_read_cycles=0;
+    assert(sample_reschedules>old_resync);
+    assert((int32_t)(sample_timer.waketime-mock_now)>0);
+    assert(sample_peak_work_ticks>=timer_from_us(70));
+    puts("PASS scheduler: NATIVE 10kHz / SERVICE 20kHz / 10ms guard / tach cadence / wrap / delayed ISR resync");
+}
+
 static void dda_and_replay(void) {
     for(unsigned wrap=0;wrap<2;wrap++)for(unsigned dirs=0;dirs<16;dirs++) {
         control_reset(wrap?0xffffff00:0);
@@ -485,6 +571,7 @@ static void global_door_policy(void) {
     puts("PASS global door policy: default OFF, idle coil release, raw/pwm/native lock gating, live raw door inputs");
 }
 int main(void) {
+    scheduler_native_service_stress();
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
     service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();service_strict_native_broad_guards();first_fault_cause_snapshotted();auxiliary_controls();global_door_policy();
