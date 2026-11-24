@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -99,6 +99,12 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] == 1
     assert c['INVENTURE_FAULT_REASON_ABI'] == 1
     assert c['INVENTURE_SCHEDULER_ABI'] == 1
+    assert c['INVENTURE_SERVICE_NATIVE_SPLIT_ABI'] == 1
+    assert c['INVENTURE_POLICY_STATUS_ABI'] == 1
+    assert 'inventure_policy_query' in dictionary['commands']
+    assert ('inventure_policy_state mode=%c profile=%c service_mask=%c'
+            ' native_hot=%c native_powered=%c native_required=%c fault=%c latched=%c'
+            ) in dictionary['responses']
     assert c['INVENTURE_SCHEDULER_SERVICE_HZ'] == 20000
     assert c['INVENTURE_SCHEDULER_NATIVE_HZ'] == 10000
     assert c['INVENTURE_SCHEDULER_GUARD_MS'] == 10
@@ -204,6 +210,8 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_service_handoff_abi=c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'],
                   native_thermal_profile_abi=c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'],
                   fault_reason_abi=c['INVENTURE_FAULT_REASON_ABI'],
+                  service_native_split_abi=c['INVENTURE_SERVICE_NATIVE_SPLIT_ABI'],
+                  policy_status_abi=c['INVENTURE_POLICY_STATUS_ABI'],
                   scheduler_abi=c['INVENTURE_SCHEDULER_ABI'],
                   scheduler_native_hz=c['INVENTURE_SCHEDULER_NATIVE_HZ'],
                   scheduler_service_hz=c['INVENTURE_SCHEDULER_SERVICE_HZ'],
