@@ -32,6 +32,7 @@ irqstatus_t irq_save(void){return 0;} void irq_restore(irqstatus_t x){(void)x;}
 void mock_shutdown(const char*s){last_failure=s;shutdown_count++;if(expect_failure)longjmp(failure,1);fprintf(stderr,"Unexpected shutdown: %s\n",s);assert(0);__builtin_unreachable();}
 static uint32_t factory_reply[15];
 static int64_t factory_guard_reply[18];
+static unsigned policy_reply[8],policy_queries;
 #ifdef TEST_Z_HOME_WIRE
 static struct {
     uint32_t owner, token, active, status, reject;
@@ -49,6 +50,13 @@ static struct {
 static uint32_t native_z_guard_reply[3];
 #endif
 void sendf(const char*f,...){
+    if(!strncmp(f,"inventure_policy_state ",22)) {
+        assert(!strcmp(f,"inventure_policy_state mode=%c profile=%c service_mask=%c"
+                         " native_hot=%c native_powered=%c native_required=%c fault=%c latched=%c"));
+        va_list ap;va_start(ap,f);
+        for(unsigned i=0;i<8;i++)policy_reply[i]=va_arg(ap,unsigned);
+        va_end(ap);policy_queries++;return;
+    }
 #ifdef TEST_Z_HOME_WIRE
     if (!strncmp(f, "inventure_z_home_state ", 23)
             || !strncmp(f,"inventure_native_z_refine_state ",32)
