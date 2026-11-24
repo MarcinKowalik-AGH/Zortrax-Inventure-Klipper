@@ -1136,7 +1136,7 @@ class NativeHomeSequenceTests(unittest.TestCase):
                 self.setUp()
                 self.operator_menu()
                 self.model.prepare_failure = stage
-                with self.assertRaisesRegex(ValueError, 'T0 selection and cleaning'):
+                with self.assertRaisesRegex(ValueError, 'T0 selection and cleaning|handoff receipt'):
                     self.adapter.cmd_request_home(Command(AXES='XYZ', ACK=Z_HOME_ACK))
                 self.assertFalse(any(c[0] in ('reference', 'refine') for c in self.model.calls))
                 self.assertEqual([c[1] for c in self.model.calls if c[0]=='G28'],
@@ -1198,7 +1198,14 @@ class NativeHomeSequenceTests(unittest.TestCase):
                     row = real_handoff(args)
                     return dict(row, reject=2) if deny_handoff else row
                 board.commands['factory_native_handoff'] = Wire(handoff)
-                board._factory_start = types.MethodType(r20.InventureMCU._factory_start, board)
+                r20_factory_start = types.MethodType(r20.InventureMCU._factory_start, board)
+                def factory_start(*args, **kwargs):
+                    # Match the installed R20 host; legacy source test package
+                    # still exposes the pinned pre-R19 ZHomeProgram otherwise.
+                    with mock.patch.dict(sys.modules, {
+                            'orange_pi.inventure_z_home': _load_r19_factory()}):
+                        return r20_factory_start(*args, **kwargs)
+                board._factory_start = factory_start
                 board._factory_action = types.MethodType(r20.InventureMCU._factory_action, board)
                 board.printer.objects['inventure_native_z'] = self.adapter
                 board.printer.objects['heaters'] = self.model

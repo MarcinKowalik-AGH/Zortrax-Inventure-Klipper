@@ -1,14 +1,22 @@
 """R20 exclusive SERVICE scope: test actual MCU host action policy."""
-import importlib.util
+import ast
 from pathlib import Path
 import unittest
 
 def load_policy():
+    # Compile the exact pure safety-policy function from the installed
+    # module. The full MCU host module legitimately imports pinned Klipper
+    # extras that are not importable in this isolated unit test.
     path = Path(__file__).resolve().parents[1]/'restored/exclusive_service_r20/inventure_mcu.py'
-    spec = importlib.util.spec_from_file_location('orange_pi.inventure_mcu_r20_policy_test', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.validate_native_excursion_action
+    tree = ast.parse(path.read_text())
+    function, = [node for node in tree.body if
+                 isinstance(node, ast.FunctionDef)
+                 and node.name == 'validate_native_excursion_action']
+    body = ast.Module(body=[ast.Import(names=[ast.alias(name='math')]), function],
+                      type_ignores=[])
+    namespace = {}
+    exec(compile(body, str(path), 'exec'), namespace)
+    return namespace['validate_native_excursion_action']
 
 class ExclusiveServiceTests(unittest.TestCase):
     @classmethod
