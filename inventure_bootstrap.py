@@ -127,7 +127,9 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo, *, restore_oled=True, restore_native_z=True, restore_motion_owner=True):
+def _plan(repo, *, restore_oled=True, restore_native_z=True, restore_motion_owner=None):
+    if restore_motion_owner is None:
+        restore_motion_owner = restore_oled and restore_native_z
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
