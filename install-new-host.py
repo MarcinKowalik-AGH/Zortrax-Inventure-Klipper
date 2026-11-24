@@ -43,6 +43,7 @@ MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
 MCU_SERVICE_HANDOFF_RELEASE = 'RC8-CONTROL-R7-HOMING-R17'
 MCU_NATIVE_PROFILE_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
 MCU_SCHEDULER_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
+MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
@@ -80,24 +81,30 @@ def require_mcu(mcu):
     wrong = {key: constants.get(key) for key, value in expected.items()
              if str(constants.get(key)) != str(value)}
     if release not in (MCU_RELEASE, MCU_SERVICE_HANDOFF_RELEASE,
-                       MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE):
+                       MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
+                       MCU_SAFETY_POLICY_RELEASE):
         wrong['INVENTURE_MCU_RELEASE'] = release
     if release in (MCU_SERVICE_HANDOFF_RELEASE, MCU_NATIVE_PROFILE_RELEASE,
-                   MCU_SCHEDULER_RELEASE) and str(
+                   MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE) and str(
             constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')) != '1':
         wrong['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = constants.get(
             'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')
-    if release in (MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE):
+    if release in (MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
+                   MCU_SAFETY_POLICY_RELEASE):
         for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
             if str(constants.get(key)) != '1':
                 wrong[key] = constants.get(key)
-    if release == MCU_SCHEDULER_RELEASE:
+    if release in (MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE):
         for key,value in (('INVENTURE_SCHEDULER_ABI',1),
                           ('INVENTURE_SCHEDULER_NATIVE_HZ',10000),
                           ('INVENTURE_SCHEDULER_SERVICE_HZ',20000),
                           ('INVENTURE_SCHEDULER_GUARD_MS',10)):
             if str(constants.get(key)) != str(value):
                 wrong[key] = constants.get(key)
+    if release == MCU_SAFETY_POLICY_RELEASE:
+        for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI'):
+            if str(constants.get(key))!='1':
+                wrong[key]=constants.get(key)
     if wrong:
         raise ValueError('Install the compatible InventureBoot 1.7 MCU application. '
                          'R38.6 requires MCU R16+ with XY handoff and Z clearance; '
@@ -111,6 +118,10 @@ def require_mcu(mcu):
                     str(constants.get('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 0)) == '1'),
                 fault_reason_abi=int(
                     str(constants.get('INVENTURE_FAULT_REASON_ABI', 0)) == '1'),
+                service_native_split_abi=int(str(
+                    constants.get('INVENTURE_SERVICE_NATIVE_SPLIT_ABI',0))=='1'),
+                policy_status_abi=int(str(
+                    constants.get('INVENTURE_POLICY_STATUS_ABI',0))=='1'),
                 scheduler_abi=int(str(constants.get('INVENTURE_SCHEDULER_ABI',0)) == '1'),
                 scheduler_native_hz=constants.get('INVENTURE_SCHEDULER_NATIVE_HZ'),
                 scheduler_service_hz=constants.get('INVENTURE_SCHEDULER_SERVICE_HZ'))

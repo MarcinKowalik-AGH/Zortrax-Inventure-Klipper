@@ -428,7 +428,7 @@ static void service_strict_native_broad_guards(void) {
     // NATIVE positioning. Independent absolute overtemperature stays enabled.
     control_reset(0);
     latest_adc[4]=4095;
-    assert(!control_sensors_valid(control_guard_mask|31,mock_now));
+    assert(!service_sensors_valid(control_guard_mask|31,mock_now));
     control_command(1,CT_NATIVE);
     assert(inventure_is_armed() && !fault && control_mode==CT_NATIVE);
     control_guard(mock_now);
@@ -466,6 +466,57 @@ static void service_strict_native_broad_guards(void) {
     latest_adc[0]=1930;
     assert(!native_sensors_valid(mock_now)); // >310C always rejected
     puts("PASS SERVICE strict and NATIVE broad: unrelated sensor fault tolerated, hot heaters monitored");
+}
+
+static void service_native_policy_telemetry(void) {
+    control_reset(0);
+    policy_queries=0;memset(policy_reply,0,sizeof(policy_reply));
+    // Diagnostic queries must not alter the SERVICE guard mask or any
+    // actuators and must not manufacture a native heater requirement.
+    control_guard_mask=BIT(0)|BIT(2)|BIT(5);
+    uint32_t before_mode=control_mode,before_mask=control_guard_mask;
+    command_inventure_policy_query(NULL);
+    assert(policy_queries==1);
+    assert(policy_reply[0]==CT_SERVICE && policy_reply[1]==1);
+    assert(policy_reply[2]==before_mask && policy_reply[3]==0);
+    assert(policy_reply[4]==0 && policy_reply[5]==0);
+    assert(control_mode==before_mode && control_guard_mask==before_mask);
+    control_command(1,CT_NATIVE);
+    command_inventure_policy_query(NULL);
+    assert(policy_queries==2 && policy_reply[0]==CT_NATIVE
+           && policy_reply[1]==2 && policy_reply[2]==before_mask);
+    assert(policy_reply[3]==0 && policy_reply[4]==0 && policy_reply[5]==0);
+
+    // Mark T0 hot, then turn its PWM off. The required NATIVE thermistor
+    // is still tracked independently of the SERVICE sensor-mask settings.
+    inventure_adc_observe(ADC1,10,1250);
+    assert(native_sensors_valid(mock_now));
+    control_heater_duty[0]=64;
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[3]&1 && policy_reply[4]&1
+           && (policy_reply[5]&(BIT(0)|BIT(5)|BIT(6)))==
+              (BIT(0)|BIT(5)|BIT(6)));
+    control_heater_duty[0]=0;
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[3]&1 && !(policy_reply[4]&1) && policy_reply[5]&1);
+
+    // A different temperature in a valid hard envelope must not become
+    // an implicit requirement inherited from a SERVICE custom minimum.
+    control_min[0]=250;control_max[0]=260;
+    assert(!service_sensors_valid(control_guard_mask|31,mock_now));
+    assert(native_sensors_valid(mock_now));
+    control_guard(mock_now);assert(control_mode==CT_NATIVE && !fault);
+
+    // Physical tray protection is unchanged by the selected policy.
+    native_z_guard_active=1;GPIOC->IDR|=BIT(13);
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"PC13 trip bypass");}
+    expect_failure=0;
+    assert(fault==7);
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[6]==7 && policy_reply[0]==CT_OFF);
+    assert(first_safety_trip.reason==7 && first_safety_trip.mode==CT_NATIVE);
+    puts("PASS separated service/native policy telemetry: effective mask, hot/energized requirements, PC13 fail-closed");
 }
 
 static void first_fault_cause_snapshotted(void) {
@@ -594,7 +645,7 @@ int main(void) {
     scheduler_native_service_stress();
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
-    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();service_strict_native_broad_guards();first_fault_cause_snapshotted();auxiliary_controls();global_door_policy();
+    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();service_strict_native_broad_guards();service_native_policy_telemetry();first_fault_cause_snapshotted();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }
