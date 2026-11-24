@@ -48,6 +48,17 @@ class PureGuardsTests(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 installer.unit_text(argv)
 
+    def test_r17_native_service_handoff_capability_checked_without_disabling_r16(self):
+        legacy = mcu_identity()
+        self.assertEqual(installer.require_mcu(legacy)['native_service_handoff_abi'], 0)
+        modern = deepcopy(legacy)
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SERVICE_HANDOFF_RELEASE
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 1
+        self.assertEqual(installer.require_mcu(modern)['native_service_handoff_abi'], 1)
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 0
+        with self.assertRaisesRegex(ValueError, 'R17'):
+            installer.require_mcu(modern)
+
     def test_mcu_release_and_both_abis_are_required(self):
         good = mcu_identity()
         self.assertEqual(installer.require_mcu(good)['native_z_clearance_abi'], 1)

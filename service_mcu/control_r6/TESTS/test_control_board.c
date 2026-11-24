@@ -266,6 +266,51 @@ static void service_to_native_heat(void) {
     puts("PASS CLEAN to native Home heating: GPIO mode, safe first duty, existing PWM handles, shared timer and interlocks");
 }
 
+// Regression: Home X -> Home Y -> Home XY leaves CT_NATIVE armed, even
+// after the stepper enable has been released. Home All must then acquire
+// SERVICE for T0 selection without STOP/latch or an MCU restart.
+static void native_to_service_quiescent_handoff(void) {
+    control_reset(0);
+    control_command(1, CT_NATIVE);
+    assert(inventure_is_armed() && control_mode==CT_NATIVE);
+    // A queued/energized native axis must never be handed to SERVICE.
+    GPIOE->ODR |= BIT(10);
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_NATIVE && !control_latched);
+    GPIOE->ODR &= ~BIT(10); // Klipper motor_off + wait_moves completed.
+    // An active native heater, guard, direct motion or feeder also blocks.
+    control_heater_duty[0]=80;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    control_heater_duty[0]=0;
+    co[6].duty=50;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    co[6].duty=0;
+    native_z_guard_active=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_guard_active=0;
+    native_z_refine_held=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_refine_held=0;
+    cm.active=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    cm.active=0;
+    feeder_running[0]=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    feeder_running[0]=0;
+    // Exact previously failing transition: idle native after X/Y/XY.
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_SERVICE && !inventure_is_armed());
+    assert(!control_latched && !fault);
+    control_command(1, CT_NATIVE);
+    assert(control_mode==CT_NATIVE && inventure_is_armed());
+    // STOP remains fail-closed, not an alternative handoff.
+    control_command(2, 0);
+    assert(control_mode==CT_OFF && control_latched);
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_OFF && control_latched);
+    puts("PASS guarded NATIVE->SERVICE after X/Y/XY: no active motors, heaters, Z guard, feeder or STOP bypass");
+}
+
 static void native_ownership(void) {
     control_reset(0);control_command(1,CT_NATIVE);assert(inventure_is_armed());
     assert(inventure_filter_gpio(GPIOE,BIT(10),1)==1);
@@ -376,7 +421,7 @@ static void global_door_policy(void) {
 int main(void) {
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
-    service_to_native_heat();native_ownership();auxiliary_controls();global_door_policy();
+    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }

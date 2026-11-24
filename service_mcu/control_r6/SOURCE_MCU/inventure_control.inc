@@ -12,6 +12,7 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_HEATER_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_XY_HANDOFF_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_SERVICE_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
@@ -727,6 +728,23 @@ static uint8_t control_take_native_heaters(void) {
     return 1;
 }
 
+// The generic motor_test_busy() deliberately treats CT_NATIVE as busy.
+// Native-to-service ownership is a narrower, explicit idle handoff:
+// PE10 must already be physically disabled by Klipper motor_off, all
+// native heater PWM outputs must be off, and no MCU owner/guard may remain.
+// Never clear the safety latch, fake a homing reference, or disarm queued
+// native motion as an implicit side effect of this transition.
+static uint8_t native_service_quiescent(void) {
+    if ((GPIOE->ODR & BIT(10)) || native_z_guard_active || native_z_refine_held
+        || native_z_refine_conflict || cm.active || fs.active || sl.active
+        || motor_test.running || xy_seek_busy() || t0_heat_busy()
+        || fan_manual_active() || feeder_running[0] || feeder_running[1]
+        || locks_on[0] || locks_on[1]) return 0;
+    for (unsigned h = 0; h < ARRAY_SIZE(th_heaters); h++)
+        if (control_heater_duty[h] || co[6+h].duty) return 0;
+    return 1;
+}
+
 void command_inventure_control(uint32_t *args) {
     unsigned action=args[0],mode=args[1];irqstatus_t flags=irq_save();uint8_t reject=0;
     uint32_t now=timer_read_time();
@@ -736,6 +754,11 @@ void command_inventure_control(uint32_t *args) {
         if(mode==CT_OFF){control_stop_all();control_mode=CT_OFF;}
         else if(mode==control_mode){} // idempotent; never renew any output timer
         else if(control_latched)reject=4;
+        else if(mode==CT_SERVICE && control_mode==CT_NATIVE) {
+            if(!control_ready(now))reject=3;
+            else if(!native_service_quiescent())reject=2;
+            else control_mode=CT_SERVICE;
+        }
         else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active
                 || (cm.active && cm.fast_direct))reject=2;
         else if(!control_ready(now))reject=3;

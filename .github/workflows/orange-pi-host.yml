@@ -1,7 +1,7 @@
 name: Verify Orange Pi host updater
 on:
   push:
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
