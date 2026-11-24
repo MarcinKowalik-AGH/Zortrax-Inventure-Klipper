@@ -2,7 +2,7 @@ name: Verify Orange Pi host updater
 on:
   push:
     # R17 source candidates are tested without modifying the released R16 image.
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation]
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation, fix/inventure-r22-strict-service-broad-native-policy]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -18,6 +18,10 @@ on:
       - 'inventure_motion_owner_restore.py'
       - 'inventure_service_excursion_restore.py'
       - 'inventure_scheduler_restore.py'
+      - 'inventure_safety_policy_restore.py'
+      - 'restored/safety_policy_r22/**'
+      - 'tests/test_inventure_safety_policy_r22.py'
+      - '.github/workflows/inventure-r22-policy.yml'
       - 'restored/scheduler_r21/**'
       - 'tests/test_inventure_timing_host_r21.py'
       - 'restored/exclusive_service_r20/**'
