@@ -49,14 +49,15 @@ static void fan_evaluate(void) {
     }
     if(fan_fault_mask & 0x0d) trip(5);
 }
-static void fan_sample(uint8_t rising,uint32_t now) {
+static void fan_sample(uint8_t rising,uint32_t now,unsigned elapsed_slots) {
     uint8_t observed=rising & fan_high & 15u;
     while(observed) {
         unsigned i=__builtin_ctz((unsigned)observed);
         fan_edges[i]++;observed&=observed-1u;
     }
-    if(++fan_sample_ticks>=20000) {
-        fan_sample_ticks=0;
+    fan_sample_ticks += elapsed_slots;
+    if(fan_sample_ticks>=20000) {
+        fan_sample_ticks-=20000;
         for(unsigned i=0;i<4;i++) {
             uint32_t count=fan_edges[i]; fan_window_edges[i]=count; fan_edges[i]=0;
             fan_window_duty[i]=fan_pwm[i];
@@ -65,7 +66,8 @@ static void fan_sample(uint8_t rising,uint32_t now) {
         fan_window_mixed=fan_mixed; fan_mixed=0;
         fan_window_clock=now; fan_sequence++;
     }
-    if(++fan_detector_ticks>=2020) {fan_detector_ticks=0;fan_evaluate();}
+    fan_detector_ticks+=elapsed_slots;
+    if(fan_detector_ticks>=2020) {fan_detector_ticks-=2020;fan_evaluate();}
 }
 void command_inventure_fan_query(uint32_t *args) {
     (void)args;
