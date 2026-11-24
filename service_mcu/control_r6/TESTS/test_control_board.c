@@ -127,7 +127,10 @@ static void scheduler_native_service_stress(void) {
     sample_event(&sample_timer);
     mock_read_cycles=0;
     assert(sample_reschedules>old_resync);
-    assert((int32_t)(sample_timer.waketime-mock_now)>0);
+    // The mock timer advances again on the final read. Compare against
+    // the measured callback completion, not the model's next future tick.
+    assert((int32_t)(sample_timer.waketime -
+           (sample_last_clock + sample_last_work)) > 0);
     assert(sample_peak_work_ticks>=timer_from_us(110));
     puts("PASS scheduler: NATIVE 10kHz / SERVICE 20kHz / 10ms guard / tach cadence / wrap / delayed ISR resync");
 }
