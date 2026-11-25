@@ -70,10 +70,12 @@ def package(build, previews, output, leveling_previews=None):
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
-    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_OLED.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_STAGES.md').read_bytes()
+    files['HOST_LEVELING_RC3.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_OLED.md').read_bytes()
     files['HOST_SERVICE_ENTRY.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
     for name in ('INVENTURE_R23_LEVELING_PHYSICAL_2026-11-25.json', 'INVENTURE_R23_LEVELING_UI.json'):
         files['validation/'+name] = (validation/name).read_bytes()
+    files['validation/INVENTURE_R23_LEVELING_STAGES.json'] = (validation/'INVENTURE_R23_LEVELING_STAGES.json').read_bytes()
     for name in ('INVENTURE_R23_M300_DISPLAY_PROVENANCE.json',
                  'INVENTURE_R23_SOFTWARE_2026-11-24.json', 'INVENTURE_R23_RLE_BENCHMARK.json'):
         files['validation/'+name] = (validation/name).read_bytes()
@@ -92,6 +94,9 @@ def package(build, previews, output, leveling_previews=None):
             data = (leveling_previews/name).read_bytes()
             require(data.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid leveling preview: '+name)
             files['preview/leveling/'+name] = data
+        gallery=proof.get('gallery')
+        require(gallery == 'OLED_LEVELING_STAGES.png','Missing leveling stage gallery')
+        files['preview/leveling/'+gallery]=(leveling_previews/gallery).read_bytes()
     source_archive = subprocess.check_output(
         ['git', 'archive', '--format=zip', '--prefix=INVENTURE_R23_SOURCE/', 'HEAD'], cwd=ROOT)
     with ZipFile(BytesIO(source_archive)) as archive:

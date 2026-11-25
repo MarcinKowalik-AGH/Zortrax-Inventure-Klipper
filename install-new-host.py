@@ -33,6 +33,7 @@ import inventure_bootstrap as bootstrap
 from inventure_bootstrap_config import stage_config
 import inventure_config_layout as layout
 import fluidd_web
+from inventure_leveling_stages_restore import RELEASE as LEVELING_UI_RELEASE
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -263,10 +264,13 @@ def wait_ready(host, config, seconds=90):
                     return dict(info, firmware_restart_required=True)
                 raise RuntimeError('New Klipper configuration failed: '+message)
             if state == 'ready':
-                values = api('/printer/objects/query?inventure_mcu&configfile&mcu')['status']
+                values = api('/printer/objects/query?inventure_mcu&configfile&mcu&inventure_oled')['status']
                 board = values.get('inventure_mcu', {})
                 if board.get('host_revision') != bootstrap.HOST_REVISION:
                     raise RuntimeError('Ready process has the wrong Inventure host revision')
+                if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
+                    raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
+                                       + LEVELING_UI_RELEASE)
                 require_mcu(values.get('mcu', {}))
                 return dict(info, firmware_restart_required=False, objects=values)
             reason = message or state

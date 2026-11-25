@@ -18,7 +18,8 @@ from zipfile import ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_TARGETS = {Path('klippy/extras/inventure_menu_service.py'),
-              Path('klippy/extras/inventure_oled_graphics.py')}
+              Path('klippy/extras/inventure_oled_graphics.py'),
+              Path('klippy/extras/inventure_oled.py')}
 spec = importlib.util.spec_from_file_location("inventure_bootstrap", ROOT/"inventure_bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
@@ -148,6 +149,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_safety_policy_restore.py', source/'inventure_safety_policy_restore.py')
             shutil.copyfile(ROOT/'inventure_operator_service_restore.py', source/'inventure_operator_service_restore.py')
             shutil.copyfile(ROOT/'inventure_leveling_ui_restore.py', source/'inventure_leveling_ui_restore.py')
+            shutil.copyfile(ROOT/'inventure_leveling_stages_restore.py', source/'inventure_leveling_stages_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -435,6 +437,20 @@ class RealHostBootstrapTests(unittest.TestCase):
                 if path not in plan['files']:self.assertEqual(path.read_bytes(),before[path])
             for path,(old,_) in plan['files'].items():path.write_bytes(old)
             self.assertEqual(before,{p:p.read_bytes() for p in stage.rglob('*') if p.is_file()})
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],'VERIFIED_LEGACY_HOST')
+
+    def test_published_rc3_upgrades_only_presentation_and_preserves_motion_programs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage=Path(temp)/'host'
+            _,files,metadata=bootstrap._plan(ROOT,restore_leveling_stages=False)
+            bootstrap._write_files(stage,files)
+            (stage/bootstrap.MANIFEST_NAME).write_bytes(bootstrap._metadata_bytes(metadata))
+            (stage/bootstrap.MANIFEST_NAME).chmod(0o644)
+            plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            self.assertEqual({p.relative_to(stage) for p in plan['files']},UI_TARGETS | {Path(bootstrap.MANIFEST_NAME)})
+            for path,(_,after) in plan['files'].items():path.write_bytes(after)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path,(before,_) in plan['files'].items():path.write_bytes(before)
             self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],'VERIFIED_LEGACY_HOST')
 
     def test_leveling_ui_tamper_is_rejected_before_staging(self):

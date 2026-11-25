@@ -1,6 +1,13 @@
 # Inventure MCU R23 OLED — points 1–5 candidate
 
-## Latest host update: preliminary leveling on the physical OLED
+## Latest host update: verified OLED activation and all preparation stages
+
+[`inventure-r23-leveling-oled-rc4`](INVENTURE_R23_LEVELING_STAGES.md) adds
+live-process checks for the actually loaded OLED UI and illustrated Home,
+heating, T0 selection and parking screens. The reported `Back / saved` view
+identified a running menu without the RC3 wizard. MCU R23 remains unchanged.
+
+## R23.2: preliminary leveling on the physical OLED
 
 [`inventure-r23-leveling-oled-rc3`](INVENTURE_R23_LEVELING_OLED.md) adds the
 original Inventure screw animations/messages and five-point result to the

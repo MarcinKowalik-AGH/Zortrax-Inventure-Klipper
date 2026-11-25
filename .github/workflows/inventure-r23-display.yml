@@ -16,11 +16,16 @@ on:
       - 'inventure_bootstrap.py'
       - 'inventure_operator_service_restore.py'
       - 'inventure_leveling_ui_restore.py'
+      - 'inventure_leveling_stages_restore.py'
       - 'restored/leveling_ui_r23/**'
+      - 'restored/leveling_stages_r23/**'
       - 'ci/extract_inventure_leveling_ui.py'
       - 'ci/render_inventure_leveling_preview.py'
       - 'tests/test_inventure_leveling_oled_r23.py'
       - 'docs/INVENTURE_R23_LEVELING_OLED.md'
+      - 'docs/INVENTURE_R23_LEVELING_STAGES.md'
+      - 'install-new-host.py'
+      - 'tests/test_install_new_host.py'
       - 'ci/check_inventure_full_cycles.py'
       - 'tests/test_inventure_operator_service_r23.py'
       - 'tests/test_inventure_bootstrap.py'
@@ -150,7 +155,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-leveling-oled-rc3
+          CANDIDATE_TAG: inventure-r23-leveling-oled-rc4
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -166,7 +171,9 @@ jobs:
             "$ARTIFACT_DIR/r23-build/klipper.bin" \
             "$ARTIFACT_DIR/r23-build/klipper.dict" \
             "$ARTIFACT_DIR/r23-build/SHA256SUMS" \
+            "$ARTIFACT_DIR/r23-leveling-preview/OLED_LEVELING_STAGES.png" \
+            "$ARTIFACT_DIR/r23-leveling-preview/INVENTURE_R23_LEVELING_PREVIEW.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.2 host · OEM leveling on physical OLED' \
-            --notes-file docs/INVENTURE_R23_LEVELING_OLED.md \
+            --title 'Inventure R23.3 host · complete OLED stages and verified UI activation' \
+            --notes-file docs/INVENTURE_R23_LEVELING_STAGES.md \
             --prerelease --latest=false

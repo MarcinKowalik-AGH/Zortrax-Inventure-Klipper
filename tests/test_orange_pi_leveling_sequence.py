@@ -121,7 +121,7 @@ class PlatformDevice(z_host.ZDevice):
 
 class SequenceTests(unittest.TestCase):
     def simulate(self, active, fail_final_stop=False, door_lock=False, both_rear=False,
-                 open_throughout=False, binding=True):
+                 open_throughout=False, binding=True, observer=None):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'printer.cfg'
             saved = json.dumps(saved_pad_record())
@@ -146,11 +146,15 @@ class SequenceTests(unittest.TestCase):
                                   factory_session=Wire(device.query_factory), z_edge=Wire(device.z_edge))
             board.door_policy_global = True
             board.commands['door_policy'] = Wire(device.door_policy)
+            if observer is not None:
+                observer(board,device)
             board.cmd_platform_level(Command(ACTION='START'))
             prompts = []
             previous_rear = None
             until = board.reactor.now + 3605.
             while board.load_test_context is not None:
+                if observer is not None:
+                    observer(board,device)
                 run = board.platform_level_status()
                 progress = run['contact_progress']
                 if progress is not None and run['phase'] in ('reference', 'measuring'):

@@ -219,7 +219,9 @@ class TransactionTests(unittest.TestCase):
         self.mcu = mcu_identity()
         self.board = {'host_revision': installer.bootstrap.HOST_REVISION, 'armed': 0, 'fault': 0,
                       'connected': True, 'status_age': 0.1}
-        self.native_z, self.oled = {'running': False}, {'ui_transport': {'active_work': False}}
+        self.native_z, self.oled = {'running': False}, {
+            'ui_transport': {'active_work': False},
+            'procedure_ui_release': installer.LEVELING_UI_RELEASE}
         self.serial, self.baud = '/dev/ttyS5', 750000
         self.macros = {'INVENTURE_DIAGNOSTICS', 'INVENTURE_HOME_ALL', 'PAUSE'}
         self.fail_locale_once = self.fail_web = self.fail_after_web = False
@@ -450,6 +452,14 @@ class TransactionTests(unittest.TestCase):
         transaction = self.transaction()
         self.state, self.message = 'error', 'Invalid new configuration'
         with self.assertRaisesRegex(RuntimeError, 'previous host/configuration restored'):
+            self.activate(transaction)
+        self.assert_restored()
+        self.assertFalse(transaction.settings_changed)
+
+    def test_ready_process_with_old_oled_ui_is_refused_and_rolled_back(self):
+        transaction=self.transaction()
+        self.oled.pop('procedure_ui_release')
+        with self.assertRaisesRegex(RuntimeError,'did not load the matching OLED procedure UI'):
             self.activate(transaction)
         self.assert_restored()
         self.assertFalse(transaction.settings_changed)
