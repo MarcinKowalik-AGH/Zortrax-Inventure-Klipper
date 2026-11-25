@@ -33,6 +33,9 @@ import inventure_bootstrap as bootstrap
 from inventure_bootstrap_config import stage_config
 import inventure_config_layout as layout
 import fluidd_web
+from inventure_configuration_audit_restore import RELEASE as LEVELING_UI_RELEASE
+import inventure_accepted_home_restore as accepted_home
+import inventure_oem_home_restore as oem_home
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -40,8 +43,14 @@ spec.loader.exec_module(updater)
 core, dashboard = updater.core, updater.dashboard
 
 MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
+MCU_SERVICE_HANDOFF_RELEASE = 'RC8-CONTROL-R7-HOMING-R17'
+MCU_NATIVE_PROFILE_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
+MCU_SCHEDULER_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
+MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
+MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
+INSTALLER_RELEASE = 'R23.7.1'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -71,20 +80,67 @@ def verify_snapshot(snapshot):
 
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
-    expected = {'INVENTURE_MCU_RELEASE': MCU_RELEASE,
-                'INVENTURE_NATIVE_XY_HANDOFF_ABI': 1,
+    release = constants.get('INVENTURE_MCU_RELEASE')
+    expected = {'INVENTURE_NATIVE_XY_HANDOFF_ABI': 1,
                 'INVENTURE_NATIVE_Z_CLEARANCE_ABI': 1}
     wrong = {key: constants.get(key) for key, value in expected.items()
              if str(constants.get(key)) != str(value)}
+    if release not in (MCU_RELEASE, MCU_SERVICE_HANDOFF_RELEASE,
+                       MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
+                       MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
+        wrong['INVENTURE_MCU_RELEASE'] = release
+    if release in (MCU_SERVICE_HANDOFF_RELEASE, MCU_NATIVE_PROFILE_RELEASE,
+                   MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE) and str(
+            constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')) != '1':
+        wrong['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = constants.get(
+            'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI')
+    if release in (MCU_NATIVE_PROFILE_RELEASE, MCU_SCHEDULER_RELEASE,
+                   MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
+        for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
+            if str(constants.get(key)) != '1':
+                wrong[key] = constants.get(key)
+    if release in (MCU_SCHEDULER_RELEASE, MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
+        for key,value in (('INVENTURE_SCHEDULER_ABI',1),
+                          ('INVENTURE_SCHEDULER_NATIVE_HZ',10000),
+                          ('INVENTURE_SCHEDULER_SERVICE_HZ',20000),
+                          ('INVENTURE_SCHEDULER_GUARD_MS',10)):
+            if str(constants.get(key)) != str(value):
+                wrong[key] = constants.get(key)
+    if release in (MCU_SAFETY_POLICY_RELEASE, MCU_DISPLAY_RELEASE):
+        for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI'):
+            if str(constants.get(key))!='1':
+                wrong[key]=constants.get(key)
+    if release == MCU_DISPLAY_RELEASE:
+        for key,value in (('INVENTURE_DISPLAY_ERROR_ABI',1),
+                          ('INVENTURE_LOCAL_OLED_ANIMATION_ABI',1),
+                          ('INVENTURE_LOCAL_OLED_NATIVE_GRAY4',1),
+                          ('INVENTURE_LOCAL_SPLASH_ABI',1),
+                          ('INVENTURE_OLED_HOSTLINK_TIMEOUT_MS',1500)):
+            if str(constants.get(key))!=str(value):
+                wrong[key]=constants.get(key)
     if wrong:
-        raise ValueError('Install the InventureBoot 1.7 MCU R16 application first. '
-                         'R38.6 requires the R16 XY handoff and Z clearance. Observed: '
+        raise ValueError('Install the compatible InventureBoot 1.7 MCU application. '
+                         'R38.6 requires MCU R16+ with XY handoff and Z clearance; '
+                         'Home All after separate Home X/Y requires R17. Observed: '
                          + json.dumps(wrong, sort_keys=True))
-    return dict(mcu_version=mcu.get('mcu_version'), mcu_release=MCU_RELEASE,
-                native_xy_handoff_abi=1, native_z_clearance_abi=1)
+    return dict(mcu_version=mcu.get('mcu_version'), mcu_release=release,
+                native_xy_handoff_abi=1, native_z_clearance_abi=1,
+                native_service_handoff_abi=int(
+                    str(constants.get('INVENTURE_NATIVE_SERVICE_HANDOFF_ABI', 0)) == '1'),
+                native_thermal_profile_abi=int(
+                    str(constants.get('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 0)) == '1'),
+                fault_reason_abi=int(
+                    str(constants.get('INVENTURE_FAULT_REASON_ABI', 0)) == '1'),
+                service_native_split_abi=int(str(
+                    constants.get('INVENTURE_SERVICE_NATIVE_SPLIT_ABI',0))=='1'),
+                policy_status_abi=int(str(
+                    constants.get('INVENTURE_POLICY_STATUS_ABI',0))=='1'),
+                scheduler_abi=int(str(constants.get('INVENTURE_SCHEDULER_ABI',0)) == '1'),
+                scheduler_native_hz=constants.get('INVENTURE_SCHEDULER_NATIVE_HZ'),
+                scheduler_service_hz=constants.get('INVENTURE_SCHEDULER_SERVICE_HZ'))
 
 
-def unit_text(argv):
+def unit_text(argv, working_directory=None):
     def quote(value):
         if not isinstance(value, str) or any(ord(c) < 32 or ord(c) == 127 for c in value):
             raise ValueError('Invalid control character in service argument')
@@ -92,8 +148,35 @@ def unit_text(argv):
         return '"'+value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$')+'"'
     if not argv or not Path(argv[0]).is_absolute():
         raise ValueError('Use the absolute Python path of the running Klipper service')
-    return (UNIT_MARKER+'[Service]\nExecStart=\nExecStart='
+    directory = ''
+    if working_directory is not None:
+        value = str(working_directory)
+        if (not Path(value).is_absolute() or value != value.strip()
+                or '\\' in value or any(ord(c)<32 or ord(c)==127 for c in value)):
+            raise ValueError('Use an absolute Klipper working directory')
+        # WorkingDirectory is one path, not an ExecStart word list. Quotes
+        # remain literal and make an otherwise absolute path invalid.
+        directory = 'WorkingDirectory='+value.replace('%','%%')+'\n'
+    return (UNIT_MARKER+'[Service]\n'+directory+'ExecStart=\nExecStart='
             +' '.join(map(quote, argv))+'\n').encode()
+
+
+def validate_service_unit(data, directory):
+    """Use systemd's actual parser before any active service is stopped."""
+    analyzer = shutil.which('systemd-analyze')
+    if analyzer is None:
+        raise ValueError('systemd-analyze is required to validate the Klipper service before activation')
+    folder = directory/'systemd-validation'
+    folder.mkdir(mode=0o700)
+    candidate = folder/'inventure-validation.service'
+    candidate.write_bytes(b'[Unit]\nDescription=Inventure startup validation\n'+data)
+    result = subprocess.run([analyzer,'--man=no','verify',str(candidate)],
+                            capture_output=True,text=True,check=False,timeout=30)
+    (folder/'verification.log').write_text(result.stdout+result.stderr)
+    if result.returncode:
+        raise ValueError('The proposed Klipper service failed systemd validation: '
+                         +(result.stderr or result.stdout).strip())
+    return candidate
 
 
 def discover():
@@ -156,6 +239,19 @@ def idle_mcu():
     return status.get('mcu', {})
 
 
+def recoverable_startup(info):
+    """Only a failed configuration load may defer the live MCU check.
+
+    This does not accept a shutdown, connection timeout or printer fault.
+    The replacement is checked without serial I/O, then must become Ready
+    and pass the normal fresh, idle, compatible-MCU checks inside rollback.
+    """
+    message = str(info.get('state_message', '')).splitlines()[0]
+    return (info.get('state') == 'error'
+            and message in ("Unknown pin chip name 'inventure_r5'",
+                            "Unknown temperature sensor 'Inventure R5 ADC'"))
+
+
 def db_read(key):
     try:
         value = api('/server/database/item?namespace=fluidd&key='+urllib.parse.quote(key))['value']
@@ -193,28 +289,58 @@ def wait_api(seconds=30):
             time.sleep(.5)
 
 
-def wait_ready(host, config, seconds=90):
+def wait_ready(host, config, seconds=90, observation_path=None):
     """Never accept the old process's cached Ready response during reconnection."""
     deadline, reason = time.monotonic()+seconds, 'waiting for new Klipper'
     while True:
         try:
             process, _, _, script = core.running_service_script()
             info = api('/printer/info')
-            if (script.parent.parent != host or info.get('process_id') != int(process.name)
-                    or Path(info.get('klipper_path', '')).resolve() != host
-                    or Path(info.get('config_file', '')).resolve() != config
-                    or info.get('software_version') != bootstrap.VERSION):
-                raise ConnectionError('Waiting for the new service path, PID and release version')
+            expected=dict(service_script=str(host/'klippy/klippy.py'),
+                          process_id=int(process.name),klipper_path=str(host),
+                          config_file=str(config),software_version=bootstrap.VERSION)
+            observed=dict(service_script=str(script),
+                          **{key:info.get(key) for key in ('process_id','klipper_path','config_file','software_version')})
+            normalized=dict(observed)
+            for key in ('klipper_path','config_file'):
+                normalized[key]=str(Path(observed.get(key) or '').resolve())
+            mismatches={key:dict(expected=value,observed=observed.get(key))
+                        for key,value in expected.items() if normalized.get(key)!=value}
+            if observation_path is not None:
+                json_write(observation_path,dict(expected=expected,observed=observed,
+                           mismatches=mismatches,state=info.get('state'),
+                           state_message=info.get('state_message')))
+            if mismatches:
+                raise ConnectionError('Startup identity mismatch: '+json.dumps(mismatches,sort_keys=True))
             state, message = info.get('state'), str(info.get('state_message', ''))
             if state in ('error', 'shutdown'):
                 if message.partition('\n')[0].strip() == SHUTDOWN_LATCH:
                     return dict(info, firmware_restart_required=True)
                 raise RuntimeError('New Klipper configuration failed: '+message)
             if state == 'ready':
-                values = api('/printer/objects/query?inventure_mcu&configfile&mcu')['status']
+                values = api('/printer/objects/query?inventure_mcu&configfile&mcu&inventure_oled&inventure_native_z')['status']
                 board = values.get('inventure_mcu', {})
                 if board.get('host_revision') != bootstrap.HOST_REVISION:
                     raise RuntimeError('Ready process has the wrong Inventure host revision')
+                native = values.get('inventure_native_z', {})
+                home_reference = (oem_home if bootstrap.current_procedure_profile() == oem_home.PROFILE
+                                  else accepted_home)
+                if (Path(board.get('host_module','')).resolve() != host/'klippy/extras/inventure_mcu.py'
+                        or Path(native.get('host_module','')).resolve() != host/'klippy/extras/inventure_native_z.py'
+                        or native.get('homing_safety_release') != home_reference.RELEASE):
+                    raise RuntimeError('Ready process loaded a different Inventure MCU or Home module')
+                if (native.get('procedure_restore_release') != home_reference.RELEASE
+                        or native.get('procedure_baseline_blob') != home_reference.BASELINE_BLOB):
+                    raise RuntimeError('Ready process did not load the selected recorded Home procedure')
+                if (home_reference is oem_home
+                        and native.get('home_procedure_profile') != oem_home.PROFILE):
+                    raise RuntimeError('Ready process did not activate the complete OEM Home profile')
+                if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
+                    raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
+                                       + LEVELING_UI_RELEASE)
+                panel=values.get('inventure_oled', {})
+                if panel.get('operator_menu_root') != 'launcher' or panel.get('operator_menu_roots') != ['Klipper','Zortrax Inventure']:
+                    raise RuntimeError('Ready Klipper did not activate the requested Klipper / Zortrax Inventure menu')
                 require_mcu(values.get('mcu', {}))
                 return dict(info, firmware_restart_required=False, objects=values)
             reason = message or state
@@ -231,12 +357,28 @@ def write_unit(data, run_directory, dropin=DROPIN):
     else:
         local = run_directory/'service-dropin.conf'
         local.write_bytes(data)
-        subprocess.run(['sudo', '--', 'install', '-D', '-m', '0644', '--', str(local), str(dropin)],
-                       check=True, timeout=15)
+        # Publish atomically: an interrupted install must not truncate the
+        # active override and expose the old $KLIPPER_ARGS on next boot.
+        temporary = dropin.with_name(dropin.name+'.new')
+        try:
+            subprocess.run(['sudo', '--', 'install', '-D', '-m', '0644', '--', str(local), str(temporary)],
+                           check=True, timeout=15)
+            subprocess.run(['sudo', '--', 'mv', '-f', '--', str(temporary), str(dropin)],
+                           check=True, timeout=15)
+            if regular_bytes(dropin) != data:
+                raise OSError('The persisted Klipper service override did not verify')
+        finally:
+            subprocess.run(['sudo', '--', 'rm', '-f', '--', str(temporary)],
+                           check=False, timeout=15)
 
 
 def reload_units():
     subprocess.run(['sudo', '--', 'systemctl', 'daemon-reload'], check=True, timeout=30)
+    result=subprocess.run(['systemctl','show','klipper.service',
+                           '--property=NeedDaemonReload','--value'],
+                          check=True,capture_output=True,text=True,timeout=10)
+    if result.stdout.strip()!='no':
+        raise ValueError('systemd has not accepted the Klipper service reload: '+result.stdout.strip())
 
 
 def service_stopped():
@@ -267,7 +409,7 @@ class InstallTransaction:
         self.dropin, self.moon_changed, self.root = dropin, moon_changed, root
         self.before_start = before_start
         self.before_unit = regular_bytes(dropin)
-        if self.before_unit is not None and not self.before_unit.startswith(UNIT_MARKER.encode()):
+        if self.before_unit is not None and self.before_unit.strip() and not self.before_unit.startswith(UNIT_MARKER.encode()):
             raise ValueError('An unmanaged service override already exists: '+str(dropin))
         self.settings = {key: db_read(key) for key in DB_KEYS}
         self.written, self.unit_written, self.stopped, self.web_previous = [], False, False, None
@@ -377,10 +519,15 @@ class InstallTransaction:
         return errors
 
 
-def activate(transaction, host, config, web_source, macros, *, serial=None, baud=None):
+def activate(transaction, host, config, web_source, macros, *, serial=None, baud=None,
+             recover_startup=False):
     try:
         transaction.activate_files()
-        live = wait_ready(host, config)
+        live = wait_ready(host, config,observation_path=transaction.directory/'startup-observation.json')
+        if recover_startup:
+            if live.get('firmware_restart_required'):
+                raise ValueError('Startup repair requires a Ready printer before accepting the new runtime')
+            require_mcu(idle_mcu())
         transaction.settings_changed = True
         groups = dashboard.setup(dashboard.BASE, config.parent, apply=True, wait=60, english=True,
                                  installed_names=lambda: set(macros), expected_revision=bootstrap.HOST_REVISION,
@@ -389,7 +536,9 @@ def activate(transaction, host, config, web_source, macros, *, serial=None, baud
         if not fluidd_web.same_build(web_source, transaction.root):
             raise ValueError('Installed Fluidd assets did not verify')
         # Recheck after the dashboard readback, accepting only the new process.
-        final = wait_ready(host, config)
+        final = wait_ready(host, config,observation_path=transaction.directory/'startup-final-observation.json')
+        if recover_startup:
+            final['recovered_mcu'] = require_mcu(idle_mcu())
         if not final.get('firmware_restart_required') and serial is not None:
             options = final['objects']['configfile']['config']['mcu']
             if options.get('serial') != serial or int(options.get('baud', 0)) != baud:
@@ -421,19 +570,47 @@ def stage_runtime(host, directory):
     return prepared, provenance, {}, None
 
 
+def require_identical_configuration(host, original, staged):
+    module = updater.klipper_config_module(host)
+    before, _ = layout.active_klipper(module, original, {})
+    after, _ = layout.active_klipper(module, staged, {})
+    if layout.config_values(before) != layout.config_values(after):
+        raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
+
+
 def run(args):
+    restore_oem = bool(getattr(args, 'restore_oem_home', False))
+    if restore_oem and getattr(args, 'restore_accepted_home', False):
+        raise ValueError('Select exactly one Home recovery profile')
+    with bootstrap.procedure_profile(oem_home.PROFILE if restore_oem else 'current'):
+        return _run(args)
+
+
+def _run(args):
     if os.geteuid() == 0:
         raise ValueError('Run as the Klipper user without sudo; privileged service operations request sudo separately')
     os.umask(0o077)
     live = discover()
-    mcu = idle_mcu()
+    requested_recovery = bool(getattr(args, 'recover_startup', False))
+    recovery = requested_recovery and live['info'].get('state') != 'ready'
+    if recovery and not recoverable_startup(live['info']):
+        raise ValueError('--recover-startup requires the exact missing Inventure pin/sensor configuration error')
+    mcu = {} if recovery else idle_mcu()
     requirement = None
     try:
         mcu_identity = require_mcu(mcu)
     except ValueError as exc:
         mcu_identity, requirement = {'mcu_version': mcu.get('mcu_version')}, str(exc)
-    if args.apply and requirement:
+    if args.apply and requirement and not recovery:
         raise ValueError(requirement)
+    restore_oem = bool(getattr(args, 'restore_oem_home', False))
+    home_reference = oem_home if restore_oem else accepted_home
+    restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem)
+    reference_backup = None
+    if restore_home:
+        if recovery or args.destination.expanduser().absolute() != live['host']:
+            raise ValueError('Accepted Home recovery requires the currently running Ready runtime')
+        reference_backup = home_reference.require_reference_backup(ROOT, Path.home(), live['host'])
     installer_commit = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     directory = Path.home()/'inventure-installations'/stamp
@@ -448,6 +625,15 @@ def run(args):
     plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
                         gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
     staged = Path(plan['config_path'])
+    if restore_home:
+        require_identical_configuration(validation_host, config, staged)
+        plan['source_snapshot'][reference_backup['saved_file']] = home_reference.BASELINE_SHA256
+        plan['accepted_home_backup'] = reference_backup
+    if recovery:
+        active, _ = layout.active_klipper(updater.klipper_config_module(validation_host), staged, {})
+        for section in active.sections():
+            if section.startswith('delayed_gcode ') and active.getfloat(section, 'initial_duration', fallback=0) > 0:
+                raise ValueError('Startup repair refuses automatic delayed G-code: '+section)
     if staged.name != config.name:
         raise ValueError('Recovery requires the active main config to be named printer.cfg')
     validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
@@ -457,6 +643,11 @@ def run(args):
     if validation.returncode:
         raise ValueError('Offline Klipper validation failed: '+validation.stdout.strip()
                          + '. Details: '+str(directory/'offline-validation.log'))
+    argv = list(live['argv'])
+    argv[live['script_index']] = str(host/'klippy/klippy.py')
+    argv[live['script_index']+1] = str(config)
+    unit = unit_text(argv, working_directory=host)
+    validate_service_unit(unit, directory)
     json_write(directory/'plan.json', dict(runtime=provenance, runtime_before=runtime_before,
                                          runtime_target=str(host),
                                          runtime_files_to_restore=sorted(str(p) for p in runtime_updates),
@@ -489,26 +680,36 @@ def run(args):
     if set(moon_updates).intersection(updates):
         raise ValueError('Klipper and Moonraker unexpectedly share a modified file')
     updates.update(moon_updates)
-    argv = list(live['argv'])
-    argv[live['script_index']] = str(host/'klippy/klippy.py')
-    argv[live['script_index']+1] = str(config)
     # The selective rollback below owns only touched files. Keep a full private
     # copy as well, including operator JSON and inactive configuration files.
     shutil.copytree(config.parent, directory/'before-config', symlinks=True)
-    transaction = InstallTransaction(directory, updates, unit_text(argv), bool(moon_updates), web_root,
+    transaction = InstallTransaction(directory, updates, unit, bool(moon_updates), web_root,
                                      before_start=lambda: bootstrap.verify_host(host))
     verify_snapshot(plan['source_snapshot'])
     bootstrap.verify_host(host, allow_legacy=True)
     current = discover()
     if current['pid'] != live['pid'] or current['argv'] != live['argv']:
         raise ValueError('Klipper changed during preparation; no service switch performed')
-    mcu_identity = require_mcu(idle_mcu())
+    if recovery:
+        if not recoverable_startup(current['info']):
+            raise ValueError('The failed-startup state changed during preparation')
+    else:
+        mcu_identity = require_mcu(idle_mcu())
     print('Activating R38.6; original files and service override are backed up.', flush=True)
     final, groups = activate(transaction, host, config, web_source, plan['macros'],
-                             serial=args.serial, baud=args.baud)
+                            serial=args.serial, baud=args.baud, recover_startup=recovery)
+    if recovery:
+        mcu_identity = final.pop('recovered_mcu')
+        requirement = None
     pending = final.get('firmware_restart_required', False)
     result = dict(
         status='INSTALLED_MCU_RESTART_REQUIRED' if pending else 'INSTALLED_INVENTURE_R38_6',
+        installer_release=INSTALLER_RELEASE,
+        accepted_home_backup=reference_backup,
+        oem_home_restoration=provenance.get('oem_home_restoration'),
+        procedure_restore_release=final.get('objects',{}).get('inventure_native_z',{}).get('procedure_restore_release'),
+        procedure_baseline_blob=home_reference.BASELINE_BLOB,
+        home_procedure_profile=bootstrap.current_procedure_profile(),
         host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
         source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
         installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
@@ -541,6 +742,12 @@ def main():
     parser.add_argument('--apply', action='store_true', help='Activate after all offline checks; default only stages')
     parser.add_argument('--restore-field-profile', action='store_true',
                         help='Recover the recorded machine profile and missing published, accepted pad calibration')
+    parser.add_argument('--recover-startup', action='store_true',
+                        help='Repair the exact missing Inventure pin/sensor startup error, validating MCU after Ready')
+    parser.add_argument('--restore-accepted-home', action='store_true',
+                        help='Require the retained pre-R23.5 Home backup and preserve every effective printer setting')
+    parser.add_argument('--restore-oem-home', action='store_true',
+                        help='Restore the complete frozen R38.6 Home set with XY release; require its retained backup and preserve all settings')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

@@ -26,7 +26,7 @@ DECL_CONSTANT("INVENTURE_LOCAL_OLED_BUFFER_BYTES",128);
 DECL_CONSTANT("INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI", 1);
 extern uint8_t inventure_board_fault(void);
 extern uint8_t inventure_board_guard_input(void);
-DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-HOMING-R16");
+DECL_CONSTANT_STR("INVENTURE_MCU_RELEASE", "RC8-CONTROL-R7-HOMING-R23-OLED");
 
 static const uint8_t input_pins[16] = {
     GPIO('B',11), GPIO('C',15), GPIO('E',12), GPIO('C',14),
@@ -78,10 +78,12 @@ DECL_TASK(inventure_inputs_task);
 
 // OLED_ABI2: bounded operations, 64-bit host generation + nonwrapping token.
 // Shutdown policy is RESET held LOW, CS HIGH. PD3 is not toggled for safety.
-#define OLED_LEASE_TICKS (CONFIG_CLOCK_FREQ * 2u)
+#define OLED_LEASE_TICKS (CONFIG_CLOCK_FREQ / 2u * 3u)
+DECL_CONSTANT("INVENTURE_OLED_HOSTLINK_TIMEOUT_MS",1500);
 static struct gpio_out oled_cs,oled_dc,oled_reset,oled_gate;
 static struct spi_config oled_spi;
 static volatile uint8_t oled_configured,oled_active,oled_latched,oled_fault;
+static uint8_t oled_display_failed;
 static volatile uint8_t oled_reset_value;
 static volatile uint32_t oled_generation_hi,oled_generation_lo,oled_last_token;
 static volatile uint32_t oled_deadline;
@@ -114,16 +116,23 @@ static void oled_raw_blank(void) {
 }
 static uint8_t sleep_light_active, sleep_light_saved;
 static void oled_restore_light(void);
+#include "inventure_display_errors.inc"
 #include "inventure_oled_local.inc"
 void inventure_panel_shutdown(void) {
     local_oled_cancel();
     oled_latched=1;oled_fault=3;oled_raw_blank();
-#ifdef DMA1_Stream4
-    oled_fast_alarm_active=0; // Klipper already reset the timer list.
-#endif
     local_oled_request(LOCAL_SHUTDOWN);
 }
-DECL_SHUTDOWN(inventure_panel_shutdown);
+void inventure_panel_after_shutdown(void) {
+    /* Only this DECL_SHUTDOWN callback runs after sched_timer_reset().
+     * The board may also call inventure_panel_shutdown() before that reset. */
+    local_timer_active=0;
+#ifdef DMA1_Stream4
+    oled_fast_alarm_active=0;
+#endif
+    inventure_panel_shutdown();
+}
+DECL_SHUTDOWN(inventure_panel_after_shutdown);
 void inventure_oled_watchdog(void) {
     irqstatus_t flag=irq_save();
     if(oled_active && (int32_t)(timer_read_time()-oled_deadline)>=0) {
@@ -140,6 +149,7 @@ static void oled_ack(uint32_t hi,uint32_t lo,uint32_t token,uint8_t result) {
 // Four fixed slots hold decoded bytes until the last bit has left SPI.
 #define OLED_FAST_QUEUE 4
 #define OLED_FAST_WIRE 256
+#include "inventure_oled_rle.h"
 #define OLED_DMA_ERRORS (DMA_HISR_TEIF4 | DMA_HISR_DMEIF4 | DMA_HISR_FEIF4)
 #define OLED_DMA_FLAGS (OLED_DMA_ERRORS | DMA_HISR_TCIF4 | DMA_HISR_HTIF4)
 #define OLED_DMA_CR (DMA_SxCR_MINC | DMA_SxCR_DIR_0 | DMA_SxCR_TCIE \
@@ -248,7 +258,7 @@ oled_fast_decode(uint8_t *out, unsigned length, unsigned encoding,
         if (code & 128) {
             if (i == size)
                 return 0;
-            memset(out + written, data[i++], count);
+            oled_fill_run(out + written, data[i++], count);
         } else {
             if (count > size - i)
                 return 0;
@@ -264,6 +274,7 @@ static void
 oled_fast_fail(void)
 {
     oled_fast_errors++;
+    oled_display_failed=1;
     oled_fault = 2;
     oled_raw_blank();
     local_oled_request(LOCAL_TRANSFER);
@@ -449,6 +460,7 @@ void command_inventure_oled_begin(uint32_t *args) {
         shutdown("Inventure invalid OLED session");
     irqstatus_t flag=irq_save();uint8_t result=0;
     if(oled_latched)result=3;
+    else if(oled_display_failed)result=2;
     else if(args[0]==oled_generation_hi && args[1]==oled_generation_lo) {
         result = oled_active && args[2]==oled_last_token &&
                  oled_last_kind==1 ? oled_last_result : 1;
@@ -486,33 +498,39 @@ void command_inventure_oled_write(uint32_t *args) {
     irq_restore(flag);
     if(result || replayed) {oled_ack(args[0],args[1],args[2],result);return;}
     if(!oled_reset_value) {oled_ack(args[0],args[1],args[2],2);return;}
-    // SSD1322 accepts contiguous RAM-write bytes while CS is LOW. Avoid a
-    // separate GPIO transition and SPI call for every data byte. The V9 SPI
-    // driver supports max 8 bytes for low SPI rates, otherwise max 32.
-    // Interrupts remain enabled while SPI is shifting data, so Klipper's
-    // planner and safety watchdog are NOT masked for an entire OLED chunk.
-    gpio_out_write(oled_dc,dc);
-    spi_prepare(oled_spi);
-    unsigned burst_max=((oled_spi.spi_cr1>>3)&7)>=5 ? 8u : 32u;
-    // The last liveliness check AND CS assertion must be atomic against
-    // an asynchronous OLED watchdog/fatal reset (which forces CS HIGH).
-    flag=irq_save();
-    uint8_t live=oled_active&&!oled_latched;
+    // Same nonfatal bounded SPI contract as M300, including legacy hosts.
+    // Never invoke the generic fatal spi_transfer() timeout for an optional
+    // display. IRQs remain enabled; an ownership loss aborts the whole block.
+    gpio_out_write(oled_dc,dc);spi_prepare(oled_spi);
+    flag=irq_save();uint8_t live=oled_active&&!oled_latched;
     if(live)gpio_out_write(oled_cs,0);
     irq_restore(flag);
-    if (!live) {oled_ack(args[0],args[1],args[2],2);return;}
-    for(unsigned off=0;off<count;) {
-        unsigned n=count-off;
-        if(n>burst_max)n=burst_max;
-        spi_transfer(oled_spi,0,n,&data[off]);
-        off+=n;
+    if(!live){oled_ack(args[0],args[1],args[2],2);return;}
+    uint32_t deadline=timer_read_time()+timer_from_us(1000);
+    for(unsigned i=0;i<count;i++) {
+        if(!oled_active || oled_latched)goto aborted;
+        while(!(SPI2->SR&(1u<<1))) {
+            if(!oled_active || oled_latched)goto aborted;
+            if(!timer_is_before(timer_read_time(),deadline))goto failed;
+        }
+        writeb((void*)&SPI2->DR,data[i]);
+    }
+    while((SPI2->SR&((1u<<1)|(1u<<7)))!=(1u<<1)) {
+        if(!oled_active || oled_latched)goto aborted;
+        if(!timer_is_before(timer_read_time(),deadline))goto failed;
     }
     gpio_out_write(oled_cs,1);
     flag=irq_save();
     result=oled_active&&!oled_latched ? 0:2;
     oled_last_result=result;
     irq_restore(flag);
-    oled_ack(args[0],args[1],args[2],result);
+    oled_ack(args[0],args[1],args[2],result);return;
+failed:
+    flag=irq_save();oled_display_failed=1;oled_fault=2;
+    oled_raw_blank();local_oled_request(LOCAL_TRANSFER);irq_restore(flag);
+aborted:
+    gpio_out_write(oled_cs,1);oled_last_result=2;
+    oled_ack(args[0],args[1],args[2],2);
 }
 DECL_COMMAND(command_inventure_oled_write,"inventure_oled_write generation_hi=%u generation_lo=%u token=%u dc=%c data=%*s");
 void command_inventure_oled_ping(uint32_t *args) {

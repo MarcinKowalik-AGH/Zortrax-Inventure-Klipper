@@ -15,6 +15,16 @@
 #define BIT(n) (1u << (n))
 #define SAMPLE_TICKS (CONFIG_CLOCK_FREQ / 20000u)
 #define GUARD_DIV 200u
+// Normal Klipper XY/Z steps must take priority over this periodic sampler.
+// SERVICE retains its existing 20 kHz tach/filament edge sampling and
+// 20 kHz fan PWM. NATIVE without feeder transport uses 10 kHz, still
+// samples 20 ms quiet windows and guards every 10 ms in real time.
+#define SAMPLE_NATIVE_DIV 2u
+#define SAMPLE_MARGIN_US 12u
+DECL_CONSTANT("INVENTURE_SCHEDULER_ABI", 1);
+DECL_CONSTANT("INVENTURE_SCHEDULER_SERVICE_HZ", 20000);
+DECL_CONSTANT("INVENTURE_SCHEDULER_NATIVE_HZ", 10000);
+DECL_CONSTANT("INVENTURE_SCHEDULER_GUARD_MS", 10);
 #define HEARTBEAT_TIMEOUT_MS 5000u
 #define HEARTBEAT_TICKS MS(HEARTBEAT_TIMEOUT_MS)
 DECL_CONSTANT("INVENTURE_HEARTBEAT_TIMEOUT_MS", HEARTBEAT_TIMEOUT_MS);
@@ -30,6 +40,10 @@ DECL_CONSTANT_STR("RESERVE_PINS_inventure_aux", "PA2,PA3,PA8,PB7,PC5,PG11,PE6,PG
 
 static volatile uint8_t fault, heartbeat_live;
 static uint8_t initialized, input_previous, guard_div, sample_started;
+static uint32_t sample_calls, sample_native_calls, sample_service_calls;
+static uint32_t sample_guard_runs, sample_reschedules, sample_skipped_slots;
+static uint32_t sample_peak_late_ticks, sample_peak_work_ticks;
+static uint32_t sample_last_clock, sample_last_late, sample_last_work;
 static volatile uint8_t sensor_seen;
 static volatile uint32_t heartbeat_deadline;
 static volatile uint32_t pulses[6], edge_time[6];
@@ -53,7 +67,9 @@ static uint8_t control_busy(void);
 static uint8_t control_door_policy_busy(void);
 static void control_guard(uint32_t now);
 static void control_fan_tick(void);
+static uint8_t native_sampler_can_reduce(void);
 static uint8_t control_service_fan(unsigned i);
+uint8_t inventure_panel_needs_service(void); // Declared by inventure_panel.c
 static uint8_t control_cooling_mask(void);
 static void control_shutdown(void);
 static void control_motion_cancel(void);
@@ -305,20 +321,66 @@ static void force_safe(void) {
 }
 
 static uint8_t guard_input_at_trip;
+// First safety trip snapshot.  Flags: PC13 open, PC14 open, PE12 on,
+// head-cable open, active native-Z guard, blocked native-Z STEP.
+static struct {
+    uint32_t clock;
+    uint16_t flags;
+    uint8_t reason,mode,sensor_seen,heater_mask;
+} first_safety_trip;
 uint8_t inventure_board_fault(void) { return fault; }
 uint8_t inventure_board_guard_input(void) { return guard_input_at_trip; }
+void command_inventure_fault_detail_query(uint32_t *args) {
+    (void)args;
+    irqstatus_t irq=irq_save();
+    uint32_t clock=first_safety_trip.clock;
+    unsigned reason=first_safety_trip.reason,mode=first_safety_trip.mode;
+    unsigned flags=first_safety_trip.flags,seen=first_safety_trip.sensor_seen;
+    unsigned heaters=first_safety_trip.heater_mask,guard=guard_input_at_trip;
+    irq_restore(irq);
+    sendf("inventure_fault_detail reason=%c mode=%c flags=%hu sensor_seen=%c heaters=%c guard_input=%c clock=%u",
+          reason,mode,flags,seen,heaters,guard,clock);
+}
+DECL_COMMAND_FLAGS(command_inventure_fault_detail_query,HF_IN_SHUTDOWN,
+                   "inventure_fault_detail_query");
 
 static void trip(uint8_t reason) {
     if (!fault) {
+        uint32_t now=timer_read_time();
         fault=reason;
         if (reason==1) {
             if (GPIOD->IDR & BIT(11)) guard_input_at_trip=1;
-            else if (!heartbeat_live || iv9_due(timer_read_time(),heartbeat_deadline))
+            else if (!heartbeat_live || iv9_due(now,heartbeat_deadline))
                 guard_input_at_trip=2;
         }
+        uint16_t flags=!!(GPIOC->IDR&BIT(13));
+        flags|=(!!(GPIOC->IDR&BIT(14)))<<1;
+        flags|=(!!(GPIOE->IDR&BIT(12)))<<2;
+        flags|=(!!(GPIOD->IDR&BIT(11)))<<3;
+        flags|=(!!native_z_guard_active)<<4;
+        flags|=(!!native_z_guard_lost)<<5;
+        unsigned heaters=0;
+        for(unsigned h=0;h<4;h++)if(control_heater_duty[h])heaters|=BIT(h);
+        first_safety_trip.clock=now;
+        first_safety_trip.reason=reason;
+        first_safety_trip.mode=control_mode;
+        first_safety_trip.flags=flags;
+        first_safety_trip.sensor_seen=cool_native_claimed?cool_native_seen:cool_local_seen;
+        first_safety_trip.heater_mask=heaters;
     }
     force_safe();
-    shutdown("Inventure V9 local safety fault");
+    // Distinct shutdown strings make the first failure visible in klippy.log.
+    switch(fault) {
+    case 1:
+        if(guard_input_at_trip==1)shutdown("Inventure V9 extruder cable interlock");
+        shutdown("Inventure V9 host heartbeat interlock");
+    case 4:shutdown("Inventure V9 thermal sensor guard");
+    case 5:shutdown("Inventure V9 cooling tach feedback guard");
+    case 6:shutdown("Inventure V9 door or lid interlock");
+    case 7:shutdown("Inventure V9 build tray PC13 interlock");
+    case 8:shutdown("Inventure V9 native Z reference guard");
+    default:shutdown("Inventure V9 local safety fault");
+    }
 }
 
 static void guard_check(uint32_t now) {
@@ -349,8 +411,30 @@ static uint_fast8_t lock_hold(struct timer *t) {
     return SF_DONE;
 }
 
+// A missed high-frequency sampling deadline must NEVER trigger a catch-up
+// storm: it would re-read the same GPIO state and postpone native stepper
+// callbacks until Klipper's core scheduler reports "Timer too close".
 static uint_fast8_t sample_event(struct timer *t) {
     uint32_t now=timer_read_time();
+    uint32_t late=(int32_t)(now-t->waketime)>0 ? now-t->waketime : 0;
+    if(late>sample_peak_late_ticks)sample_peak_late_ticks=late;
+    uint32_t previous_clock=sample_last_clock;
+    sample_last_late=late;sample_last_clock=now;sample_calls++;
+    // Do not downsample the SERVICE fan/P13 diagnostic path, any active
+    // factory motion or native P13 transport, or the 100-ms local heater PWM.
+    unsigned slots=native_sampler_can_reduce() ? SAMPLE_NATIVE_DIV : 1u;
+    if(slots==SAMPLE_NATIVE_DIV)sample_native_calls++;
+    else sample_service_calls++;
+    // Safety policies use elapsed *real* time, never only the number of
+    // successfully serviced IRQs. Late callbacks must not stretch the
+    // PC13/heartbeat/fan guard interval silently.
+    uint32_t elapsed_slots=slots;
+    if(sample_calls>1) {
+        uint32_t real_slots=(now-previous_clock)/SAMPLE_TICKS;
+        if(real_slots>elapsed_slots)
+            elapsed_slots=real_slots>20000u?20000u:real_slots;
+    }
+
     t0_heat_sample(now);
     control_fan_tick();
     uint8_t value=read_pulses(), changed=value^input_previous;
@@ -360,16 +444,37 @@ static uint_fast8_t sample_event(struct timer *t) {
         pulses[i]++;edge_time[i]=now;rising&=rising-1u;
     }
     for(unsigned i=0;i<2;i++) {
-        if(quiet_ticks[i]<401) quiet_ticks[i]++;
+        uint32_t quiet=quiet_ticks[i] + elapsed_slots;
+        quiet_ticks[i]=quiet>401 ? 401 : quiet;
         if(changed & BIT(i+4)) {
             if(quiet_ticks[i]>=401) {pulses[i+4]++;edge_time[i+4]=now;}
             quiet_ticks[i]=0;
         }
     }
-    fan_sample(changed & value,now);
+    fan_sample(changed & value,now,elapsed_slots);
     input_previous=value;
-    if(++guard_div >= GUARD_DIV) { guard_div=0; inventure_inputs_poll(); guard_check(now); transport_sample(now); }
-    t->waketime += SAMPLE_TICKS;
+    uint32_t guard_due=(uint32_t)guard_div + elapsed_slots;
+    guard_div=guard_due%GUARD_DIV;
+    if(guard_due >= GUARD_DIV) {
+        sample_guard_runs++;
+        inventure_inputs_poll();guard_check(now);transport_sample(now);
+    }
+    uint32_t finished=timer_read_time();
+    uint32_t work=finished-now;
+    if(work>sample_peak_work_ticks)sample_peak_work_ticks=work;
+    sample_last_work=work;
+    uint32_t next=t->waketime+slots*SAMPLE_TICKS;
+    uint32_t earliest=finished+timer_from_us(SAMPLE_MARGIN_US);
+    if((int32_t)(earliest-next)>=0) {
+        // Never reschedule from the old, now-past deadline. Skip only the
+        // missed *polling slots*; thermal/door/heartbeat guards above still
+        // evaluate the real MCU clock, not a synthetic catch-up clock.
+        unsigned missed=1u+(uint32_t)(earliest-next)/SAMPLE_TICKS;
+        sample_skipped_slots+=missed;
+        sample_reschedules++;
+        next=finished+slots*SAMPLE_TICKS;
+    }
+    t->waketime=next;
     return SF_RESCHEDULE;
 }
 
@@ -389,11 +494,31 @@ void inventure_board_start_task(void) {
     if(sample_started || !initialized || fault)return;
     irqstatus_t flags=irq_save();
     /* All DECL_INIT callbacks, including counter initialization, have ended. */
+    // New schedule epoch; never reuse an orphaned pre-init/old timer clock.
     sample_timer.waketime=timer_read_time()+SAMPLE_TICKS;
     sched_add_timer(&sample_timer);sample_started=1;
     irq_restore(flags);
 }
 DECL_TASK(inventure_board_start_task);
+
+// All counters are read-only, O(1), and remain available after a scheduler
+// shutdown without restarting timers, PWM, motors, or service ownership.
+void command_inventure_scheduler_query(uint32_t *args) {
+    (void)args;
+    irqstatus_t saved=irq_save();
+    uint32_t now=timer_read_time(),calls=sample_calls,normal=sample_native_calls;
+    uint32_t service=sample_service_calls,guards=sample_guard_runs;
+    uint32_t skips=sample_skipped_slots,resync=sample_reschedules;
+    uint32_t late=sample_peak_late_ticks,work=sample_peak_work_ticks;
+    uint32_t last=sample_last_clock,lastlate=sample_last_late,lastwork=sample_last_work;
+    uint8_t mode=control_mode,fault_code=fault;
+    irq_restore(saved);
+    sendf("inventure_scheduler_state clock=%u calls=%u native=%u service=%u guards=%u skipped=%u resync=%u peak_late=%u peak_work=%u last_clock=%u last_late=%u last_work=%u mode=%c fault=%c",
+          now,calls,normal,service,guards,skips,resync,late,work,last,lastlate,
+          lastwork,mode,fault_code);
+}
+DECL_COMMAND_FLAGS(command_inventure_scheduler_query,HF_IN_SHUTDOWN,
+                   "inventure_scheduler_query");
 
 void inventure_board_shutdown(void) {
     fault=fault?fault:255;force_safe();

@@ -85,7 +85,7 @@ static uint8_t zh_service_guard_ok(uint32_t now,uint32_t owner,unsigned tool) {
         return 0;
     return fs_nozzle_temperature_ok(tool,now,1)
         && (!fs.dual_nozzle_z || ((GPIOE->ODR&BIT(10)) && fs_nozzle_temperature_ok(1-tool,now,1)))
-        && control_sensors_valid(control_guard_mask|31,now);
+        && service_sensors_valid(control_guard_mask|31,now);
 }
 
 static uint8_t zh_native_guard_ok(uint32_t now,uint32_t owner,int16_t min_c,int16_t max_c) {
@@ -97,7 +97,7 @@ static uint8_t zh_native_guard_ok(uint32_t now,uint32_t owner,int16_t min_c,int1
     uint8_t valid;
     int16_t temperature=control_temp(0,now,&valid);
     return valid && temperature>=min_c && temperature<max_c
-        && control_sensors_valid(control_guard_mask|31,now);
+        && native_sensors_valid(now);
 }
 
 static void zh_guard(uint32_t now) {

@@ -33,8 +33,9 @@ def exercise_home_confirmation(gcode):
             assert menu.view.title == ('Home XYZ complete' if button == 'ALL' else 'Home Z complete')
             assert rig.model.physical_tool == 0
             assert rig.model.prepare_actions[-1]['cleaning_done']
-            assert [entry[1] for entry in rig.model.calls if entry[0] == 'service_home'] == ['Y','X']
-            expected_axes = ['Z']
+            assert not [entry for entry in rig.model.calls if entry[0] == 'service_home']
+            expected_axes = (['Z','Z'] if button == 'Z' and homed == 'xy'
+                             else ['Z','Y','X','Z'])
             assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == expected_axes
             assert len([entry for entry in rig.model.calls if entry[0] == 'refine' and entry[2]]) == 1
             assert rig.adapter.last_result['coordinate_saved']
@@ -46,7 +47,7 @@ def exercise_home_confirmation(gcode):
                 menu.panel_move(1)
                 gcode.run_script_from_command(menu.panel_select_command(acknowledged=True))
                 assert menu.view.title == 'Home Z complete'
-                assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == ['Z']
+                assert [entry[1] for entry in rig.model.calls if entry[0] == 'G28'] == ['Z','Z']
                 assert rig.adapter.last_result['coordinate_saved']
     print('Home Z and All from installed macros through confirmation to STM32 refinement and park (simulated MCU)')
 

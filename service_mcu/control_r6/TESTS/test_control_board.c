@@ -20,7 +20,7 @@ static void control_reset(uint32_t now) {
     memset(transport,0,sizeof(transport));memset(assist_pending,0,sizeof(assist_pending));
     transport_live=0;auxiliary_ready=0;
     memset(&motor_test,0,sizeof(motor_test));memset(&xy_seek,0,sizeof(xy_seek));
-    control_guard_mask=127;memset(control_tach_watch,0,sizeof(control_tach_watch));
+    control_guard_mask=127;native_hot_mask=0;memset(control_tach_watch,0,sizeof(control_tach_watch));
     const int16_t caps[]={310,310,150,150,150,100,100,190};
     for(unsigned i=0;i<8;i++){control_min[i]=-20;control_max[i]=caps[i];}
     heat_reset(now);control_adc();
@@ -45,6 +45,112 @@ static void output(unsigned action,unsigned channel,unsigned duty,uint32_t ms,in
 static void advance(unsigned ms) {
     mock_now+=MS(ms);command_inventure_heartbeat(NULL);control_adc();guard_check(mock_now);cooling_update();
 }
+// Stress the actual production sampler with both scheduler phases, synthetic
+// interrupt blackouts, packet-rate bursts and wrapping 32-bit MCU clock.
+static void scheduler_native_service_stress(void) {
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed());
+    sample_calls=sample_native_calls=sample_service_calls=sample_guard_runs=0;
+    sample_skipped_slots=sample_reschedules=0;
+    sample_peak_late_ticks=sample_peak_work_ticks=0;
+    guard_div=0;fan_sample_ticks=fan_detector_ticks=0;
+    quiet_ticks[0]=quiet_ticks[1]=0;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    uint32_t previous=sample_timer.waketime;
+    for(unsigned i=0;i<1800;i++) {
+        mock_now=sample_timer.waketime; // on-time callback
+        assert(sample_event(&sample_timer)==SF_RESCHEDULE);
+        assert((uint32_t)(sample_timer.waketime-previous)==2*SAMPLE_TICKS);
+        assert((int32_t)(sample_timer.waketime-mock_now)>=
+               (int32_t)timer_from_us(SAMPLE_MARGIN_US));
+        previous=sample_timer.waketime;
+        if((i%250)==0)command_inventure_heartbeat(NULL);
+    }
+    assert(sample_native_calls==1800 && !sample_service_calls);
+    assert(sample_guard_runs==18); // preserved 10 ms independent safety cadence
+    assert(fan_sample_ticks==3600); // preserves 1-second tach window in NATIVE
+    assert(!sample_reschedules && !sample_skipped_slots);
+    // 20 ms noise suppression is expressed in 20 kHz-equivalent slots even
+    // though normal XY/Z has only 10 kHz callbacks.
+    assert(quiet_ticks[0]==401 && quiet_ticks[1]==401);
+
+    // Native feeder transport still gets the full 20 kHz physical sampler.
+    transport_live=1;
+    mock_now=sample_timer.waketime;
+    previous=sample_timer.waketime;
+    sample_event(&sample_timer);
+    assert(sample_timer.waketime-previous==SAMPLE_TICKS);
+    assert(sample_service_calls==1);
+    transport_live=0;
+
+    // SERVICE diagnostics and all manual calibrated fan PWM stay at 20 kHz.
+    control_reset(0);
+    assert(control_mode==CT_SERVICE);
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    for(unsigned i=0;i<100;i++) {
+        mock_now=sample_timer.waketime;previous=sample_timer.waketime;
+        sample_event(&sample_timer);
+        assert(sample_timer.waketime-previous==SAMPLE_TICKS);
+    }
+
+    // MCU wrap is not a special timer epoch. The same signed comparator is
+    // valid for any short delta crossing ffffffff -> 00000000.
+    control_reset(0xffffe000u);
+    control_command(1,CT_NATIVE);
+    mock_now=0xffffe000u;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    for(unsigned i=0;i<1200;i++) {
+        mock_now=sample_timer.waketime;
+        sample_event(&sample_timer);
+        assert((int32_t)(sample_timer.waketime-mock_now)>0);
+        if(!(i%250))command_inventure_heartbeat(NULL);
+    }
+
+    // Delayed ISR cannot silently postpone the safety tick; physical elapsed
+    // time must advance the 10ms guard and fan tach window in one callback.
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    guard_div=0;sample_calls=0;sample_guard_runs=0;
+    fan_sample_ticks=fan_detector_ticks=0;
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime;
+    sample_event(&sample_timer);
+    assert(!sample_guard_runs);
+    mock_now=sample_timer.waketime+MS(13);
+    sample_event(&sample_timer);
+    assert(sample_guard_runs==1);
+    assert(fan_sample_ticks>=260 && fan_sample_ticks<20000);
+    assert((int32_t)(sample_timer.waketime-mock_now)>0);
+
+    // Delayed callback MUST skip overdue polling slots, not run the same
+    // GPIO twice for every missed 50 us and starve Klipper's step timers.
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime+2*SAMPLE_TICKS; // emulate ISR contention
+    uint32_t old_skipped=sample_skipped_slots,old_resync=sample_reschedules;
+    sample_event(&sample_timer);
+    assert(sample_skipped_slots>old_skipped && sample_reschedules==old_resync+1);
+    assert((int32_t)(sample_timer.waketime-mock_now)>=
+           (int32_t)timer_from_us(SAMPLE_MARGIN_US));
+    // A long callback taking more than the 100 us NATIVE period must also
+    // resynchronize to the end of the callback, not its already-past start.
+    sample_timer.waketime=mock_now+SAMPLE_TICKS;
+    mock_now=sample_timer.waketime;
+    mock_read_cycles=timer_from_us(110);
+    old_resync=sample_reschedules;
+    sample_event(&sample_timer);
+    mock_read_cycles=0;
+    assert(sample_reschedules>old_resync);
+    // The mock timer advances again on the final read. Compare against
+    // the measured callback completion, not the model's next future tick.
+    assert((int32_t)(sample_timer.waketime -
+           (sample_last_clock + sample_last_work)) > 0);
+    assert(sample_peak_work_ticks>=timer_from_us(110));
+    puts("PASS scheduler: NATIVE 10kHz / SERVICE 20kHz / 10ms guard / tach cadence / wrap / delayed ISR resync");
+}
+
 static void dda_and_replay(void) {
     for(unsigned wrap=0;wrap<2;wrap++)for(unsigned dirs=0;dirs<16;dirs++) {
         control_reset(wrap?0xffffff00:0);
@@ -266,6 +372,168 @@ static void service_to_native_heat(void) {
     puts("PASS CLEAN to native Home heating: GPIO mode, safe first duty, existing PWM handles, shared timer and interlocks");
 }
 
+// Regression: Home X -> Home Y -> Home XY leaves CT_NATIVE armed, even
+// after the stepper enable has been released. Home All must then acquire
+// SERVICE for T0 selection without STOP/latch or an MCU restart.
+static void native_to_service_quiescent_handoff(void) {
+    control_reset(0);
+    control_command(1, CT_NATIVE);
+    assert(inventure_is_armed() && control_mode==CT_NATIVE);
+    // A queued/energized native axis must never be handed to SERVICE.
+    GPIOE->ODR |= BIT(10);
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_NATIVE && !control_latched);
+    GPIOE->ODR &= ~BIT(10); // Klipper motor_off + wait_moves completed.
+    // An active native heater, guard, direct motion or feeder also blocks.
+    control_heater_duty[0]=80;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    control_heater_duty[0]=0;
+    co[6].duty=50;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    co[6].duty=0;
+    native_z_guard_active=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_guard_active=0;
+    native_z_refine_held=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_refine_held=0;
+    cm.active=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    cm.active=0;
+    feeder_running[0]=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    feeder_running[0]=0;
+    locks_pulling[1]=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    locks_pulling[1]=0;
+    native_z_refine_conflict=1;
+    control_command(1, CT_SERVICE);assert(control_mode==CT_NATIVE);
+    native_z_refine_conflict=0;
+    // Exact previously failing transition: idle native after X/Y/XY.
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_SERVICE && !inventure_is_armed());
+    assert(!control_latched && !fault);
+    control_command(1, CT_NATIVE);
+    assert(control_mode==CT_NATIVE && inventure_is_armed());
+    // STOP remains fail-closed, not an alternative handoff.
+    control_command(2, 0);
+    assert(control_mode==CT_OFF && control_latched);
+    control_command(1, CT_SERVICE);
+    assert(control_mode==CT_OFF && control_latched);
+    puts("PASS guarded NATIVE->SERVICE after X/Y/XY: no active motors, heaters, Z guard, feeder or STOP bypass");
+}
+
+static void service_strict_native_broad_guards(void) {
+    // Unrelated failed chamber-center ADC blocks strict SERVICE, not cold
+    // NATIVE positioning. Independent absolute overtemperature stays enabled.
+    control_reset(0);
+    latest_adc[4]=4095;
+    assert(!service_sensors_valid(control_guard_mask|31,mock_now));
+    control_command(1,CT_NATIVE);
+    assert(inventure_is_armed() && !fault && control_mode==CT_NATIVE);
+    control_guard(mock_now);
+    assert(!fault && inventure_is_armed());
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    control_heater_duty[0]=64;
+    latest_adc[0]=4095;
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"powered native heater missing ADC");}
+    expect_failure=0;
+    assert(fault==4 && first_safety_trip.reason==4);
+    assert(strstr(last_failure,"thermal sensor guard"));
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    inventure_adc_observe(ADC1,10,1250);
+    assert(native_sensors_valid(mock_now) && (native_hot_mask&1));
+    control_heater_duty[0]=0;
+    latest_adc[0]=4095;
+    assert(!native_sensors_valid(mock_now)); // still-hot heater kept guarded
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    latest_adc[5]=4095;
+    assert(native_sensors_valid(mock_now)); // idle PSU ADC is not a homing veto
+    control_heater_duty[0]=64;
+    assert(!native_sensors_valid(mock_now)); // powered requires PSU telemetry
+
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    latest_adc[0]=1918;
+    assert(native_sensors_valid(mock_now)); // 309C < absolute 310C limit
+    latest_adc[0]=1930;
+    assert(!native_sensors_valid(mock_now)); // >310C always rejected
+    puts("PASS SERVICE strict and NATIVE broad: unrelated sensor fault tolerated, hot heaters monitored");
+}
+
+static void service_native_policy_telemetry(void) {
+    control_reset(0);
+    policy_queries=0;memset(policy_reply,0,sizeof(policy_reply));
+    // Diagnostic queries must not alter the SERVICE guard mask or any
+    // actuators and must not manufacture a native heater requirement.
+    control_guard_mask=BIT(0)|BIT(2)|BIT(5);
+    uint32_t before_mode=control_mode,before_mask=control_guard_mask;
+    command_inventure_policy_query(NULL);
+    assert(policy_queries==1);
+    assert(policy_reply[0]==CT_SERVICE && policy_reply[1]==1);
+    assert(policy_reply[2]==before_mask && policy_reply[3]==0);
+    assert(policy_reply[4]==0 && policy_reply[5]==0);
+    assert(control_mode==before_mode && control_guard_mask==before_mask);
+    control_command(1,CT_NATIVE);
+    command_inventure_policy_query(NULL);
+    assert(policy_queries==2 && policy_reply[0]==CT_NATIVE
+           && policy_reply[1]==2 && policy_reply[2]==before_mask);
+    assert(policy_reply[3]==0 && policy_reply[4]==0 && policy_reply[5]==0);
+
+    // Mark T0 hot, then turn its PWM off. The required NATIVE thermistor
+    // is still tracked independently of the SERVICE sensor-mask settings.
+    inventure_adc_observe(ADC1,10,1250);
+    assert(native_sensors_valid(mock_now));
+    control_heater_duty[0]=64;
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[3]&1 && policy_reply[4]&1
+           && (policy_reply[5]&(BIT(0)|BIT(5)|BIT(6)))==
+              (BIT(0)|BIT(5)|BIT(6)));
+    control_heater_duty[0]=0;
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[3]&1 && !(policy_reply[4]&1) && policy_reply[5]&1);
+
+    // A different temperature in a valid hard envelope must not become
+    // an implicit requirement inherited from a SERVICE custom minimum.
+    control_min[0]=250;control_max[0]=260;
+    assert(!service_sensors_valid(control_guard_mask|31,mock_now));
+    assert(native_sensors_valid(mock_now));
+    control_guard(mock_now);assert(control_mode==CT_NATIVE && !fault);
+
+    // Physical tray protection is unchanged by the selected policy.
+    native_z_guard_active=1;GPIOC->IDR|=BIT(13);
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"PC13 trip bypass");}
+    expect_failure=0;
+    assert(fault==7);
+    command_inventure_policy_query(NULL);
+    assert(policy_reply[6]==7 && policy_reply[0]==CT_OFF);
+    assert(first_safety_trip.reason==7 && first_safety_trip.mode==CT_NATIVE);
+    puts("PASS separated service/native policy telemetry: effective mask, hot/energized requirements, PC13 fail-closed");
+}
+
+static void first_fault_cause_snapshotted(void) {
+    control_reset(0);
+    control_command(1,CT_NATIVE);
+    GPIOC->IDR |= BIT(13);
+    native_z_guard_active=1;
+    expect_failure=1;
+    if(!setjmp(failure)){control_guard(mock_now);assert(!"tray interlock failure");}
+    expect_failure=0;
+    assert(fault==7 && first_safety_trip.reason==7);
+    assert((first_safety_trip.flags & (BIT(0)|BIT(4))) == (BIT(0)|BIT(4)));
+    assert(strstr(last_failure,"build tray PC13 interlock"));
+    assert(!inventure_is_armed());
+    puts("PASS first fault identifies PC13 tray and snapshots raw inputs before safe shutdown");
+}
+
 static void native_ownership(void) {
     control_reset(0);control_command(1,CT_NATIVE);assert(inventure_is_armed());
     assert(inventure_filter_gpio(GPIOE,BIT(10),1)==1);
@@ -286,7 +554,7 @@ static void native_ownership(void) {
         if(cause==2)control_set_door_policy(1);
         control_command(1,CT_NATIVE);assert(inventure_is_armed());
         if(cause==0)heartbeat_live=0;
-        if(cause==1)latest_adc[2]=4095;
+        if(cause==1){control_heater_duty[0]=64;latest_adc[0]=4095;} // powered heater, not unused chamber ADC
         if(cause==2)GPIOB->IDR&=~BIT(10);
         expect_failure=1;
         if(!setjmp(failure)){control_guard(mock_now);assert(!"native guard failed to trip");}
@@ -374,9 +642,10 @@ static void global_door_policy(void) {
     puts("PASS global door policy: default OFF, idle coil release, raw/pwm/native lock gating, live raw door inputs");
 }
 int main(void) {
+    scheduler_native_service_stress();
     dda_and_replay();input_stops();motion_guards();pwm_outputs();temperature_stops();
     nozzle_310_cutoff_and_link_loss();
-    service_to_native_heat();native_ownership();auxiliary_controls();global_door_policy();
+    service_to_native_heat();native_ownership();native_to_service_quiescent_handoff();service_strict_native_broad_guards();service_native_policy_telemetry();first_fault_cause_snapshotted();auxiliary_controls();global_door_policy();
     puts("PASS CONTROL-R5: 4-driver DDA, 16 directions, all 16 stop inputs/both polarities, wraps, replay, durations, hardware active-LOW PWM, all 6 fans, native ARM/STOP latch, thermal freshness, both feeders/locks and common STOP");
     return 0;
 }

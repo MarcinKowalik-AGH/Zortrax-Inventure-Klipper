@@ -1,0 +1,82 @@
+name: Build Inventure MCU R18 native policy candidate (not hardware verified)
+on:
+  push:
+    branches: [fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18]
+    paths:
+      - 'service_mcu/control_r6/SOURCE_MCU/**'
+      - 'service_mcu/control_r6/TESTS/**'
+      - '.github/workflows/inventure-r17-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-and-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: C register and timing regression tests
+        run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
+      - name: Fetch pinned GNU Arm 14.2.1 with SHA-256 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 --connect-timeout 20 --output toolchain.tar.xz \
+            'https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz'
+          printf '%s  %s\n' \
+            '62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823' toolchain.tar.xz | sha256sum --check
+          mkdir -p gcc-arm
+          tar -xf toolchain.tar.xz -C gcc-arm --strip-components=1
+          echo "$RUNNER_TEMP/gcc-arm/bin" >> "$GITHUB_PATH"
+      - name: Assemble the exact pinned RC8 source kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source/parts/part*.bin > "$RUNNER_TEMP/pinned-kit.zip"
+          printf '%s  %s\n' \
+            '1c3e388744159cb10d3e27750b598a4cf434abe0b5f8029d5a8dd3b1567de3f8' "$RUNNER_TEMP/pinned-kit.zip" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/pinned-kit"
+          unzip -q "$RUNNER_TEMP/pinned-kit.zip" -d "$RUNNER_TEMP/pinned-kit"
+      - name: Compile and validate InventureBoot 1.7 MCU application
+        shell: bash
+        run: |
+          set -euo pipefail
+          python service_mcu/control_r6/SOURCE_MCU/build_thermal_test.py \
+            "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r18-build"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          out=Path(os.environ['RUNNER_TEMP'])/'r18-build'
+          verify=json.loads((out/'THERMAL_TEST_VERIFY.json').read_text())
+          assert verify['mcu_release']=='RC8-CONTROL-R7-HOMING-R18'
+          assert verify['motor_release']=='RC8-CONTROL-R7-HOMING-R18'
+          assert verify['native_service_handoff_abi']==1
+          assert verify['native_thermal_profile_abi']==1
+          assert verify['fault_reason_abi']==1
+          assert verify['tested_on_printer'] is False
+          assert (out/'INVENTUR.IVB').is_file()
+          PY
+          (cd "$RUNNER_TEMP/r18-build" && sha256sum INVENTUR.IVB klipper.bin klipper.dict > SHA256SUMS)
+          printf '%s\n' \
+            'EXPERIMENTAL R18 BUILD - NOT YET TESTED ON A PHYSICAL PRINTER.' \
+            'Do not flash until the safety review and physical acceptance plan are approved.' \
+            'The existing R16 flash is unchanged by this workflow.' \
+            > "$RUNNER_TEMP/r18-build/README_CANDIDATE.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: INVENTURE_R18_CANDIDATE_NOT_HARDWARE_VERIFIED
+          path: |
+            ${{ runner.temp }}/r18-build/INVENTUR.IVB
+            ${{ runner.temp }}/r18-build/klipper.bin
+            ${{ runner.temp }}/r18-build/klipper.dict
+            ${{ runner.temp }}/r18-build/THERMAL_TEST_VERIFY.json
+            ${{ runner.temp }}/r18-build/BUILD_REPORT.json
+            ${{ runner.temp }}/r18-build/SHA256SUMS
+            ${{ runner.temp }}/r18-build/README_CANDIDATE.txt
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,200 @@
+{
+  "status": "PASS",
+  "checked_fills": 2048,
+  "hardware_cycles_measured": false,
+  "rows": [
+    {
+      "length": 4,
+      "offset": 0,
+      "c_instructions": 22,
+      "asm_instructions": 24
+    },
+    {
+      "length": 4,
+      "offset": 1,
+      "c_instructions": 22,
+      "asm_instructions": 24
+    },
+    {
+      "length": 4,
+      "offset": 2,
+      "c_instructions": 22,
+      "asm_instructions": 24
+    },
+    {
+      "length": 4,
+      "offset": 3,
+      "c_instructions": 22,
+      "asm_instructions": 24
+    },
+    {
+      "length": 8,
+      "offset": 0,
+      "c_instructions": 38,
+      "asm_instructions": 40
+    },
+    {
+      "length": 8,
+      "offset": 1,
+      "c_instructions": 38,
+      "asm_instructions": 40
+    },
+    {
+      "length": 8,
+      "offset": 2,
+      "c_instructions": 38,
+      "asm_instructions": 40
+    },
+    {
+      "length": 8,
+      "offset": 3,
+      "c_instructions": 38,
+      "asm_instructions": 40
+    },
+    {
+      "length": 12,
+      "offset": 0,
+      "c_instructions": 54,
+      "asm_instructions": 56
+    },
+    {
+      "length": 12,
+      "offset": 1,
+      "c_instructions": 54,
+      "asm_instructions": 56
+    },
+    {
+      "length": 12,
+      "offset": 2,
+      "c_instructions": 54,
+      "asm_instructions": 56
+    },
+    {
+      "length": 12,
+      "offset": 3,
+      "c_instructions": 54,
+      "asm_instructions": 56
+    },
+    {
+      "length": 16,
+      "offset": 0,
+      "c_instructions": 70,
+      "asm_instructions": 72
+    },
+    {
+      "length": 16,
+      "offset": 1,
+      "c_instructions": 70,
+      "asm_instructions": 72
+    },
+    {
+      "length": 16,
+      "offset": 2,
+      "c_instructions": 70,
+      "asm_instructions": 72
+    },
+    {
+      "length": 16,
+      "offset": 3,
+      "c_instructions": 70,
+      "asm_instructions": 72
+    },
+    {
+      "length": 32,
+      "offset": 0,
+      "c_instructions": 134,
+      "asm_instructions": 27
+    },
+    {
+      "length": 32,
+      "offset": 1,
+      "c_instructions": 134,
+      "asm_instructions": 47
+    },
+    {
+      "length": 32,
+      "offset": 2,
+      "c_instructions": 134,
+      "asm_instructions": 43
+    },
+    {
+      "length": 32,
+      "offset": 3,
+      "c_instructions": 134,
+      "asm_instructions": 40
+    },
+    {
+      "length": 64,
+      "offset": 0,
+      "c_instructions": 262,
+      "asm_instructions": 33
+    },
+    {
+      "length": 64,
+      "offset": 1,
+      "c_instructions": 262,
+      "asm_instructions": 53
+    },
+    {
+      "length": 64,
+      "offset": 2,
+      "c_instructions": 262,
+      "asm_instructions": 49
+    },
+    {
+      "length": 64,
+      "offset": 3,
+      "c_instructions": 262,
+      "asm_instructions": 46
+    },
+    {
+      "length": 96,
+      "offset": 0,
+      "c_instructions": 390,
+      "asm_instructions": 39
+    },
+    {
+      "length": 96,
+      "offset": 1,
+      "c_instructions": 390,
+      "asm_instructions": 59
+    },
+    {
+      "length": 96,
+      "offset": 2,
+      "c_instructions": 390,
+      "asm_instructions": 55
+    },
+    {
+      "length": 96,
+      "offset": 3,
+      "c_instructions": 390,
+      "asm_instructions": 52
+    },
+    {
+      "length": 128,
+      "offset": 0,
+      "c_instructions": 518,
+      "asm_instructions": 45
+    },
+    {
+      "length": 128,
+      "offset": 1,
+      "c_instructions": 518,
+      "asm_instructions": 65
+    },
+    {
+      "length": 128,
+      "offset": 2,
+      "c_instructions": 518,
+      "asm_instructions": 61
+    },
+    {
+      "length": 128,
+      "offset": 3,
+      "c_instructions": 518,
+      "asm_instructions": 58
+    }
+  ],
+  "performance_passed": true
+}

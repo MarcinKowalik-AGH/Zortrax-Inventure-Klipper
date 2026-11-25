@@ -6,7 +6,8 @@ destinations are never an install target: callers must explicitly verify them.
 """
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, contextmanager
+from contextvars import ContextVar
 import ctypes
 import errno
 from hashlib import sha1, sha256
@@ -15,12 +16,30 @@ import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import stat
+import shutil
 import subprocess
 import tempfile
 import types
 from zipfile import BadZipFile, ZipFile
 
 ROOT = Path(__file__).resolve().parent
+_procedure_profile = ContextVar('inventure_procedure_profile', default='current')
+
+
+@contextmanager
+def procedure_profile(name):
+    if name not in ('current', 'oem-home-r38.6'):
+        raise ValueError('Unknown Inventure procedure profile: ' + str(name))
+    token = _procedure_profile.set(name)
+    try:
+        yield
+    finally:
+        _procedure_profile.reset(token)
+
+
+def current_procedure_profile():
+    return _procedure_profile.get()
+
 SOURCE_COMMIT = "ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f"
 SOURCE_TAG = "inventure-homing-r38.6"
 UPSTREAM_COMMIT = "ee2c6fb6b00b2b5d097ef70d0868df7d74943b51"
@@ -126,7 +145,31 @@ def _module(name, path, data):
     return module
 
 
-def _plan(repo, *, restore_oled=True):
+def _plan(repo, *, restore_oled=True, restore_native_z=True,
+          restore_motion_owner=None, restore_service_excursion=None,
+          restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
+          restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
+          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True):
+    if restore_motion_owner is None:
+        restore_motion_owner = restore_oled and restore_native_z
+    if restore_service_excursion is None:
+        restore_service_excursion = restore_motion_owner
+    if restore_scheduler is None:
+        restore_scheduler = restore_service_excursion
+    if restore_safety_policy is None:
+        restore_safety_policy = restore_scheduler
+    if restore_operator_service is None:
+        restore_operator_service = restore_safety_policy
+    if restore_leveling_ui is None:
+        restore_leveling_ui = restore_operator_service
+    if restore_leveling_stages is None:
+        restore_leveling_stages = restore_leveling_ui
+    if restore_operator_menu is None:
+        restore_operator_menu = restore_leveling_stages
+    if restore_configuration_audit is None:
+        restore_configuration_audit = restore_operator_menu
+    if restore_accepted_home is None:
+        restore_accepted_home = restore_configuration_audit
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -184,6 +227,119 @@ def _plan(repo, *, restore_oled=True):
         files[target] = (renderer, 0o644)
         metadata["files"][target] = dict(sha256=sha256(renderer).hexdigest(), mode=0o644)
         metadata["runtime_restorations"] = {"oled_dual_thermal_v2": provenance}
+    if restore_native_z:
+        # R18 is a post-release NATIVE policy fix, not a change to the
+        # cryptographically pinned R38.6 source tree.
+        path = repo/"inventure_native_z_restore.py"
+        restoration = _module("inventure_bootstrap_native_z", path, _regular_bytes(path))
+        target = restoration.TARGET
+        new_module, provenance = restoration.restored_native_z(repo, files[target][0])
+        files[target] = (new_module, 0o644)
+        metadata["files"][target] = dict(sha256=sha256(new_module).hexdigest(), mode=0o644)
+        metadata.setdefault("runtime_restorations", {})["native_z_r18"] = provenance
+    if restore_motion_owner:
+        _require(restore_native_z and restore_oled,
+                 "R19 native motion owner requires both authenticated R18 and OLED restorations")
+        path = repo/"inventure_motion_owner_restore.py"
+        restoration = _module("inventure_bootstrap_motion_owner", path, _regular_bytes(path))
+        updates, provenance = restoration.restored_motion_owner(repo, files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata["files"][target] = dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault("runtime_restorations", {})["single_motion_owner_r19"] = provenance
+    if restore_service_excursion:
+        _require(restore_motion_owner, "R20 service handoff requires authenticated R19")
+        path = repo/"inventure_service_excursion_restore.py"
+        restoration = _module("inventure_bootstrap_service_excursion", path, _regular_bytes(path))
+        updates, provenance = restoration.restored_service_excursion(repo, files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata["files"][target] = dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault("runtime_restorations", {})["exclusive_service_r20"] = provenance
+    if restore_scheduler:
+        _require(restore_service_excursion,
+                 'R21 diagnostics require the authenticated R20 service layer')
+        path = repo/'inventure_scheduler_restore.py'
+        restoration = _module('inventure_bootstrap_scheduler',path,_regular_bytes(path))
+        updates,provenance=restoration.restored_scheduler(repo,files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata['files'][target]=dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault('runtime_restorations',{})['scheduler_r21']=provenance
+    if restore_safety_policy:
+        _require(restore_scheduler,'R22 safety policy requires R21 diagnostics')
+        path=repo/'inventure_safety_policy_restore.py'
+        restoration=_module('inventure_bootstrap_safety_policy',path,_regular_bytes(path))
+        updates,provenance=restoration.restored_safety_policy(repo,files)
+        files.update(updates)
+        for target,(data,mode) in updates.items():
+            metadata['files'][target]=dict(sha256=sha256(data).hexdigest(),mode=mode)
+        metadata.setdefault('runtime_restorations',{})['safety_policy_r22']=provenance
+    if restore_operator_service:
+        _require(restore_safety_policy, 'Operator SERVICE restoration requires the R22 policy layer')
+        path = repo/'inventure_operator_service_restore.py'
+        restoration = _module('inventure_bootstrap_operator_service', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_operator_service(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['operator_service_r23'] = provenance
+    if restore_leveling_ui:
+        _require(restore_operator_service, 'Leveling UI requires the verified R23 SERVICE entry')
+        path = repo/'inventure_leveling_ui_restore.py'
+        restoration = _module('inventure_bootstrap_leveling_ui', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_leveling_ui(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['leveling_ui_r23'] = provenance
+    if restore_leveling_stages:
+        _require(restore_leveling_ui, 'Leveling stages require the verified R23.2 OLED UI')
+        path = repo/'inventure_leveling_stages_restore.py'
+        restoration = _module('inventure_bootstrap_leveling_stages', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_leveling_stages(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['leveling_stages_r23'] = provenance
+    if restore_operator_menu:
+        _require(restore_leveling_stages, 'Operator menu requires the R23.3 procedure display')
+        path = repo/'inventure_operator_menu_restore.py'
+        restoration = _module('inventure_bootstrap_operator_menu', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_operator_menu(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['operator_menu_r23'] = provenance
+    if restore_configuration_audit:
+        _require(restore_operator_menu, 'Configuration audit requires the R23.4 operator menu')
+        path = repo/'inventure_configuration_audit_restore.py'
+        restoration = _module('inventure_bootstrap_configuration_audit', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_configuration_audit(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['configuration_audit_r23'] = provenance
+    if restore_accepted_home:
+        _require(restore_configuration_audit, 'Accepted Home restoration requires the recorded R23.5 input')
+        path = repo/'inventure_accepted_home_restore.py'
+        restoration = _module('inventure_bootstrap_accepted_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_accepted_home(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['accepted_home_r23'] = provenance
+    profile = _procedure_profile.get() if procedure_profile is None else procedure_profile
+    _require(profile in ('current', 'oem-home-r38.6'), 'Unknown procedure profile')
+    if profile == 'oem-home-r38.6':
+        _require(restore_accepted_home, 'OEM recovery requires the authenticated current runtime input')
+        path = repo/'inventure_oem_home_restore.py'
+        restoration = _module('inventure_bootstrap_oem_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_oem_home(repo, files, retain_service_entry=oem_service_entry)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['oem_home_r38_6'] = provenance
     return source, files, metadata
 
 
@@ -199,15 +355,31 @@ def _write_files(root, files):
         Path(directory).chmod(0o755)
 
 
-def _core_check(target, source, temporary):
+def _core_check(target, source, temporary, *, native_restored=False, single_owner=False):
     snapshot = temporary/"release-inputs"
     inputs = {name: (data, 0o644) for name, data in source.items()
               if PurePosixPath(name).parts[0] in ("host", "orange_pi")}
     _write_files(snapshot, inputs)
     path = snapshot/"orange_pi/install_thermal_test.py"
     core = _module("inventure_bootstrap_verifier", path, source["orange_pi/install_thermal_test.py"])
+    verification_target = target
+    if native_restored or single_owner:
+        # The pinned offline installer validates the exact R38.6 input modules.
+        # Verify those in an isolated shadow, never mutate the installed
+        # runtime while Klipper owns a stepper or heater.
+        verification_target = temporary/"core-compat-host"
+        extras = verification_target/"klippy/extras"
+        extras.parent.mkdir(parents=True)
+        shutil.copytree(target/"klippy/extras", extras)
+        shutil.copy2(target/"klippy/serialhdl.py",
+                     verification_target/"klippy/serialhdl.py")
+        for name in (("inventure_native_z.py","inventure_z_home.py","inventure_mcu.py")
+                     if single_owner else ("inventure_native_z.py",)) + (
+                         "inventure_menu_service.py", "inventure_oled_graphics.py", "inventure_oled.py",
+                         "inventure_menu_core.py", "inventure_oem_menu.py"):
+            (extras/name).write_bytes(source["orange_pi/"+name])
     with redirect_stdout(io.StringIO()):
-        result = core.install(target, apply=False)
+        result = core.install(verification_target, apply=False)
     _require(result.get("status") == "ALREADY_INSTALLED"
              and result.get("host_revision") == HOST_REVISION,
              "Prepared host does not match the complete release manifest")
@@ -289,7 +461,9 @@ def prepare_host(destination, repo=ROOT) -> Path:
         marker.write_bytes(_metadata_bytes(metadata))
         marker.chmod(0o644)
         _verify_files(stage, metadata)
-        _core_check(stage, source, temporary)
+        _core_check(stage, source, temporary,
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}),
+                    single_owner='single_motion_owner_r19' in metadata.get('runtime_restorations', {}))
         _publish_new(stage, destination)
     return destination
 
@@ -297,7 +471,9 @@ def prepare_host(destination, repo=ROOT) -> Path:
 def _verify_runtime(target, source, metadata, *, restoration_required):
     generated = _verify_files(target, metadata)
     with tempfile.TemporaryDirectory(prefix="inventure-host-verify-") as temp:
-        _core_check(target, source, Path(temp))
+        _core_check(target, source, Path(temp),
+                    native_restored='native_z_r18' in metadata.get('runtime_restorations', {}),
+                    single_owner='single_motion_owner_r19' in metadata.get('runtime_restorations', {}))
     return dict(status="VERIFIED_LEGACY_HOST" if restoration_required else "VERIFIED_HOST",
                 path=str(target), host_revision=HOST_REVISION,
                 source_commit=SOURCE_COMMIT, source_tag=SOURCE_TAG,
@@ -305,6 +481,18 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 runtime_restoration_required=restoration_required,
                 runtime_restorations=metadata.get("runtime_restorations", {}),
                 oled_restoration=metadata.get("runtime_restorations", {}).get("oled_dual_thermal_v2"),
+                native_z_restoration=metadata.get("runtime_restorations", {}).get("native_z_r18"),
+                single_motion_owner_restoration=metadata.get("runtime_restorations", {}).get("single_motion_owner_r19"),
+                exclusive_service_restoration=metadata.get("runtime_restorations", {}).get("exclusive_service_r20"),
+                scheduler_restoration=metadata.get("runtime_restorations", {}).get("scheduler_r21"),
+                safety_policy_restoration=metadata.get("runtime_restorations", {}).get("safety_policy_r22"),
+                operator_service_restoration=metadata.get("runtime_restorations", {}).get("operator_service_r23"),
+                leveling_ui_restoration=metadata.get("runtime_restorations", {}).get("leveling_ui_r23"),
+                leveling_stages_restoration=metadata.get("runtime_restorations", {}).get("leveling_stages_r23"),
+                operator_menu_restoration=metadata.get("runtime_restorations", {}).get("operator_menu_r23"),
+                configuration_audit_restoration=metadata.get("runtime_restorations", {}).get("configuration_audit_r23"),
+                accepted_home_restoration=metadata.get("runtime_restorations", {}).get("accepted_home_r23"),
+                oem_home_restoration=metadata.get("runtime_restorations", {}).get("oem_home_r38_6"),
                 generated_files=sorted(generated))
 
 
@@ -325,38 +513,93 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
     return _verify_runtime(target, source, metadata, restoration_required=False)
 
 
+def _predecessor_plans(repo):
+    """Every authenticated prefix through the published R23.5 runtime."""
+    names = ('restore_oled', 'restore_native_z', 'restore_motion_owner',
+             'restore_service_excursion', 'restore_scheduler', 'restore_safety_policy',
+             'restore_operator_service', 'restore_leveling_ui', 'restore_leveling_stages',
+             'restore_operator_menu', 'restore_configuration_audit')
+    for enabled in range(len(names)+1):
+        yield _plan(repo, restore_accepted_home=False, procedure_profile='current',
+                    **{name: index < enabled for index, name in enumerate(names)})
+    if _procedure_profile.get() != 'current':
+        yield _plan(repo, procedure_profile='current')
+    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
+    if _procedure_profile.get() == 'current':
+        yield _plan(repo, procedure_profile='oem-home-r38.6')
+
+
 def verify_legacy_host(destination, repo=ROOT) -> dict:
-    """Read-only recognition of the exact pre-restoration R38.6 bootstrap."""
-    target = Path(destination).expanduser().absolute()
-    source, _, metadata = _plan(Path(repo).expanduser().resolve(strict=True), restore_oled=False)
-    return _verify_runtime(target, source, metadata, restoration_required=True)
+    """Recognize only the two authenticated predecessor runtime layouts.
 
-
-def prepare_runtime_update(destination, repo=ROOT) -> dict:
-    """Plan the two-file OLED restoration of a verified legacy runtime.
-
-    No runtime file is written.  The caller must stop the service, recheck the
-    current bytes, apply the plan transactionally and call strict verify_host
-    before starting Klipper.  Existing file modes are the verified 0644 modes.
+    Original R38.6 had generic OLED and native Z. Current Orange Pi hosts
+    already have the restored dual-thermal OLED but not the R18 Z policy.
     """
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
-    source, previous_files, previous_metadata = _plan(repo, restore_oled=False)
-    _verify_runtime(target, source, previous_metadata, restoration_required=True)
+    recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
+    for source, _, metadata in _predecessor_plans(repo):
+        if recorded == metadata:
+            return _verify_runtime(target, source, metadata, restoration_required=True)
+    raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
+
+
+def prepare_runtime_update(destination, repo=ROOT) -> dict:
+    """Plan atomic restoration of OLED and/or R18 NATIVE Z without stopping service.
+
+    Accept only a byte-for-byte verified pre-OLED R38.6 or current OLED-only
+    host. No unexpected runtime edits are permitted; the caller owns the
+    service/rollback transaction.
+    """
+    target = Path(destination).expanduser().absolute()
+    repo = Path(repo).expanduser().resolve(strict=True)
+    recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
+    previous = None
+    for source, files, metadata in _predecessor_plans(repo):
+        if recorded == metadata:
+            _verify_runtime(target, source, metadata, restoration_required=True)
+            previous = files, metadata
+            break
+    _require(previous is not None,
+             "Installed host metadata differs from every verified R38.6 predecessor")
+    previous_files, previous_metadata = previous
     _, files, metadata = _plan(repo)
     changed = {name for name in files.keys() | previous_files.keys()
                if files.get(name) != previous_files.get(name)}
-    renderer_name = "klippy/extras/inventure_oled_render.py"
-    _require(changed == {renderer_name}, "Unexpected runtime files in OLED restoration")
-    renderer = target/renderer_name
-    before = _regular_bytes(renderer)
-    _require(before == previous_files[renderer_name][0],
-             "OLED renderer changed while preparing restoration")
+    allowed = {"klippy/extras/inventure_oled_render.py",
+               "klippy/extras/inventure_menu_service.py",
+               "klippy/extras/inventure_oled_graphics.py",
+               "klippy/extras/inventure_oem_menu.py",
+               "klippy/extras/inventure_menu_core.py",
+               "klippy/extras/inventure_oled.py",
+               "klippy/extras/inventure_native_z.py",
+               "klippy/extras/inventure_z_home.py",
+               "klippy/extras/inventure_mcu.py"}
+    _require(bool(changed) and changed <= allowed,
+             "Unexpected runtime files in R18 restoration")
+    updates = {}
+    for name in changed:
+        destination_file = target/name
+        before = _regular_bytes(destination_file)
+        _require(before == previous_files[name][0],
+                 "Runtime module changed while preparing restoration: " + name)
+        updates[destination_file] = before, files[name][0]
     manifest = target/MANIFEST_NAME
     manifest_before = _regular_bytes(manifest)
     _require(json.loads(manifest_before) == previous_metadata,
              "Host metadata changed while preparing restoration")
-    return dict(files={renderer: (before, files[renderer_name][0]),
-                       manifest: (manifest_before, _metadata_bytes(metadata))},
-                metadata=metadata,
-                restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"])
+    updates[manifest] = manifest_before, _metadata_bytes(metadata)
+    return dict(files=updates, metadata=metadata,
+                restoration=metadata["runtime_restorations"]["oled_dual_thermal_v2"],
+                native_z_restoration=metadata["runtime_restorations"]["native_z_r18"],
+                single_motion_owner_restoration=metadata["runtime_restorations"]["single_motion_owner_r19"],
+                exclusive_service_restoration=metadata["runtime_restorations"]["exclusive_service_r20"],
+                scheduler_restoration=metadata["runtime_restorations"]["scheduler_r21"],
+                safety_policy_restoration=metadata["runtime_restorations"]["safety_policy_r22"],
+                operator_service_restoration=metadata["runtime_restorations"]["operator_service_r23"],
+                leveling_ui_restoration=metadata["runtime_restorations"]["leveling_ui_r23"],
+                leveling_stages_restoration=metadata["runtime_restorations"]["leveling_stages_r23"],
+                operator_menu_restoration=metadata["runtime_restorations"]["operator_menu_r23"],
+                configuration_audit_restoration=metadata["runtime_restorations"]["configuration_audit_r23"],
+                accepted_home_restoration=metadata["runtime_restorations"]["accepted_home_r23"],
+                oem_home_restoration=metadata["runtime_restorations"].get("oem_home_r38_6"))

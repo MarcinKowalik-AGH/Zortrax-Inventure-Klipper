@@ -10,7 +10,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R16'
+MCU_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 
 def embedded_dictionary_matches(app, dictionary):
     for offset in range(len(app) - 2):
@@ -48,13 +48,26 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                  'inventure_transport.inc','inventure_transport.h', 'inventure_motor_test.inc', 'inventure_xy_seek.inc', 'inventure_cooling.inc', 'inventure_fan_manual.inc', 'inventure_heat_test.inc',
                  'inventure_panel.c', 'inventure_fans.inc', 'gpioperiph.c',
                  'inventure_p4_baud.c','inventure_p4_baud.h','serial.c','inventure_oled_local.inc',
-                 'inventure_oled_fault_glyphs.inc'):
+                 'inventure_oled_fault_glyphs.inc','inventure_display_errors.inc',
+                 'inventure_oled_activity.inc','inventure_oled_error_icons.inc',
+                 'inventure_oled_startup_logo.inc','inventure_oled_rle.h'):
         data = (source / name).read_bytes()
         (root / 'src/stm32' / name).write_bytes(data)
         changes[name] = base.sha(data)
     provenance=json.loads((root/'.inventure-v9-patch.json').read_text())
     provenance['patched_sha256'].update({'src/stm32/'+name:digest for name,digest in changes.items()})
     provenance['version'] = MCU_RELEASE
+    scheduler=root/'src/sched.c'
+    before=scheduler.read_text()
+    anchor='    SchedStatus.shutdown_status = 2;\n    sched_timer_reset();\n'
+    if before.count(anchor)!=1:
+        sys.exit('Unexpected pinned scheduler shutdown hook')
+    scheduler.write_text(before.replace(anchor,
+        '    SchedStatus.shutdown_status = 2;\n'
+        '    extern void inventure_oled_capture_shutdown(uint16_t native_id);\n'
+        '    inventure_oled_capture_shutdown(SchedStatus.shutdown_reason);\n'
+        '    sched_timer_reset();\n'))
+    provenance['patched_sha256']['src/sched.c']=base.sha(scheduler.read_bytes())
     provenance['p4_mode']='InventureBoot 1.7 journal; forced baud disabled'
     # The pinned archive has no .git, so upstream would otherwise include
     # the build clock and hostname in the dictionary embedded in the image.
@@ -93,8 +106,32 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     assert c['INVENTURE_DOOR_POLICY_DEFAULT_ENABLED'] == 0
     assert c['INVENTURE_MOTOR_TEST_RELEASE'] == MCU_RELEASE
     assert c['INVENTURE_LOCAL_OLED_DIAGNOSTIC_ABI'] == 1
+    assert c['INVENTURE_DISPLAY_ERROR_ABI'] == 1
+    assert c['INVENTURE_LOCAL_OLED_ANIMATION_ABI'] == 1
+    assert c['INVENTURE_LOCAL_OLED_NATIVE_GRAY4'] == 1
+    assert c['INVENTURE_LOCAL_SPLASH_ABI'] == 1
+    assert 'inventure_display_error_query' in dictionary['commands']
     assert c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'] == 1
     assert c['INVENTURE_NATIVE_XY_HANDOFF_ABI'] == 1
+    assert c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] == 1
+    assert c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] == 1
+    assert c['INVENTURE_FAULT_REASON_ABI'] == 1
+    assert c['INVENTURE_SCHEDULER_ABI'] == 1
+    assert c['INVENTURE_SERVICE_NATIVE_SPLIT_ABI'] == 1
+    assert c['INVENTURE_POLICY_STATUS_ABI'] == 1
+    assert 'inventure_policy_query' in dictionary['commands']
+    assert ('inventure_policy_state mode=%c profile=%c service_mask=%c'
+            ' native_hot=%c native_powered=%c native_required=%c fault=%c latched=%c'
+            ) in dictionary['responses']
+    assert c['INVENTURE_SCHEDULER_SERVICE_HZ'] == 20000
+    assert c['INVENTURE_SCHEDULER_NATIVE_HZ'] == 10000
+    assert c['INVENTURE_SCHEDULER_GUARD_MS'] == 10
+    assert 'inventure_scheduler_query' in dictionary['commands']
+    assert ('inventure_scheduler_state clock=%u calls=%u native=%u service=%u'
+            ' guards=%u skipped=%u resync=%u peak_late=%u peak_work=%u'
+            ' last_clock=%u last_late=%u last_work=%u mode=%c fault=%c'
+            ) in dictionary['responses']
+    assert 'inventure_fault_detail_query' in dictionary['commands']
     assert ('inventure_native_z_refine_clearance action=%c owner=%u token=%u span=%hu '
             'interval_us=%hu min_c=%hi max_c=%hi clearance_steps=%hu clearance_us=%hu') in dictionary['commands']
     assert 'inventure_local_oled_diag_query' in dictionary['commands']
@@ -180,6 +217,11 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
     report = dict(mcu_release=c['INVENTURE_MCU_RELEASE'], motor_release=c['INVENTURE_MOTOR_TEST_RELEASE'],
                   heartbeat_timeout_s=c['INVENTURE_HEARTBEAT_TIMEOUT_MS']/1000.,
                   build_identity=build_identity,
+                  display_error_abi=c['INVENTURE_DISPLAY_ERROR_ABI'],
+                  local_oled_animation_abi=c['INVENTURE_LOCAL_OLED_ANIMATION_ABI'],
+                  local_oled_gray4=c['INVENTURE_LOCAL_OLED_NATIVE_GRAY4'],
+                  local_oled_splash_abi=c['INVENTURE_LOCAL_SPLASH_ABI'],
+                  display_lease_ms=c['INVENTURE_OLED_HOSTLINK_TIMEOUT_MS'],
                   motor_test_abi=2, xy_seek_abi=1,xy_repeat_abi=1,load_stream_abi=1,factory_abi=1,
                   factory_guard_diagnostic_abi=c['INVENTURE_FACTORY_GUARD_DIAGNOSTIC_ABI'],
                   z_home_abi=c['INVENTURE_Z_HOME_ABI'],
@@ -188,6 +230,15 @@ with tempfile.TemporaryDirectory(prefix='inventure-r7-') as tmp:
                   native_z_refine_abi=c['INVENTURE_NATIVE_Z_REFINE_ABI'],
                   native_z_clearance_abi=c['INVENTURE_NATIVE_Z_CLEARANCE_ABI'],
                   native_xy_handoff_abi=c['INVENTURE_NATIVE_XY_HANDOFF_ABI'],
+                  native_service_handoff_abi=c['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'],
+                  native_thermal_profile_abi=c['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'],
+                  fault_reason_abi=c['INVENTURE_FAULT_REASON_ABI'],
+                  service_native_split_abi=c['INVENTURE_SERVICE_NATIVE_SPLIT_ABI'],
+                  policy_status_abi=c['INVENTURE_POLICY_STATUS_ABI'],
+                  scheduler_abi=c['INVENTURE_SCHEDULER_ABI'],
+                  scheduler_native_hz=c['INVENTURE_SCHEDULER_NATIVE_HZ'],
+                  scheduler_service_hz=c['INVENTURE_SCHEDULER_SERVICE_HZ'],
+                  scheduler_guard_ms=c['INVENTURE_SCHEDULER_GUARD_MS'],
                   nozzle_z_test_abi=c['INVENTURE_NOZZLE_Z_TEST_ABI'],
                   nozzle_z_dual_abi=c['INVENTURE_NOZZLE_Z_DUAL_ABI'],
                   nozzle_xy_abi=c['INVENTURE_NOZZLE_XY_ABI'],

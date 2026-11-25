@@ -1,7 +1,8 @@
 name: Verify Orange Pi host updater
 on:
   push:
-    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer]
+    # R17 source candidates are tested without modifying the released R16 image.
+    branches: [orange-pi, orange-pi-all-axis, fix/w2-r38.6-installer, fix/inventure-native-service-handoff-r17, fix/inventure-native-service-policy-r18, fix/inventure-klipper-single-motion-owner-r19, fix/inventure-exclusive-service-handoff-r20, fix/inventure-r21-mcu-scheduler-and-handoff-validation, fix/inventure-r22-strict-service-broad-native-policy, test/inventure-r22-full-cycle-acceptance, feature/inventure-r23-m300-display-parity]
     paths:
       - 'orange_pi/**'
       - 'host/inventure_filament.py'
@@ -13,6 +14,60 @@ on:
       - 'install-new-host.py'
       - 'inventure_bootstrap*.py'
       - 'inventure_oled_restore.py'
+      - 'inventure_native_z_restore.py'
+      - 'inventure_motion_owner_restore.py'
+      - 'inventure_service_excursion_restore.py'
+      - 'inventure_scheduler_restore.py'
+      - 'inventure_safety_policy_restore.py'
+      - 'inventure_operator_service_restore.py'
+      - 'inventure_leveling_ui_restore.py'
+      - 'inventure_leveling_stages_restore.py'
+      - 'inventure_operator_menu_restore.py'
+      - 'inventure_configuration_audit_restore.py'
+      - 'inventure_accepted_home_restore.py'
+      - 'inventure_oem_home_restore.py'
+      - 'tests/test_inventure_oem_home_restore.py'
+      - 'ci/check_inventure_oem_home.py'
+      - 'ci/check_inventure_home_xy.py'
+      - 'tests/test_inventure_home_xy.py'
+      - 'tests/test_inventure_g28_audit.py'
+      - 'tools/inventure_g28_audit.py'
+      - 'docs/INVENTURE_HOME_XY_REFERENCE_2026-11-25.md'
+      - 'restored/accepted_home_r23/**'
+      - 'tests/test_inventure_accepted_home_restore.py'
+      - 'inventure_config_cleanup.py'
+      - 'restored/configuration_audit_r23/**'
+      - 'tests/test_inventure_config_audit.py'
+      - 'ci/check_inventure_config_audit.py'
+      - 'restored/operator_menu_r23/**'
+      - 'tests/test_inventure_operator_menu_r23.py'
+      - 'ci/check_inventure_operator_menu.py'
+      - 'ci/render_inventure_operator_menu.py'
+      - 'restored/leveling_ui_r23/**'
+      - 'restored/leveling_stages_r23/**'
+      - 'tests/test_inventure_leveling_oled_r23.py'
+      - 'tests/test_inventure_operator_service_r23.py'
+      - 'restored/safety_policy_r22/**'
+      - 'tests/test_inventure_safety_policy_r22.py'
+      - 'tests/test_inventure_full_cycles.py'
+      - 'tests/test_inventure_display_r23.py'
+      - 'tests/mcu/**'
+      - 'ci/render_inventure_r23_preview.py'
+      - 'ci/benchmark_inventure_oled_rle.py'
+      - 'ci/check_inventure_full_cycles.py'
+      - '.github/workflows/inventure-r22-policy.yml'
+      - 'restored/scheduler_r21/**'
+      - 'tests/test_inventure_timing_host_r21.py'
+      - 'restored/exclusive_service_r20/**'
+      - 'tests/test_inventure_service_excursion_r20.py'
+      - '.github/workflows/inventure-r21-scheduler.yml'
+      - 'tools/inventure_fault_analyzer.py'
+      - 'tools/inventure_home_reference_audit.py'
+      - 'tests/test_inventure_home_reference_audit.py'
+      - 'tests/test_inventure_fault_analyzer.py'
+      - 'restored/single_owner_r19/**'
+      - 'restored/native_z_r18/**'
+      - 'tests/test_orange_pi_native_z.py'
       - 'restored/oled_dual_thermal_v2/**'
       - 'ci/validate_bootstrap_config.py'
       - 'tests/test_inventure_bootstrap*.py'
@@ -68,6 +123,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    env:
+      INVENTURE_CYCLE_REPORT: /tmp/inventure-r22-full-cycles.json
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,6 +137,14 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6'
       - run: python -m unittest discover -s tests -v
+      - name: Retain the simulated full-cycle acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: INVENTURE_R22_FULL_CYCLES_SIMULATED
+          path: /tmp/inventure-r22-full-cycles.json
+          if-no-files-found: error
+          retention-days: 14
       - run: python ci/check_native_nozzle_startup.py
       - run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
       - run: python ci/benchmark_inventure_oled.py --output /tmp/inventure-oled-uart-model.json

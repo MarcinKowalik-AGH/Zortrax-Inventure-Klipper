@@ -98,7 +98,9 @@ def merge_groups(before, names):
             if target != group:
                 continue
             if name not in indexed:
-                indexed[name] = dict(name=name, visible=not (name in SECONDARY or name.startswith(SECONDARY_PREFIXES)))
+                primary_menu = name in ('INVENTURE_MAIN_MENU','INVENTURE_KLIPPER_MENU',
+                                        'INVENTURE_MAINTENANCE','INVENTURE_MATERIAL_MENU')
+                indexed[name] = dict(name=name, visible=primary_menu or not (name in SECONDARY or name.startswith(SECONDARY_PREFIXES)))
                 rows.append(indexed[name])
             indexed[name]['categoryId'] = by_name[group]['id']
             if name.startswith('INVENTURE_TEST_') or name in ('INVENTURE_DISPLAY_TEXT_TEST', 'INVENTURE_DISPLAY_REINIT'):

@@ -1,0 +1,124 @@
+{
+  "status": "SOFTWARE_VERIFIED_PHYSICAL_MENU_ACCEPTANCE_PENDING",
+  "ui_release": "RC8-OPERATOR-MENU-R23.4",
+  "date": "2026-11-25",
+  "preceding_release": {
+    "tag": "inventure-r23-leveling-oled-rc4",
+    "commit": "ec220f2eb4ad6a1b98be8876a5d61fcebdd95c04",
+    "ui_release": "RC8-LEVELING-UI-R23.3",
+    "operator_confirmed_working": true
+  },
+  "candidate_tag": "inventure-r23-oem-menu-rc5",
+  "reference_m300": {
+    "distribution_commit": "7ed37d50fa543fdd63c31f82b9f10f4aca43226e",
+    "source_commit": "89aede3cc176361f315a91633468a4ac400e1580",
+    "changed": false
+  },
+  "launcher": [
+    "Klipper",
+    "Zortrax Inventure"
+  ],
+  "fluidd_group": "ZORTRAX INVENTURE",
+  "original_menu": {
+    "record_count": 66,
+    "inventory": "INVENTURE_OEM_MENU_R0323.json",
+    "inventory_sha256": "aa0958393dc2bd2ec845b9400395a0aa1efb24c925fdd40b284d982089deae75",
+    "firmware_application_sha256": "9b980ba04531fac4425b77a23969076d24d8f25629fc2a501ac05d262c142268",
+    "callbacks_executed": false,
+    "child_order_checked": true
+  },
+  "rendering": {
+    "status": "PASS_INSTALLED_OEM_OPERATOR_MENU_RENDER",
+    "pages": 26,
+    "selected_rows": 127,
+    "bytes_per_frame": 8192,
+    "release_gallery": "OLED_ZORTRAX_INVENTURE_MENU.png"
+  },
+  "installed_parity": {
+    "status": "PASS_INSTALLED_OLED_FLUIDD_MENU_PARITY",
+    "page_macros": 8,
+    "paired_cases": 24,
+    "starts": 48,
+    "after_restart": true,
+    "after_completed_home": true,
+    "saved_filament_temperatures_and_speeds": true,
+    "cancellation": true,
+    "printing_interlock_refusals": 2,
+    "stale_button_refused": true,
+    "home_cycles": 36,
+    "home_refusals": 9,
+    "home_to_leveling": 2,
+    "physical_interfaces": "simulated",
+    "serial_opened": false
+  },
+  "runtime_update_from_rc4": {
+    "changed_python_modules": [
+      "klippy/extras/inventure_menu_core.py",
+      "klippy/extras/inventure_menu_service.py",
+      "klippy/extras/inventure_oem_menu.py",
+      "klippy/extras/inventure_oled.py",
+      "klippy/extras/inventure_oled_graphics.py"
+    ],
+    "manifest_backed_up": true,
+    "tuning_and_save_config_preserved": true,
+    "calibration_sidecars_preserved": true,
+    "live_ready_ui_and_launcher_verified": true
+  },
+  "mcu": {
+    "release": "RC8-CONTROL-R7-HOMING-R23-OLED",
+    "ivb_sha256": "ef83d8ca0c26c12ed11fbd27380b1ee014cb4baf977c7adebb178861df137645",
+    "reflash_required": false,
+    "bootloader_update": false
+  },
+  "physical_evidence": {
+    "prior_r23_3_leveling_ui_operator_accepted": true,
+    "expanded_r23_4_menu_tested": false
+  },
+  "capability_limits": [
+    "English-only adaptation; original Polski row reports this explicitly",
+    "File checking and material-endstop overrides require the enabled qualified P15/P13 contract",
+    "Save the print does not persist a restart checkpoint",
+    "Models use host virtual SD; no unconfigured MCU SD reader is claimed"
+  ],
+  "authenticated_files": {
+    "klippy/extras/inventure_menu_service.py": {
+      "source": "restored/operator_menu_r23/inventure_menu_service.py",
+      "prior_blob": "5a08da3154254f9ef478ebfcd35dfad7d531762b",
+      "installed_blob": "ff5ef37239b3754b489a390ae953bbfb92f69532",
+      "sha256": "51b4158a25fb143a73d31fabe25333c05b2d83d90a65790072ec2f81d92c50c3"
+    },
+    "klippy/extras/inventure_oled_graphics.py": {
+      "source": "restored/operator_menu_r23/inventure_oled_graphics.py",
+      "prior_blob": "145c34679ffd56c6a3b9ea31d9ee3cb705bd7389",
+      "installed_blob": "7461f7703cf810a058d4213757daf378b85e5c0d",
+      "sha256": "f14f1e2048219eea6b4697e51122621cf66b220f677bb213f0131e1d3488b0d1"
+    },
+    "klippy/extras/inventure_oled.py": {
+      "source": "restored/operator_menu_r23/inventure_oled.py",
+      "prior_blob": "b360bbfc2239141b75ec5f41bf580f9b519771fa",
+      "installed_blob": "ed947efd5c4e1c6ac6e54747a1d27f1121fa932a",
+      "sha256": "79a8a83252b2baeb707d658f830d11a4abb8349044ecbcc915b4f1283bba6779"
+    },
+    "klippy/extras/inventure_menu_core.py": {
+      "source": "restored/operator_menu_r23/inventure_menu_core.py",
+      "prior_blob": "87c547008ba56c44e8a43c6e4b1d444ad027e3d6",
+      "installed_blob": "287e74b1f07cf078f813754ae46d8467d5e10d0f",
+      "sha256": "b383aff2947e7eb77d90d0a12b1f99b92769409142f3bcd97c695b3259829748"
+    },
+    "klippy/extras/inventure_oem_menu.py": {
+      "source": "restored/operator_menu_r23/inventure_oem_menu.py",
+      "prior_blob": "c9cf76d5198aad8eed81f3083a86ac2f4f27fdc7",
+      "installed_blob": "37334e6ecefb9f2da44b7904d4b74d1386878988",
+      "sha256": "d32af9743fce67fa026985c87467cbcc6cc3017814bf52e7f0a27df7cdf5d0b4"
+    }
+  },
+  "software_checks": {
+    "unittest_count": 978,
+    "unittest_result": "PASS",
+    "startup": "CONFIG_LOADED",
+    "installed_macros": 112,
+    "fluidd_visible_macros": 65,
+    "four_pid_zones_save_config_reload": "PASS",
+    "rc4_exact_runtime_upgrade_and_rollback": "PASS"
+  }
+}

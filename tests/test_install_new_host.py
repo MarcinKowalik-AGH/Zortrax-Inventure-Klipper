@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,120 @@ class PureGuardsTests(unittest.TestCase):
                      ['/python', 'bad\targ'], ['/python', 'bad\x7farg']):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 installer.unit_text(argv)
+
+    def test_working_directory_refuses_ambiguous_paths_before_service_changes(self):
+        for value in ('relative/host', '/host\nextra', '/host\t', '/host ', '/host\\name'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                installer.unit_text([sys.executable], working_directory=value)
+
+    def test_missing_systemd_parser_refuses_activation(self):
+        with patch.object(installer.shutil, 'which', return_value=None), \
+             self.assertRaisesRegex(ValueError, 'systemd-analyze is required'):
+            installer.validate_service_unit(b'', Path('/unused'))
+
+    def test_daemon_reload_requires_systemd_readback(self):
+        for state in ('no', 'yes', ''):
+            result = subprocess.CompletedProcess([], 0, stdout=state+'\n')
+            with self.subTest(state=state), patch.object(installer.subprocess, 'run', return_value=result) as run:
+                if state == 'no':
+                    installer.reload_units()
+                else:
+                    with self.assertRaisesRegex(ValueError, 'not accepted'):
+                        installer.reload_units()
+                self.assertEqual(run.call_args_list[0].args[0], ['sudo', '--', 'systemctl', 'daemon-reload'])
+                self.assertEqual(run.call_args_list[1].args[0],
+                    ['systemctl', 'show', 'klipper.service', '--property=NeedDaemonReload', '--value'])
+
+    def test_r17_native_service_handoff_capability_checked_without_disabling_r16(self):
+        legacy = mcu_identity()
+        self.assertEqual(installer.require_mcu(legacy)['native_service_handoff_abi'], 0)
+        modern = deepcopy(legacy)
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SERVICE_HANDOFF_RELEASE
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 1
+        self.assertEqual(installer.require_mcu(modern)['native_service_handoff_abi'], 1)
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 0
+        with self.assertRaisesRegex(ValueError, 'R17'):
+            installer.require_mcu(modern)
+
+    def test_r18_requires_independent_native_thermal_profile_and_fault_reason(self):
+        modern = mcu_identity()
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_NATIVE_PROFILE_RELEASE
+        modern['mcu_constants']['INVENTURE_NATIVE_SERVICE_HANDOFF_ABI'] = 1
+        modern['mcu_constants']['INVENTURE_NATIVE_THERMAL_PROFILE_ABI'] = 1
+        modern['mcu_constants']['INVENTURE_FAULT_REASON_ABI'] = 1
+        self.assertEqual(installer.require_mcu(modern)['native_thermal_profile_abi'], 1)
+        for key in ('INVENTURE_NATIVE_THERMAL_PROFILE_ABI', 'INVENTURE_FAULT_REASON_ABI'):
+            broken = deepcopy(modern)
+            broken['mcu_constants'].pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                installer.require_mcu(broken)
+
+    def test_r23_display_requires_its_caps_and_all_r22_safety_caps(self):
+        modern=mcu_identity()
+        modern['mcu_constants'].update(
+            INVENTURE_MCU_RELEASE=installer.MCU_DISPLAY_RELEASE,
+            INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,INVENTURE_FAULT_REASON_ABI=1,
+            INVENTURE_SCHEDULER_ABI=1,INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+            INVENTURE_SCHEDULER_SERVICE_HZ=20000,INVENTURE_SCHEDULER_GUARD_MS=10,
+            INVENTURE_SERVICE_NATIVE_SPLIT_ABI=1,INVENTURE_POLICY_STATUS_ABI=1,
+            INVENTURE_DISPLAY_ERROR_ABI=1,INVENTURE_LOCAL_OLED_ANIMATION_ABI=1,
+            INVENTURE_LOCAL_OLED_NATIVE_GRAY4=1,INVENTURE_LOCAL_SPLASH_ABI=1,
+            INVENTURE_OLED_HOSTLINK_TIMEOUT_MS=1500)
+        self.assertEqual(installer.require_mcu(modern)['mcu_release'],installer.MCU_DISPLAY_RELEASE)
+        for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI',
+                    'INVENTURE_NATIVE_SERVICE_HANDOFF_ABI','INVENTURE_DISPLAY_ERROR_ABI',
+                    'INVENTURE_LOCAL_OLED_ANIMATION_ABI','INVENTURE_LOCAL_OLED_NATIVE_GRAY4',
+                    'INVENTURE_LOCAL_SPLASH_ABI','INVENTURE_OLED_HOSTLINK_TIMEOUT_MS'):
+            broken=deepcopy(modern);broken['mcu_constants'].pop(key)
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,key):
+                installer.require_mcu(broken)
+
+    def test_r22_service_native_policy_abi_required_and_r21_remains_compatible(self):
+        modern = mcu_identity()
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SAFETY_POLICY_RELEASE
+        modern['mcu_constants'].update(
+            INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,
+            INVENTURE_FAULT_REASON_ABI=1,
+            INVENTURE_SCHEDULER_ABI=1,
+            INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+            INVENTURE_SCHEDULER_SERVICE_HZ=20000,
+            INVENTURE_SCHEDULER_GUARD_MS=10,
+            INVENTURE_SERVICE_NATIVE_SPLIT_ABI=1,
+            INVENTURE_POLICY_STATUS_ABI=1)
+        profile=installer.require_mcu(modern)
+        self.assertEqual(profile['service_native_split_abi'],1)
+        self.assertEqual(profile['policy_status_abi'],1)
+        for key in ('INVENTURE_SERVICE_NATIVE_SPLIT_ABI','INVENTURE_POLICY_STATUS_ABI'):
+            broken = deepcopy(modern)
+            broken['mcu_constants'].pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError,key):
+                installer.require_mcu(broken)
+        predecessor=deepcopy(modern)
+        predecessor['mcu_constants']['INVENTURE_MCU_RELEASE']=installer.MCU_SCHEDULER_RELEASE
+        predecessor['mcu_constants'].pop('INVENTURE_SERVICE_NATIVE_SPLIT_ABI')
+        predecessor['mcu_constants'].pop('INVENTURE_POLICY_STATUS_ABI')
+        self.assertEqual(installer.require_mcu(predecessor)['policy_status_abi'],0)
+
+    def test_r21_scheduler_release_requires_scheduler_abi_and_clock_profiles(self):
+        modern = mcu_identity()
+        modern['mcu_constants']['INVENTURE_MCU_RELEASE'] = installer.MCU_SCHEDULER_RELEASE
+        modern['mcu_constants'].update(
+            INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,
+            INVENTURE_FAULT_REASON_ABI=1,
+            INVENTURE_SCHEDULER_ABI=1,
+            INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+            INVENTURE_SCHEDULER_SERVICE_HZ=20000,
+            INVENTURE_SCHEDULER_GUARD_MS=10)
+        self.assertEqual(installer.require_mcu(modern)['scheduler_abi'],1)
+        for field in ('INVENTURE_SCHEDULER_ABI', 'INVENTURE_SCHEDULER_NATIVE_HZ',
+                      'INVENTURE_SCHEDULER_SERVICE_HZ','INVENTURE_SCHEDULER_GUARD_MS'):
+            damaged = deepcopy(modern)
+            damaged['mcu_constants'][field] = 0
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,field):
+                installer.require_mcu(damaged)
 
     def test_mcu_release_and_both_abis_are_required(self):
         good = mcu_identity()
@@ -88,6 +203,34 @@ class PureGuardsTests(unittest.TestCase):
             self.assertTrue(existing.is_symlink())
 
 
+@unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
+class SystemdParserTests(unittest.TestCase):
+    def test_actual_parser_accepts_absolute_working_directory_with_spaces_and_percent(self):
+        with tempfile.TemporaryDirectory(prefix='inventure-systemd-') as temporary:
+            root = Path(temporary)
+            host = root/'host with spaces %R'
+            host.mkdir()
+            script = host/'klippy.py'
+            script.write_text('# Not executed by systemd-analyze\n')
+            unit = installer.unit_text([sys.executable, str(script)], working_directory=host)
+            self.assertIn(('WorkingDirectory='+str(host).replace('%', '%%')+'\n').encode(), unit)
+            candidate = installer.validate_service_unit(unit, root)
+            self.assertTrue(candidate.is_file())
+            self.assertEqual((candidate.parent/'verification.log').read_text(), '')
+
+    def test_actual_parser_rejects_the_rc6_quoted_working_directory(self):
+        with tempfile.TemporaryDirectory(prefix='inventure-systemd-') as temporary:
+            root = Path(temporary)
+            unit = installer.unit_text([sys.executable], working_directory=root)
+            old_unit = unit.replace(('WorkingDirectory='+str(root)+'\n').encode(),
+                                   ('WorkingDirectory="'+str(root)+'"\n').encode())
+            with self.assertRaisesRegex(ValueError, 'failed systemd validation'):
+                installer.validate_service_unit(old_unit, root)
+            log = (root/'systemd-validation/verification.log').read_text()
+            self.assertIn('WorkingDirectory=', log)
+            self.assertIn('not absolute', log)
+
+
 class TransactionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='inventure-transaction-')
@@ -127,8 +270,16 @@ class TransactionTests(unittest.TestCase):
         self.state, self.message = 'ready', 'Printer is ready'
         self.mcu = mcu_identity()
         self.board = {'host_revision': installer.bootstrap.HOST_REVISION, 'armed': 0, 'fault': 0,
-                      'connected': True, 'status_age': 0.1}
-        self.native_z, self.oled = {'running': False}, {'ui_transport': {'active_work': False}}
+                      'connected': True, 'status_age': 0.1,
+                      'host_module':str(self.host/'klippy/extras/inventure_mcu.py')}
+        self.native_z, self.oled = {'running': False,
+            'host_module':str(self.host/'klippy/extras/inventure_native_z.py'),
+            'homing_safety_release':installer.accepted_home.RELEASE,
+            'procedure_restore_release':installer.accepted_home.RELEASE,
+            'procedure_baseline_blob':installer.accepted_home.BASELINE_BLOB}, {
+            'ui_transport': {'active_work': False},
+            'procedure_ui_release': installer.LEVELING_UI_RELEASE,
+            'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
         self.serial, self.baud = '/dev/ttyS5', 750000
         self.macros = {'INVENTURE_DIAGNOSTICS', 'INVENTURE_HOME_ALL', 'PAUSE'}
         self.fail_locale_once = self.fail_web = self.fail_after_web = False
@@ -267,6 +418,77 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual((self.web/'config.json').read_bytes(), b'{"operator": "retained"}')
         self.assertFalse((self.report/'rollback.json').exists())
         self.assertEqual(self.service_calls.count(('start', 'klipper')), 1)
+        for name in ('startup-observation.json', 'startup-final-observation.json'):
+            observation = json.loads((self.report/name).read_text())
+            self.assertEqual(observation['mismatches'], {})
+            self.assertEqual(observation['observed']['process_id'], 81)
+
+    @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
+    def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):
+        previous = installer.UNIT_MARKER.encode()+b'[Service]\n# Previous verified runtime\n'
+        self.dropin.write_bytes(previous)
+        (self.root/'gcodes').mkdir()
+        staged = self.root/'staged/printer.cfg'
+        staged.parent.mkdir()
+        staged.write_bytes(self.before_config)
+        bad_unit = self.unit.replace(b'[Service]\n', b'[Service]\nWorkingDirectory="'+str(self.host).encode()+b'"\n')
+        real_run = subprocess.run
+        def subprocess_boundary(argv, **kwargs):
+            if str(ROOT/'ci/validate_bootstrap_config.py') in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout='offline fixture accepted\n', stderr='')
+            return real_run(argv, **kwargs)
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
+        args = SimpleNamespace(apply=True, destination=self.host, serial=self.serial,
+                               baud=self.baud, restore_field_profile=True)
+        with patch.object(installer.os, 'geteuid', return_value=1000), \
+             patch.object(Path, 'home', return_value=self.root), \
+             patch.object(installer, 'stage_runtime', return_value=(self.host, {}, {}, {})), \
+             patch.object(installer, 'stage_config', return_value={'config_path': str(staged)}), \
+             patch.object(installer, 'unit_text', return_value=bad_unit), \
+             patch.object(installer.subprocess, 'run', side_effect=subprocess_boundary), \
+             self.assertRaisesRegex(ValueError, 'failed systemd validation'):
+            installer.run(args)
+        self.assertEqual(self.service_calls, [])
+        self.assertEqual(self.config.read_bytes(), self.before_config)
+        self.assertEqual(self.dropin.read_bytes(), previous)
+        self.assertEqual(self.db, self.before_db)
+        self.assertFalse(self.include.exists())
+
+    def test_startup_identity_failure_records_actual_runtime_pid_and_version(self):
+        info = self.info()
+        info.update(process_id=17, klipper_path='/home/klipper/klipper', software_version='v0.14.0')
+        observation = self.report/'identity.json'
+        wrong_script = Path('/home/klipper/klipper/klippy/klippy.py')
+        with patch.object(installer.core, 'running_service_script',
+                          return_value=(self.process, self.argv, 1, wrong_script)), \
+             patch.object(installer, 'api', return_value=info), \
+             self.assertRaisesRegex(ValueError, 'Startup identity mismatch') as failure:
+            installer.wait_ready(self.host, self.config, seconds=0, observation_path=observation)
+        details = json.loads(observation.read_text())
+        self.assertEqual(set(details['mismatches']), {'service_script', 'process_id', 'klipper_path', 'software_version'})
+        self.assertEqual(details['mismatches']['process_id'], {'expected': 81, 'observed': 17})
+        self.assertIn('v0.14.0', str(failure.exception))
+        self.assertIn('/home/klipper/klipper/klippy/klippy.py', str(failure.exception))
+
+    def test_ready_paths_keep_resolving_equivalent_moonraker_paths(self):
+        info = self.info()
+        info['klipper_path'] = str(self.host/'klippy/..')
+        info['config_file'] = str(self.config.parent/'../config/printer.cfg')
+        original_api = installer.api
+        with patch.object(installer, 'api', side_effect=lambda endpoint:
+                          info if endpoint == '/printer/info' else original_api(endpoint)):
+            self.assertEqual(installer.wait_ready(self.host, self.config, seconds=0)['state'], 'ready')
+
+    def test_oem_home_readback_requires_the_selected_full_reference(self):
+        with installer.bootstrap.procedure_profile(installer.oem_home.PROFILE):
+            with self.assertRaisesRegex(RuntimeError, 'different Inventure MCU or Home module'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.native_z.update(homing_safety_release=installer.oem_home.RELEASE,
+                procedure_restore_release=installer.oem_home.RELEASE,
+                procedure_baseline_blob=installer.oem_home.BASELINE_BLOB,
+                home_procedure_profile=installer.oem_home.PROFILE)
+            self.assertEqual(installer.wait_ready(self.host,self.config,seconds=0)['state'],'ready')
 
     def test_armed_controller_is_rejected_before_staging_and_service_stop(self):
         self.board['armed'] = 1
@@ -362,6 +584,44 @@ class TransactionTests(unittest.TestCase):
             self.activate(transaction)
         self.assert_restored()
         self.assertFalse(transaction.settings_changed)
+
+    def test_ready_process_with_old_oled_ui_is_refused_and_rolled_back(self):
+        transaction=self.transaction()
+        self.oled.pop('procedure_ui_release')
+        with self.assertRaisesRegex(RuntimeError,'did not load the matching OLED procedure UI'):
+            self.activate(transaction)
+        self.assert_restored()
+        self.assertFalse(transaction.settings_changed)
+
+    def test_ready_ui_with_wrong_launcher_is_refused_and_rolled_back(self):
+        transaction=self.transaction()
+        self.oled['operator_menu_root']='root'
+        with self.assertRaisesRegex(RuntimeError,'requested Klipper / Zortrax Inventure menu'):
+            self.activate(transaction)
+        self.assert_restored()
+
+    def test_ready_with_a_home_module_from_candidate_runtime_is_rolled_back(self):
+        self.native_z['host_module']='/home/klipper/klipper-inventure-candidate/klippy/extras/inventure_native_z.py'
+        with self.assertRaisesRegex(RuntimeError,'different Inventure MCU or Home module'):
+            self.activate(self.transaction())
+        self.assert_restored()
+
+    def test_ready_without_the_restored_procedure_identity_is_rolled_back(self):
+        self.native_z.pop('procedure_restore_release')
+        with self.assertRaisesRegex(RuntimeError, 'selected recorded Home procedure'):
+            self.activate(self.transaction())
+        self.assert_restored()
+
+    def test_missing_driver_recovery_validates_ready_mcu_inside_transaction(self):
+        result,_=self.activate(self.transaction(),recover_startup=True)
+        self.assertIn('recovered_mcu',result)
+        self.assertEqual(result['recovered_mcu']['mcu_release'],installer.MCU_RELEASE)
+
+    def test_startup_recovery_rejects_a_stale_mcu_status_and_rolls_back(self):
+        self.board['status_age']=2.0
+        with self.assertRaisesRegex(RuntimeError,'fresh Inventure MCU status'):
+            self.activate(self.transaction(),recover_startup=True)
+        self.assert_restored()
 
     def test_dashboard_http_failure_restores_settings_and_existing_service_override(self):
         previous_unit = installer.UNIT_MARKER.encode()+b'[Service]\n# previous managed override\n'

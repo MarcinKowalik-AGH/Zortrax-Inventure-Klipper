@@ -1087,7 +1087,7 @@ static void pad_cold_center(unsigned tool) {
 }
 
 static void native_xy_handoff(void) {
-    for(unsigned condition=0;condition<9;condition++) {
+    for(unsigned condition=0;condition<13;condition++) {
         factory_reset(0,1);
         native_xy_handoff_owner=native_xy_handoff_run=native_xy_handoff_token=0;
         native_dir_seen=native_dir_levels=0;
@@ -1110,9 +1110,34 @@ static void native_xy_handoff(void) {
         if(condition==6)args[2]++;
         if(condition==7)GPIOE->ODR=0;
         if(condition==8)inventure_adc_observe(ADC1,10,4095);
+        if(condition==9) {
+            // An unrelated PA4 sensor going offline at return to NATIVE:
+            // strict SERVICE would reject it but safe ordinary motion
+            // MUST use independent NATIVE requirements.
+            latest_adc[4]=4095;
+            assert(!service_sensors_valid(control_guard_mask|31,mock_now));
+            assert(native_sensors_valid(mock_now));
+        }
+        if(condition==10) {
+            // Loss of the hot T0 thermistor is still fatal for NATIVE.
+            latest_adc[0]=4095;
+            assert(!native_sensors_valid(mock_now));
+        }
+        if(condition==11) {
+            // NATIVE power demands independently valid PSU/board sensors.
+            control_heater_duty[0]=64;
+            latest_adc[5]=4095;
+            assert(!native_sensors_valid(mock_now));
+        }
+        if(condition==12) {
+            // SERVICE-only min/max cannot leak across the owner transition.
+            control_min[1]=300;
+            assert(!service_sensors_valid(control_guard_mask|31,mock_now));
+            assert(native_sensors_valid(mock_now));
+        }
         command_inventure_factory_native_handoff(args);
         assert(native_dir_levels==dir_cache && !cm.sent[2] && !cm.sent[3]);
-        if(condition) {
+        if(condition && condition!=9 && condition!=12) {
             assert(control_mode==CT_SERVICE && fs.active);
             continue;
         }
@@ -1128,7 +1153,8 @@ static void native_xy_handoff(void) {
         command_inventure_factory_native_handoff(args);
         assert(!inventure_is_armed() && GPIOE->BSRR==(BIT(10)<<16));
     }
-    puts("PASS native XY handoff: completed owner only, continuous enable, restored native DIR, heater release, replay and guard refusals");
+    puts("PASS native XY handoff: completed owner only, NATIVE ignores SERVICE mask/min, "
+         "hot T0/PSU still protected, continuous enable, restored DIR, replay and refusals");
 }
 
 int main(void) {

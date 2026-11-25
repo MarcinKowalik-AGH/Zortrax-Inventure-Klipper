@@ -8,7 +8,8 @@ import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 PROGRAMS=('test_control_board.c','test_t0_heat_board.c','test_motor_board.c','test_load_stream.c',
-          'test_factory_session.c','test_z_home.c','test_load15_joint.c','test_cassette_load_joint.c')
+          'test_factory_session.c','test_z_home.c','test_load15_joint.c','test_cassette_load_joint.c',
+          'test_r22_full_cycles.c')
 def main():
     compiler=shutil.which('gcc')
     if not compiler:raise SystemExit('A C11 host compiler (gcc) is required for register mocks')
@@ -20,7 +21,11 @@ def main():
                 '-I','TESTS/mock','-I','SOURCE_MCU','-I','TESTS/support','-I','TESTS',
                 str(Path('TESTS')/name),'-o',str(binary)]
             subprocess.run(command,cwd=ROOT,check=True)
-            result=subprocess.run([str(binary)],cwd=ROOT,check=True,capture_output=True,text=True)
-            print(result.stdout,end='');rows.append(dict(program=name,status='PASS',output=result.stdout))
+            result=subprocess.run([str(binary)],cwd=ROOT,check=False,capture_output=True,text=True)
+            print(result.stdout,end='',flush=True)
+            if result.returncode:
+                print(result.stderr,end='',flush=True)
+                raise SystemExit('MCU register test failed: '+name+' exit '+str(result.returncode))
+            rows.append(dict(program=name,status='PASS',output=result.stdout))
     print(json.dumps(dict(status='PASS_CONTROL_R6_REGISTER_TESTS',programs=rows),indent=2))
 if __name__=='__main__':main()

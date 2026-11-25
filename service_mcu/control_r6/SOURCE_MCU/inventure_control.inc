@@ -12,6 +12,13 @@ DECL_CONSTANT("INVENTURE_FACTORY_FEED_CLOCK",1);
 DECL_CONSTANT("INVENTURE_NATIVE_Z_GUARD_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_HEATER_HANDOFF_ABI",1);
 DECL_CONSTANT("INVENTURE_NATIVE_XY_HANDOFF_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_SERVICE_HANDOFF_ABI",1);
+DECL_CONSTANT("INVENTURE_NATIVE_THERMAL_PROFILE_ABI",1);
+DECL_CONSTANT("INVENTURE_SERVICE_NATIVE_SPLIT_ABI",1);
+// Read-only capability: strict SERVICE sensor mask and native requirements
+// are independent.  Returned policy is selected solely by MCU mode.
+DECL_CONSTANT("INVENTURE_POLICY_STATUS_ABI",1);
+DECL_CONSTANT("INVENTURE_FAULT_REASON_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_XY_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_ABI",1);
 DECL_CONSTANT("INVENTURE_NOZZLE_PAD_SWEEP_ABI",1);
@@ -125,7 +132,13 @@ static void zh_shutdown(void);
 static uint8_t factory_transport_allowed(void) {
     return fs.active && control_mode==CT_SERVICE;
 }
+static uint8_t native_sampler_can_reduce(void) {
+    return control_mode==CT_NATIVE && !transport_live && !fs.active
+        && !cm.active && !sl.active && !t0_heat_busy();
+}
 static uint8_t control_guard_mask=127,control_fan_phase,control_heat_seen;
+// NATIVE heater history independent of strict SERVICE profile windows.
+static uint8_t native_hot_mask;
 static uint32_t control_cooldown_ms,control_cooldown_tick;
 static uint8_t control_tach_watch[4];
 static int16_t control_min[8]={-20,-20,-20,-20,-20,-20,-20,-20};
@@ -185,10 +198,45 @@ static uint8_t pad_temperature_ok(uint32_t now,uint8_t cold,int16_t minimum) {
     return 1;
 }
 static uint8_t fs_pad_temperature_ok(uint32_t now) {return pad_temperature_ok(now,fs.pad_cold,fs.min_c);}
-static uint8_t control_sensors_valid(uint8_t mask,uint32_t now) {
+// Strict calibration/service validation. NEVER call from a NATIVE
+// homing, print, native heater or SERVICE->NATIVE handback path.
+static uint8_t service_sensors_valid(uint8_t mask,uint32_t now) {
     for(unsigned i=0;i<8;i++)if(mask&BIT(i)) {
         uint8_t valid;int16_t t=control_temp(i,now,&valid);
         if(!valid || t<control_min[i] || t>=control_max[i])return 0;
+    }
+    return 1;
+}
+// Ordinary NATIVE operation cannot inherit the SERVICE calibration/diagnostic
+// sensor mask. Preserve independent hard limits and freshness for powered or
+// still-hot heaters; inactive/unrelated missing sensors do not abort homing.
+// Also used at SERVICE->NATIVE admission so the *end* of normal Home Z/All
+// cannot be refused by an unrelated strict SERVICE sensor min/max setting.
+// Hot SERVICE nozzles remain mandatory inputs when ownership is handed back.
+// Never forget the most recent verified hot temperature when service PWM goes
+// OFF. The 10-ms guard already supervises SERVICE; track only four heaters.
+static void service_native_hot_history(uint32_t now) {
+    if(control_mode!=CT_SERVICE)return;
+    for(unsigned i=0;i<4;i++) {
+        uint8_t valid;int16_t temperature=control_temp(i,now,&valid);
+        if(co[6+i].duty || (valid && temperature>=45))native_hot_mask|=BIT(i);
+        else if(valid && temperature<=40 && !control_heater_duty[i])
+            native_hot_mask&=~BIT(i);
+    }
+}
+static uint8_t native_sensors_valid(uint32_t now) {
+    static const int16_t hard_max[8]={310,310,150,150,150,100,100,190};
+    uint8_t powered=0;
+    for(unsigned h=0;h<4;h++)if(control_heater_duty[h])powered=1;
+    for(unsigned i=0;i<8;i++) {
+        uint8_t valid;int16_t temperature=control_temp(i,now,&valid);
+        if(valid && (temperature< -30 || temperature>=hard_max[i]))return 0;
+        if(i<4) {
+            uint8_t bit=BIT(i), heating=!!control_heater_duty[i];
+            if(heating || (valid && temperature>=45)) native_hot_mask|=bit;
+            if(valid && temperature<=40 && !heating)native_hot_mask&=~bit;
+            if((native_hot_mask&bit) && !valid)return 0;
+        } else if((i==5 || i==6) && powered && !valid)return 0;
     }
     return 1;
 }
@@ -220,7 +268,7 @@ static uint8_t cm_hot_e_ready(unsigned tool,uint32_t now,int16_t maximum) {
             && (uint32_t)(now-co[6+tool].last_tick)/MS(1)>=co[6+tool].remaining))
         return 0;
     return valid && t>=CM_AXIS_E_MIN_C && t<maximum
-        && control_sensors_valid(control_guard_mask|31,now);
+        && service_sensors_valid(control_guard_mask|31,now);
 }
 static uint8_t control_aux_allowed(void) {
     return control_mode==CT_SERVICE && !sl.active && !fs.active && !fault && !control_latched && heartbeat_live;
@@ -318,7 +366,7 @@ static uint8_t cm_pad_timeout_unqualified(uint32_t now) {
         && transport[fs.tool].configured && !transport[fs.tool].fault
         && fs_nozzle_temperature_ok(fs.tool,now,0)
         && fs_nozzle_temperature_ok(1-fs.tool,now,0)
-        && fs_pad_temperature_ok(now) && control_sensors_valid(control_guard_mask|31,now)
+        && fs_pad_temperature_ok(now) && service_sensors_valid(control_guard_mask|31,now)
         && !cm_input_hit(BIT(0)|BIT(1)|BIT(2)|BIT(4),BIT(0)|BIT(1)|BIT(2)|BIT(4));
 }
 static void cm_end(uint8_t reason) {
@@ -644,6 +692,7 @@ static void control_guard(uint32_t now) {
     sl_guard(now);
     zh_guard(now);
     fs_guard(now);
+    service_native_hot_history(now);
     if(control_cooldown_ms) {
         uint32_t ms=(uint32_t)(now-control_cooldown_tick)/MS(1);
         if(ms){control_cooldown_tick+=ms*MS(1);control_cooldown_ms=ms>=control_cooldown_ms?0:control_cooldown_ms-ms;}
@@ -660,7 +709,7 @@ static void control_guard(uint32_t now) {
         if(native_z_guard_active && (native_z_guard_lost || (GPIOC->IDR&BIT(13))))
             trip(7);
         if(door_policy_enabled()&&door_closed_mask()!=3)trip(6);
-        if(!control_sensors_valid(control_guard_mask|31,now))trip(4);
+        if(!native_sensors_valid(now))trip(4);
         for(unsigned h=0;h<4;h++)if(control_heater_duty[h])control_heat_seen=1;
         uint8_t needed=control_cooling_mask();
         if(control_heater_duty[0]||control_heater_duty[1])needed|=1;
@@ -698,7 +747,7 @@ static void control_guard(uint32_t now) {
         if(!off)co[i].remaining-=ms;
         if(i>=6) {
             uint8_t valid;int16_t t=control_temp(th_heaters[i-6].sensor,now,&valid);
-            if(!valid || t>=co[i].limit || !control_sensors_valid(control_guard_mask|31,now))off=4;
+            if(!valid || t>=co[i].limit || !service_sensors_valid(control_guard_mask|31,now))off=4;
         }
         if(off){control_output_off(i);co[i].reason=off;}
     }
@@ -727,6 +776,24 @@ static uint8_t control_take_native_heaters(void) {
     return 1;
 }
 
+// The generic motor_test_busy() deliberately treats CT_NATIVE as busy.
+// Native-to-service ownership is a narrower, explicit idle handoff:
+// PE10 must already be physically disabled by Klipper motor_off, all
+// native heater PWM outputs must be off, and no MCU owner/guard may remain.
+// Never clear the safety latch, fake a homing reference, or disarm queued
+// native motion as an implicit side effect of this transition.
+static uint8_t native_service_quiescent(void) {
+    if ((GPIOE->ODR & BIT(10)) || native_z_guard_active || native_z_refine_held
+        || native_z_refine_conflict || zh_active() || cm.active || fs.active || sl.active
+        || motor_test.running || xy_seek_busy() || t0_heat_busy()
+        || fan_manual_active() || feeder_running[0] || feeder_running[1]
+        || locks_on[0] || locks_on[1] || locks_pulling[0]
+        || locks_pulling[1]) return 0;
+    for (unsigned h = 0; h < ARRAY_SIZE(th_heaters); h++)
+        if (control_heater_duty[h] || co[6+h].duty) return 0;
+    return 1;
+}
+
 void command_inventure_control(uint32_t *args) {
     unsigned action=args[0],mode=args[1];irqstatus_t flags=irq_save();uint8_t reject=0;
     uint32_t now=timer_read_time();
@@ -736,10 +803,15 @@ void command_inventure_control(uint32_t *args) {
         if(mode==CT_OFF){control_stop_all();control_mode=CT_OFF;}
         else if(mode==control_mode){} // idempotent; never renew any output timer
         else if(control_latched)reject=4;
+        else if(mode==CT_SERVICE && control_mode==CT_NATIVE) {
+            if(!control_ready(now))reject=3;
+            else if(!native_service_quiescent())reject=2;
+            else control_mode=CT_SERVICE;
+        }
         else if(motor_test_busy() || t0_heat_busy() || fan_manual_active() || fs.active
                 || (cm.active && cm.fast_direct))reject=2;
         else if(!control_ready(now))reject=3;
-        else if(mode==CT_NATIVE && (!control_sensors_valid(control_guard_mask|31,now)
+        else if(mode==CT_NATIVE && (!native_sensors_valid(now)
              || (door_policy_enabled()&&door_closed_mask()!=3)))reject=5;
         else if(mode==CT_NATIVE && !control_take_native_heaters())reject=2;
         else control_mode=mode;
@@ -1021,7 +1093,7 @@ void command_inventure_output(uint32_t *args) {
                     && !(cm.fast_direct && cm.planned[3] && i==6u+cm.fast_tool))
                 || motor_test.running || xy_seek_busy() || t0_heat_busy() || fan_manual_active())reject=2;
         else if(i>=6 && (limit<40 || limit>control_max[th_heaters[i-6].sensor]
-                 || !control_sensors_valid(control_guard_mask|31,now)))reject=5;
+                 || !service_sensors_valid(control_guard_mask|31,now)))reject=5;
         else if(i>=6) {
             uint8_t valid;int16_t t=control_temp(th_heaters[i-6].sensor,now,&valid);
             if(!valid || t>=limit)reject=5;
@@ -1037,7 +1109,10 @@ void command_inventure_output(uint32_t *args) {
                 co[i].initialized=1;gpio_pwm_write(co[i].pwm,i>=6?256-duty:duty);
                 control_pwm_bypass=0;
             }
-            if(i>=6 && duty)control_heat_seen=1;
+            if(i>=6 && duty) {
+                control_heat_seen=1;
+                native_hot_mask|=BIT(i-6); // SERVICE -> NATIVE thermal history
+            }
             if(!duty)control_output_off(i);
         }
     }
@@ -1048,6 +1123,26 @@ void command_inventure_output(uint32_t *args) {
 }
 DECL_COMMAND_FLAGS(command_inventure_output,HF_IN_SHUTDOWN,
  "inventure_output action=%c channel=%c duty=%hu duration_ms=%u limit_c=%hi token=%u");
+// Read-only, safe while shut down: the strict SERVICE guard mask is
+// intentionally displayed next to (not combined into) the broad NATIVE
+// heater and thermal requirements. Never changes motion/PWM/lease state.
+void command_inventure_policy_query(uint32_t *args) {
+    (void)args;
+    irqstatus_t saved=irq_save();
+    uint8_t mode=control_mode,service_mask=control_guard_mask;
+    uint8_t hot=native_hot_mask,powered=0,required=0;
+    for(unsigned h=0;h<4;h++)if(control_heater_duty[h])powered|=BIT(h);
+    required=hot|powered;
+    if(powered)required|=BIT(5)|BIT(6);
+    uint8_t profile=mode==CT_SERVICE?1:mode==CT_NATIVE?2:0;
+    uint8_t fault_code=fault,latch=control_latched;
+    irq_restore(saved);
+    sendf("inventure_policy_state mode=%c profile=%c service_mask=%c native_hot=%c native_powered=%c native_required=%c fault=%c latched=%c",
+          mode,profile,service_mask,hot,powered,required,fault_code,latch);
+}
+DECL_COMMAND_FLAGS(command_inventure_policy_query,HF_IN_SHUTDOWN,
+                   "inventure_policy_query");
+
 void command_inventure_control_guard(uint32_t *args) {
     unsigned i=args[0],enabled=args[1];int16_t lo=args[2],hi=args[3];
     irqstatus_t flags=irq_save();uint8_t reject=0;
@@ -1077,7 +1172,7 @@ static void sl_guard(uint32_t now) {
         why=5;
     } else if(iv9_due(now,sl.deadline) || !feeder_running[sl.channel])why=3;
     else if(!valid || temperature<sl.min_c || temperature>=sl.max_c
-            || !control_sensors_valid(control_guard_mask|31,now) || co[6+sl.tool].reason>=3)why=4;
+            || !service_sensors_valid(control_guard_mask|31,now) || co[6+sl.tool].reason>=3)why=4;
     if(why){control_stop_all();sl.reason=why;}
 }
 
@@ -1109,7 +1204,7 @@ void command_inventure_load_stream(uint32_t *args) {
         for(unsigned i=0;i<10;i++)if(!reject && i!=6+tool && co[i].duty)reject=2;
         uint8_t valid;int16_t t=control_temp(tool<2?tool:0,now,&valid);
         if(!reject && (!valid || t<minimum_c || t>=maximum_c
-                || !control_sensors_valid(control_guard_mask|31,now) || co[6+tool].reason>=3))reject=3;
+                || !service_sensors_valid(control_guard_mask|31,now) || co[6+tool].reason>=3))reject=3;
         if(!reject) {
             uint32_t motion[]={1,e_direction?8:0,0,0,0,steps,rate,10,maximum,0,0,0,token};
             reject=cm_request(motion,now,0,0);
@@ -1202,7 +1297,7 @@ static void fs_guard(uint32_t now) {
             || (fs.dual_nozzle_z && !fs_nozzle_temperature_ok(1-fs.tool,now,0))
             || (fs.nozzle_pad && cm.active && cm.planned[3] && !cm_hot_e_ready(fs.tool,now,fs.max_c))
             || ((pad_probe || fs.pad_cold) && !fs_pad_temperature_ok(now))
-            || !control_sensors_valid(control_guard_mask|31,now))why=4;
+            || !service_sensors_valid(control_guard_mask|31,now))why=4;
     else if((door_policy_enabled()&&door_closed_mask()!=3) || !transport_live
             || transport_selected!=fs.tool || transport[fs.tool].fault
             || !transport[fs.tool].configured || cm.phase==CM_FAILED
@@ -1287,7 +1382,7 @@ void command_inventure_factory_session(uint32_t *args) {
         uint8_t valid;int16_t t=control_temp(tool<2?tool:0,now,&valid);
         if(!reject && (control_mode!=CT_SERVICE || !control_ready(now) || !auxiliary_ready
                 || !valid || (mode!=IVT_STOP && t<minimum) || t>=maximum || co[6+tool].reason>=3
-                || !control_sensors_valid(control_guard_mask|31,now)
+                || !service_sensors_valid(control_guard_mask|31,now)
                 || (door_policy_enabled()&&door_closed_mask()!=3)))reject=3;
         if(!reject && dual) {
             unsigned other=tool^1;
@@ -1320,7 +1415,7 @@ void command_inventure_factory_session(uint32_t *args) {
                 || budget!=fs.budget_steps || lease!=fs.lease_ms || minimum!=fs.min_c || maximum!=fs.max_c)reject=1;
         else if(zh_active() && (mode!=IVT_STOP || monitor!=fs.monitor))reject=2;
         else if(mode!=IVT_STOP && (!valid || t<fs.min_c || t>=fs.max_c
-                || !control_sensors_valid(control_guard_mask|31,now)))reject=3;
+                || !service_sensors_valid(control_guard_mask|31,now)))reject=3;
         else if(sequence==fs.sequence) {
             if(mode!=fs.mode || monitor!=fs.monitor)reject=1;
         } else {
@@ -1425,7 +1520,7 @@ void command_inventure_factory_native_handoff(uint32_t *args) {
             || zh_active() || sl.active || motor_test.running || xy_seek_busy()
             || t0_heat_busy() || fan_manual_active() || (native_dir_seen&7)!=7)reject=2;
     else if(!control_ready(now) || !(GPIOE->ODR&BIT(10)) || !zh_contact_open()
-            || (GPIOC->IDR&BIT(13)) || !control_sensors_valid(control_guard_mask|31,now)
+            || (GPIOC->IDR&BIT(13)) || !native_sensors_valid(now)
             || (door_policy_enabled() && door_closed_mask()!=3))reject=3;
     else {
         for(unsigned i=6;i<10;i++)control_output_off(i);

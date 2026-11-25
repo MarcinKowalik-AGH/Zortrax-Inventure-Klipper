@@ -1,0 +1,1543 @@
+[
+  {
+    "address": "0x2000028c",
+    "label_en": "Main menu",
+    "label_pl": "Menu główne",
+    "parent": "0x0",
+    "count_initial": 5,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000448",
+      "0x20000a8c",
+      "0x200002c0",
+      "0x200008e0",
+      "0x200001f8"
+    ],
+    "raw_words": [
+      "0x80304e8",
+      "0x0",
+      "0x200002ac",
+      "0x5",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000448",
+    "label_en": "Models",
+    "label_pl": "Modele",
+    "parent": "0x2000028c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016db1",
+    "callback20": "0x8016b2d",
+    "flags28": "0x4",
+    "children": [],
+    "raw_words": [
+      "0x8030530",
+      "0x2000028c",
+      "0x20005268",
+      "0x0",
+      "0x8016db1",
+      "0x8016b2d",
+      "0x802d744",
+      "0x4"
+    ]
+  },
+  {
+    "address": "0x20000a8c",
+    "label_en": "Maintenance",
+    "label_pl": "Konserwacja",
+    "parent": "0x2000028c",
+    "count_initial": 6,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000ae4",
+      "0x200009e4",
+      "0x20000a24",
+      "0x20000a04",
+      "0x20000ac4",
+      "0x200009c4"
+    ],
+    "raw_words": [
+      "0x80304f0",
+      "0x2000028c",
+      "0x20000aac",
+      "0x6",
+      "0x0",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000ae4",
+    "label_en": "Platform leveling",
+    "label_pl": "Poziomowanie platformy",
+    "parent": "0x20000a8c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80163bd",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80305f0",
+      "0x20000a8c",
+      "0x0",
+      "0x0",
+      "0x80163bd",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200009e4",
+    "label_en": "Nozzle alignment calibration",
+    "label_pl": "Kalibracja położenia dysz",
+    "parent": "0x20000a8c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80163c1",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030578",
+      "0x20000a8c",
+      "0x0",
+      "0x0",
+      "0x80163c1",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000a24",
+    "label_en": "Hotend maintenance",
+    "label_pl": "Konserwacja głowic",
+    "parent": "0x20000a8c",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000a44",
+      "0x20000a64"
+    ],
+    "raw_words": [
+      "0x8030260",
+      "0x20000a8c",
+      "0x20000a84",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000a44",
+    "label_en": "Left hotend maintenance (model)",
+    "label_pl": "Konserwacja lewej głowicy (materiału modelowego)",
+    "parent": "0x20000a24",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016819",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030268",
+      "0x20000a24",
+      "0x0",
+      "0x0",
+      "0x8016819",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000a64",
+    "label_en": "Right hotend maintenance (support)",
+    "label_pl": "Konserwacja prawej głowicy (materiału podporowego)",
+    "parent": "0x20000a24",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801681f",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030270",
+      "0x20000a24",
+      "0x0",
+      "0x0",
+      "0x801681f",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000a04",
+    "label_en": "Heat the extruder",
+    "label_pl": "Nagrzej ekstruder",
+    "parent": "0x20000a8c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80163c5",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030240",
+      "0x20000a8c",
+      "0x0",
+      "0x0",
+      "0x80163c5",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000ac4",
+    "label_en": "Move the platform",
+    "label_pl": "Zmiana położenia platformy",
+    "parent": "0x20000a8c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016435",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030560",
+      "0x20000a8c",
+      "0x0",
+      "0x0",
+      "0x8016435",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200009c4",
+    "label_en": "Fan Test",
+    "label_pl": "Test wentylatorów",
+    "parent": "0x20000a8c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8015e29",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030030",
+      "0x20000a8c",
+      "0x0",
+      "0x0",
+      "0x8015e29",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200002c0",
+    "label_en": "Material",
+    "label_pl": "Materiał",
+    "parent": "0x2000028c",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x80169dd",
+    "flags28": "0x8",
+    "children": [
+      "0x200003b0",
+      "0x200003d0"
+    ],
+    "raw_words": [
+      "0x80304f8",
+      "0x2000028c",
+      "0x20000430",
+      "0x2",
+      "0x0",
+      "0x80169dd",
+      "0x802d058",
+      "0x8"
+    ]
+  },
+  {
+    "address": "0x200003b0",
+    "label_en": "Model",
+    "label_pl": "Modelowy",
+    "parent": "0x200002c0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x20",
+    "children": [
+      "0x200003f0",
+      "0x200002e0"
+    ],
+    "raw_words": [
+      "0x8030508",
+      "0x200002c0",
+      "0x20000438",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d058",
+      "0x20"
+    ]
+  },
+  {
+    "address": "0x200003f0",
+    "label_en": "Unload the model material",
+    "label_pl": "Wysuń materiał modelowy",
+    "parent": "0x200003b0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016a51",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030648",
+      "0x200003b0",
+      "0x0",
+      "0x0",
+      "0x8016a51",
+      "0x0",
+      "0x802d3d4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200002e0",
+    "label_en": "Load the model material",
+    "label_pl": "Załaduj materiał modelowy",
+    "parent": "0x200003b0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000300",
+      "0x20000320"
+    ],
+    "raw_words": [
+      "0x80304d0",
+      "0x200003b0",
+      "0x20000340",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d20c",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000300",
+    "label_en": "Load from cartridge",
+    "label_pl": "Załaduj z kartridża",
+    "parent": "0x200002e0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016a71",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304c8",
+      "0x200002e0",
+      "0x0",
+      "0x0",
+      "0x8016a71",
+      "0x0",
+      "0x802d058",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000320",
+    "label_en": "Load from spool",
+    "label_pl": "Załaduj ze szpuli",
+    "parent": "0x200002e0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80176c5",
+    "callback20": "0x0",
+    "flags28": "0x4",
+    "children": [],
+    "raw_words": [
+      "0x80304d8",
+      "0x200002e0",
+      "0x0",
+      "0x0",
+      "0x80176c5",
+      "0x0",
+      "0x802d3c4",
+      "0x4"
+    ]
+  },
+  {
+    "address": "0x200003d0",
+    "label_en": "Support",
+    "label_pl": "Podporowy",
+    "parent": "0x200002c0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x20",
+    "children": [
+      "0x20000410",
+      "0x20000348"
+    ],
+    "raw_words": [
+      "0x8030528",
+      "0x200002c0",
+      "0x20000440",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d058",
+      "0x20"
+    ]
+  },
+  {
+    "address": "0x20000410",
+    "label_en": "Unload the support material",
+    "label_pl": "Wysuń materiał podporowy",
+    "parent": "0x200003d0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016abd",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030650",
+      "0x200003d0",
+      "0x0",
+      "0x0",
+      "0x8016abd",
+      "0x0",
+      "0x802d4b0",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000348",
+    "label_en": "Load the support material",
+    "label_pl": "Załaduj materiał podporowy",
+    "parent": "0x200003d0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000368",
+      "0x20000388"
+    ],
+    "raw_words": [
+      "0x80304e0",
+      "0x200003d0",
+      "0x200003a8",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d2e4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000368",
+    "label_en": "Load from cartridge",
+    "label_pl": "Załaduj z kartridża",
+    "parent": "0x20000348",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016adf",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304c8",
+      "0x20000348",
+      "0x0",
+      "0x0",
+      "0x8016adf",
+      "0x0",
+      "0x802d068",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000388",
+    "label_en": "Load from spool",
+    "label_pl": "Załaduj ze szpuli",
+    "parent": "0x20000348",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80176d1",
+    "callback20": "0x0",
+    "flags28": "0x4",
+    "children": [],
+    "raw_words": [
+      "0x80304d8",
+      "0x20000348",
+      "0x0",
+      "0x0",
+      "0x80176d1",
+      "0x0",
+      "0x802d590",
+      "0x4"
+    ]
+  },
+  {
+    "address": "0x200008e0",
+    "label_en": "Settings",
+    "label_pl": "Ustawienia",
+    "parent": "0x2000028c",
+    "count_initial": 5,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000224",
+      "0x20000468",
+      "0x200000a8",
+      "0x20000110",
+      "0x200001d8"
+    ],
+    "raw_words": [
+      "0x8030638",
+      "0x2000028c",
+      "0x20000900",
+      "0x5",
+      "0x0",
+      "0x0",
+      "0x802f1f8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000224",
+    "label_en": "Language",
+    "label_pl": "Język",
+    "parent": "0x200008e0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x2000024c",
+      "0x2000026c"
+    ],
+    "raw_words": [
+      "0x80304b0",
+      "0x200008e0",
+      "0x20000244",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802c3c8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000024c",
+    "label_en": "English",
+    "label_pl": "English",
+    "parent": "0x20000224",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8017319",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304b8",
+      "0x20000224",
+      "0x0",
+      "0x0",
+      "0x8017319",
+      "0x0",
+      "0x802c3c8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000026c",
+    "label_en": "Polski",
+    "label_pl": "Polski",
+    "parent": "0x20000224",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801734d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304c0",
+      "0x20000224",
+      "0x0",
+      "0x0",
+      "0x801734d",
+      "0x0",
+      "0x802c3c8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000468",
+    "label_en": "Models sorting",
+    "label_pl": "Sortowanie modeli",
+    "parent": "0x200008e0",
+    "count_initial": 4,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000498",
+      "0x200004b8",
+      "0x200004d8",
+      "0x200004f8"
+    ],
+    "raw_words": [
+      "0x8030538",
+      "0x200008e0",
+      "0x20000488",
+      "0x4",
+      "0x0",
+      "0x0",
+      "0x802f5a8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000498",
+    "label_en": "Date/time ↓",
+    "label_pl": "Data/czas ↓",
+    "parent": "0x20000468",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80173cb",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030540",
+      "0x20000468",
+      "0x0",
+      "0x0",
+      "0x80173cb",
+      "0x0",
+      "0x802f5a8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200004b8",
+    "label_en": "Date/time ↑",
+    "label_pl": "Data/czas ↑",
+    "parent": "0x20000468",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80173d1",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030548",
+      "0x20000468",
+      "0x0",
+      "0x0",
+      "0x80173d1",
+      "0x0",
+      "0x802f5a8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200004d8",
+    "label_en": "File name",
+    "label_pl": "Nazwa pliku",
+    "parent": "0x20000468",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80173d7",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030550",
+      "0x20000468",
+      "0x0",
+      "0x0",
+      "0x80173d7",
+      "0x0",
+      "0x802f5a8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200004f8",
+    "label_en": "File size",
+    "label_pl": "Rozmiar pliku",
+    "parent": "0x20000468",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80173dd",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030558",
+      "0x20000468",
+      "0x0",
+      "0x0",
+      "0x80173dd",
+      "0x0",
+      "0x802f5a8",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200000a8",
+    "label_en": "Door lock",
+    "label_pl": "Blokada drzwiczek",
+    "parent": "0x200008e0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x200000e8",
+      "0x200000c8"
+    ],
+    "raw_words": [
+      "0x8030038",
+      "0x200008e0",
+      "0x20000108",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802c7d4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200000e8",
+    "label_en": "Door lock enable",
+    "label_pl": "Włącz blokadę drzwiczek",
+    "parent": "0x200000a8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80173e5",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030048",
+      "0x200000a8",
+      "0x0",
+      "0x0",
+      "0x80173e5",
+      "0x0",
+      "0x802c7d4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200000c8",
+    "label_en": "Door lock disable",
+    "label_pl": "Wyłącz blokadę drzwiczek",
+    "parent": "0x200000a8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801740d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030040",
+      "0x200000a8",
+      "0x0",
+      "0x0",
+      "0x801740d",
+      "0x0",
+      "0x802c7d4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000110",
+    "label_en": "File checking",
+    "label_pl": "Sprawdzanie plików",
+    "parent": "0x200008e0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000150",
+      "0x20000130"
+    ],
+    "raw_words": [
+      "0x8030210",
+      "0x200008e0",
+      "0x20000170",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802a684",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000150",
+    "label_en": "Enable .zcode file checking",
+    "label_pl": "Włącz sprawdzanie plików .zcode",
+    "parent": "0x200000a8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8017445",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030220",
+      "0x200000a8",
+      "0x0",
+      "0x0",
+      "0x8017445",
+      "0x0",
+      "0x802a684",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000130",
+    "label_en": "Disable .zcode file checking",
+    "label_pl": "Wyłącz sprawdzanie plików .zcode",
+    "parent": "0x200000a8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801746d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030218",
+      "0x200000a8",
+      "0x0",
+      "0x0",
+      "0x801746d",
+      "0x0",
+      "0x802a684",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200001d8",
+    "label_en": "Ignore material endstops",
+    "label_pl": "Ignoruj endstopy materiału",
+    "parent": "0x200008e0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8017495",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030420",
+      "0x200008e0",
+      "0x0",
+      "0x0",
+      "0x8017495",
+      "0x0",
+      "0x802d3c4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200001f8",
+    "label_en": "Information",
+    "label_pl": "Informacje",
+    "parent": "0x2000028c",
+    "count_initial": 3,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x20000178",
+      "0x2000087c",
+      "0x200001b8"
+    ],
+    "raw_words": [
+      "0x8030428",
+      "0x2000028c",
+      "0x20000218",
+      "0x3",
+      "0x0",
+      "0x0",
+      "0x802aab4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000178",
+    "label_en": "Firmware version",
+    "label_pl": "Wersja firmware",
+    "parent": "0x200001f8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016191",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030228",
+      "0x200001f8",
+      "0x0",
+      "0x0",
+      "0x8016191",
+      "0x0",
+      "0x802aab4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000087c",
+    "label_en": "Printer information",
+    "label_pl": "Informacje o drukarce",
+    "parent": "0x200001f8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80161f1",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030600",
+      "0x200001f8",
+      "0x0",
+      "0x0",
+      "0x80161f1",
+      "0x0",
+      "0x802aab4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200001b8",
+    "label_en": "Help",
+    "label_pl": "Pomoc",
+    "parent": "0x200001f8",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801637d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030258",
+      "0x200001f8",
+      "0x0",
+      "0x0",
+      "0x801637d",
+      "0x0",
+      "0x802aab4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000518",
+    "label_en": "--- UNUSED ---",
+    "label_pl": "--- UNUSED ---",
+    "parent": "0x0",
+    "count_initial": 5,
+    "selection_initial": 2,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x2000085c",
+      "0x200007a8",
+      "0x20000768",
+      "0x200007c8",
+      "0x200006a4"
+    ],
+    "raw_words": [
+      "0x8030580",
+      "0x0",
+      "0x20000538",
+      "0x20005",
+      "0x0",
+      "0x0",
+      "0x802de00",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000085c",
+    "label_en": "WARNING: Hot extruder",
+    "label_pl": "UWAGA: Gorący ekstruder",
+    "parent": "0x20000518",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x2",
+    "children": [],
+    "raw_words": [
+      "0x8030588",
+      "0x20000518",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x802de00",
+      "0x2"
+    ]
+  },
+  {
+    "address": "0x200007a8",
+    "label_en": "",
+    "label_pl": "",
+    "parent": "0x20000518",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x2",
+    "children": [],
+    "raw_words": [
+      "0x0",
+      "0x20000518",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x802de00",
+      "0x2"
+    ]
+  },
+  {
+    "address": "0x20000768",
+    "label_en": "Resume the print job",
+    "label_pl": "Kontynuuj druk",
+    "parent": "0x20000518",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8015c39",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80305c0",
+      "0x20000518",
+      "0x0",
+      "0x0",
+      "0x8015c39",
+      "0x0",
+      "0x802de00",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200007c8",
+    "label_en": "Stop the print job",
+    "label_pl": "Zatrzymaj druk",
+    "parent": "0x0",
+    "count_initial": 5,
+    "selection_initial": 3,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x200007e8",
+      "0x200007a8",
+      "0x200007a8",
+      "0x2000081c",
+      "0x2000083c"
+    ],
+    "raw_words": [
+      "0x80305d8",
+      "0x0",
+      "0x20000808",
+      "0x30005",
+      "0x0",
+      "0x0",
+      "0x802de00",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200007e8",
+    "label_en": "Are you sure you want to cancel\nthe print job?",
+    "label_pl": "Czy na pewno chcesz przerwać druk?",
+    "parent": "0x0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x2",
+    "children": [],
+    "raw_words": [
+      "0x80305e0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x802de00",
+      "0x2"
+    ]
+  },
+  {
+    "address": "0x2000081c",
+    "label_en": "No",
+    "label_pl": "Nie",
+    "parent": "0x0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8015c4d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030570",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x8015c4d",
+      "0x0",
+      "0x802de00",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000083c",
+    "label_en": "Yes",
+    "label_pl": "Tak",
+    "parent": "0x0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8015c6d",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030658",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x8015c6d",
+      "0x0",
+      "0x802de00",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200006a4",
+    "label_en": "Material/Maintenance",
+    "label_pl": "Materiał/Konserwacja",
+    "parent": "0x20000518",
+    "count_initial": 3,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x200005b4",
+      "0x20000788",
+      "0x2000054c"
+    ],
+    "raw_words": [
+      "0x8030598",
+      "0x20000518",
+      "0x200006c4",
+      "0x3",
+      "0x0",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200005b4",
+    "label_en": "Material",
+    "label_pl": "Materiał",
+    "parent": "0x200006a4",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x80169dd",
+    "flags28": "0x8",
+    "children": [
+      "0x200006d0",
+      "0x200006f0"
+    ],
+    "raw_words": [
+      "0x80304f8",
+      "0x200006a4",
+      "0x20000750",
+      "0x2",
+      "0x0",
+      "0x80169dd",
+      "0x802d058",
+      "0x8"
+    ]
+  },
+  {
+    "address": "0x200006d0",
+    "label_en": "Model",
+    "label_pl": "Modelowy",
+    "parent": "0x200005b4",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x20",
+    "children": [
+      "0x20000710",
+      "0x200005d4"
+    ],
+    "raw_words": [
+      "0x8030508",
+      "0x200005b4",
+      "0x20000758",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d058",
+      "0x20"
+    ]
+  },
+  {
+    "address": "0x20000710",
+    "label_en": "Unload the model material",
+    "label_pl": "Wysuń materiał modelowy",
+    "parent": "0x200006d0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016a51",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030648",
+      "0x200006d0",
+      "0x0",
+      "0x0",
+      "0x8016a51",
+      "0x0",
+      "0x802d3d4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200005d4",
+    "label_en": "Load the model material",
+    "label_pl": "Załaduj materiał modelowy",
+    "parent": "0x200006d0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x200005f4",
+      "0x20000614"
+    ],
+    "raw_words": [
+      "0x80304d0",
+      "0x200006d0",
+      "0x20000634",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d20c",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x200005f4",
+    "label_en": "Load from cartridge",
+    "label_pl": "Załaduj z kartridża",
+    "parent": "0x200005d4",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016a71",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304c8",
+      "0x200005d4",
+      "0x0",
+      "0x0",
+      "0x8016a71",
+      "0x0",
+      "0x802d058",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x20000614",
+    "label_en": "Load from spool",
+    "label_pl": "Załaduj ze szpuli",
+    "parent": "0x200005d4",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80176dd",
+    "callback20": "0x0",
+    "flags28": "0x4",
+    "children": [],
+    "raw_words": [
+      "0x80304d8",
+      "0x200005d4",
+      "0x0",
+      "0x0",
+      "0x80176dd",
+      "0x0",
+      "0x802d3c4",
+      "0x4"
+    ]
+  },
+  {
+    "address": "0x200006f0",
+    "label_en": "Support",
+    "label_pl": "Podporowy",
+    "parent": "0x200005b4",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x20",
+    "children": [
+      "0x20000730",
+      "0x2000063c"
+    ],
+    "raw_words": [
+      "0x8030528",
+      "0x200005b4",
+      "0x20000760",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d058",
+      "0x20"
+    ]
+  },
+  {
+    "address": "0x20000730",
+    "label_en": "Unload the support material",
+    "label_pl": "Wysuń materiał podporowy",
+    "parent": "0x200006f0",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016abd",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030650",
+      "0x200006f0",
+      "0x0",
+      "0x0",
+      "0x8016abd",
+      "0x0",
+      "0x802d4b0",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000063c",
+    "label_en": "Load the support material",
+    "label_pl": "Załaduj materiał podporowy",
+    "parent": "0x200006f0",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x2000065c",
+      "0x2000067c"
+    ],
+    "raw_words": [
+      "0x80304e0",
+      "0x200006f0",
+      "0x2000069c",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802d2e4",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000065c",
+    "label_en": "Load from cartridge",
+    "label_pl": "Załaduj z kartridża",
+    "parent": "0x20000348",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016adf",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80304c8",
+      "0x20000348",
+      "0x0",
+      "0x0",
+      "0x8016adf",
+      "0x0",
+      "0x802d068",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000067c",
+    "label_en": "Load from spool",
+    "label_pl": "Załaduj ze szpuli",
+    "parent": "0x20000348",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x80176e9",
+    "callback20": "0x0",
+    "flags28": "0x4",
+    "children": [],
+    "raw_words": [
+      "0x80304d8",
+      "0x20000348",
+      "0x0",
+      "0x0",
+      "0x80176e9",
+      "0x0",
+      "0x802d590",
+      "0x4"
+    ]
+  },
+  {
+    "address": "0x20000788",
+    "label_en": "Save the print",
+    "label_pl": "Zapisz wydruk",
+    "parent": "0x200006a4",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016825",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x80305d0",
+      "0x200006a4",
+      "0x0",
+      "0x0",
+      "0x8016825",
+      "0x0",
+      "0x802a684",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000054c",
+    "label_en": "Hotend maintenance",
+    "label_pl": "Konserwacja głowic",
+    "parent": "0x200006a4",
+    "count_initial": 2,
+    "selection_initial": 0,
+    "callback16": "0x0",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [
+      "0x2000056c",
+      "0x2000058c"
+    ],
+    "raw_words": [
+      "0x8030260",
+      "0x200006a4",
+      "0x200005ac",
+      "0x2",
+      "0x0",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000056c",
+    "label_en": "Left hotend maintenance (model)",
+    "label_pl": "Konserwacja lewej głowicy (materiału modelowego)",
+    "parent": "0x2000054c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x8016819",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030268",
+      "0x2000054c",
+      "0x0",
+      "0x0",
+      "0x8016819",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  },
+  {
+    "address": "0x2000058c",
+    "label_en": "Right hotend maintenance (support)",
+    "label_pl": "Konserwacja prawej głowicy (materiału podporowego)",
+    "parent": "0x2000054c",
+    "count_initial": 0,
+    "selection_initial": 0,
+    "callback16": "0x801681f",
+    "callback20": "0x0",
+    "flags28": "0x0",
+    "children": [],
+    "raw_words": [
+      "0x8030270",
+      "0x2000054c",
+      "0x0",
+      "0x0",
+      "0x801681f",
+      "0x0",
+      "0x802ce70",
+      "0x0"
+    ]
+  }
+]

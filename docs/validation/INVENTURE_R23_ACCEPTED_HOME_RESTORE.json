@@ -1,0 +1,36 @@
+{
+  "baseline_blob": "3fc954974a4a375e003b50c8624304301457f1de",
+  "baseline_sha256": "3e82ecc981bcf2b6e009dd10d579c9b1c8de1084c3e63f7c5d15ab4af72425d2",
+  "exact_rollback_verified": true,
+  "installed_blob": "5263263a899be9d08dbeed495d04e8663371ed4c",
+  "installed_sha256": "653324cf871bc923421ebb7c053abed05c3d5ef0e5b910cd620750df56ad8c8d",
+  "local_unit_tests_passed": 1002,
+  "matching_retained_backups": [
+    "20261125T132634.084458Z",
+    "20261125T135716.311355Z"
+  ],
+  "mcu_release": "RC8-CONTROL-R7-HOMING-R23-OLED",
+  "mcu_update_required": false,
+  "new_restoration_hardware_tested": false,
+  "only_status_method_differs": true,
+  "physical_collision_root_cause_established": false,
+  "prior_and_latest_motion_settings_identical": true,
+  "prior_physical_run_cycles": [
+    311,
+    102,
+    332
+  ],
+  "private_configuration_validation": {
+    "calibration_files_identical": true,
+    "effective_settings_identical": true,
+    "hardware_tested": false,
+    "macro_count": 92,
+    "offline_startup_passed": true,
+    "serial_opened": false
+  },
+  "procedure_ast_identical_to_retained_reference": true,
+  "rc7_upgrade_native_and_manifest_only": true,
+  "release": "RC8-ACCEPTED-HOME-R23.6",
+  "status_method_read_only": true,
+  "supplied_config_zip_sha256": "d21eeedf8aaf878d6a4e9f2f160032fdbd4939cdfc27b327a7c67bcda5bfe9a7"
+}
