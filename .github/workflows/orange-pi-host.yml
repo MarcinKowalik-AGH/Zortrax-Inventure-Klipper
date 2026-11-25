@@ -51,6 +51,8 @@ on:
       - 'tests/test_inventure_service_excursion_r20.py'
       - '.github/workflows/inventure-r21-scheduler.yml'
       - 'tools/inventure_fault_analyzer.py'
+      - 'tools/inventure_home_reference_audit.py'
+      - 'tests/test_inventure_home_reference_audit.py'
       - 'tests/test_inventure_fault_analyzer.py'
       - 'restored/single_owner_r19/**'
       - 'restored/native_z_r18/**'

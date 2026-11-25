@@ -61,3 +61,33 @@ base version string as proof of a particular restored module.
 This evidence/preservation update changes no executable procedure, printer
 configuration, installer, firmware or motion parameter. It is not a repair
 release and does not authorize another physical Home test.
+
+## Identify the saved implementation without moving the printer
+
+`tools/inventure_home_reference_audit.py` reads the current native module,
+its runtime manifest and the native-module copies indexed by the installer's
+`~/inventure-installations/*/backup.json` files. It prints Git-blob and SHA256
+identities, whether the current manifest agrees, and which saved copies match
+the public pre-R23.5 reference. It reads neither calibration contents nor other
+backed-up configuration files, and never restores a module or controls a service.
+
+Run the tool as the Klipper user from a checkout containing it:
+
+```bash
+python3 tools/inventure_home_reference_audit.py
+```
+
+A reference match identifies bytes; correlate the installation record with the
+completed runs before treating a copy as the accepted implementation. The audit
+does not automatically label a version physically safe.
+
+For the operator's 17:23:59 readback, the fresh controller response reports
+NATIVE, fault 0 and latch 0. QUERY_ENDSTOPS reports all three limits open,
+and GET_POSITION reports X82.8 Y68 Z10 with CoreXY motor coordinates
+150.8 and 14.8 mm. Those coordinates are internally consistent. They do not
+independently measure the head's physical location or prove a successful Z
+reference. The nested motion result has receive time 12118.856636 versus
+19499.109173 for the controller query, making it approximately 7380 seconds
+(123 minutes) old. Its z_bottom value must not be interpreted as the live
+endstop state. A native Z result from before any restart is needed to establish
+whether the later coordinate report followed a completed reference cycle.
