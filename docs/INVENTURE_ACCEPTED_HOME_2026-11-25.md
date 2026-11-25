@@ -1,5 +1,14 @@
 # Preserve the accepted Inventure Home procedure
 
+**Later operator clarification:** the omitted release concerns X/Y endstops
+and bellows preload, not the PC14 Z measurement. R19 removed the older
+preparatory `home_release` calls and measured XY translation. The RC8 copy
+below already contains R19, so restoring it alone does not recover that
+earlier composed procedure. See the explicit
+[complete R38.6 recovery and its limits](INVENTURE_R23_OEM_HOME_RC9.md).
+The three successful Z completions below do not prove acceptance of that
+changed XY preparation or its motor holding behavior.
+
 The later installer audit positively identified two retained pre-R23.5 copies.
 The [R23.6 restoration](INVENTURE_R23_ACCEPTED_HOME_RC8.md) preserves that
 reference's executable AST; only status fields differ. This is separate from

@@ -27,7 +27,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(build, previews, output, leveling_previews=None, menu_previews=None, operator_cycles=None):
+def package(build, previews, output, leveling_previews=None, menu_previews=None, operator_cycles=None, oem_home_proof=None):
     status = subprocess.check_output(
         ['git', 'status', '--porcelain'], cwd=ROOT, text=True)
     require(not status, 'Commit the candidate source before packaging')
@@ -70,7 +70,15 @@ def package(build, previews, output, leveling_previews=None, menu_previews=None,
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
-    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_OEM_HOME_RC9.md').read_bytes()
+    files['HOST_RESTORE_RC8.md'] = (ROOT/'docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md').read_bytes()
+    if oem_home_proof is not None:
+        proof=json.loads(oem_home_proof.read_text())
+        require(proof['status']=='PASS_OEM_HOME_RECOVERY'
+                and proof['configuration_values_unchanged'] is True
+                and proof['hardware_tested'] is False
+                and proof['serial_opened'] is False, 'Invalid OEM Home recovery evidence')
+        files['validation/OEM_HOME_RECOVERY.json']=oem_home_proof.read_bytes()
     files['HOST_STARTUP_RC7.md'] = (ROOT/'docs/INVENTURE_R23_STARTUP_RC7.md').read_bytes()
     files['validation/INVENTURE_R23_ACCEPTED_HOME_RESTORE.json'] = (ROOT/'docs/validation/INVENTURE_R23_ACCEPTED_HOME_RESTORE.json').read_bytes()
     files['HOST_CONFIG_RC6.md'] = (ROOT/'docs/INVENTURE_R23_CONFIG_AUDIT.md').read_bytes()
@@ -144,7 +152,9 @@ def package(build, previews, output, leveling_previews=None, menu_previews=None,
         'application_slot_free_bytes': LIMIT-len(binary),
         'preview_source': 'Compiled MCU C code / simulated SPI / SSD1322 GDDRAM',
         'operator_ui_release': 'RC8-CONFIG-AUDIT-R23.5',
-        'installer_release': 'R23.6',
+        'installer_release': 'R23.7',
+        'optional_home_recovery_profile': 'oem-home-r38.6',
+        'optional_home_recovery_release': 'RC8-OEM-HOME-R38.6-RESTORE-R23.7',
         'procedure_restore_release': 'RC8-ACCEPTED-HOME-R23.6',
         'procedure_baseline_blob': '3fc954974a4a375e003b50c8624304301457f1de',
         'operator_menu_hardware_tested': False,
@@ -175,7 +185,8 @@ if __name__ == '__main__':
     parser.add_argument('--leveling-previews', type=Path)
     parser.add_argument('--menu-previews', type=Path)
     parser.add_argument('--operator-cycles', type=Path)
+    parser.add_argument('--oem-home-proof', type=Path)
     args = parser.parse_args()
     print(json.dumps(package(args.build.resolve(), args.previews.resolve(),
                              args.output.resolve(), args.leveling_previews,
-                             args.menu_previews, args.operator_cycles), indent=2))
+                             args.menu_previews, args.operator_cycles, args.oem_home_proof), indent=2))

@@ -35,6 +35,7 @@ import inventure_config_layout as layout
 import fluidd_web
 from inventure_configuration_audit_restore import RELEASE as LEVELING_UI_RELEASE
 import inventure_accepted_home_restore as accepted_home
+import inventure_oem_home_restore as oem_home
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -49,7 +50,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R23.6'
+INSTALLER_RELEASE = 'R23.7'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -322,13 +323,18 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                 if board.get('host_revision') != bootstrap.HOST_REVISION:
                     raise RuntimeError('Ready process has the wrong Inventure host revision')
                 native = values.get('inventure_native_z', {})
+                home_reference = (oem_home if bootstrap.current_procedure_profile() == oem_home.PROFILE
+                                  else accepted_home)
                 if (Path(board.get('host_module','')).resolve() != host/'klippy/extras/inventure_mcu.py'
                         or Path(native.get('host_module','')).resolve() != host/'klippy/extras/inventure_native_z.py'
-                        or native.get('homing_safety_release') != accepted_home.RELEASE):
+                        or native.get('homing_safety_release') != home_reference.RELEASE):
                     raise RuntimeError('Ready process loaded a different Inventure MCU or Home module')
-                if (native.get('procedure_restore_release') != accepted_home.RELEASE
-                        or native.get('procedure_baseline_blob') != accepted_home.BASELINE_BLOB):
-                    raise RuntimeError('Ready process did not load the recorded pre-R23.5 Home procedure')
+                if (native.get('procedure_restore_release') != home_reference.RELEASE
+                        or native.get('procedure_baseline_blob') != home_reference.BASELINE_BLOB):
+                    raise RuntimeError('Ready process did not load the selected recorded Home procedure')
+                if (home_reference is oem_home
+                        and native.get('home_procedure_profile') != oem_home.PROFILE):
+                    raise RuntimeError('Ready process did not activate the complete OEM Home profile')
                 if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
                     raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
                                        + LEVELING_UI_RELEASE)
@@ -573,6 +579,14 @@ def require_identical_configuration(host, original, staged):
 
 
 def run(args):
+    restore_oem = bool(getattr(args, 'restore_oem_home', False))
+    if restore_oem and getattr(args, 'restore_accepted_home', False):
+        raise ValueError('Select exactly one Home recovery profile')
+    with bootstrap.procedure_profile(oem_home.PROFILE if restore_oem else 'current'):
+        return _run(args)
+
+
+def _run(args):
     if os.geteuid() == 0:
         raise ValueError('Run as the Klipper user without sudo; privileged service operations request sudo separately')
     os.umask(0o077)
@@ -589,12 +603,14 @@ def run(args):
         mcu_identity, requirement = {'mcu_version': mcu.get('mcu_version')}, str(exc)
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
-    restore_home = bool(getattr(args, 'restore_accepted_home', False))
+    restore_oem = bool(getattr(args, 'restore_oem_home', False))
+    home_reference = oem_home if restore_oem else accepted_home
+    restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem)
     reference_backup = None
     if restore_home:
         if recovery or args.destination.expanduser().absolute() != live['host']:
             raise ValueError('Accepted Home recovery requires the currently running Ready runtime')
-        reference_backup = accepted_home.require_reference_backup(ROOT, Path.home(), live['host'])
+        reference_backup = home_reference.require_reference_backup(ROOT, Path.home(), live['host'])
     installer_commit = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     directory = Path.home()/'inventure-installations'/stamp
@@ -611,7 +627,7 @@ def run(args):
     staged = Path(plan['config_path'])
     if restore_home:
         require_identical_configuration(validation_host, config, staged)
-        plan['source_snapshot'][reference_backup['saved_file']] = accepted_home.BASELINE_SHA256
+        plan['source_snapshot'][reference_backup['saved_file']] = home_reference.BASELINE_SHA256
         plan['accepted_home_backup'] = reference_backup
     if recovery:
         active, _ = layout.active_klipper(updater.klipper_config_module(validation_host), staged, {})
@@ -690,8 +706,10 @@ def run(args):
         status='INSTALLED_MCU_RESTART_REQUIRED' if pending else 'INSTALLED_INVENTURE_R38_6',
         installer_release=INSTALLER_RELEASE,
         accepted_home_backup=reference_backup,
+        oem_home_restoration=provenance.get('oem_home_restoration'),
         procedure_restore_release=final.get('objects',{}).get('inventure_native_z',{}).get('procedure_restore_release'),
-        procedure_baseline_blob=accepted_home.BASELINE_BLOB,
+        procedure_baseline_blob=home_reference.BASELINE_BLOB,
+        home_procedure_profile=bootstrap.current_procedure_profile(),
         host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
         source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
         installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
@@ -728,6 +746,8 @@ def main():
                         help='Repair the exact missing Inventure pin/sensor startup error, validating MCU after Ready')
     parser.add_argument('--restore-accepted-home', action='store_true',
                         help='Require the retained pre-R23.5 Home backup and preserve every effective printer setting')
+    parser.add_argument('--restore-oem-home', action='store_true',
+                        help='Restore the complete frozen R38.6 Home set with XY release; require its retained backup and preserve all settings')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

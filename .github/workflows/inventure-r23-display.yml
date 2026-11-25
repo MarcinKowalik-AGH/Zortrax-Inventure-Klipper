@@ -20,6 +20,10 @@ on:
       - 'inventure_operator_menu_restore.py'
       - 'inventure_configuration_audit_restore.py'
       - 'inventure_accepted_home_restore.py'
+      - 'inventure_oem_home_restore.py'
+      - 'tests/test_inventure_oem_home_restore.py'
+      - 'ci/check_inventure_oem_home.py'
+      - 'docs/INVENTURE_R23_OEM_HOME_RC9.md'
       - 'restored/accepted_home_r23/**'
       - 'tests/test_inventure_accepted_home_restore.py'
       - 'docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md'
@@ -76,6 +80,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Verify installed configuration and native startup
         run: python ci/check_native_nozzle_startup.py
+      - name: Verify the complete frozen R38.6 Home recovery without UART
+        run: python ci/check_inventure_oem_home.py --destination "$RUNNER_TEMP/oem-home-recovery"
       - name: Render the installed OEM Inventure leveling dialogs
         run: python ci/render_inventure_leveling_preview.py "$RUNNER_TEMP/r23-leveling-preview"
       - name: Render every installed Zortrax Inventure operator menu page
@@ -139,15 +145,15 @@ jobs:
           PY
           (cd "$RUNNER_TEMP/r23-build" && sha256sum INVENTUR.IVB klipper.bin klipper.dict > SHA256SUMS)
           printf '%s\n' \
-            'R23.4 HOST OPERATOR MENU CANDIDATE - NEW MENU AWAITS PHYSICAL ACCEPTANCE.' \
+            'R23.7 HOST RECOVERY - EXPLICIT --restore-oem-home RESTORES THE PRE-R19 HOME SET.' \
             'Application file: INVENTUR.IVB for the existing InventureBoot 1.7.' \
             'Existing R23 MCU is byte-for-byte unchanged; no new flash is required.' \
-            'R23.3 leveling UI was accepted by the operator; the expanded menu is software verified.' \
+            'See HOST_UPDATE.md for the exact scope and standalone XY limitation.' \
             > "$RUNNER_TEMP/r23-build/README_CANDIDATE.txt"
       - name: Verify optimized Cortex-M3 RLE stores
         run: python ci/benchmark_inventure_oled_rle.py --output "$RUNNER_TEMP/r23-build/RLE_BENCHMARK.json"
       - name: Package the exact committed candidate
-        run: python ci/package_inventure_r23.py "$RUNNER_TEMP/r23-build" "$RUNNER_TEMP/r23-captures/preview" "$RUNNER_TEMP/INVENTURE_R23_MCU_OLED.zip" --leveling-previews "$RUNNER_TEMP/r23-leveling-preview" --menu-previews "$RUNNER_TEMP/r23-menu-preview" --operator-cycles "$RUNNER_TEMP/r23-full-cycles.json"
+        run: python ci/package_inventure_r23.py "$RUNNER_TEMP/r23-build" "$RUNNER_TEMP/r23-captures/preview" "$RUNNER_TEMP/INVENTURE_R23_MCU_OLED.zip" --leveling-previews "$RUNNER_TEMP/r23-leveling-preview" --menu-previews "$RUNNER_TEMP/r23-menu-preview" --operator-cycles "$RUNNER_TEMP/r23-full-cycles.json" --oem-home-proof "$RUNNER_TEMP/oem-home-recovery/OEM_HOME_RECOVERY.json"
       - uses: actions/upload-artifact@v4
         with:
           name: INVENTURE_R23_OLED_CANDIDATE
@@ -166,6 +172,7 @@ jobs:
             ${{ runner.temp }}/r23-leveling-preview/
             ${{ runner.temp }}/r23-menu-preview/
             ${{ runner.temp }}/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json
+            ${{ runner.temp }}/oem-home-recovery/OEM_HOME_RECOVERY.json
           if-no-files-found: error
           retention-days: 14
   publish-candidate:
@@ -186,7 +193,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-accepted-home-rc8
+          CANDIDATE_TAG: inventure-r23-oem-home-rc9
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -208,7 +215,8 @@ jobs:
             "$ARTIFACT_DIR/r23-menu-preview/INVENTURE_R23_OPERATOR_MENU_PREVIEW.json" \
             "$ARTIFACT_DIR/r23-full-cycles.json" \
             "$ARTIFACT_DIR/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json" \
+            "$ARTIFACT_DIR/oem-home-recovery/OEM_HOME_RECOVERY.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.6 host · restore the recorded Home procedure' \
-            --notes-file docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md \
+            --title 'Inventure R23.7 host · recover the pre-R19 XY release preparation' \
+            --notes-file docs/INVENTURE_R23_OEM_HOME_RC9.md \
             --prerelease --latest=false

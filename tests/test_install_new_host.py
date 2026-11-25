@@ -480,6 +480,16 @@ class TransactionTests(unittest.TestCase):
                           info if endpoint == '/printer/info' else original_api(endpoint)):
             self.assertEqual(installer.wait_ready(self.host, self.config, seconds=0)['state'], 'ready')
 
+    def test_oem_home_readback_requires_the_selected_full_reference(self):
+        with installer.bootstrap.procedure_profile(installer.oem_home.PROFILE):
+            with self.assertRaisesRegex(RuntimeError, 'different Inventure MCU or Home module'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.native_z.update(homing_safety_release=installer.oem_home.RELEASE,
+                procedure_restore_release=installer.oem_home.RELEASE,
+                procedure_baseline_blob=installer.oem_home.BASELINE_BLOB,
+                home_procedure_profile=installer.oem_home.PROFILE)
+            self.assertEqual(installer.wait_ready(self.host,self.config,seconds=0)['state'],'ready')
+
     def test_armed_controller_is_rejected_before_staging_and_service_stop(self):
         self.board['armed'] = 1
         with patch.object(installer.os, 'geteuid', return_value=1000), \
@@ -598,7 +608,7 @@ class TransactionTests(unittest.TestCase):
 
     def test_ready_without_the_restored_procedure_identity_is_rolled_back(self):
         self.native_z.pop('procedure_restore_release')
-        with self.assertRaisesRegex(RuntimeError, 'recorded pre-R23.5 Home procedure'):
+        with self.assertRaisesRegex(RuntimeError, 'selected recorded Home procedure'):
             self.activate(self.transaction())
         self.assert_restored()
 

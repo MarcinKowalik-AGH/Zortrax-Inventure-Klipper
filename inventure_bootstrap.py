@@ -6,7 +6,8 @@ destinations are never an install target: callers must explicitly verify them.
 """
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, contextmanager
+from contextvars import ContextVar
 import ctypes
 import errno
 from hashlib import sha1, sha256
@@ -22,6 +23,23 @@ import types
 from zipfile import BadZipFile, ZipFile
 
 ROOT = Path(__file__).resolve().parent
+_procedure_profile = ContextVar('inventure_procedure_profile', default='current')
+
+
+@contextmanager
+def procedure_profile(name):
+    if name not in ('current', 'oem-home-r38.6'):
+        raise ValueError('Unknown Inventure procedure profile: ' + str(name))
+    token = _procedure_profile.set(name)
+    try:
+        yield
+    finally:
+        _procedure_profile.reset(token)
+
+
+def current_procedure_profile():
+    return _procedure_profile.get()
+
 SOURCE_COMMIT = "ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f"
 SOURCE_TAG = "inventure-homing-r38.6"
 UPSTREAM_COMMIT = "ee2c6fb6b00b2b5d097ef70d0868df7d74943b51"
@@ -131,7 +149,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
-          restore_accepted_home=None):
+          restore_accepted_home=None, procedure_profile=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -311,6 +329,17 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['accepted_home_r23'] = provenance
+    profile = _procedure_profile.get() if procedure_profile is None else procedure_profile
+    _require(profile in ('current', 'oem-home-r38.6'), 'Unknown procedure profile')
+    if profile == 'oem-home-r38.6':
+        _require(restore_accepted_home, 'OEM recovery requires the authenticated current runtime input')
+        path = repo/'inventure_oem_home_restore.py'
+        restoration = _module('inventure_bootstrap_oem_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_oem_home(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['oem_home_r38_6'] = provenance
     return source, files, metadata
 
 
@@ -463,6 +492,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 operator_menu_restoration=metadata.get("runtime_restorations", {}).get("operator_menu_r23"),
                 configuration_audit_restoration=metadata.get("runtime_restorations", {}).get("configuration_audit_r23"),
                 accepted_home_restoration=metadata.get("runtime_restorations", {}).get("accepted_home_r23"),
+                oem_home_restoration=metadata.get("runtime_restorations", {}).get("oem_home_r38_6"),
                 generated_files=sorted(generated))
 
 
@@ -490,8 +520,12 @@ def _predecessor_plans(repo):
              'restore_operator_service', 'restore_leveling_ui', 'restore_leveling_stages',
              'restore_operator_menu', 'restore_configuration_audit')
     for enabled in range(len(names)+1):
-        yield _plan(repo, restore_accepted_home=False,
+        yield _plan(repo, restore_accepted_home=False, procedure_profile='current',
                     **{name: index < enabled for index, name in enumerate(names)})
+    if _procedure_profile.get() != 'current':
+        yield _plan(repo, procedure_profile='current')
+    if _procedure_profile.get() == 'current':
+        yield _plan(repo, procedure_profile='oem-home-r38.6')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
@@ -566,4 +600,5 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                 leveling_stages_restoration=metadata["runtime_restorations"]["leveling_stages_r23"],
                 operator_menu_restoration=metadata["runtime_restorations"]["operator_menu_r23"],
                 configuration_audit_restoration=metadata["runtime_restorations"]["configuration_audit_r23"],
-                accepted_home_restoration=metadata["runtime_restorations"]["accepted_home_r23"])
+                accepted_home_restoration=metadata["runtime_restorations"]["accepted_home_r23"],
+                oem_home_restoration=metadata["runtime_restorations"].get("oem_home_r38_6"))

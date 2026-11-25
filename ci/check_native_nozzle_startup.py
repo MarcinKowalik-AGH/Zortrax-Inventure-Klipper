@@ -100,9 +100,14 @@ def check_loaded(printer, config):
         status = json.loads(messages[-1].split(' ', 1)[1])
         assert status['running'] is False and status['last_result'] is None
         assert status['retained_refinement'] is None
-        assert status['homing_safety_release'] == 'RC8-ACCEPTED-HOME-R23.6'
-        assert status['procedure_restore_release'] == 'RC8-ACCEPTED-HOME-R23.6'
-        assert status['procedure_baseline_blob'] == '3fc954974a4a375e003b50c8624304301457f1de'
+        if status.get('home_procedure_profile') == 'oem-home-r38.6':
+            assert status['homing_safety_release'] == 'RC8-OEM-HOME-R38.6-RESTORE-R23.7'
+            assert status['procedure_restore_release'] == status['homing_safety_release']
+            assert status['procedure_baseline_blob'] == '9355e8f2de8880f80c5302f4270f34fbc7d5cf93'
+        else:
+            assert status['homing_safety_release'] == 'RC8-ACCEPTED-HOME-R23.6'
+            assert status['procedure_restore_release'] == 'RC8-ACCEPTED-HOME-R23.6'
+            assert status['procedure_baseline_blob'] == '3fc954974a4a375e003b50c8624304301457f1de'
     native_gcode.ready_gcode_handlers['M117'](native_gcode.create_gcode_command('M117', 'M117 Display test', {}))
     native_gcode.ready_gcode_handlers['M73'](native_gcode.create_gcode_command('M73', 'M73 P25', {'P':'25'}))
     assert display.get_status(now) == {'message': 'Display test', 'progress': .25}
