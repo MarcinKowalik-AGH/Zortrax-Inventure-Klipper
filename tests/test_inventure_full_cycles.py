@@ -25,6 +25,9 @@ class InstalledCycleTests(unittest.TestCase):
             self.assertEqual(len(proof['refusals']), 9)
             self.assertTrue(all(r['status'] == 'PASS' for r in proof['refusals']))
             self.assertTrue(proof['config_unchanged'])
+            self.assertEqual([r['origin'] for r in proof['home_to_leveling']], ['fluidd', 'oled'])
+            self.assertTrue(all(r['service_acquired'] and r['native_enable_released']
+                                for r in proof['home_to_leveling']))
             self.assertFalse(proof['serial_opened'])
             self.assertFalse(proof['firmware_flashed'])
             self.assertFalse(proof['hardware_tested'])

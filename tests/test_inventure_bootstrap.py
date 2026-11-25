@@ -116,6 +116,12 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.r21/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.r21_metadata))
         (cls.r21/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _,cls.r22_files,cls.r22_metadata=bootstrap._plan(ROOT,restore_operator_service=False)
+        cls.r22=cls.root/'r23-rc1-host'
+        bootstrap._write_files(cls.r22,cls.r22_files)
+        (cls.r22/bootstrap.MANIFEST_NAME).write_bytes(
+            bootstrap._metadata_bytes(cls.r22_metadata))
+        (cls.r22/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -133,6 +139,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_service_excursion_restore.py', source/'inventure_service_excursion_restore.py')
             shutil.copyfile(ROOT/'inventure_scheduler_restore.py', source/'inventure_scheduler_restore.py')
             shutil.copyfile(ROOT/'inventure_safety_policy_restore.py', source/'inventure_safety_policy_restore.py')
+            shutil.copyfile(ROOT/'inventure_operator_service_restore.py', source/'inventure_operator_service_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -179,8 +186,10 @@ class RealHostBootstrapTests(unittest.TestCase):
             if target!=policy['target']:
                 self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                                  record['sha256'])
-        self.assertEqual(sha256((self.stage/policy['target']).read_bytes()).hexdigest(),
-                         policy['sha256'])
+        entry=self.metadata['runtime_restorations']['operator_service_r23']
+        self.assertEqual(entry['prior_blob'],policy['installed_blob'])
+        self.assertEqual(sha256((self.stage/entry['target']).read_bytes()).hexdigest(),
+                         entry['sha256'])
         self.assertEqual(restoration['source_sha256'],
                          'c37e1c9c9e085193818b9b9d472c0dc3f1ac1399465bb5db6d3f4b0c099ad437')
         self.assertNotEqual(self.metadata['files']['klippy/extras/inventure_mcu.py'],
@@ -380,6 +389,26 @@ class RealHostBootstrapTests(unittest.TestCase):
             self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
             for path,(old,new) in plan['files'].items():
                 path.write_bytes(old)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
+                             'VERIFIED_LEGACY_HOST')
+
+    def test_published_r23_rc1_migrates_only_service_entry_and_rolls_back_exactly(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage=Path(temp)/'host'
+            shutil.copytree(self.r22,stage)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT,allow_legacy=True)['status'],
+                             'VERIFIED_LEGACY_HOST')
+            before={p:p.read_bytes() for p in stage.rglob('*') if p.is_file()}
+            plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            self.assertEqual({p.relative_to(stage) for p in plan['files']},
+                             {Path('klippy/extras/inventure_mcu.py'),Path(bootstrap.MANIFEST_NAME)})
+            self.assertFalse(plan['operator_service_restoration']['mcu_update_required'])
+            for path,(old,new) in plan['files'].items():
+                self.assertEqual(path.read_bytes(),old)
+                path.write_bytes(new)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path,(old,new) in plan['files'].items():path.write_bytes(old)
+            self.assertEqual(before,{p:p.read_bytes() for p in stage.rglob('*') if p.is_file()})
             self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
                              'VERIFIED_LEGACY_HOST')
 

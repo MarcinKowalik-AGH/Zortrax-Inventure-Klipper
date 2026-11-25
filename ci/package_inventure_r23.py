@@ -70,6 +70,7 @@ def package(build, previews, output):
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
     for name in ('INVENTURE_R23_M300_DISPLAY_PROVENANCE.json',
                  'INVENTURE_R23_SOFTWARE_2026-11-24.json', 'INVENTURE_R23_RLE_BENCHMARK.json'):
         files['validation/'+name] = (validation/name).read_bytes()

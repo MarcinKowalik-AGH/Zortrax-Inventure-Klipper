@@ -38,12 +38,14 @@ class CyclePrinter:
                             homing=types.SimpleNamespace(cmd_G28=self.home))
         operations = self.objects['inventure_operations']
         operations.state.homed = lambda axes: None
+        operations.state.selector_unknown = lambda reason: setattr(operations.state, 'selector_tool', None)
         operations.invalidate = lambda axes, reason: model.clear_homing_state(axes)
         operations.procedure = lambda name: nullcontext()
 
     def home(self, command):
         from test_orange_pi_native_z import Command
         self.model.cmd_G28(Command(**command.get_command_parameters()))
+        self.model.shared_enable = True
         if 'Z' in command.get_command_parameters():
             bottom = self.objects['inventure_native_z'].bottom_position
             self.model.position[2] = self.model.physical_z = bottom
@@ -59,7 +61,7 @@ class CyclePrinter:
         return self.board.reactor
 
     def get_start_args(self):
-        return {}
+        return dict(self.board.install_start_args)
 
     def register_event_handler(self, *args):
         pass
@@ -105,7 +107,8 @@ class InstalledRig:
             heater.set_temp = lambda value, heater=heater: setattr(heater, 'target_temp', value)
             heater.get_temp = lambda now, heater=heater: (heater.target_temp, heater.target_temp)
             model.heaters[name] = heater
-        self.board = board = ZHomeHostTests().host()
+        self.board = board = ZHomeHostTests().host(edges=True)
+        board.install_start_args = dict(printer.get_start_args())
         # Reuse only its independently modelled wires/plant. All host methods,
         # including the entire factory interpreter, come from installed R22.
         board.__class__ = type(installed_board)
@@ -122,6 +125,38 @@ class InstalledRig:
         board.commands['factory_native_handoff'] = Wire(board.device.native_handoff)
         self.handoffs = board.commands['factory_native_handoff']
         board.gcode = gcode
+        # These registered handlers belong to the configured board. Rebind
+        # its physical-interface fixture, retaining the installed methods.
+        printer.objects['inventure_mcu'] = board
+        for command in ('INVENTURE_PLATFORM_LEVEL', 'ZORTRAX_PLATFORM_LEVEL'):
+            gcode.register_command(command, None)
+            gcode.register_command(command, board.cmd_platform_level)
+        # Physical R23 refuses SERVICE while PE10 is still held, even when
+        # native motion is idle. Model the queued Klipper disable separately.
+        model.shared_enable = bool(hot)
+        model.disable_pending = False
+        motor_off, wait_moves = model.motor_off, model.wait_moves
+
+        def release_motors():
+            motor_off()
+            model.disable_pending = True
+
+        def drain_moves():
+            wait_moves()
+            if model.disable_pending:
+                model.shared_enable = model.disable_pending = False
+
+        model.motor_off, model.wait_moves = release_motors, drain_moves
+        actual_control = board.device.control
+
+        def guarded_control(data):
+            action, mode = data
+            if (action == 1 and mode == 2 and board.control_reply['mode'] == 1
+                    and model.shared_enable):
+                return dict(board.control_reply, active=1, reject=2)
+            return actual_control(data)
+
+        board.commands['control'] = Wire(guarded_control)
 
         # Preserve the values obtained from the staged config. Bind physical
         # interfaces on the actual registered adapter, not a copied handler.
@@ -129,6 +164,7 @@ class InstalledRig:
                       'guard', 'refine', 'refine_clearance', 'stepper')
         for name in interfaces:
             setattr(native, name, getattr(fixture.adapter, name))
+        model.get_kinematics = lambda: native.kin
         native.board, native.reactor, native.gcode = board, board.reactor, gcode
         native.printer = board.printer = CyclePrinter(board, model, gcode, native)
         native.heaters = model
@@ -314,6 +350,42 @@ def inspect_refusals(printer, klipper):
     return rows
 
 
+def inspect_home_to_leveling(printer, klipper):
+    rows = []
+    for origin in ('fluidd', 'oled'):
+        rig = InstalledRig(printer, klipper)
+        rig.home('XYZ', origin)
+        require(rig.model.shared_enable, 'Completed Home did not retain the physical motor owner')
+        rig.run('TURN_OFF_HEATERS')
+        rig.board.nozzle_z_dual_abi = 1
+        require(rig.board.connected and rig.board.allow_actuators,
+                'Leveling fixture lost its connected actuator interface')
+        require(rig.board._z_home_mcu_available(),
+                'Leveling fixture lost its bounded Z-edge interface: %s' % rig.board.commands.keys())
+        require(rig.board._factory_motion_available(0),
+                'Leveling fixture lacks the R23 factory motion interface')
+        before = len(rig.model.calls)
+        if origin == 'oled':
+            rig.lines.clear()
+            rig.menu.open('leveling')
+            require(rig.board.load_test_context is None, 'Leveling moved before confirmation')
+            rig.confirm(origin)
+        else:
+            rig.run('INVENTURE_LEVEL')
+        require(rig.board._control_query()['mode'] == 'SERVICE', 'Leveling did not acquire SERVICE')
+        require(not rig.model.shared_enable, 'Leveling retained the native physical enable')
+        require(rig.board.load_test_context['factory']['operation'] == 'PLATFORM_LEVEL',
+                'The installed level command did not reach the factory backend')
+        require(any(row[0] == 'motor_off' for row in rig.model.calls[before:]),
+                'Leveling did not release the Klipper stepper owner')
+        rows.append(dict(origin=origin, status='PASS', service_acquired=True,
+                         native_enable_released=True, physical_interfaces='simulated'))
+        rig.run('INVENTURE_LEVEL_STOP')
+        require(rig.board.platform_level_status()['phase'] == 'cancelled',
+                'The installed cancel macro did not end the leveling session')
+    return rows
+
+
 def inspect_cycles(klipper, config, repetitions):
     sys.path.insert(0, str(klipper / 'klippy'))
     import klippy
@@ -362,9 +434,10 @@ def inspect_cycles(klipper, config, repetitions):
                                  handoffs=len(rig.handoffs.calls)))
         with patch.object(rig.home_module, 'HomingMove', PhysicalHomingMove):
             refusals = inspect_refusals(printer, klipper)
+            home_to_leveling = inspect_home_to_leveling(printer, klipper)
         return dict(status='PASS_INSTALLED_R22_FULL_CYCLES', sessions=sessions,
                     cycle_count=sum(len(s['cycles']) for s in sessions),
-                    refusals=refusals,
+                    refusals=refusals, home_to_leveling=home_to_leveling,
                     physical_interfaces='simulated', serial_opened=False,
                     native_mesh_probe_configured=printer.lookup_object('probe', None) is not None,
                     firmware_flashed=False, hardware_tested=False,

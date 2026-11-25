@@ -12,6 +12,13 @@ on:
       - 'ci/package_inventure_r23.py'
       - 'docs/validation/INVENTURE_R23*.json'
       - 'docs/INVENTURE_R23_RELEASE.md'
+      - 'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md'
+      - 'inventure_bootstrap.py'
+      - 'inventure_operator_service_restore.py'
+      - 'ci/check_inventure_full_cycles.py'
+      - 'tests/test_inventure_operator_service_r23.py'
+      - 'tests/test_inventure_bootstrap.py'
+      - 'tests/test_inventure_full_cycles.py'
       - '.github/workflows/inventure-r23-display.yml'
   workflow_dispatch:
 permissions:
@@ -134,7 +141,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-mcu-r23-oled-rc1
+          CANDIDATE_TAG: inventure-r23-leveling-host-rc2
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -151,6 +158,6 @@ jobs:
             "$ARTIFACT_DIR/r23-build/klipper.dict" \
             "$ARTIFACT_DIR/r23-build/SHA256SUMS" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure MCU R23 OLED · points 1–5 candidate' \
-            --notes-file docs/INVENTURE_R23_RELEASE.md \
+            --title 'Inventure R23.1 host · leveling after Home' \
+            --notes-file docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md \
             --prerelease --latest=false

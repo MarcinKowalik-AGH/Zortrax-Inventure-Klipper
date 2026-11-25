@@ -19,6 +19,8 @@ on:
       - 'inventure_service_excursion_restore.py'
       - 'inventure_scheduler_restore.py'
       - 'inventure_safety_policy_restore.py'
+      - 'inventure_operator_service_restore.py'
+      - 'tests/test_inventure_operator_service_r23.py'
       - 'restored/safety_policy_r22/**'
       - 'tests/test_inventure_safety_policy_r22.py'
       - 'tests/test_inventure_full_cycles.py'
