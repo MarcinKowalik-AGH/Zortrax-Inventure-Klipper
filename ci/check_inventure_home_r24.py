@@ -71,6 +71,10 @@ def inspect(klipper,config):
                         require(board.control_reply['mode']==1,'Held entry was not NATIVE')
                         model.calls.append(('held_service',owner))
                         board.control_reply.update(mode=2,armed=0)
+                        # A periodic query can observe SERVICE before the
+                        # held-entry reply reaches the homing coroutine.
+                        board._control_query()
+                        require(set(native.xy_references)=={'X','Y'},'Status polling discarded held XY')
                         return dict(owner=owner+(fault=='held_receipt'),mode=2,enabled=1,reject=0)
                     native.held_service=Wire(held_entry)
                     class Approach:

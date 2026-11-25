@@ -6,6 +6,7 @@ are inherited unchanged. R24 adds a drained, held NATIVE -> SERVICE entry.
 """
 import json
 import math
+from contextlib import nullcontext
 
 from . import homing
 from .inventure_factory_core import FactoryError, XY_RELEASE_MM, XY_RELEASE_SPEED
@@ -250,15 +251,19 @@ class OperatorHome:
         if self.held_service is None:
             raise FactoryError('Matching R24 MCU held-service command is unavailable')
         self.toolhead.wait_moves()
+        self.board.r24_held_home_owner=owner
         try:
-            row = self.held_service.send([owner])
-            self.board._control_validate(row,dict(owner=(1,0xffffffff),mode=(0,2),enabled=(0,1),reject=(0,255)))
-            if (row['owner'] != owner or row['reject'] or row['mode'] != 2 or row['enabled'] != 1):
-                raise FactoryError('MCU refused the drained, continuously held T0 handoff')
-            # This cache update comes from the verified MCU receipt. The old
-            # loss-of-ARM callback must not misclassify a held handoff as M84.
-            self.board.control_last=dict(self.board.control_last,mode='SERVICE',armed=False)
+            mutex=getattr(self.board,'query_mutex',None)
+            with mutex if mutex is not None else nullcontext():
+                row = self.held_service.send([owner])
+                self.board._control_validate(row,dict(owner=(1,0xffffffff),mode=(0,2),enabled=(0,1),reject=(0,255)))
+                if (row['owner'] != owner or row['reject'] or row['mode'] != 2 or row['enabled'] != 1):
+                    raise FactoryError('MCU refused the drained, continuously held T0 handoff')
+                # This cache update comes from the verified MCU receipt. The old
+                # loss-of-ARM callback must not misclassify a held handoff as M84.
+                self.board.control_last=dict(self.board.control_last,mode='SERVICE',armed=False)
         except Exception:
+            self.board.r24_held_home_owner=0
             self.board._control_abort()
             self._invalidate_native_homing()
             raise
@@ -295,3 +300,5 @@ class OperatorHome:
             self.board._control_abort()
             self._invalidate_native_homing()
             raise
+        finally:
+            self.board.r24_held_home_owner=0

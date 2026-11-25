@@ -6,7 +6,7 @@ from pathlib import Path
 PROFILE='operator-home-r24'
 RELEASE='RC8-HOME-XY-RELEASE-Z-REUSE-R24'
 BASELINE_BLOB='9355e8f2de8880f80c5302f4270f34fbc7d5cf93'
-OPERATOR_SHA256='246659dbd618d1fb87b7f5a8b3a305acbe6460a3bff9823b4befe80472781af0'
+OPERATOR_SHA256='d5c97c401e538f4b5012b967e51805c43bff1b153ed60bcfc12c82b08900c9e3'
 
 def require_reference_backup(repo,home,host):
     from inventure_oem_home_restore import require_reference_backup as verify
@@ -37,6 +37,10 @@ def restored_operator_home(repo,files):
                       "            yield from self._module('home_xy', self._home_steps(y_first=True, include_z=False))\n")
     updates[program]=(data.encode(),0o644)
     data=files[driver][0].decode()
+    data=replace(data,"        if was_armed and not p['armed'] and not stopping:\n",
+        "        held_home=(getattr(self,'r24_held_home_owner',0)\n"
+        "                   and p['mode']==2 and not p['fault'] and not p['latched'])\n"
+        "        if was_armed and not p['armed'] and not stopping and not held_home:\n")
     data=replace(data,"                        native_homing['pad_xy'], native_homing['pad_speed'])",
                       "                        native_homing['pad_xy'], native_homing['pad_speed'],\n"
                       "                        prepared_xy=bool(native_homing.get('held_xy')))")
@@ -63,7 +67,7 @@ def restored_operator_home(repo,files):
     updates[extension]=(code,0o644)
     # Apart from the preparation dispatcher, every accepted engine method
     # remains the same AST, including all PC14, PE12, T0 motion and heat code.
-    for name,allowed in ((driver,{'_factory_start'}),(program,{'prepare_native_home'})):
+    for name,allowed in ((driver,{'_factory_start','_control_query'}),(program,{'prepare_native_home'})):
         old=ast.parse(files[name][0]);new=ast.parse(updates[name][0])
         def methods(tree):
             return {n.name:ast.dump(n,include_attributes=False) for c in tree.body
