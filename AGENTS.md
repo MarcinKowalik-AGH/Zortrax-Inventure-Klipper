@@ -37,3 +37,7 @@ For the current Home incident, start with
 [the three completed runs and regression scope](docs/INVENTURE_ACCEPTED_HOME_2026-11-25.md).
 For standalone Home X/Y and the actual G28 route, also read
 [the source and execution audit](docs/INVENTURE_HOME_XY_REFERENCE_2026-11-25.md).
+The original r0323 binary independently confirms that the XY reference is
+assigned after the reverse release phase. Keep this firmware fact separate
+from which Klipper entry point actually implements it; see
+[the instruction-level evidence](docs/INVENTURE_OEM_XY_RELEASE_EVIDENCE_2026-11-26.md).
