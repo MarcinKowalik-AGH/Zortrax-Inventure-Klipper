@@ -28,7 +28,7 @@ _procedure_profile = ContextVar('inventure_procedure_profile', default='current'
 
 @contextmanager
 def procedure_profile(name):
-    if name not in ('current', 'oem-home-r38.6'):
+    if name not in ('current', 'oem-home-r38.6', 'operator-home-r24'):
         raise ValueError('Unknown Inventure procedure profile: ' + str(name))
     token = _procedure_profile.set(name)
     try:
@@ -330,8 +330,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['accepted_home_r23'] = provenance
     profile = _procedure_profile.get() if procedure_profile is None else procedure_profile
-    _require(profile in ('current', 'oem-home-r38.6'), 'Unknown procedure profile')
-    if profile == 'oem-home-r38.6':
+    _require(profile in ('current', 'oem-home-r38.6', 'operator-home-r24'), 'Unknown procedure profile')
+    if profile in ('oem-home-r38.6', 'operator-home-r24'):
         _require(restore_accepted_home, 'OEM recovery requires the authenticated current runtime input')
         path = repo/'inventure_oem_home_restore.py'
         restoration = _module('inventure_bootstrap_oem_home', path, _regular_bytes(path))
@@ -340,6 +340,14 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['oem_home_r38_6'] = provenance
+    if profile == 'operator-home-r24':
+        path = repo/'inventure_operator_home_restore.py'
+        restoration = _module('inventure_bootstrap_operator_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_operator_home(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['operator_home_r24'] = provenance
     return source, files, metadata
 
 
@@ -525,7 +533,7 @@ def _predecessor_plans(repo):
     if _procedure_profile.get() != 'current':
         yield _plan(repo, procedure_profile='current')
     yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
-    if _procedure_profile.get() == 'current':
+    if _procedure_profile.get() in ('current', 'operator-home-r24'):
         yield _plan(repo, procedure_profile='oem-home-r38.6')
 
 

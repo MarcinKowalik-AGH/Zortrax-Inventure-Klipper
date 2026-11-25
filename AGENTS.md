@@ -41,3 +41,15 @@ The original r0323 binary independently confirms that the XY reference is
 assigned after the reverse release phase. Keep this firmware fact separate
 from which Klipper entry point actually implements it; see
 [the instruction-level evidence](docs/INVENTURE_OEM_XY_RELEASE_EVIDENCE_2026-11-26.md).
+
+## R24 operator Home repair
+
+The operator explicitly requested separate firmware-style X/Y release homing,
+held drives, and the accepted T0/Z sequence with reuse of valid XY. The
+`operator-home-r24` profile implements that routing around the frozen R38.6
+engines. It requires the matched R24 MCU held-service capability; do not
+activate its host on R23 or remove motor disable from ordinary SERVICE entry.
+Read [the R24 contract and verification limits](docs/INVENTURE_HOME_R24.md).
+The new combination still needs physical acceptance. Preserve its tested
+sequence during later UI/configuration integration; a source comparison or
+simulation alone does not establish acceptance on the actual printer.
