@@ -26,6 +26,7 @@ on:
       - 'ci/check_inventure_config_audit.py'
       - 'ci/check_native_nozzle_startup.py'
       - 'docs/INVENTURE_R23_CONFIG_AUDIT.md'
+      - 'docs/INVENTURE_R23_STARTUP_RC7.md'
       - 'inventure_bootstrap_config.py'
       - 'restored/operator_menu_r23/**'
       - 'config/INVENTURE_DASHBOARD.cfg'
@@ -181,7 +182,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-config-audit-rc6
+          CANDIDATE_TAG: inventure-r23-startup-rc7
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -204,6 +205,6 @@ jobs:
             "$ARTIFACT_DIR/r23-full-cycles.json" \
             "$ARTIFACT_DIR/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.5 host · startup repair and configuration audit' \
-            --notes-file docs/INVENTURE_R23_CONFIG_AUDIT.md \
+            --title 'Inventure R23.5.1 host · verified systemd startup' \
+            --notes-file docs/INVENTURE_R23_STARTUP_RC7.md \
             --prerelease --latest=false

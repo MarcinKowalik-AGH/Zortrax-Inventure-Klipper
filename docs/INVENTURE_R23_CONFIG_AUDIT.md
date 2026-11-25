@@ -1,5 +1,9 @@
 # Inventure R23.5: persistent startup repair, shared Home and configuration audit
 
+**Installer superseded by RC7:** RC6 quoted `WorkingDirectory` incorrectly.
+Use [the corrected RC7 installer](INVENTURE_R23_STARTUP_RC7.md); the configuration
+layout and UI/Home safety version described below remain R23.5.
+
 The supplied log shows a working `klipper-inventure-r38.6` runtime followed,
 after a restart, by `klipper-inventure-candidate`. That second runtime stops
 while configuring a heater fan: the `inventure_r5` pin provider is absent.
@@ -32,7 +36,7 @@ Run as the Klipper user, with the printer idle and heater targets off:
 ```bash
 cd ~/inventure-src &&
 git fetch origin --tags &&
-git switch --detach inventure-r23-config-audit-rc6 &&
+git switch --detach inventure-r23-startup-rc7 &&
 python3 install-new-host.py --recover-startup --restore-field-profile --serial /dev/ttyS5 --baud 750000 --apply
 ```
 

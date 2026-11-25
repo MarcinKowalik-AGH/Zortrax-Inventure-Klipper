@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,29 @@ class PureGuardsTests(unittest.TestCase):
                      ['/python', 'bad\targ'], ['/python', 'bad\x7farg']):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
                 installer.unit_text(argv)
+
+    def test_working_directory_refuses_ambiguous_paths_before_service_changes(self):
+        for value in ('relative/host', '/host\nextra', '/host\t', '/host ', '/host\\name'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                installer.unit_text([sys.executable], working_directory=value)
+
+    def test_missing_systemd_parser_refuses_activation(self):
+        with patch.object(installer.shutil, 'which', return_value=None), \
+             self.assertRaisesRegex(ValueError, 'systemd-analyze is required'):
+            installer.validate_service_unit(b'', Path('/unused'))
+
+    def test_daemon_reload_requires_systemd_readback(self):
+        for state in ('no', 'yes', ''):
+            result = subprocess.CompletedProcess([], 0, stdout=state+'\n')
+            with self.subTest(state=state), patch.object(installer.subprocess, 'run', return_value=result) as run:
+                if state == 'no':
+                    installer.reload_units()
+                else:
+                    with self.assertRaisesRegex(ValueError, 'not accepted'):
+                        installer.reload_units()
+                self.assertEqual(run.call_args_list[0].args[0], ['sudo', '--', 'systemctl', 'daemon-reload'])
+                self.assertEqual(run.call_args_list[1].args[0],
+                    ['systemctl', 'show', 'klipper.service', '--property=NeedDaemonReload', '--value'])
 
     def test_r17_native_service_handoff_capability_checked_without_disabling_r16(self):
         legacy = mcu_identity()
@@ -177,6 +201,34 @@ class PureGuardsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'symlink'):
                 installer.verify_snapshot(snapshot)
             self.assertTrue(existing.is_symlink())
+
+
+@unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
+class SystemdParserTests(unittest.TestCase):
+    def test_actual_parser_accepts_absolute_working_directory_with_spaces_and_percent(self):
+        with tempfile.TemporaryDirectory(prefix='inventure-systemd-') as temporary:
+            root = Path(temporary)
+            host = root/'host with spaces %R'
+            host.mkdir()
+            script = host/'klippy.py'
+            script.write_text('# Not executed by systemd-analyze\n')
+            unit = installer.unit_text([sys.executable, str(script)], working_directory=host)
+            self.assertIn(('WorkingDirectory='+str(host).replace('%', '%%')+'\n').encode(), unit)
+            candidate = installer.validate_service_unit(unit, root)
+            self.assertTrue(candidate.is_file())
+            self.assertEqual((candidate.parent/'verification.log').read_text(), '')
+
+    def test_actual_parser_rejects_the_rc6_quoted_working_directory(self):
+        with tempfile.TemporaryDirectory(prefix='inventure-systemd-') as temporary:
+            root = Path(temporary)
+            unit = installer.unit_text([sys.executable], working_directory=root)
+            old_unit = unit.replace(('WorkingDirectory='+str(root)+'\n').encode(),
+                                   ('WorkingDirectory="'+str(root)+'"\n').encode())
+            with self.assertRaisesRegex(ValueError, 'failed systemd validation'):
+                installer.validate_service_unit(old_unit, root)
+            log = (root/'systemd-validation/verification.log').read_text()
+            self.assertIn('WorkingDirectory=', log)
+            self.assertIn('not absolute', log)
 
 
 class TransactionTests(unittest.TestCase):
@@ -364,6 +416,67 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual((self.web/'config.json').read_bytes(), b'{"operator": "retained"}')
         self.assertFalse((self.report/'rollback.json').exists())
         self.assertEqual(self.service_calls.count(('start', 'klipper')), 1)
+        for name in ('startup-observation.json', 'startup-final-observation.json'):
+            observation = json.loads((self.report/name).read_text())
+            self.assertEqual(observation['mismatches'], {})
+            self.assertEqual(observation['observed']['process_id'], 81)
+
+    @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
+    def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):
+        previous = installer.UNIT_MARKER.encode()+b'[Service]\n# Previous verified runtime\n'
+        self.dropin.write_bytes(previous)
+        (self.root/'gcodes').mkdir()
+        staged = self.root/'staged/printer.cfg'
+        staged.parent.mkdir()
+        staged.write_bytes(self.before_config)
+        bad_unit = self.unit.replace(b'[Service]\n', b'[Service]\nWorkingDirectory="'+str(self.host).encode()+b'"\n')
+        real_run = subprocess.run
+        def subprocess_boundary(argv, **kwargs):
+            if str(ROOT/'ci/validate_bootstrap_config.py') in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout='offline fixture accepted\n', stderr='')
+            return real_run(argv, **kwargs)
+        old_umask = os.umask(0o077)
+        self.addCleanup(os.umask, old_umask)
+        args = SimpleNamespace(apply=True, destination=self.host, serial=self.serial,
+                               baud=self.baud, restore_field_profile=True)
+        with patch.object(installer.os, 'geteuid', return_value=1000), \
+             patch.object(Path, 'home', return_value=self.root), \
+             patch.object(installer, 'stage_runtime', return_value=(self.host, {}, {}, {})), \
+             patch.object(installer, 'stage_config', return_value={'config_path': str(staged)}), \
+             patch.object(installer, 'unit_text', return_value=bad_unit), \
+             patch.object(installer.subprocess, 'run', side_effect=subprocess_boundary), \
+             self.assertRaisesRegex(ValueError, 'failed systemd validation'):
+            installer.run(args)
+        self.assertEqual(self.service_calls, [])
+        self.assertEqual(self.config.read_bytes(), self.before_config)
+        self.assertEqual(self.dropin.read_bytes(), previous)
+        self.assertEqual(self.db, self.before_db)
+        self.assertFalse(self.include.exists())
+
+    def test_startup_identity_failure_records_actual_runtime_pid_and_version(self):
+        info = self.info()
+        info.update(process_id=17, klipper_path='/home/klipper/klipper', software_version='v0.14.0')
+        observation = self.report/'identity.json'
+        wrong_script = Path('/home/klipper/klipper/klippy/klippy.py')
+        with patch.object(installer.core, 'running_service_script',
+                          return_value=(self.process, self.argv, 1, wrong_script)), \
+             patch.object(installer, 'api', return_value=info), \
+             self.assertRaisesRegex(ValueError, 'Startup identity mismatch') as failure:
+            installer.wait_ready(self.host, self.config, seconds=0, observation_path=observation)
+        details = json.loads(observation.read_text())
+        self.assertEqual(set(details['mismatches']), {'service_script', 'process_id', 'klipper_path', 'software_version'})
+        self.assertEqual(details['mismatches']['process_id'], {'expected': 81, 'observed': 17})
+        self.assertIn('v0.14.0', str(failure.exception))
+        self.assertIn('/home/klipper/klipper/klippy/klippy.py', str(failure.exception))
+
+    def test_ready_paths_keep_resolving_equivalent_moonraker_paths(self):
+        info = self.info()
+        info['klipper_path'] = str(self.host/'klippy/..')
+        info['config_file'] = str(self.config.parent/'../config/printer.cfg')
+        original_api = installer.api
+        with patch.object(installer, 'api', side_effect=lambda endpoint:
+                          info if endpoint == '/printer/info' else original_api(endpoint)):
+            self.assertEqual(installer.wait_ready(self.host, self.config, seconds=0)['state'], 'ready')
 
     def test_armed_controller_is_rejected_before_staging_and_service_stop(self):
         self.board['armed'] = 1

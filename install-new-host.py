@@ -48,6 +48,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
+INSTALLER_RELEASE = 'R23.5.1'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -147,11 +148,33 @@ def unit_text(argv, working_directory=None):
         raise ValueError('Use the absolute Python path of the running Klipper service')
     directory = ''
     if working_directory is not None:
-        if not Path(working_directory).is_absolute():
+        value = str(working_directory)
+        if (not Path(value).is_absolute() or value != value.strip()
+                or '\\' in value or any(ord(c)<32 or ord(c)==127 for c in value)):
             raise ValueError('Use an absolute Klipper working directory')
-        directory = 'WorkingDirectory='+quote(str(working_directory))+'\n'
+        # WorkingDirectory is one path, not an ExecStart word list. Quotes
+        # remain literal and make an otherwise absolute path invalid.
+        directory = 'WorkingDirectory='+value.replace('%','%%')+'\n'
     return (UNIT_MARKER+'[Service]\n'+directory+'ExecStart=\nExecStart='
             +' '.join(map(quote, argv))+'\n').encode()
+
+
+def validate_service_unit(data, directory):
+    """Use systemd's actual parser before any active service is stopped."""
+    analyzer = shutil.which('systemd-analyze')
+    if analyzer is None:
+        raise ValueError('systemd-analyze is required to validate the Klipper service before activation')
+    folder = directory/'systemd-validation'
+    folder.mkdir(mode=0o700)
+    candidate = folder/'inventure-validation.service'
+    candidate.write_bytes(b'[Unit]\nDescription=Inventure startup validation\n'+data)
+    result = subprocess.run([analyzer,'--man=no','verify',str(candidate)],
+                            capture_output=True,text=True,check=False,timeout=30)
+    (folder/'verification.log').write_text(result.stdout+result.stderr)
+    if result.returncode:
+        raise ValueError('The proposed Klipper service failed systemd validation: '
+                         +(result.stderr or result.stdout).strip())
+    return candidate
 
 
 def discover():
@@ -264,18 +287,29 @@ def wait_api(seconds=30):
             time.sleep(.5)
 
 
-def wait_ready(host, config, seconds=90):
+def wait_ready(host, config, seconds=90, observation_path=None):
     """Never accept the old process's cached Ready response during reconnection."""
     deadline, reason = time.monotonic()+seconds, 'waiting for new Klipper'
     while True:
         try:
             process, _, _, script = core.running_service_script()
             info = api('/printer/info')
-            if (script.parent.parent != host or info.get('process_id') != int(process.name)
-                    or Path(info.get('klipper_path', '')).resolve() != host
-                    or Path(info.get('config_file', '')).resolve() != config
-                    or info.get('software_version') != bootstrap.VERSION):
-                raise ConnectionError('Waiting for the new service path, PID and release version')
+            expected=dict(service_script=str(host/'klippy/klippy.py'),
+                          process_id=int(process.name),klipper_path=str(host),
+                          config_file=str(config),software_version=bootstrap.VERSION)
+            observed=dict(service_script=str(script),
+                          **{key:info.get(key) for key in ('process_id','klipper_path','config_file','software_version')})
+            normalized=dict(observed)
+            for key in ('klipper_path','config_file'):
+                normalized[key]=str(Path(observed.get(key) or '').resolve())
+            mismatches={key:dict(expected=value,observed=observed.get(key))
+                        for key,value in expected.items() if normalized.get(key)!=value}
+            if observation_path is not None:
+                json_write(observation_path,dict(expected=expected,observed=observed,
+                           mismatches=mismatches,state=info.get('state'),
+                           state_message=info.get('state_message')))
+            if mismatches:
+                raise ConnectionError('Startup identity mismatch: '+json.dumps(mismatches,sort_keys=True))
             state, message = info.get('state'), str(info.get('state_message', ''))
             if state in ('error', 'shutdown'):
                 if message.partition('\n')[0].strip() == SHUTDOWN_LATCH:
@@ -330,6 +364,11 @@ def write_unit(data, run_directory, dropin=DROPIN):
 
 def reload_units():
     subprocess.run(['sudo', '--', 'systemctl', 'daemon-reload'], check=True, timeout=30)
+    result=subprocess.run(['systemctl','show','klipper.service',
+                           '--property=NeedDaemonReload','--value'],
+                          check=True,capture_output=True,text=True,timeout=10)
+    if result.stdout.strip()!='no':
+        raise ValueError('systemd has not accepted the Klipper service reload: '+result.stdout.strip())
 
 
 def service_stopped():
@@ -474,7 +513,7 @@ def activate(transaction, host, config, web_source, macros, *, serial=None, baud
              recover_startup=False):
     try:
         transaction.activate_files()
-        live = wait_ready(host, config)
+        live = wait_ready(host, config,observation_path=transaction.directory/'startup-observation.json')
         if recover_startup:
             if live.get('firmware_restart_required'):
                 raise ValueError('Startup repair requires a Ready printer before accepting the new runtime')
@@ -487,7 +526,7 @@ def activate(transaction, host, config, web_source, macros, *, serial=None, baud
         if not fluidd_web.same_build(web_source, transaction.root):
             raise ValueError('Installed Fluidd assets did not verify')
         # Recheck after the dashboard readback, accepting only the new process.
-        final = wait_ready(host, config)
+        final = wait_ready(host, config,observation_path=transaction.directory/'startup-final-observation.json')
         if recover_startup:
             final['recovered_mcu'] = require_mcu(idle_mcu())
         if not final.get('firmware_restart_required') and serial is not None:
@@ -566,6 +605,11 @@ def run(args):
     if validation.returncode:
         raise ValueError('Offline Klipper validation failed: '+validation.stdout.strip()
                          + '. Details: '+str(directory/'offline-validation.log'))
+    argv = list(live['argv'])
+    argv[live['script_index']] = str(host/'klippy/klippy.py')
+    argv[live['script_index']+1] = str(config)
+    unit = unit_text(argv, working_directory=host)
+    validate_service_unit(unit, directory)
     json_write(directory/'plan.json', dict(runtime=provenance, runtime_before=runtime_before,
                                          runtime_target=str(host),
                                          runtime_files_to_restore=sorted(str(p) for p in runtime_updates),
@@ -598,13 +642,10 @@ def run(args):
     if set(moon_updates).intersection(updates):
         raise ValueError('Klipper and Moonraker unexpectedly share a modified file')
     updates.update(moon_updates)
-    argv = list(live['argv'])
-    argv[live['script_index']] = str(host/'klippy/klippy.py')
-    argv[live['script_index']+1] = str(config)
     # The selective rollback below owns only touched files. Keep a full private
     # copy as well, including operator JSON and inactive configuration files.
     shutil.copytree(config.parent, directory/'before-config', symlinks=True)
-    transaction = InstallTransaction(directory, updates, unit_text(argv,working_directory=host), bool(moon_updates), web_root,
+    transaction = InstallTransaction(directory, updates, unit, bool(moon_updates), web_root,
                                      before_start=lambda: bootstrap.verify_host(host))
     verify_snapshot(plan['source_snapshot'])
     bootstrap.verify_host(host, allow_legacy=True)
@@ -625,6 +666,7 @@ def run(args):
     pending = final.get('firmware_restart_required', False)
     result = dict(
         status='INSTALLED_MCU_RESTART_REQUIRED' if pending else 'INSTALLED_INVENTURE_R38_6',
+        installer_release=INSTALLER_RELEASE,
         host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
         source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
         installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
