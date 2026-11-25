@@ -27,7 +27,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(build, previews, output, leveling_previews=None):
+def package(build, previews, output, leveling_previews=None, menu_previews=None, operator_cycles=None):
     status = subprocess.check_output(
         ['git', 'status', '--porcelain'], cwd=ROOT, text=True)
     require(not status, 'Commit the candidate source before packaging')
@@ -70,12 +70,15 @@ def package(build, previews, output, leveling_previews=None):
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
-    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_STAGES.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_OPERATOR_MENU.md').read_bytes()
+    files['HOST_LEVELING_RC4.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_STAGES.md').read_bytes()
     files['HOST_LEVELING_RC3.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_OLED.md').read_bytes()
     files['HOST_SERVICE_ENTRY.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
     for name in ('INVENTURE_R23_LEVELING_PHYSICAL_2026-11-25.json', 'INVENTURE_R23_LEVELING_UI.json'):
         files['validation/'+name] = (validation/name).read_bytes()
     files['validation/INVENTURE_R23_LEVELING_STAGES.json'] = (validation/'INVENTURE_R23_LEVELING_STAGES.json').read_bytes()
+    for name in ('INVENTURE_OEM_MENU_R0323.json', 'INVENTURE_R23_OPERATOR_MENU.json'):
+        files['validation/'+name] = (validation/name).read_bytes()
     for name in ('INVENTURE_R23_M300_DISPLAY_PROVENANCE.json',
                  'INVENTURE_R23_SOFTWARE_2026-11-24.json', 'INVENTURE_R23_RLE_BENCHMARK.json'):
         files['validation/'+name] = (validation/name).read_bytes()
@@ -97,6 +100,25 @@ def package(build, previews, output, leveling_previews=None):
         gallery=proof.get('gallery')
         require(gallery == 'OLED_LEVELING_STAGES.png','Missing leveling stage gallery')
         files['preview/leveling/'+gallery]=(leveling_previews/gallery).read_bytes()
+    if menu_previews is not None:
+        proof_name = 'INVENTURE_R23_OPERATOR_MENU_PREVIEW.json'
+        proof = json.loads((menu_previews/proof_name).read_text())
+        require(proof['status'] == 'PASS_INSTALLED_OEM_OPERATOR_MENU_RENDER'
+                and proof['hardware_tested'] is False
+                and proof['original_record_count'] == 66
+                and proof['launcher'] == ['Klipper', 'Zortrax Inventure'],
+                'Invalid operator menu preview evidence')
+        files['validation/'+proof_name] = (menu_previews/proof_name).read_bytes()
+        for name in [*proof['frames'], proof['gallery']]:
+            require(Path(name).name == name and name.endswith('.png'), 'Invalid menu preview path')
+            data = (menu_previews/name).read_bytes()
+            require(data.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid menu preview: '+name)
+            files['preview/menu/'+name] = data
+    if operator_cycles is not None:
+        proof = json.loads(operator_cycles.read_text())
+        require(proof['operator_menu']['status'] == 'PASS_INSTALLED_OLED_FLUIDD_MENU_PARITY'
+                and proof['hardware_tested'] is False, 'Invalid installed macro acceptance evidence')
+        files['validation/INVENTURE_R23_INSTALLED_OPERATOR_CYCLES.json'] = operator_cycles.read_bytes()
     source_archive = subprocess.check_output(
         ['git', 'archive', '--format=zip', '--prefix=INVENTURE_R23_SOURCE/', 'HEAD'], cwd=ROOT)
     with ZipFile(BytesIO(source_archive)) as archive:
@@ -117,6 +139,10 @@ def package(build, previews, output, leveling_previews=None):
         'application_bytes': metadata['payload_bytes'],
         'application_slot_free_bytes': LIMIT-len(binary),
         'preview_source': 'Compiled MCU C code / simulated SPI / SSD1322 GDDRAM',
+        'operator_ui_release': 'RC8-OPERATOR-MENU-R23.4',
+        'operator_menu_hardware_tested': False,
+        'prior_leveling_ui_operator_accepted': True,
+        'mcu_update_required_from_r23': False,
     }, indent=2)+'\n').encode()
     files['SHA256SUMS'] = ''.join(
         f'{digest(data)}  {name}\n' for name, data in sorted(files.items())).encode()
@@ -140,6 +166,9 @@ if __name__ == '__main__':
     parser.add_argument('previews', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--leveling-previews', type=Path)
+    parser.add_argument('--menu-previews', type=Path)
+    parser.add_argument('--operator-cycles', type=Path)
     args = parser.parse_args()
     print(json.dumps(package(args.build.resolve(), args.previews.resolve(),
-                             args.output.resolve(), args.leveling_previews), indent=2))
+                             args.output.resolve(), args.leveling_previews,
+                             args.menu_previews, args.operator_cycles), indent=2))

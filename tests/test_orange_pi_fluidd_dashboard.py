@@ -111,6 +111,15 @@ class FluiddSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Duplicate'):
             setup.merge_groups(dict(stored=[dict(name='A'), dict(name='a')]), names)
 
+    def test_menu_entry_macros_are_visible_in_zortrax_group_and_keep_user_choices(self):
+        names = {'INVENTURE_MAIN_MENU', 'INVENTURE_KLIPPER_MENU',
+                 'INVENTURE_MAINTENANCE', 'INVENTURE_MATERIAL_MENU'}
+        after, assigned = setup.merge_groups({}, names)
+        self.assertEqual(set(assigned.values()), {'ZORTRAX INVENTURE'})
+        self.assertTrue(all(row['visible'] for row in after['stored']))
+        after['stored'][0]['visible'] = False
+        self.assertEqual(setup.merge_groups(after, names)[0], after)
+
     def test_http_apply_readback_noop_and_restore(self):
         source = {'categories':[dict(name='My group', id='local')], 'stored':[]}
         state = dict(macros=copy.deepcopy(source), writes=0)

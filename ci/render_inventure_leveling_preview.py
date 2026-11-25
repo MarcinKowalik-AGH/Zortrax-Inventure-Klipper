@@ -78,7 +78,7 @@ def render(destination):
         (destination/gallery).write_bytes(png(b''.join(rows),scale=2,width=512,height=192))
         proof=dict(status='PASS_INSTALLED_LEVELING_OLED_RENDER',hardware_tested=False,
                    ui_release=graphics.LEVELING_RENDERER_RELEASE,gallery=gallery,
-                   restoration=metadata['runtime_restorations']['leveling_stages_r23'],
+                   restoration=metadata['runtime_restorations']['operator_menu_r23'],
                    oem_catalog_sha256=sha256(json.dumps(graphics._LEVELING_OEM,sort_keys=True).encode()).hexdigest(),
                    frames=captures)
         (destination/'INVENTURE_R23_LEVELING_PREVIEW.json').write_text(json.dumps(proof,indent=2)+'\n')

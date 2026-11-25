@@ -221,7 +221,8 @@ class TransactionTests(unittest.TestCase):
                       'connected': True, 'status_age': 0.1}
         self.native_z, self.oled = {'running': False}, {
             'ui_transport': {'active_work': False},
-            'procedure_ui_release': installer.LEVELING_UI_RELEASE}
+            'procedure_ui_release': installer.LEVELING_UI_RELEASE,
+            'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
         self.serial, self.baud = '/dev/ttyS5', 750000
         self.macros = {'INVENTURE_DIAGNOSTICS', 'INVENTURE_HOME_ALL', 'PAUSE'}
         self.fail_locale_once = self.fail_web = self.fail_after_web = False
@@ -463,6 +464,13 @@ class TransactionTests(unittest.TestCase):
             self.activate(transaction)
         self.assert_restored()
         self.assertFalse(transaction.settings_changed)
+
+    def test_ready_ui_with_wrong_launcher_is_refused_and_rolled_back(self):
+        transaction=self.transaction()
+        self.oled['operator_menu_root']='root'
+        with self.assertRaisesRegex(RuntimeError,'requested Klipper / Zortrax Inventure menu'):
+            self.activate(transaction)
+        self.assert_restored()
 
     def test_dashboard_http_failure_restores_settings_and_existing_service_override(self):
         previous_unit = installer.UNIT_MARKER.encode()+b'[Service]\n# previous managed override\n'

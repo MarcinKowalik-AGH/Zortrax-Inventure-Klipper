@@ -33,7 +33,7 @@ import inventure_bootstrap as bootstrap
 from inventure_bootstrap_config import stage_config
 import inventure_config_layout as layout
 import fluidd_web
-from inventure_leveling_stages_restore import RELEASE as LEVELING_UI_RELEASE
+from inventure_operator_menu_restore import RELEASE as LEVELING_UI_RELEASE
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -271,6 +271,9 @@ def wait_ready(host, config, seconds=90):
                 if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
                     raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
                                        + LEVELING_UI_RELEASE)
+                panel=values.get('inventure_oled', {})
+                if panel.get('operator_menu_root') != 'launcher' or panel.get('operator_menu_roots') != ['Klipper','Zortrax Inventure']:
+                    raise RuntimeError('Ready Klipper did not activate the requested Klipper / Zortrax Inventure menu')
                 require_mcu(values.get('mcu', {}))
                 return dict(info, firmware_restart_required=False, objects=values)
             reason = message or state

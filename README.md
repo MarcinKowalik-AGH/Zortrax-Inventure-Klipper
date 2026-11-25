@@ -1,6 +1,8 @@
 # Zortrax Inventure for Klipper
 
-This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. The five main OLED entries are Models, Maintenance, Material, Settings and Information.
+This port runs Klipper on the Orange Pi with the original Zortrax Inventure controller, dual-nozzle selector, contact pads and OLED. The printer menu, Fluidd macros and host messages are in English. From the status screen, OK opens **Klipper** and **Zortrax Inventure**. The Zortrax submenu contains Models, Maintenance, Material, Settings and Information.
+
+**R23.4 host operator menu:** the original 66-record firmware tree, including model/support material and pause menus, is mapped to existing Inventure procedure owners. OLED and Fluidd use shared actions and page navigation. The new entry macros remain in **ZORTRAX INVENTURE**. The previous R23.3 leveling UI was accepted by the operator; this expanded menu is software verified and awaits physical acceptance. Existing MCU R23 stays installed. [Update, complete menu and verification](docs/INVENTURE_R23_OPERATOR_MENU.md)
 
 **R23.1 host fix — leveling after Home:** operator SERVICE entry now drains native moves, releases the shared motor enable through Klipper, drains that queued write and checks ownership again before asking the MCU for SERVICE. This resolves the missing host step behind `another_owner_is_busy` after a completed Home. Existing MCU R23 stays installed. [Update and verification](docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md)
 

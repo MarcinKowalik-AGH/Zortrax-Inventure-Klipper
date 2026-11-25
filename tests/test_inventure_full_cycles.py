@@ -28,6 +28,15 @@ class InstalledCycleTests(unittest.TestCase):
             self.assertEqual([r['origin'] for r in proof['home_to_leveling']], ['fluidd', 'oled'])
             self.assertTrue(all(r['service_acquired'] and r['native_enable_released']
                                 for r in proof['home_to_leveling']))
+            menu = proof['operator_menu']
+            self.assertEqual(menu['status'], 'PASS_INSTALLED_OLED_FLUIDD_MENU_PARITY')
+            self.assertEqual(menu['launcher'], ['Klipper', 'Zortrax Inventure'])
+            self.assertEqual(len(menu['pages']), 8)
+            self.assertEqual(len(menu['procedures']), 24)
+            self.assertTrue(all(r['cancel_verified'] and r['simulated_mcu_reached']
+                                for r in menu['procedures']))
+            self.assertEqual(len(menu['refusal_cases']), 2)
+            self.assertTrue(menu['stale_button_rejected'])
             self.assertFalse(proof['serial_opened'])
             self.assertFalse(proof['firmware_flashed'])
             self.assertFalse(proof['hardware_tested'])

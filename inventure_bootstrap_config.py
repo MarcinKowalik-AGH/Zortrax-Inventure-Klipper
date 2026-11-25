@@ -298,6 +298,12 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
         _set_scalar(module, main, 'mcu', 'serial', serial)
         _set_scalar(module, main, 'mcu', 'baud', baud)
         staged, _ = layout.active_klipper(module, main, {})
+        if staged.has_section('inventure_oled'):
+            # Requested operator layout: status -> Klipper / Zortrax Inventure.
+            # Other display preferences and the field tuning keep their owners.
+            _set_scalar(module, main, 'inventure_oled', 'oem_menu', 'True')
+            _set_scalar(module, main, 'inventure_oled', 'menu_profile', 'inventure')
+            _set_scalar(module, main, 'inventure_oled', 'oem_start_screen', 'klipper')
         if not staged.has_section('virtual_sdcard'):
             main.write_bytes(updater.append_config_section(main.read_bytes(), b'[virtual_sdcard]'))
         _set_scalar(module, main, 'virtual_sdcard', 'path', str(gcodes))

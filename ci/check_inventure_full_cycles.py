@@ -447,9 +447,12 @@ def inspect_cycles(klipper, config, repetitions):
         with patch.object(rig.home_module, 'HomingMove', PhysicalHomingMove):
             refusals = inspect_refusals(printer, klipper)
             home_to_leveling = inspect_home_to_leveling(printer, klipper)
+            from check_inventure_operator_menu import inspect_operator_menu
+            operator_menu = inspect_operator_menu(printer, klipper)
         return dict(status='PASS_INSTALLED_R22_FULL_CYCLES', sessions=sessions,
                     cycle_count=sum(len(s['cycles']) for s in sessions),
                     refusals=refusals, home_to_leveling=home_to_leveling,
+                    operator_menu=operator_menu,
                     physical_interfaces='simulated', serial_opened=False,
                     native_mesh_probe_configured=printer.lookup_object('probe', None) is not None,
                     firmware_flashed=False, hardware_tested=False,

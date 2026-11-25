@@ -19,7 +19,8 @@ from zipfile import ZipFile, ZipInfo
 ROOT = Path(__file__).resolve().parents[1]
 UI_TARGETS = {Path('klippy/extras/inventure_menu_service.py'),
               Path('klippy/extras/inventure_oled_graphics.py'),
-              Path('klippy/extras/inventure_oled.py')}
+              Path('klippy/extras/inventure_oled.py'),
+              Path('klippy/extras/inventure_oem_menu.py'),Path('klippy/extras/inventure_menu_core.py')}
 spec = importlib.util.spec_from_file_location("inventure_bootstrap", ROOT/"inventure_bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
@@ -150,6 +151,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_operator_service_restore.py', source/'inventure_operator_service_restore.py')
             shutil.copyfile(ROOT/'inventure_leveling_ui_restore.py', source/'inventure_leveling_ui_restore.py')
             shutil.copyfile(ROOT/'inventure_leveling_stages_restore.py', source/'inventure_leveling_stages_restore.py')
+            shutil.copyfile(ROOT/'inventure_operator_menu_restore.py', source/'inventure_operator_menu_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -446,6 +448,20 @@ class RealHostBootstrapTests(unittest.TestCase):
             bootstrap._write_files(stage,files)
             (stage/bootstrap.MANIFEST_NAME).write_bytes(bootstrap._metadata_bytes(metadata))
             (stage/bootstrap.MANIFEST_NAME).chmod(0o644)
+            plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            self.assertEqual({p.relative_to(stage) for p in plan['files']},UI_TARGETS | {Path(bootstrap.MANIFEST_NAME)})
+            for path,(_,after) in plan['files'].items():path.write_bytes(after)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path,(before,_) in plan['files'].items():path.write_bytes(before)
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],'VERIFIED_LEGACY_HOST')
+
+    def test_published_rc4_updates_only_five_operator_ui_modules_and_rolls_back(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage=Path(temp)/'host'
+            _,files,metadata=bootstrap._plan(ROOT,restore_operator_menu=False)
+            bootstrap._write_files(stage,files)
+            marker=stage/bootstrap.MANIFEST_NAME
+            marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
             plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
             self.assertEqual({p.relative_to(stage) for p in plan['files']},UI_TARGETS | {Path(bootstrap.MANIFEST_NAME)})
             for path,(_,after) in plan['files'].items():path.write_bytes(after)

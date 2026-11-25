@@ -130,7 +130,7 @@ def _module(name, path, data):
 def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
-          restore_leveling_ui=None, restore_leveling_stages=None):
+          restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -145,6 +145,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         restore_leveling_ui = restore_operator_service
     if restore_leveling_stages is None:
         restore_leveling_stages = restore_leveling_ui
+    if restore_operator_menu is None:
+        restore_operator_menu = restore_leveling_stages
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -277,6 +279,15 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['leveling_stages_r23'] = provenance
+    if restore_operator_menu:
+        _require(restore_leveling_stages, 'Operator menu requires the R23.3 procedure display')
+        path = repo/'inventure_operator_menu_restore.py'
+        restoration = _module('inventure_bootstrap_operator_menu', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_operator_menu(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['operator_menu_r23'] = provenance
     return source, files, metadata
 
 
@@ -312,7 +323,8 @@ def _core_check(target, source, temporary, *, native_restored=False, single_owne
                      verification_target/"klippy/serialhdl.py")
         for name in (("inventure_native_z.py","inventure_z_home.py","inventure_mcu.py")
                      if single_owner else ("inventure_native_z.py",)) + (
-                         "inventure_menu_service.py", "inventure_oled_graphics.py", "inventure_oled.py"):
+                         "inventure_menu_service.py", "inventure_oled_graphics.py", "inventure_oled.py",
+                         "inventure_menu_core.py", "inventure_oem_menu.py"):
             (extras/name).write_bytes(source["orange_pi/"+name])
     with redirect_stdout(io.StringIO()):
         result = core.install(verification_target, apply=False)
@@ -425,6 +437,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 operator_service_restoration=metadata.get("runtime_restorations", {}).get("operator_service_r23"),
                 leveling_ui_restoration=metadata.get("runtime_restorations", {}).get("leveling_ui_r23"),
                 leveling_stages_restoration=metadata.get("runtime_restorations", {}).get("leveling_stages_r23"),
+                operator_menu_restoration=metadata.get("runtime_restorations", {}).get("operator_menu_r23"),
                 generated_files=sorted(generated))
 
 
@@ -454,21 +467,22 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui in (
-            (False,False,False,False,False,False,False,False),
-            (True,False,False,False,False,False,False,False),
-            (True,True,False,False,False,False,False,False),
-            (True,True,True,False,False,False,False,False),
-            (True,True,True,True,False,False,False,False),
-            (True,True,True,True,True,False,False,False),
-            (True,True,True,True,True,True,False,False),
-            (True,True,True,True,True,True,True,False),
-            (True,True,True,True,True,True,True,True)):
+    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui,with_stages in (
+            (False,False,False,False,False,False,False,False,False),
+            (True,False,False,False,False,False,False,False,False),
+            (True,True,False,False,False,False,False,False,False),
+            (True,True,True,False,False,False,False,False,False),
+            (True,True,True,True,False,False,False,False,False),
+            (True,True,True,True,True,False,False,False,False),
+            (True,True,True,True,True,True,False,False,False),
+            (True,True,True,True,True,True,True,False,False),
+            (True,True,True,True,True,True,True,True,False),
+            (True,True,True,True,True,True,True,True,True)):
         source, _, metadata = _plan(
             repo, restore_oled=with_oled, restore_native_z=with_native_z,
             restore_motion_owner=with_motion, restore_service_excursion=with_service,
             restore_scheduler=with_scheduler, restore_safety_policy=with_policy,
-            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=False)
+            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=with_stages, restore_operator_menu=False)
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -485,21 +499,22 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui in (
-            (False,False,False,False,False,False,False,False),
-            (True,False,False,False,False,False,False,False),
-            (True,True,False,False,False,False,False,False),
-            (True,True,True,False,False,False,False,False),
-            (True,True,True,True,False,False,False,False),
-            (True,True,True,True,True,False,False,False),
-            (True,True,True,True,True,True,False,False),
-            (True,True,True,True,True,True,True,False),
-            (True,True,True,True,True,True,True,True)):
+    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui,with_stages in (
+            (False,False,False,False,False,False,False,False,False),
+            (True,False,False,False,False,False,False,False,False),
+            (True,True,False,False,False,False,False,False,False),
+            (True,True,True,False,False,False,False,False,False),
+            (True,True,True,True,False,False,False,False,False),
+            (True,True,True,True,True,False,False,False,False),
+            (True,True,True,True,True,True,False,False,False),
+            (True,True,True,True,True,True,True,False,False),
+            (True,True,True,True,True,True,True,True,False),
+            (True,True,True,True,True,True,True,True,True)):
         source, files, metadata = _plan(
             repo, restore_oled=with_oled, restore_native_z=with_native_z,
             restore_motion_owner=with_motion, restore_service_excursion=with_service,
             restore_scheduler=with_scheduler, restore_safety_policy=with_policy,
-            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=False)
+            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=with_stages, restore_operator_menu=False)
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
@@ -513,6 +528,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     allowed = {"klippy/extras/inventure_oled_render.py",
                "klippy/extras/inventure_menu_service.py",
                "klippy/extras/inventure_oled_graphics.py",
+               "klippy/extras/inventure_oem_menu.py",
+               "klippy/extras/inventure_menu_core.py",
                "klippy/extras/inventure_oled.py",
                "klippy/extras/inventure_native_z.py",
                "klippy/extras/inventure_z_home.py",
@@ -540,4 +557,5 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                 safety_policy_restoration=metadata["runtime_restorations"]["safety_policy_r22"],
                 operator_service_restoration=metadata["runtime_restorations"]["operator_service_r23"],
                 leveling_ui_restoration=metadata["runtime_restorations"]["leveling_ui_r23"],
-                leveling_stages_restoration=metadata["runtime_restorations"]["leveling_stages_r23"])
+                leveling_stages_restoration=metadata["runtime_restorations"]["leveling_stages_r23"],
+                operator_menu_restoration=metadata["runtime_restorations"]["operator_menu_r23"])
