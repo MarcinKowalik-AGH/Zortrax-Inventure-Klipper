@@ -47,6 +47,10 @@ class OemHomeRestoreTests(unittest.TestCase):
                 calls = [n for n in ast.walk(status) if isinstance(n, ast.Call)]
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0].func.id, 'dict')
+            elif name == 'inventure_mcu.py':
+                self.assertEqual(restoration.without_service_entry(actual),restoration.without_service_entry(baseline))
+                self.assertEqual(restoration.service_entry(actual)[2],
+                                 restoration.service_entry(current['klippy/extras/'+name][0])[2])
             else:
                 self.assertEqual(actual, baseline)
         proof = metadata['runtime_restorations']['oem_home_r38_6']
@@ -61,6 +65,22 @@ class OemHomeRestoreTests(unittest.TestCase):
                 self.assertEqual(bootstrap.current_procedure_profile(), restoration.PROFILE)
                 raise RuntimeError('test interruption')
         self.assertEqual(bootstrap.current_procedure_profile(), 'current')
+
+    def test_first_oem_recovery_upgrades_only_existing_service_entry_and_manifest(self):
+        with tempfile.TemporaryDirectory(prefix='inventure-oem-home-rc9-') as temporary:
+            host=Path(temporary)/'host'
+            _,files,metadata=bootstrap._plan(ROOT,procedure_profile=restoration.PROFILE,oem_service_entry=False)
+            bootstrap._write_files(host,files)
+            marker=host/bootstrap.MANIFEST_NAME
+            marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+            with bootstrap.procedure_profile(restoration.PROFILE):
+                self.assertEqual(bootstrap.verify_host(host,allow_legacy=True)['status'],'VERIFIED_LEGACY_HOST')
+                update=bootstrap.prepare_runtime_update(host)
+                self.assertEqual({p.relative_to(host).as_posix() for p in update['files']},
+                                 {'klippy/extras/inventure_mcu.py',bootstrap.MANIFEST_NAME})
+                for path,(_,after) in update['files'].items():
+                    path.write_bytes(after)
+                self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
 
     def test_upgrade_and_exact_rollback_preserve_all_other_runtime_files(self):
         with tempfile.TemporaryDirectory(prefix='inventure-oem-home-') as temporary:

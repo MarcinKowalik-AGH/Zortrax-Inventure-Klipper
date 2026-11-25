@@ -193,7 +193,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-oem-home-rc9
+          CANDIDATE_TAG: inventure-r23-oem-home-rc9.1
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -217,6 +217,6 @@ jobs:
             "$ARTIFACT_DIR/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json" \
             "$ARTIFACT_DIR/oem-home-recovery/OEM_HOME_RECOVERY.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.7 host · recover the pre-R19 XY release preparation' \
+            --title 'Inventure R23.7.1 host · recover XY release and retain SERVICE entry' \
             --notes-file docs/INVENTURE_R23_OEM_HOME_RC9.md \
             --prerelease --latest=false

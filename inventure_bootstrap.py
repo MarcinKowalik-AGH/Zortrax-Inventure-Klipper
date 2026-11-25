@@ -149,7 +149,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
-          restore_accepted_home=None, procedure_profile=None):
+          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -335,7 +335,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         _require(restore_accepted_home, 'OEM recovery requires the authenticated current runtime input')
         path = repo/'inventure_oem_home_restore.py'
         restoration = _module('inventure_bootstrap_oem_home', path, _regular_bytes(path))
-        updates, provenance = restoration.restored_oem_home(repo, files)
+        updates, provenance = restoration.restored_oem_home(repo, files, retain_service_entry=oem_service_entry)
         files.update(updates)
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
@@ -524,6 +524,7 @@ def _predecessor_plans(repo):
                     **{name: index < enabled for index, name in enumerate(names)})
     if _procedure_profile.get() != 'current':
         yield _plan(repo, procedure_profile='current')
+    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
     if _procedure_profile.get() == 'current':
         yield _plan(repo, procedure_profile='oem-home-r38.6')
 

@@ -21,6 +21,7 @@ REFERENCE = {
     'inventure_z_home.py': '6473c5473dec6b0889772ff10536390c6ad377c6',
 }
 TARGET = 'klippy/extras/inventure_native_z.py'
+CURRENT_MCU_BLOB = '8d64f94d3ae4257fbc20e936b9145ba0419f34ed'
 
 
 def blob(data):
@@ -36,7 +37,23 @@ def execution_ast(data):
     return ast.dump(tree, include_attributes=False)
 
 
-def restored_oem_home(repo, files):
+def without_service_entry(data):
+    tree=ast.parse(data)
+    for owner in tree.body:
+        if isinstance(owner,ast.ClassDef) and owner.name=='InventureMCU':
+            owner.body=[n for n in owner.body if not isinstance(n,ast.FunctionDef)
+                        or n.name!='_enter_operator_service']
+    return ast.dump(tree,include_attributes=False)
+
+
+def service_entry(data):
+    owner=next(n for n in ast.parse(data).body if isinstance(n,ast.ClassDef) and n.name=='InventureMCU')
+    node=next(n for n in owner.body if isinstance(n,ast.FunctionDef) and n.name=='_enter_operator_service')
+    lines=data.decode('utf-8').splitlines(keepends=True)
+    return node,lines,''.join(lines[node.lineno-1:node.end_lineno])
+
+
+def restored_oem_home(repo, files, *, retain_service_entry=True):
     updates, records = {}, {}
     for name, expected in REFERENCE.items():
         path = Path(repo)/'orange_pi'/name
@@ -47,6 +64,15 @@ def restored_oem_home(repo, files):
             raise ValueError('Frozen R38.6 Home reference changed: ' + name)
         after = source
         target = 'klippy/extras/' + name
+        if name == 'inventure_mcu.py' and retain_service_entry:
+            current=files[target][0]
+            if blob(current)!=CURRENT_MCU_BLOB:
+                raise ValueError('Unexpected installed SERVICE entry before OEM recovery')
+            old,lines,_=service_entry(source)
+            _,_,retained=service_entry(current)
+            after=(''.join(lines[:old.lineno-1])+retained+''.join(lines[old.end_lineno:])).encode('utf-8')
+            if without_service_entry(source)!=without_service_entry(after):
+                raise ValueError('OEM interpreter changed outside the retained SERVICE entry')
         if name == 'inventure_native_z.py':
             before = b'                    retained_refinement=self.retained_refinement)\n'
             replacement = (
@@ -65,6 +91,9 @@ def restored_oem_home(repo, files):
         updates[target] = (after, 0o644)
         records[target] = dict(source='orange_pi/' + name, reference_blob=expected,
                                installed_blob=blob(after), sha256=sha256(after).hexdigest())
+        if name == 'inventure_mcu.py' and retain_service_entry:
+            records[target].update(retained_current_method='_enter_operator_service',
+                                   retained_method_source_blob=CURRENT_MCU_BLOB)
     return updates, dict(release=RELEASE, profile=PROFILE, reference_commit=REFERENCE_COMMIT,
                          reference_tag=REFERENCE_TAG, files=records,
                          executable_home_ast_identical=True,

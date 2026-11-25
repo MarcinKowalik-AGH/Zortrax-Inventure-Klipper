@@ -1,4 +1,4 @@
-# Inventure R23.7: recovery of the complete R38.6 Home preparation
+# Inventure R23.7.1: recovery of the complete R38.6 Home preparation
 
 This recovery is selected explicitly with `--restore-oem-home`. It restores
 the complete pre-R19 Home implementation from immutable commit
@@ -38,7 +38,11 @@ Three runtime files are restored together:
 
 The native adapter receives only read-only source/version fields in
 `get_status`; its executable procedure AST equals the frozen source. The
-other two modules are byte-identical. The retained native backup at
+preparation generator is byte-identical. The MCU interpreter retains the
+already-installed R23.1 `_enter_operator_service` method verbatim, so the
+existing menu SERVICE-entry fix is preserved; every other interpreter AST
+node equals the frozen R38.6 source. No new transfer protocol is introduced.
+The retained native backup at
 `20261124T142803.217006Z/before/0`, identified in the operator's supplied
 audit, has the first blob above. Recovery refuses activation without an
 indexed backup matching its exact blob and SHA256.
@@ -75,7 +79,7 @@ and wait for Ready. Install before any Home/heating command:
 ```bash
 cd "$HOME/inventure-src" &&
 git fetch origin --tags &&
-git switch --detach inventure-r23-oem-home-rc9 &&
+git switch --detach inventure-r23-oem-home-rc9.1 &&
 python3 install-new-host.py --restore-oem-home --serial /dev/ttyS5 --baud 750000 --apply
 ```
 
