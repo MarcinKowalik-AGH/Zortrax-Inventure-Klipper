@@ -35,3 +35,5 @@ it resembles a successful log; recover its exact identity from release/runtime
 records or backups. Record any unresolved identity rather than inventing it.
 For the current Home incident, start with
 [the three completed runs and regression scope](docs/INVENTURE_ACCEPTED_HOME_2026-11-25.md).
+For standalone Home X/Y and the actual G28 route, also read
+[the source and execution audit](docs/INVENTURE_HOME_XY_REFERENCE_2026-11-25.md).
