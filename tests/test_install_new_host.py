@@ -274,7 +274,9 @@ class TransactionTests(unittest.TestCase):
                       'host_module':str(self.host/'klippy/extras/inventure_mcu.py')}
         self.native_z, self.oled = {'running': False,
             'host_module':str(self.host/'klippy/extras/inventure_native_z.py'),
-            'homing_safety_release':installer.LEVELING_UI_RELEASE}, {
+            'homing_safety_release':installer.accepted_home.RELEASE,
+            'procedure_restore_release':installer.accepted_home.RELEASE,
+            'procedure_baseline_blob':installer.accepted_home.BASELINE_BLOB}, {
             'ui_transport': {'active_work': False},
             'procedure_ui_release': installer.LEVELING_UI_RELEASE,
             'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
@@ -591,6 +593,12 @@ class TransactionTests(unittest.TestCase):
     def test_ready_with_a_home_module_from_candidate_runtime_is_rolled_back(self):
         self.native_z['host_module']='/home/klipper/klipper-inventure-candidate/klippy/extras/inventure_native_z.py'
         with self.assertRaisesRegex(RuntimeError,'different Inventure MCU or Home module'):
+            self.activate(self.transaction())
+        self.assert_restored()
+
+    def test_ready_without_the_restored_procedure_identity_is_rolled_back(self):
+        self.native_z.pop('procedure_restore_release')
+        with self.assertRaisesRegex(RuntimeError, 'recorded pre-R23.5 Home procedure'):
             self.activate(self.transaction())
         self.assert_restored()
 

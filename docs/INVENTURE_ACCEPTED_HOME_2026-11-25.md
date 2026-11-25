@@ -1,5 +1,10 @@
 # Preserve the accepted Inventure Home procedure
 
+The later installer audit positively identified two retained pre-R23.5 copies.
+The [R23.6 restoration](INVENTURE_R23_ACCEPTED_HOME_RC8.md) preserves that
+reference's executable AST; only status fields differ. This is separate from
+establishing the physical cause of the impacts.
+
 The operator requested integration of existing, physically tested procedures
 into the OLED menu and Fluidd macros. That integration must preserve their
 behavior. It does not authorize another reconstruction of homing, selector

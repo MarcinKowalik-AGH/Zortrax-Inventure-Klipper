@@ -19,6 +19,10 @@ on:
       - 'inventure_leveling_stages_restore.py'
       - 'inventure_operator_menu_restore.py'
       - 'inventure_configuration_audit_restore.py'
+      - 'inventure_accepted_home_restore.py'
+      - 'restored/accepted_home_r23/**'
+      - 'tests/test_inventure_accepted_home_restore.py'
+      - 'docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md'
       - 'inventure_config_cleanup.py'
       - 'restored/configuration_audit_r23/**'
       - 'tests/test_inventure_config_audit.py'
@@ -182,7 +186,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-startup-rc7
+          CANDIDATE_TAG: inventure-r23-accepted-home-rc8
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -205,6 +209,6 @@ jobs:
             "$ARTIFACT_DIR/r23-full-cycles.json" \
             "$ARTIFACT_DIR/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.5.1 host · verified systemd startup' \
-            --notes-file docs/INVENTURE_R23_STARTUP_RC7.md \
+            --title 'Inventure R23.6 host · restore the recorded Home procedure' \
+            --notes-file docs/INVENTURE_R23_ACCEPTED_HOME_RC8.md \
             --prerelease --latest=false

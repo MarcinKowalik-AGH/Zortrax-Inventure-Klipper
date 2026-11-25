@@ -155,6 +155,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_leveling_stages_restore.py', source/'inventure_leveling_stages_restore.py')
             shutil.copyfile(ROOT/'inventure_operator_menu_restore.py', source/'inventure_operator_menu_restore.py')
             shutil.copyfile(ROOT/'inventure_configuration_audit_restore.py', source/'inventure_configuration_audit_restore.py')
+            shutil.copyfile(ROOT/'inventure_accepted_home_restore.py', source/'inventure_accepted_home_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -204,6 +205,8 @@ class RealHostBootstrapTests(unittest.TestCase):
         audit=self.metadata['runtime_restorations']['configuration_audit_r23']
         self.assertEqual(audit['release'],'RC8-CONFIG-AUDIT-R23.5')
         for target,record in audit['files'].items():
+            if target in self.metadata['runtime_restorations']['accepted_home_r23']['files']:
+                continue
             self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),record['sha256'])
         entry=self.metadata['runtime_restorations']['operator_service_r23']
         self.assertEqual(entry['prior_blob'],policy['installed_blob'])

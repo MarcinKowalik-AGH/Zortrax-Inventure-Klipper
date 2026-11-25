@@ -399,16 +399,18 @@ def inspect_home_to_leveling(printer, klipper):
 
 
 def inspect_xy_switch_refusals(printer, klipper):
-    """A reported G28 completion cannot authorize T0 without physical limits."""
+    """A native Klipper homing failure cannot authorize T0 preparation."""
     rows=[]
     for origin in ('fluidd','oled'):
         for axis in ('X','Y'):
             rig=InstalledRig(printer,klipper)
-            inputs=rig.board._fresh_inputs
-            def failed_switch(axis=axis):
-                reply=inputs();reply['raw'][axis.lower()+'_endstop']=0
-                return reply
-            rig.board._fresh_inputs=failed_switch
+            original_home = rig.model.cmd_G28
+            def failed_home(command, axis=axis):
+                if axis in command:
+                    rig.model.clear_homing_state(axis.lower())
+                    raise ValueError('No trigger on '+axis.lower()+'_endstop after full movement')
+                return original_home(command)
+            rig.model.cmd_G28=failed_home
             rejection=None
             try:
                 if origin=='fluidd':rig.run('INVENTURE_HOME_ALL ACK=PAD_AND_CLEARANCE_CHECKED')
@@ -423,7 +425,8 @@ def inspect_xy_switch_refusals(printer, klipper):
             require(not any(h.get_temp(0)[1] for h in rig.model.heaters.values()),
                     'A failed XY reference started heating')
             rows.append(dict(origin=origin,axis=axis,status='PASS',reason=rejection,
-                             selector_not_started=True,reference_invalidated=True))
+                             selector_not_started=True,reference_invalidated=True,
+                             mechanism='native_klipper_homing_failure'))
     return rows
 
 

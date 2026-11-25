@@ -34,6 +34,7 @@ from inventure_bootstrap_config import stage_config
 import inventure_config_layout as layout
 import fluidd_web
 from inventure_configuration_audit_restore import RELEASE as LEVELING_UI_RELEASE
+import inventure_accepted_home_restore as accepted_home
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -48,7 +49,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R23.5.1'
+INSTALLER_RELEASE = 'R23.6'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -323,8 +324,11 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                 native = values.get('inventure_native_z', {})
                 if (Path(board.get('host_module','')).resolve() != host/'klippy/extras/inventure_mcu.py'
                         or Path(native.get('host_module','')).resolve() != host/'klippy/extras/inventure_native_z.py'
-                        or native.get('homing_safety_release') != LEVELING_UI_RELEASE):
+                        or native.get('homing_safety_release') != accepted_home.RELEASE):
                     raise RuntimeError('Ready process loaded a different Inventure MCU or Home module')
+                if (native.get('procedure_restore_release') != accepted_home.RELEASE
+                        or native.get('procedure_baseline_blob') != accepted_home.BASELINE_BLOB):
+                    raise RuntimeError('Ready process did not load the recorded pre-R23.5 Home procedure')
                 if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
                     raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
                                        + LEVELING_UI_RELEASE)
@@ -560,6 +564,14 @@ def stage_runtime(host, directory):
     return prepared, provenance, {}, None
 
 
+def require_identical_configuration(host, original, staged):
+    module = updater.klipper_config_module(host)
+    before, _ = layout.active_klipper(module, original, {})
+    after, _ = layout.active_klipper(module, staged, {})
+    if layout.config_values(before) != layout.config_values(after):
+        raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
+
+
 def run(args):
     if os.geteuid() == 0:
         raise ValueError('Run as the Klipper user without sudo; privileged service operations request sudo separately')
@@ -577,6 +589,12 @@ def run(args):
         mcu_identity, requirement = {'mcu_version': mcu.get('mcu_version')}, str(exc)
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
+    restore_home = bool(getattr(args, 'restore_accepted_home', False))
+    reference_backup = None
+    if restore_home:
+        if recovery or args.destination.expanduser().absolute() != live['host']:
+            raise ValueError('Accepted Home recovery requires the currently running Ready runtime')
+        reference_backup = accepted_home.require_reference_backup(ROOT, Path.home(), live['host'])
     installer_commit = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     directory = Path.home()/'inventure-installations'/stamp
@@ -591,6 +609,10 @@ def run(args):
     plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
                         gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
     staged = Path(plan['config_path'])
+    if restore_home:
+        require_identical_configuration(validation_host, config, staged)
+        plan['source_snapshot'][reference_backup['saved_file']] = accepted_home.BASELINE_SHA256
+        plan['accepted_home_backup'] = reference_backup
     if recovery:
         active, _ = layout.active_klipper(updater.klipper_config_module(validation_host), staged, {})
         for section in active.sections():
@@ -667,6 +689,9 @@ def run(args):
     result = dict(
         status='INSTALLED_MCU_RESTART_REQUIRED' if pending else 'INSTALLED_INVENTURE_R38_6',
         installer_release=INSTALLER_RELEASE,
+        accepted_home_backup=reference_backup,
+        procedure_restore_release=final.get('objects',{}).get('inventure_native_z',{}).get('procedure_restore_release'),
+        procedure_baseline_blob=accepted_home.BASELINE_BLOB,
         host_revision=bootstrap.HOST_REVISION, software_version=final['software_version'],
         source_commit=bootstrap.SOURCE_COMMIT, source_tag=bootstrap.SOURCE_TAG,
         installer_commit=installer_commit, runtime_manifest=str(host/bootstrap.MANIFEST_NAME),
@@ -701,6 +726,8 @@ def main():
                         help='Recover the recorded machine profile and missing published, accepted pad calibration')
     parser.add_argument('--recover-startup', action='store_true',
                         help='Repair the exact missing Inventure pin/sensor startup error, validating MCU after Ready')
+    parser.add_argument('--restore-accepted-home', action='store_true',
+                        help='Require the retained pre-R23.5 Home backup and preserve every effective printer setting')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

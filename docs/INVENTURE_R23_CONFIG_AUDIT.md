@@ -1,5 +1,9 @@
 # Inventure R23.5: persistent startup repair, shared Home and configuration audit
 
+**Home behavior superseded by RC8:** use the
+[recorded Home restoration](INVENTURE_R23_ACCEPTED_HOME_RC8.md) for this incident.
+The added raw-X/Y checks documented here describe R23.5 and are reverted by RC8.
+
 **Installer superseded by RC7:** RC6 quoted `WorkingDirectory` incorrectly.
 Use [the corrected RC7 installer](INVENTURE_R23_STARTUP_RC7.md); the configuration
 layout and UI/Home safety version described below remain R23.5.

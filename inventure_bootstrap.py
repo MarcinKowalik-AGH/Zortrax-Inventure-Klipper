@@ -130,7 +130,8 @@ def _module(name, path, data):
 def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
-          restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None):
+          restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
+          restore_accepted_home=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -149,6 +150,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         restore_operator_menu = restore_leveling_stages
     if restore_configuration_audit is None:
         restore_configuration_audit = restore_operator_menu
+    if restore_accepted_home is None:
+        restore_accepted_home = restore_configuration_audit
     source = _source_files(repo)
     expected_outer = source["source/SHA256SUMS"].decode("ascii").split()[0]
     archive = b"".join(source[name] for name in sorted(source) if name.startswith("source/parts/"))
@@ -299,6 +302,15 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['configuration_audit_r23'] = provenance
+    if restore_accepted_home:
+        _require(restore_configuration_audit, 'Accepted Home restoration requires the recorded R23.5 input')
+        path = repo/'inventure_accepted_home_restore.py'
+        restoration = _module('inventure_bootstrap_accepted_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_accepted_home(repo, files)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['accepted_home_r23'] = provenance
     return source, files, metadata
 
 
@@ -450,6 +462,7 @@ def _verify_runtime(target, source, metadata, *, restoration_required):
                 leveling_stages_restoration=metadata.get("runtime_restorations", {}).get("leveling_stages_r23"),
                 operator_menu_restoration=metadata.get("runtime_restorations", {}).get("operator_menu_r23"),
                 configuration_audit_restoration=metadata.get("runtime_restorations", {}).get("configuration_audit_r23"),
+                accepted_home_restoration=metadata.get("runtime_restorations", {}).get("accepted_home_r23"),
                 generated_files=sorted(generated))
 
 
@@ -470,6 +483,17 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
     return _verify_runtime(target, source, metadata, restoration_required=False)
 
 
+def _predecessor_plans(repo):
+    """Every authenticated prefix through the published R23.5 runtime."""
+    names = ('restore_oled', 'restore_native_z', 'restore_motion_owner',
+             'restore_service_excursion', 'restore_scheduler', 'restore_safety_policy',
+             'restore_operator_service', 'restore_leveling_ui', 'restore_leveling_stages',
+             'restore_operator_menu', 'restore_configuration_audit')
+    for enabled in range(len(names)+1):
+        yield _plan(repo, restore_accepted_home=False,
+                    **{name: index < enabled for index, name in enumerate(names)})
+
+
 def verify_legacy_host(destination, repo=ROOT) -> dict:
     """Recognize only the two authenticated predecessor runtime layouts.
 
@@ -479,23 +503,7 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui,with_stages,with_menu in (
-            (False,False,False,False,False,False,False,False,False,False),
-            (True,False,False,False,False,False,False,False,False,False),
-            (True,True,False,False,False,False,False,False,False,False),
-            (True,True,True,False,False,False,False,False,False,False),
-            (True,True,True,True,False,False,False,False,False,False),
-            (True,True,True,True,True,False,False,False,False,False),
-            (True,True,True,True,True,True,False,False,False,False),
-            (True,True,True,True,True,True,True,False,False,False),
-            (True,True,True,True,True,True,True,True,False,False),
-            (True,True,True,True,True,True,True,True,True,False),
-            (True,True,True,True,True,True,True,True,True,True)):
-        source, _, metadata = _plan(
-            repo, restore_oled=with_oled, restore_native_z=with_native_z,
-            restore_motion_owner=with_motion, restore_service_excursion=with_service,
-            restore_scheduler=with_scheduler, restore_safety_policy=with_policy,
-            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=with_stages, restore_operator_menu=with_menu, restore_configuration_audit=False)
+    for source, _, metadata in _predecessor_plans(repo):
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -512,23 +520,7 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    for with_oled,with_native_z,with_motion,with_service,with_scheduler,with_policy,with_operator,with_ui,with_stages,with_menu in (
-            (False,False,False,False,False,False,False,False,False,False),
-            (True,False,False,False,False,False,False,False,False,False),
-            (True,True,False,False,False,False,False,False,False,False),
-            (True,True,True,False,False,False,False,False,False,False),
-            (True,True,True,True,False,False,False,False,False,False),
-            (True,True,True,True,True,False,False,False,False,False),
-            (True,True,True,True,True,True,False,False,False,False),
-            (True,True,True,True,True,True,True,False,False,False),
-            (True,True,True,True,True,True,True,True,False,False),
-            (True,True,True,True,True,True,True,True,True,False),
-            (True,True,True,True,True,True,True,True,True,True)):
-        source, files, metadata = _plan(
-            repo, restore_oled=with_oled, restore_native_z=with_native_z,
-            restore_motion_owner=with_motion, restore_service_excursion=with_service,
-            restore_scheduler=with_scheduler, restore_safety_policy=with_policy,
-            restore_operator_service=with_operator, restore_leveling_ui=with_ui, restore_leveling_stages=with_stages, restore_operator_menu=with_menu, restore_configuration_audit=False)
+    for source, files, metadata in _predecessor_plans(repo):
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
@@ -573,4 +565,5 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                 leveling_ui_restoration=metadata["runtime_restorations"]["leveling_ui_r23"],
                 leveling_stages_restoration=metadata["runtime_restorations"]["leveling_stages_r23"],
                 operator_menu_restoration=metadata["runtime_restorations"]["operator_menu_r23"],
-                configuration_audit_restoration=metadata["runtime_restorations"]["configuration_audit_r23"])
+                configuration_audit_restoration=metadata["runtime_restorations"]["configuration_audit_r23"],
+                accepted_home_restoration=metadata["runtime_restorations"]["accepted_home_r23"])

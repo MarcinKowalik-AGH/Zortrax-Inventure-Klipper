@@ -14,6 +14,7 @@ import stat
 NATIVE = Path('klippy/extras/inventure_native_z.py')
 PRE_AUDIT_BLOB = '3fc954974a4a375e003b50c8624304301457f1de'
 R23_5_BLOB = 'eb92dd3eb7bb54aee5b710b34957494250a547e9'
+RESTORED_HOME_BLOB = '5263263a899be9d08dbeed495d04e8663371ed4c'
 MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -34,6 +35,7 @@ def fingerprint(data):
     return dict(bytes=len(data), git_blob=blob, sha256=sha256(data).hexdigest(),
                 reference=('public_pre_R23_5' if blob == PRE_AUDIT_BLOB else
                            'R23_5_added_raw_switch_checks' if blob == R23_5_BLOB else
+                           'pre_R23_5_procedures_with_R23_6_status' if blob == RESTORED_HOME_BLOB else
                            'other_code'))
 
 
