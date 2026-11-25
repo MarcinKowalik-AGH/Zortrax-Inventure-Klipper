@@ -17,6 +17,8 @@ import warnings
 from zipfile import ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+UI_TARGETS = {Path('klippy/extras/inventure_menu_service.py'),
+              Path('klippy/extras/inventure_oled_graphics.py')}
 spec = importlib.util.spec_from_file_location("inventure_bootstrap", ROOT/"inventure_bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
@@ -122,6 +124,11 @@ class RealHostBootstrapTests(unittest.TestCase):
         (cls.r22/bootstrap.MANIFEST_NAME).write_bytes(
             bootstrap._metadata_bytes(cls.r22_metadata))
         (cls.r22/bootstrap.MANIFEST_NAME).chmod(0o644)
+        _, cls.r23_files, cls.r23_metadata = bootstrap._plan(ROOT, restore_leveling_ui=False)
+        cls.r23 = cls.root/'r23-rc2-host'
+        bootstrap._write_files(cls.r23,cls.r23_files)
+        (cls.r23/bootstrap.MANIFEST_NAME).write_bytes(bootstrap._metadata_bytes(cls.r23_metadata))
+        (cls.r23/bootstrap.MANIFEST_NAME).chmod(0o644)
 
     @classmethod
     def tearDownClass(cls):
@@ -140,6 +147,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_scheduler_restore.py', source/'inventure_scheduler_restore.py')
             shutil.copyfile(ROOT/'inventure_safety_policy_restore.py', source/'inventure_safety_policy_restore.py')
             shutil.copyfile(ROOT/'inventure_operator_service_restore.py', source/'inventure_operator_service_restore.py')
+            shutil.copyfile(ROOT/'inventure_leveling_ui_restore.py', source/'inventure_leveling_ui_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -244,7 +252,7 @@ class RealHostBootstrapTests(unittest.TestCase):
                               Path('klippy/extras/inventure_native_z.py'),
                               Path('klippy/extras/inventure_z_home.py'),
                               Path('klippy/extras/inventure_mcu.py'),
-                              Path(bootstrap.MANIFEST_NAME)}
+                              Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected_names)
             self.assertEqual(plan['metadata'], self.metadata)
             self.assertEqual(plan['restoration'], self.metadata['runtime_restorations']['oled_dual_thermal_v2'])
@@ -275,7 +283,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             expected_names = {Path('klippy/extras/inventure_native_z.py'),
                               Path('klippy/extras/inventure_z_home.py'),
                               Path('klippy/extras/inventure_mcu.py'),
-                              Path(bootstrap.MANIFEST_NAME)}
+                              Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected_names)
             self.assertEqual(plan['native_z_restoration'],
                              self.metadata['runtime_restorations']['native_z_r18'])
@@ -299,7 +307,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             expected = {Path('klippy/extras/inventure_native_z.py'),
                         Path('klippy/extras/inventure_z_home.py'),
                         Path('klippy/extras/inventure_mcu.py'),
-                        Path(bootstrap.MANIFEST_NAME)}
+                        Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected)
             self.assertEqual(plan['single_motion_owner_restoration'],
                              self.metadata['runtime_restorations']['single_motion_owner_r19'])
@@ -323,7 +331,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             factory = (stage/'klippy/extras/inventure_z_home.py').read_bytes()
             plan = bootstrap.prepare_runtime_update(stage, repo=ROOT)
             expected = {Path('klippy/extras/inventure_native_z.py'),
-                        Path('klippy/extras/inventure_mcu.py'), Path(bootstrap.MANIFEST_NAME)}
+                        Path('klippy/extras/inventure_mcu.py'), Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS
             self.assertEqual({p.relative_to(stage) for p in plan['files']}, expected)
             self.assertEqual(plan['exclusive_service_restoration'],
                              self.metadata['runtime_restorations']['exclusive_service_r20'])
@@ -351,7 +359,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             self.assertEqual(changed,{
                 Path('klippy/extras/inventure_mcu.py'),
                 Path('klippy/extras/inventure_native_z.py'),
-                Path(bootstrap.MANIFEST_NAME)})
+                Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS)
             self.assertEqual(plan['scheduler_restoration'],
                              self.metadata['runtime_restorations']['scheduler_r21'])
             for path,(before,after) in plan['files'].items():
@@ -377,7 +385,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
             self.assertEqual({p.relative_to(stage) for p in plan['files']},
                              {Path('klippy/extras/inventure_mcu.py'),
-                              Path(bootstrap.MANIFEST_NAME)})
+                              Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS)
             self.assertEqual(plan['safety_policy_restoration'],
                              self.metadata['runtime_restorations']['safety_policy_r22'])
             for path,(old,new) in plan['files'].items():
@@ -401,7 +409,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             before={p:p.read_bytes() for p in stage.rglob('*') if p.is_file()}
             plan=bootstrap.prepare_runtime_update(stage,repo=ROOT)
             self.assertEqual({p.relative_to(stage) for p in plan['files']},
-                             {Path('klippy/extras/inventure_mcu.py'),Path(bootstrap.MANIFEST_NAME)})
+                             {Path('klippy/extras/inventure_mcu.py'),Path(bootstrap.MANIFEST_NAME)} | UI_TARGETS)
             self.assertFalse(plan['operator_service_restoration']['mcu_update_required'])
             for path,(old,new) in plan['files'].items():
                 self.assertEqual(path.read_bytes(),old)
@@ -411,6 +419,31 @@ class RealHostBootstrapTests(unittest.TestCase):
             self.assertEqual(before,{p:p.read_bytes() for p in stage.rglob('*') if p.is_file()})
             self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],
                              'VERIFIED_LEGACY_HOST')
+
+    def test_published_r23_rc2_upgrades_only_two_ui_modules_and_preserves_motor_program(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.r23, stage)
+            before = {p:p.read_bytes() for p in stage.rglob('*') if p.is_file()}
+            plan = bootstrap.prepare_runtime_update(stage,repo=ROOT)
+            self.assertEqual({p.relative_to(stage) for p in plan['files']},
+                             UI_TARGETS | {Path(bootstrap.MANIFEST_NAME)})
+            self.assertFalse(plan['leveling_ui_restoration']['mcu_update_required'])
+            for path,(_,new) in plan['files'].items():path.write_bytes(new)
+            self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
+            for path in before:
+                if path not in plan['files']:self.assertEqual(path.read_bytes(),before[path])
+            for path,(old,_) in plan['files'].items():path.write_bytes(old)
+            self.assertEqual(before,{p:p.read_bytes() for p in stage.rglob('*') if p.is_file()})
+            self.assertEqual(bootstrap.verify_legacy_host(stage,repo=ROOT)['status'],'VERIFIED_LEGACY_HOST')
+
+    def test_leveling_ui_tamper_is_rejected_before_staging(self):
+        with self.source_copy() as source,tempfile.TemporaryDirectory() as temp:
+            path = source/'restored/leveling_ui_r23/inventure_menu_service.py'
+            path.write_bytes(path.read_bytes()+b'\n# unaudited UI edit\n')
+            with self.assertRaisesRegex(ValueError,'Leveling UI restoration integrity mismatch'):
+                bootstrap.prepare_host(Path(temp)/'host',repo=source)
+            self.assertFalse((Path(temp)/'host').exists())
 
     def test_r22_refuses_unaudited_policy_module_before_install(self):
         with self.source_copy() as source,tempfile.TemporaryDirectory() as temp:

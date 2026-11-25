@@ -27,7 +27,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(build, previews, output):
+def package(build, previews, output, leveling_previews=None):
     status = subprocess.check_output(
         ['git', 'status', '--porcelain'], cwd=ROOT, text=True)
     require(not status, 'Commit the candidate source before packaging')
@@ -70,7 +70,10 @@ def package(build, previews, output):
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
-    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_OLED.md').read_bytes()
+    files['HOST_SERVICE_ENTRY.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
+    for name in ('INVENTURE_R23_LEVELING_PHYSICAL_2026-11-25.json', 'INVENTURE_R23_LEVELING_UI.json'):
+        files['validation/'+name] = (validation/name).read_bytes()
     for name in ('INVENTURE_R23_M300_DISPLAY_PROVENANCE.json',
                  'INVENTURE_R23_SOFTWARE_2026-11-24.json', 'INVENTURE_R23_RLE_BENCHMARK.json'):
         files['validation/'+name] = (validation/name).read_bytes()
@@ -78,6 +81,17 @@ def package(build, previews, output):
         data = (previews/(name+'.png')).read_bytes()
         require(data.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid preview: '+name)
         files['preview/'+name+'.png'] = data
+    if leveling_previews is not None:
+        proof_name = 'INVENTURE_R23_LEVELING_PREVIEW.json'
+        proof = json.loads((leveling_previews/proof_name).read_text())
+        require(proof['status'] == 'PASS_INSTALLED_LEVELING_OLED_RENDER'
+                and proof['hardware_tested'] is False, 'Invalid leveling preview evidence')
+        files['validation/'+proof_name] = (leveling_previews/proof_name).read_bytes()
+        for name in proof['frames']:
+            require(Path(name).name == name and name.endswith('.png'), 'Invalid leveling preview path')
+            data = (leveling_previews/name).read_bytes()
+            require(data.startswith(b'\x89PNG\r\n\x1a\n'), 'Invalid leveling preview: '+name)
+            files['preview/leveling/'+name] = data
     source_archive = subprocess.check_output(
         ['git', 'archive', '--format=zip', '--prefix=INVENTURE_R23_SOURCE/', 'HEAD'], cwd=ROOT)
     with ZipFile(BytesIO(source_archive)) as archive:
@@ -120,6 +134,7 @@ if __name__ == '__main__':
     parser.add_argument('build', type=Path)
     parser.add_argument('previews', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--leveling-previews', type=Path)
     args = parser.parse_args()
     print(json.dumps(package(args.build.resolve(), args.previews.resolve(),
-                             args.output.resolve()), indent=2))
+                             args.output.resolve(), args.leveling_previews), indent=2))

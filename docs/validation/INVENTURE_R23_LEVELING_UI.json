@@ -1,0 +1,55 @@
+{
+  "status": "SOFTWARE_RENDER_VERIFIED_PHYSICAL_PANEL_PENDING",
+  "release": "RC8-LEVELING-UI-R23.2",
+  "tag": "inventure-r23-leveling-oled-rc3",
+  "procedure": "preliminary five-point measurement and three-knob adjustment",
+  "mesh_compensation_added": false,
+  "macro": "INVENTURE_LEVEL",
+  "oled_menu": [
+    "Zortrax",
+    "Maintenance",
+    "Platform leveling"
+  ],
+  "mcu_unchanged": true,
+  "ivb_sha256": "ef83d8ca0c26c12ed11fbd27380b1ee014cb4baf977c7adebb178861df137645",
+  "oem_application_sha256": "9b980ba04531fac4425b77a23969076d24d8f25629fc2a501ac05d262c142268",
+  "oem_catalog_sha256": "c057ddad9bce814824fe3781ac089dcc4e5965ca3bafba200d5af29c1efe8864",
+  "original_screen_records": 14,
+  "original_sprite_descriptors": 10,
+  "original_animation_frames": 18,
+  "preview_frames": 20,
+  "restoration": {
+    "release": "RC8-LEVELING-UI-R23.2",
+    "files": {
+      "klippy/extras/inventure_menu_service.py": {
+        "source": "restored/leveling_ui_r23/inventure_menu_service.py",
+        "prior_blob": "4d40f4408c37a5499633a3789634832c492794ac",
+        "installed_blob": "527efc9db3e58549647208a2fea36207d36431f1",
+        "sha256": "06781bfd70059ea8d0303ebad1e6edef8677d851ad352e17696d16ea66a7390b"
+      },
+      "klippy/extras/inventure_oled_graphics.py": {
+        "source": "restored/leveling_ui_r23/inventure_oled_graphics.py",
+        "prior_blob": "ed25fca215f31ea94d2b4b4581ce5833c78013c6",
+        "installed_blob": "a965cf2ec3a0508af326518b904ebabcbaaffe10",
+        "sha256": "bba681f06e8576d6d25054c9052926a7c704ee688137620a8f7e420d861eb193"
+      }
+    },
+    "mcu_update_required": false,
+    "hardware_qualified": false
+  },
+  "m300_reference": {
+    "distribution": "7ed37d50fa543fdd63c31f82b9f10f4aca43226e",
+    "source": "89aede3cc176361f315a91633468a4ac400e1580"
+  },
+  "hardware_tested": false,
+  "validation": {
+    "complete_host_suite": {
+      "tests": 961,
+      "passed": true
+    },
+    "installed_configuration_startup": "PASS",
+    "mcu_register_programs": 9,
+    "mcu_register_programs_passed": true,
+    "new_oled_physical_acceptance": false
+  }
+}

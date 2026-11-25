@@ -1,0 +1,1446 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""One Zortrax procedure owner interface for OLED and G-code/Fluidd.
+
+The service routes intentions to existing Inventure owners. It never creates
+qualification flags, native coordinates, RFID identities or print checkpoints.
+"""
+import json
+import math
+import textwrap
+from pathlib import Path
+
+from .inventure_oem_menu import action_icon
+from .inventure_oled_graphics import leveling_screen
+from .inventure_menu_core import (ALL_ACTIONS, CHOICE_ACTIONS, DISPLAY_ACTIONS, HOME_ACTIONS, MODEL_MATERIALS,
+    NATIVE_ACTIONS, READ_ACTIONS, SERVICE_ACTIONS, SUPPORT_MATERIALS,
+    MenuError, SettingsStore, View, source_identity)
+
+LEVEL_PHASE_TITLES = {
+    'preparing': 'Preparing platform', 'await_knobs': 'Tighten all 3 knobs',
+    'heating': 'Heating nozzles', 'reference': 'Finding reference',
+    'measuring': 'Measuring platform', 'adjust': 'Adjust platform',
+    'finishing': 'Finishing', 'candidate': 'Leveling result',
+}
+
+
+class Command:
+    def __init__(self, service, **values):self.service=service;self.values=values
+    def get(self,key,default=None):return self.values.get(key,default)
+    def get_command_parameters(self):return dict(self.values)
+    def get_int(self,key,default=None,minval=None,maxval=None):
+        value=int(self.get(key,default))
+        if minval is not None and value<minval or maxval is not None and value>maxval:raise MenuError('Invalid '+key)
+        return value
+    def get_float(self,key,default=None,minval=None,maxval=None,above=None,below=None):
+        value=float(self.get(key,default))
+        if (minval is not None and value<minval or maxval is not None and value>maxval
+                or above is not None and value<=above or below is not None and value>=below):raise MenuError('Invalid '+key)
+        return value
+    def error(self,message):return MenuError(message)
+    def respond_info(self,message):self.service.messages.append(str(message)[:1800]);self.service.messages[:]=self.service.messages[-8:]
+
+
+class ZortraxMenuService:
+    def __init__(self, board, config):
+        self.board=board;self.printer=board.printer;self.reactor=board.reactor;self.gcode=board.gcode
+        args=self.printer.get_start_args() if hasattr(self.printer,'get_start_args') else {}
+        default=str(Path(args['config_file']).with_name('inventure_menu_settings.json')) if args.get('config_file') else None
+        try:self.settings=SettingsStore(config.get('zortrax_settings_file',default))
+        except (ValueError,OSError) as exc:raise config.error('Zortrax menu settings: '+str(exc))
+        self.view=None;self.active=None;self.last=None;self.messages=[];self.stopped=False
+        self.fan_session=None
+        self.executing=False;self.last_buttons=0;self.last_sequence=None;self.last_native_key=None
+        self.menu_dialog_requested = False
+        self.menu_dialog_token = None
+        self.operator_page_open = False
+        self.platform_dialog = None
+        self.leveling_step = (None, 0)
+        self.jam_dialog = None
+        self.last_pause_view=None
+        self.platform_step=float(config.get('zortrax_platform_step',1.))
+        self.platform_speed=float(config.get('zortrax_platform_speed',1.))
+        if not all(math.isfinite(v) and .1<=v<=5. for v in (self.platform_step,self.platform_speed)):
+            raise config.error('Zortrax platform step/speed must be finite 0.1..5 mm and mm/s')
+        self.timer=self.reactor.register_timer(self._tick)
+        self.gcode.register_command('INVENTURE_ZORTRAX',self.cmd,when_not_ready=True)
+        self.printer.register_event_handler('klippy:ready',self._ready)
+        for event in ('klippy:shutdown','klippy:disconnect','gcode:request_restart'):
+            self.printer.register_event_handler(event,self._shutdown)
+
+    def _ready(self):
+        self.reactor.update_timer(self.timer,self.reactor.monotonic()+.25)
+    def _shutdown(self,*args):
+        self._close_menu_dialog()
+        self.menu_dialog_requested = False
+        self.stopped=True;self.view=None;self.active=None;self.last_native_key=None;self.fan_session=None
+        self.reactor.update_timer(self.timer,self.reactor.NEVER)
+    def _obj(self,name):return self.printer.lookup_object(name,None)
+    def _status(self,name):
+        obj=self._obj(name)
+        return obj.get_status(self.reactor.monotonic()) if obj is not None and hasattr(obj,'get_status') else {}
+    def _enabled(self,name):
+        obj=self._obj(name)
+        return obj is not None and bool(getattr(obj,'enabled',False)) and not getattr(obj,'stopped',False)
+    def _xy_available(self):
+        check=getattr(self.board,'nozzle_xy_available',None)
+        return callable(check) and check()
+    def _xy_status(self):
+        read=getattr(self.board,'nozzle_xy_status',None)
+        return read() if callable(read) else {}
+    def _jam_status(self):
+        jam = getattr(self.board, 'filament_jam', None)
+        return jam.get_status(self.reactor.monotonic()) if jam is not None else {}
+
+    @staticmethod
+    def _jam_title(run):
+        tool = run.get('tool')
+        reason = run.get('reason')
+        warnings = {'CASSETTE_JAM': (176, 'Cartridge jam'), 'RUNOUT': (161, 'Material empty'),
+                    'CARTRIDGE_ERROR': (163, 'Cartridge error')}
+        if tool in ('T0', 'T1') and reason in warnings:
+            code, label = warnings[reason]
+            return '#%d %s' % (code + (tool == 'T1'), label)
+        if (reason == 'EXTRUDER_JAM' and run.get('phase') == 'waiting'
+                and run.get('stage') in ('R1', 'reload')):
+            if tool == 'T0':
+                return '#174 Extruder jam'
+            if tool == 'T1' and run.get('pcb_class') is not None:
+                return '#178 Overheating' if run['pcb_class'] > 1 else '#175 Extruder jam'
+        return {'EXTRUDER_JAM': 'Extruder jam', 'MATERIAL_MISSING': 'Material missing',
+                'BROKEN_FILAMENT': 'Broken filament', 'MONITOR_ERROR': 'Transport monitor'}.get(
+                    reason, 'Filament recovery')
+
+    @staticmethod
+    def _jam_choices(run):
+        # Each operator reply only applies to the displayed run and phase.
+        owner = dict(RUN_ID=run['run_id'], PROMPT_ID=run['prompt_id'])
+        choices = []
+        actions = run['allowed_actions']
+        if 'SOURCE' in actions:
+            for label, source in [('Use cartridge', 'CASSETTE'), ('Use external spool', 'EXTERNAL')]:
+                choices.append((label, dict(owner, ACTION='SOURCE', TOOL=run['tool'], SOURCE=source)))
+        for action, label in [('RETRY', 'Retry recovery'), ('CONFIRM', 'Flow verified / resume'),
+                              ('UNLOAD', 'Unload filament'), ('MORE_OUT', 'Retract next portion'),
+                              ('BROKEN', 'Broken filament'), ('CLEARED', 'Broken pieces removed'),
+                              ('LOAD', 'Load replacement'),
+                              ('MORE_IN', 'Feed next portion'), ('WIPE', 'Wipe nozzle'),
+                              ('FLOW', 'Confirm visible flow'), ('CONTINUE', 'Resume print'),
+                              ('CANCEL', 'Stop recovery')]:
+            if action in actions:
+                choices.append((label, dict(owner, ACTION=action)))
+        return choices
+
+    def _jam_fluidd_prompt(self, run):
+        # Progress is always on the OLED. Open a web dialog only for operator input.
+        key = (run['run_id'], run['prompt_id']) if (
+            run.get('active') and run['phase'] in ('waiting', 'verifying')) else None
+        if key == self.jam_dialog:
+            return
+        emit = self.gcode.respond_raw
+        if self.jam_dialog is not None:
+            emit('// action:prompt_end')
+        self.jam_dialog = key
+        if key is None:
+            return
+        emit('// action:prompt_begin %s - %s' % (self._jam_title(run), run['tool']))
+        emit('// action:prompt_text ' + ' '.join(run['message'].split()))
+        for label, params in self._jam_choices(run):
+            cmd = 'INVENTURE_FILAMENT_JAM ' + ' '.join('%s=%s' % item for item in params.items())
+            emit('// action:prompt_button ' + label + '|' + cmd)
+        emit('// action:prompt_show')
+
+    def _jam_menu(self):
+        run = self._jam_status()
+        if not run:
+            return self._info('Filament recovery', 'Filament monitoring is unavailable')
+        if run.get('active'):
+            self.active = dict(backend='jam', object=self.board.filament_jam,
+                               action='filament_jam', run_id=run['run_id'])
+            self.last_native_key = None
+            return self._running_view()
+        options = [('Back', ('close', {}))]
+        if 'EXCHANGE' in run.get('allowed_actions', ()):
+            options.append(('Replace filament', ('jam_command', dict(ACTION='EXCHANGE'))))
+        if 'REPORT' in run.get('allowed_actions', ()):
+            options.append(('Report filament jam', ('jam_report', {})))
+        if 'MISSING' in run.get('allowed_actions', ()):
+            options.append(('Material missing', ('jam_command', dict(ACTION='MISSING'))))
+        if 'BROKEN' in run.get('allowed_actions', ()):
+            options.append(('Broken filament', ('jam_command', dict(ACTION='BROKEN'))))
+        if 'SOURCE' in run.get('allowed_actions', ()):
+            if self._native_job()[2] not in ('printing','paused') and 'factory_session' in self.board.commands:
+                options.append(('Replacement steps', ('exchange_steps', {})))
+                options.append(('Test recovery at idle', ('jam_test', {})))
+            sources = run.get('sources', {})
+            for tool in ('T0', 'T1'):
+                current = sources.get(tool, 'UNKNOWN')
+                options.append(('%s source: %s' % (tool, current), ('jam_source_menu', dict(tool=tool))))
+        if run.get('message'):
+            options.extend((line, None) for line in textwrap.wrap(run['message'], 25))
+        view = self._set_view('choice', 'Filament recovery', options, icon='activity:filament_jam')
+        view.option_icons = tuple('activity:filament_runout' if command and command[1].get('ACTION') == 'MISSING'
+                                  else view.icon for _, command in options)
+        return view
+
+    def _close_menu_dialog(self):
+        if self.menu_dialog_token is not None:
+            self.gcode.respond_raw('// action:prompt_end')
+            self.menu_dialog_token = None
+
+    def request_home_review(self, axes, options):
+        action = 'home_' + axes.lower()
+        self.operator_page_open = False
+        view = self.open(action, **{k: v for k, v in options.items() if k != 'AXES'})
+        if view is None or view.kind != 'confirm':
+            raise MenuError('Homing unavailable: ' + (view.title if view else 'no confirmation'))
+        self.menu_dialog_requested = True
+        self._sync_menu_dialog()
+
+    def choose_cassette(self, action, options):
+        from .inventure_fluidd import require_idle
+        require_idle(self.board)
+        if self.stopped or self.executing or self.active is not None or self.fan_session is not None:
+            raise MenuError('Finish the current procedure before choosing a cassette')
+        title = {'LOAD': 'Load cassette', 'UNLOAD': 'Unload cassette', 'JOG': 'Manual cassette move'}[action]
+        rows = [('Back', ('close', {}))]
+        for tool in ('T0', 'T1'):
+            rows.append((tool, ('cassette_operation', dict(options, ACTION=action, TOOL=tool))))
+        self.operator_page_open = False
+        self._set_view('choice', title, rows, data={'action': 'choose_cassette'})
+        self.menu_dialog_requested = True
+        self._sync_menu_dialog()
+
+    def cancel_motion_review(self):
+        view = self.view
+        if view is not None and (view.kind == 'confirm' or view.data.get('action') == 'choose_cassette'):
+            self._close_menu_dialog()
+            self.menu_dialog_requested = False
+            self.operator_page_open = False
+            self.view = None
+            self._wake()
+
+    def _sync_menu_dialog(self):
+        if not self.menu_dialog_requested:
+            return
+        view = self.view
+        if (self.active is not None or view is None or view.used or
+                self.reactor.monotonic() >= view.deadline or view.kind not in ('confirm', 'choice', 'fan', 'info', 'files', 'preview')):
+            self._close_menu_dialog()
+            self.menu_dialog_requested = False
+            self.operator_page_open = False
+            return
+        if view.token == self.menu_dialog_token:
+            return
+        self._close_menu_dialog()
+        self.menu_dialog_token = view.token
+        emit = self.gcode.respond_raw
+        # File names and device labels are text fields in Fluidd's prompt protocol.
+        def prompt_label(value):
+            return ' '.join(value.splitlines()).replace('|', '¦')
+        emit('// action:prompt_begin '+prompt_label(view.title))
+        if 'oled_setting' in view.data:
+            emit('// action:prompt_text INVENTURE_OLED_EDITOR %s %d %s' %
+                 (view.data['oled_setting'], view.data['value'], view.token))
+        for index, (label, action) in enumerate(view.options):
+            label = prompt_label(label)
+            if action is None:
+                emit('// action:prompt_text '+label)
+            else:
+                emit('// action:prompt_button %s|INVENTURE_ZORTRAX OP=CHOOSE TOKEN=%s INDEX=%d'
+                     % (label, view.token, index))
+        emit('// action:prompt_show')
+
+    def _platform_status(self):
+        read = getattr(self.board, 'platform_level_status', None)
+        return read() if callable(read) else {}
+    def _platform_fluidd_prompt(self, run):
+        phase = run.get('phase')
+        key = None
+        if run.get('awaiting_operator') or phase == 'candidate':
+            key = (run['run_id'], phase, run.get('prompt_id'))
+        if key == self.platform_dialog:
+            return
+        emit = self.gcode.respond_raw
+        if self.platform_dialog is not None:
+            emit('// action:prompt_end')
+        self.platform_dialog = key
+        if key is None:
+            return
+        command = 'INVENTURE_PLATFORM_LEVEL'
+        owner = ' RUN_ID=' + run['run_id']
+        emit('// action:prompt_begin Platform leveling')
+        if phase == 'candidate':
+            emit('// action:prompt_text Platform depth %.3f mm' % (run['candidate_depth_um'] / 1000.))
+            if run.get('deformed'):
+                emit('// action:prompt_text The center of the tray is deformed. Replace the tray and repeat leveling.')
+            else:
+                emit('// action:prompt_button Save result|' + command + ' ACTION=SAVE' + owner + '|primary')
+        else:
+            if phase == 'await_knobs':
+                emit('// action:prompt_text Tighten all three knobs under the platform.')
+            else:
+                from .inventure_platform_level import adjustment_text
+                for instruction in run['instructions']:
+                    emit('// action:prompt_text ' + adjustment_text(instruction))
+                emit('// action:prompt_text The hotend is hot. Wear protective gloves when adjusting the knobs.')
+            if run.get('door_pause'):
+                emit('// action:prompt_text Motion and heating have stopped. You may open the front door and lid.')
+                emit('// action:prompt_text Leave the nozzle selector in place. Seat the tray and close the front door and lid before selecting Continue.')
+            emit('// action:prompt_button Continue|' + command + ' ACTION=NEXT' + owner
+                 + ' PROMPT_ID=%d|primary' % run['prompt_id'])
+        emit('// action:prompt_footer_button Cancel|' + command + ' ACTION=CANCEL' + owner)
+        emit('// action:prompt_show')
+    @staticmethod
+    def _xy_line_options(axis,detail):
+        choices=(0,) if axis=='X' and detail.get('x_mode')=='STOCK_REFERENCE' else range(-6,7)
+        return [('Line %+d'%line if line else 'Line 0 (neutral)',('line',dict(axis=axis,line=line)))
+            for line in choices]
+    def _native_job(self):
+        sd=self._obj('virtual_sdcard');stats=self._status('print_stats')
+        f=getattr(sd,'current_file',None)
+        return (id(f) if f is not None else None,getattr(f,'name',None),stats.get('state'))
+    def _binding(self):
+        ctx=getattr(self.board,'load_test_context',None)
+        f={} if ctx is None else ctx.get('factory') or {}
+        ops=getattr(self._obj('inventure_operations'),'state',None)
+        cal=self._status('inventure_calibration')
+        filament=self._obj('inventure_filament');level=self._obj('inventure_leveling');align=self._obj('inventure_alignment');pre=self._obj('inventure_preflight')
+        xy=self._xy_status();lines=xy.get('lines') or {}
+        platform = self._platform_status()
+        jam = self._jam_status()
+        return (jam.get('run_id'), jam.get('prompt_id'), jam.get('phase'),
+            tuple(jam.get('allowed_actions', ())),id(ctx) if ctx is not None else None, f.get('token'), f.get('material_prompt'),
+            None if ctx is None else ctx.get('measurement',{}).get('completed_jogs'),
+            getattr(ops,'epoch',None),getattr(self._obj('inventure_materials'),'generation',None),
+            cal.get('revision'),self._native_job(),getattr(filament,'job',None),
+            (getattr(filament,'prompt',None) or {}).get('token'),
+            id(getattr(level,'session',None)),getattr(level,'state',None),
+            getattr(getattr(level,'session',None),'candidate',None),
+            id(getattr(align,'lease',None)),getattr(align,'state',None),
+            repr(getattr(align,'candidate',None)),
+            platform.get('run_id'), platform.get('phase'), platform.get('next_point'),
+            platform.get('prompt_id'), platform.get('awaiting_operator'),
+            repr(platform.get('instructions')), platform.get('candidate_depth_um'), platform.get('deformed'),
+            self._xy_available(),xy.get('run_id'),xy.get('phase'),lines.get('X'),lines.get('Y'),repr(xy.get('candidate')),
+            getattr(pre,'epoch',None),getattr(getattr(pre,'ticket',None),'token',None),
+            tuple(getattr(self.board,'fan_manual_last',{}).get(k) for k in ('run','channel','phase')))
+    def _set_view(self,kind,title,options,*,data=None,binding=True,icon=None,animated=False):
+        self.view=View(self.reactor.monotonic(),kind,title,options,
+            binding=self._binding() if binding else None,data=data)
+        self.view.icon = icon or action_icon(self.view.data.get('action'))
+        if self.view.data.get('action') == 'leveling':
+            self.view.icon = 'leveling:0x0802A218'
+        self.view.animated = animated
+        # Retain the actual file object for this view; an id() reused after
+        # close/reopen of the same filename cannot resurrect old authority.
+        self.view.job_reference=getattr(self._obj('virtual_sdcard'),'current_file',None)
+        self.view.released=not bool(self.last_buttons&4)
+        self._wake()
+        return self.view
+    def _wake(self):
+        oled=self._obj('inventure_oled')
+        if oled is not None:
+            oled.message=None;oled.render_at=0.;oled._user_refresh_pending=True
+            if hasattr(oled,'_display_activity'):oled._display_activity(self.reactor.monotonic())
+            if hasattr(oled,'_wake'):oled._wake()
+    def _info(self,title,reason,**data):
+        result = data.get('result')
+        failed = isinstance(result, dict) and (result.get('error') or result.get('phase') == 'failed')
+        icon = 'activity:error' if failed or title == 'Operation unavailable' else None
+        lines=[str(reason)[i:i+24] for i in range(0,len(str(reason)),24)] or ['']
+        if title == 'Platform leveling' and isinstance(result, dict):
+            data['leveling'] = leveling_screen(result)
+        return self._set_view('info',title,[('Back',('close',{}))]+[(x,None) for x in lines],data=dict(data,reason=str(reason)),icon=icon)
+    def _confirm(self,action,params=None,title=None):
+        reviews=[]
+        if action.startswith('load_cartridge_'):reviews=['Cassette/path checked','SERVICE: preinserted only']
+        elif action in HOME_ACTIONS:
+            axes = HOME_ACTIONS[action]
+            title = 'Home '+axes+'?'
+            if 'Z' in axes:
+                title = 'Pad and clearance OK?'
+                target = float((params or {}).get('TARGET', self._obj('inventure_native_z').target))
+                reviews = ['Home '+axes+' with T0', 'Home Y/X once, heat T0', 'Select T0, wipe, pad', 'Tray seated, pad clear',
+                           'Platform travel clear', 'Nozzle target: %g C' % target]
+        elif action=='leveling':
+            if self.capability(action)['backend'] == 'platform_level':
+                title = 'Start platform leveling?'
+                reviews = ['Automatic T0 selection', 'Nozzle target: 200C']
+            else:
+                title = 'Knobs and tray checked?'
+        elif action in ('door_lock','door_unlock'):
+            title = 'Enable door lock?' if action=='door_lock' else 'Disable door lock?'
+            reviews = ['Global: front door + lid']
+        elif action in ('platform_up', 'platform_down'):
+            distance = float((params or {}).get('DISTANCE', self.platform_step))
+            speed = float((params or {}).get('SPEED', self.platform_speed))
+            if not (.1 <= distance <= 5. and .1 <= speed <= 5.):
+                raise MenuError('Platform DISTANCE and SPEED must be 0.1..5 mm and mm/s')
+            title = 'Move platform '+action.split('_')[1]+'?'
+            reviews = ['%g mm at %g mm/s' % (distance, speed)]
+        elif action=='alignment':
+            if self._xy_available():
+                reviews=['Clean, level tray','Filament in T0 and T1','Tool heights checked']
+            else:reviews=['Geometry/materials checked']
+        elif action=='check_model':title='Job + spool supply OK?'
+        return self._set_view('confirm',title or action.replace('_',' ').title(),
+            [('No / Back',('close',{})),('Yes / Start',('execute',dict(action=action,params=dict(params or {}))))]+
+            [(line,None) for line in reviews],
+            data=dict(action=action,parameters=dict(params or {})))
+
+    def capability(self,action):
+        if action not in ALL_ACTIONS and not action.startswith(('fan_','platform_','spool_')):
+            return dict(available=False,backend=None,reason='Unknown menu action')
+        if action in HOME_ACTIONS:
+            ready = callable(getattr(self._obj('inventure_native_z'), 'cmd_request_home', None))
+            return dict(available=ready, backend='inventure_native_z' if ready else None,
+                        reason=None if ready else 'The native homing module is unavailable')
+        if action == 'light':
+            ready = self.board.connected and 'rgb' in self.board.commands
+            return dict(available=ready, backend='rgb' if ready else None,
+                        reason=None if ready else 'The MCU lighting command is unavailable')
+        if action in DISPLAY_ACTIONS:
+            available = self._obj('inventure_oled') is not None
+            if action == 'oled_sleep_light':
+                available = available and 'oled_sleep_light' in getattr(self.board,'commands',{})
+            return dict(available=available, backend='display' if available else None,
+                        reason=None if available else 'Inventure display capability unavailable')
+        if action in READ_ACTIONS or action in CHOICE_ACTIONS or action.startswith(('sort_','language_')) or action in ('back','go_status','cancel_no','question_no'):
+            return dict(available=True,backend='host_view',reason=None)
+        if action=='alignment' and self._xy_available():
+            return dict(available=True,backend='nozzle_xy',reason=None)
+        if action == 'leveling':
+            available = getattr(self.board, 'platform_level_available', None)
+            if callable(available) and available():
+                return dict(available=True, backend='platform_level', reason=None)
+        if action in NATIVE_ACTIONS:
+            name=NATIVE_ACTIONS[action];enabled=self._enabled(name)
+            if action in ('pause','resume','cancel_yes') and not enabled:
+                enabled=self._obj('pause_resume') is not None and self._obj('virtual_sdcard') is not None
+                if enabled:return dict(available=True,backend='native_pause_resume',reason=None)
+            if action in ('filecheck_on','filecheck_off','ignore_filament'):
+                method='set_file_checking' if action.startswith('filecheck_') else 'set_ignore_endstops'
+                enabled=enabled and callable(getattr(self._obj(name),method,None))
+            return dict(available=enabled,backend=name,reason=None if enabled else name+' is absent or its required execution contract is disabled')
+        if action.startswith(('door_','fan_')):
+            key='door_policy' if action.startswith('door_') else 'fan_manual'
+            okay=key in self.board.commands
+            return dict(available=okay,backend=key,reason=None if okay else key+' MCU ABI is unavailable')
+        if action.startswith('platform_'):
+            from .inventure_fluidd import platform_available
+            okay = platform_available(self.board)
+            return dict(available=okay,backend='native_platform',reason=None if okay else 'Native homed Z is required')
+        if action in ('select_t0','select_t1') and self._enabled('inventure_tools'):
+            return dict(available=True,backend='inventure_tools',reason=None)
+        okay='factory_session' in self.board.commands
+        return dict(available=okay,backend='R7_service',reason=None if okay else 'Requires MCU RC8-CONTROL-R7-FACTORY')
+
+    def open_operator_page(self):
+        oled = self._obj('inventure_oled')
+        navigation = oled.oem_menu
+        page = navigation.view()
+        items = navigation.items()
+        options = [(node.label, ('operator_item', {'index': i})) for i, node in enumerate(items)]
+        view = self._set_view('choice', page['title'], options)
+        view.option_icons = tuple(navigation.item_icon(node) for node in items)
+        view.selected = navigation.selected
+        self.menu_dialog_requested = True
+        self.operator_page_open = True
+        self._sync_menu_dialog()
+        return view
+
+    def _choose_operator_item(self, index):
+        oled = self._obj('inventure_oled')
+        navigation = oled.oem_menu
+        navigation.selected = index
+        selected = navigation.select()
+        if selected in ('submenu', 'back'):
+            return self.open_operator_page()
+        self.view = None
+        if selected == 'exit_to_status':
+            oled.oem_display_mode = 'status'
+            self._wake()
+            return
+        if selected in ('inert', 'language'):
+            navigation.notice = None
+            return self.open(navigation.last_action)
+        return self._info('Menu', 'Use the physical panel for this entry')
+
+    def _display_editor(self, action, draft=None):
+        oled = self._obj('inventure_oled')
+        values = self.settings.value
+        if action == 'oled_sleep_light':
+            return self._set_view('choice', 'Sleep lighting', [('Back', ('close', {}))] +
+                [(label, ('display_save', {'SLEEP_LIGHT': value})) for value, label in
+                 (('manual','Keep current light'),('dynamic','Dynamic (magenta)'),('white','White'),('off','Off'))])
+        if action == 'oled_sleep_mode':
+            current = bool(values.get('sleep_enabled', oled.configured_sleep))
+            return self._set_view('choice', 'Sleep mode', [
+                ('Back', ('close', {})), ('Currently ' + ('on' if current else 'off'), None),
+                ('Enable', ('display_save', {'ENABLED': 1})),
+                ('Disable', ('display_save', {'ENABLED': 0}))])
+        dim, sleep = oled.timer_preferences(values)
+        settings = {'oled_brightness': ('OLED brightness', 'LEVEL', 'oled_level', oled.configured_brightness, 16, ''),
+                    'oled_idle': ('Idle timeout', 'IDLE', 'idle_s', oled.configured_sleep or 300, 86400, ' s'),
+                    'oled_notice': ('Wake notice', 'NOTICE', 'notice_s', oled.configured_notice, 3600, ' s'),
+                    'oled_dim': ('OLED dim time', 'DIM', 'dim_min', dim, 60, ' min'),
+                    'oled_sleep': ('OLED sleep time', 'SLEEP', 'sleep_min', sleep, 60, ' min')}
+        title, option, key, default, high, unit = settings[action]
+        value = int(values.get(key, default) if draft is None else draft)
+        step = 10 if action == 'oled_idle' else 1
+        return self._set_view('choice', title, [('Back', ('close', {})),
+            ('%d%s' % (value, unit), None),
+            ('Decrease', ('display_edit', {'action': action, 'draft': max(1, value-step)})),
+            ('Increase', ('display_edit', {'action': action, 'draft': min(high, value+step)})),
+            ('Save', ('display_save', {option: value}))],
+            data={'oled_setting': option, 'value': value, 'max': high}, icon='activity:oled_brightness')
+
+    def open(self,action,**params):
+        if self.stopped:raise MenuError('Menu lifecycle ended; reconnect first')
+        if not isinstance(action,str) or not action:raise MenuError('Specify a stable menu ACTION identifier')
+        if action == 'leveling':
+            platform = self._platform_status()
+            if platform.get('run_id') and platform.get('phase') in LEVEL_PHASE_TITLES:
+                self.active = dict(backend='platform_level', object=self.board,
+                                   run_id=platform['run_id'], action='leveling')
+                self.last_native_key = None
+                return self._running_view()
+        if params and action in ('light', 'current_procedure'):
+            raise MenuError('This menu entry uses the configured printer settings')
+        if action == 'current_procedure':
+            if self.active is not None:
+                return self._running_view()
+            context = self.board.load_test_context
+            report = self.board._load_test_report(context) if context is not None else {}
+            factory = report.get('factory') or {}
+            operation = self._status('inventure_operations').get('operation')
+            phase = factory.get('phase') or report.get('phase') or operation
+            if not phase and self._status('inventure_native_z').get('running'):
+                phase = 'Native Z reference'
+            return self._info('Current procedure', str(phase or 'No current service operation'))
+        if self.active is not None:self._running_view()
+        if self.active is not None:raise MenuError('A menu procedure is active; use its current controls')
+        if self.fan_session is not None and action not in READ_ACTIONS and action not in ('fan_test','back','go_status') and not action.startswith('fan_'):
+            return self._info('Fan test active','End the fan-test session before starting another menu operation')
+        if action in ('go_status','back','cancel_no','question_no'):self.view=None;return
+        if action=='question_yes':return self._info('Confirmation','No bound question is active; open the intended operation')
+        if action == 'light':
+            cap = self.capability(action)
+            if not cap['available']:
+                return self._info('Light', cap['reason'])
+            return self._set_view('choice', 'Light', [('Back', ('close', {})),
+                ('White', ('set_light', {'mask': 7})), ('Off', ('set_light', {'mask': 0})),
+                ('Sleep lighting', ('request', {'action': 'oled_sleep_light'}))])
+        if action in DISPLAY_ACTIONS and action != 'oled_timers':
+            return self._display_editor(action)
+        if action == 'oled_timers':
+            return self._set_view('choice', 'OLED timers', [('Back', ('close', {})),
+                ('Idle timeout (Inventure)', ('request', {'action': 'oled_idle'})),
+                ('Wake notice (Inventure)', ('request', {'action': 'oled_notice'})),
+                ('Timed dim (minutes)', ('request', {'action': 'oled_dim'})),
+                ('Timed off (minutes)', ('request', {'action': 'oled_sleep'}))])
+        if action=='job_info':return self._job_view()
+        if action == 'oled_icons':
+            from .inventure_oled_graphics import project_symbols
+            names = tuple(project_symbols())
+            name = params.get('NAME', names[0]).lower()
+            if name not in names:
+                raise MenuError('Unknown OLED icon. Available names: ' + ', '.join(names))
+            index = names.index(name)
+            label = name.replace('_', ' ').replace('-', ' ').title()
+            choices = [('Back', ('close', {})), (label, None)]
+            for step, button in ((-1, 'Previous'), (1, 'Next')):
+                other = names[(index + step) % len(names)]
+                choices.append((button, ('request', {'action': 'oled_icons', 'NAME': other})))
+            view = self._set_view('choice', 'OLED icons (%d/%d)' % (index + 1, len(names)),
+                                  choices, icon='project:' + name, animated=True)
+            view.selected = 3
+            return view
+        if action=='filament_jam':return self._jam_menu()
+        if action in READ_ACTIONS:return self._read(action)
+        if action=='sd_browser':return self._browse()
+        if action in ('spool_catalog_model','spool_catalog_support'):
+            tool=int(action=='spool_catalog_support');catalog=SUPPORT_MATERIALS if tool else MODEL_MATERIALS
+            return self._set_view('choice','Support spool' if tool else 'Model spool',
+                [('Back',('close',{}))]+[(label,('request',dict(action='spool_load',tool=tool,material_id=i))) for i,label in catalog])
+        if action in ('maintenance_t0','maintenance_t1'):
+            tool=int(action.endswith('1'))
+            return self._set_view('choice','Hotend T%d'%tool,[('Back',('close',{}))]+[
+                (label,('request',dict(action=name+'_t%d'%tool))) for label,name in
+                [('Select nozzle','select'),('Heat / hold','heat'),('Purge and clean','purge'),
+                 ('Clean nozzle','clean'),('Feed 20mm','manual_load'),('Retract 20mm','manual_unload')]])
+        if action=='heat':
+            return self._set_view('choice','Heat extruder',[('Back',('close',{})),
+                ('Model nozzle T0',('request',dict(action='heat_t0'))),('Support nozzle T1',('request',dict(action='heat_t1')))])
+        if action=='move_platform':
+            return self._set_view('choice','Move platform',[('Back',('close',{})),
+                ('Up %gmm'%self.platform_step,('request',dict(action='platform_up'))),
+                ('Down %gmm'%self.platform_step,('request',dict(action='platform_down')))])
+        if action=='fan_test':
+            return self._set_view('choice','Fan test',[('Back',('close',{}))]+[
+                ('F%d %s'%(i,name),('fan_page',dict(channel=i))) for i,name in enumerate(self.board.FAN_NAMES)])
+        if action.startswith('sort_'):
+            self.settings.set(sorting=action[5:]);return self._info('Models sorting',self.settings.value['sorting'])
+        if action=='language_en':
+            return self._info('Language','English')
+        capability=self.capability(action)
+        if action in ('heat_t0','heat_t1','spool_load'):capability=dict(available=True)
+        if not capability['available']:return self._info('Unavailable',capability['reason'],action=action)
+        title=None
+        if action == 'leveling':
+            params.pop('ACTIVE_TOOL', None)  # Older launchers supplied this parameter.
+        if action in SERVICE_ACTIONS or action in ('heat_t0','heat_t1'):
+            from .inventure_factory_core import parameters, require_heated_target
+            tool=SERVICE_ACTIONS[action][1] if action in SERVICE_ACTIONS else int(action[-1])
+            if 'TOOL' in params and str(params['TOOL']).upper()!='T%d'%tool:raise MenuError('TOOL differs from the selected menu nozzle')
+            params.pop('TOOL',None)
+            if action in SERVICE_ACTIONS and self.board._factory_motion_available(tool):
+                params.setdefault('SPEED_PROFILE', 'OEM')
+            native_filament=(action.startswith(('load_cartridge_','unload_'))
+                and self._enabled('inventure_filament'))
+            operation=SERVICE_ACTIONS[action][0] if action in SERVICE_ACTIONS else 'HEAT'
+            service = getattr(self.board, 'material_service', None)
+            if service is not None and not native_filament and operation in ('AUTO','UNLOAD','MANUAL'):
+                if operation != 'MANUAL':
+                    params.setdefault('SPEED_PROFILE','OEM')
+                    params.setdefault('INTERACTIVE',1)
+                elif action.startswith('manual_unload_'):
+                    params['MANUAL_DIR']='UNLOAD'
+                parsed=service.parameters(Command(self,TOOL='T%d'%tool,**params), operation)
+            else:
+                parsed=parameters(Command(self,TOOL='T%d'%tool,**params),getattr(self.board,'procedure_profiles',None),
+                                  max_target=getattr(self.board,'nozzle_service_target_max',240.))
+            if not native_filament:
+                require_heated_target(parsed,operation,getattr(self.board,'nozzle_service_target_max',240.))
+            for key in ('MAX_POWER','DURATION'):params.setdefault(key,parsed[key.lower()])
+            if not parsed['target_requires_override']:
+                params.setdefault('TARGET',parsed['target'])
+            if action.startswith('select_'):
+                title='Select nozzle T%d?'%tool
+            else:
+                title='T%d %s'%(tool,action.split('_')[0])
+                if not parsed['target_requires_override']:title+=' at %gC'%parsed['target']
+                title+='?'
+        elif action=='alignment':
+            if capability['backend']=='nozzle_xy':
+                title='Print XY test pattern?'
+            else:
+                from .inventure_factory_core import parameters
+                for tool in (0,1):
+                    p=parameters(Command(self,TOOL='T%d'%tool),getattr(self.board,'procedure_profiles',None))
+                    params.setdefault('T%d_TEMP'%tool,p['target'])
+                title='Align %g/%gC?'%(float(params['T0_TEMP']),float(params['T1_TEMP']))
+        elif action=='spool_load':
+            if type(params.get('tool')) is not int or params.get('material_id') not in dict(SUPPORT_MATERIALS if params.get('tool') else MODEL_MATERIALS):
+                raise MenuError('Choose a material from the current spool catalogue')
+            if not (self._enabled('inventure_materials') and self._enabled('inventure_filament')):
+                tool = 'T%d' % params['tool']
+                if 'factory_session' not in self.board.commands or not self.board._factory_motion_available(params['tool']):
+                    return self._info('External spool', 'The native spool or OEM service transport is required')
+                from .inventure_fluidd import require_idle
+                require_idle(self.board)
+                parent = 'spool_catalog_support' if params['tool'] else 'spool_catalog_model'
+                material = dict(SUPPORT_MATERIALS if params['tool'] else MODEL_MATERIALS)[params['material_id']]
+                options = [('Back', ('request', dict(action=parent))), (material, None), ('Guide filament by hand', None)]
+                for step, label in (('LOAD','Feed 20 mm'), ('UNLOAD','Retract 20 mm'), ('WIPE','Wipe nozzle')):
+                    options.append((label, ('jam_test_temperature', dict(TOOL=tool, SOURCE='EXTERNAL', STEP=step))))
+                return self._set_view('choice', tool+' external spool', options)
+        elif action=='check_model':
+            if not isinstance(params.get('identity'),dict):raise MenuError('Choose a model from the current browser preview')
+        elif action=='print_model':
+            token=self._status('inventure_preflight').get('token')
+            if token is None:return self._info('Models','Run P15 checking for the selected manifest before starting')
+            if params.get('owner_token',token)!=token:raise MenuError('Checked model token changed')
+            params['owner_token']=token
+        return self._confirm(action,params,title)
+
+    def _read(self,action):
+        now=self.reactor.monotonic()
+        if action=='save_print':return self._info('Save print','P17 has no restart checkpoint; a paused job remains in the current host session')
+        if action in ('motion_disabled','homing_disabled','heating_disabled'):
+            return self._info('Native control','Use the qualified Inventure native motion/thermal profile; R7 service is separate')
+        if action=='help':return self._info('Inventure help','UP/DOWN select, OK confirm, POWER back. Hold POWER stops the current operation.')
+        if action in ('version','printer_info','mcu_info','uart_info'):
+            rows=['Host '+str(__import__(self.board.__class__.__module__,fromlist=['HOST_REVISION']).HOST_REVISION),
+                'MCU '+str(getattr(self.board,'mcu_release',None)),
+                'UART '+str(getattr(self.board,'p4_boot',{}).get('baud','unknown'))]
+        elif action in ('thermal_info','adc_info'):
+            rows=['%s: %s'%(self.board.ADC_PINS[i],'--' if (t:=self.board.panel_temperature(i,now))[1]!='valid' else '%.1fC'%t[0]) for i in range(8)]
+        elif action=='fans_info':rows=['F%d: %s'%(i,self.board.panel_fan_duty(i,now)) for i in range(6)]
+        elif action=='oled_info':rows=[str(self._status('inventure_oled'))[:200]]
+        elif action=='rfid_info':rows=[str(self.board.uart_status),str(self.board.inputs.get('raw',{}))]
+        elif action=='settings_info':rows=[str(self.settings.value),'Host JSON only']
+        elif action=='job_info':rows=[str(self._status('print_stats')),str(self._status('inventure_cycle'))]
+        else:rows=[action]
+        return self._set_view('info',action.replace('_',' ').title(),[('Back',('close',{}))]+[(str(row),None) for row in rows],data={'readings':rows})
+
+    def _job_view(self):
+        job=self._native_job();state=job[2]
+        options=[('Back',('close',{}))]
+        if state=='printing':
+            options.append(('Pause current print',('request',dict(action='pause'))))
+            if getattr(self.board, 'filament_jam', None) is not None:
+                options.append(('Filament recovery', ('request', dict(action='filament_jam'))))
+        elif state=='paused':
+            options += [('Resume this print',('request',dict(action='resume'))),
+                ('Stop this print',('request',dict(action='cancel_yes')))]
+        return self._set_view('job','Print: '+str(state or 'idle'),options,
+            data={'job_file':job[1],'state':state})
+
+    def _browse(self):
+        sd=self._obj('virtual_sdcard');root=getattr(sd,'sdcard_dirname',None)
+        if root is None:return self._info('Models','Native virtual_sdcard is not configured; MCU card browsing needs its own reader backend')
+        files=[]
+        for p in Path(root).rglob('*'):
+            if len(files)>=1000:break
+            if not p.is_symlink() and p.is_file() and p.suffix.lower() in ('.json','.gcode','.gco','.zcode'):
+                stat=p.stat();files.append((str(p.relative_to(root)),stat.st_size,stat.st_mtime_ns))
+        sorting=self.settings.value['sorting']
+        files.sort(key=lambda x: x[0].lower() if sorting=='name' else x[1] if sorting=='size' else x[2],reverse=sorting in ('desc','size'))
+        return self._set_view('files','Models / host files',[('Back',('close',{}))]+
+            [(name,('preview',dict(name=name))) for name,_,_ in files],data={'count':len(files),'source':'native_virtual_sdcard'})
+
+    def _preview(self,name):
+        sd=self._obj('virtual_sdcard');identity=source_identity(sd.sdcard_dirname,name)
+        self.preview=identity
+        choices=[('Back to models',('browse',{})),('File '+str(identity['size'])+' bytes',None)]
+        if name.lower().endswith('.json'):
+            choices.append(('Check manifest (P15)',('request',dict(action='check_model',name=name,identity=identity))))
+        else:choices.append(('Needs P15 manifest',None))
+        return self._set_view('preview',Path(name).name,choices,data=identity, icon='activity:sd_read')
+
+    def _fan_page(self,channel):
+        status=getattr(self.board,'fan_manual_last',{})
+        readings=[('State: '+str(status.get('phase','idle')),None),
+            ('Tach ON/OFF %s/%s'%(status.get('tach_on_edges','--'),status.get('tach_off_edges','--')),None)]
+        return self._set_view('fan','Fan F%d'%channel,[('Back / end test',('fan_end',{}))]+[
+            (label,('request',dict(action='fan_'+verb,channel=channel))) for label,verb in
+            [('Cold printer: ON','on'),('OFF','off'),('Observed PASS','pass'),('Observed FAIL','fail'),('Cancel test','cancel')]]+readings,data=dict(channel=channel,status=status),
+            icon={0:'activity:fan_lower',1:'activity:fan_upper'}.get(channel))
+
+    def _end_fan(self):
+        owned=self.fan_session;self.fan_session=None
+        if owned is not None:
+            self._call(self.board,'cmd_fan_manual_status')
+            current=getattr(self.board,'fan_manual_last',{})
+            if current.get('run')==owned['run']:
+                self._call(self.board,'cmd_fan_manual_cancel')
+        return self._info('Fan test ended','Automatic cooling retains priority')
+
+    def _call(self,obj,method,**params):
+        fn=getattr(obj,method,None)
+        if not callable(fn):raise MenuError('Required owner method is unavailable: '+method)
+        return fn(Command(self,**params))
+    def _service_ready(self):
+        if not self.board.connected:raise MenuError('MCU disconnected')
+        if self.fan_session is not None:raise MenuError('End the menu fan-test session before starting heat or motion')
+        if self._native_job()[2] in ('printing','paused'):raise MenuError('R7 SERVICE requires an idle printer; the native print retains ownership')
+        if getattr(self.board,'load_test_context',None) is not None:raise MenuError('Another service procedure is active')
+        self.board._enter_operator_service()
+    def _start_service(self,action,params):
+        operation,tool=SERVICE_ACTIONS[action]
+        args=dict(ACTION=operation,TOOL='T%d'%tool);args.update(params)
+        if args['TOOL']!='T%d'%tool:raise MenuError('Menu tool differs from the requested procedure')
+        if action.startswith('manual_unload_'):args['MANUAL_DIR']='UNLOAD'
+        self._call(self.board,'cmd_procedure',**args)
+        context=self.board.load_test_context
+        if context is None:raise MenuError('Service did not establish a running owner')
+        self.active=dict(backend='service',object=context,action=action)
+
+    def _execute(self,action,params):
+        if self.stopped:raise MenuError('Host lifecycle ended')
+        if action in SERVICE_ACTIONS:
+            # Prefer the full native P13 contract when that qualified profile is
+            # installed. R7 SERVICE explicitly handles preinserted cartridges.
+            filament=self._obj('inventure_filament')
+            if action in ('select_t0','select_t1') and self._enabled('inventure_tools'):
+                self._call(self._obj('inventure_tools'),'cmd_select',TOOL=int(action[-1]))
+            elif action.startswith(('load_cartridge_','unload_')) and self._enabled('inventure_filament'):
+                if action.startswith('load_cartridge_'):
+                    selection=self._status('inventure_materials').get('selection')
+                    if not selection or selection[int(action[-1])]['source']!='cartridge':
+                        raise MenuError('The selected native material source is not a cartridge; select and verify that source first')
+                tool=int(action[-1]);self._call(filament,'cmd_load' if action.startswith('load_') else 'cmd_unload',TOOL=tool,ACK='TRANSPORT_PATH_CHECKED')
+                self.active=dict(backend='filament',object=filament,job=filament.job,action=action)
+            else:self._start_service(action,params)
+        elif action in ('heat_t0','heat_t1'):
+            self._service_ready();self._call(self.board,'cmd_load_test',ACTION='HEAT',TOOL='T'+action[-1],**params)
+            self.active=dict(backend='service',object=self.board.load_test_context,action=action)
+        elif action=='leveling':
+            if self.capability(action)['backend'] == 'platform_level':
+                self._call(self.board, 'cmd_platform_level', ACTION='START')
+                run_id = self._platform_status().get('run_id')
+                if not run_id:
+                    raise MenuError('Platform leveling did not establish a run')
+                self.active = dict(backend='platform_level', object=self.board, run_id=run_id, action=action)
+            else:
+                obj=self._obj('inventure_leveling');self._call(obj,'cmd_start',ACK='KNOBS_AND_TRAY_CHECKED')
+                self.active=dict(backend='level',object=obj,session=obj.session,action=action)
+        elif action=='alignment':
+            if self._xy_available():
+                self._call(self.board,'cmd_nozzle_xy_test',
+                    **dict(params,ACTION='START',ACK='XY_PATTERN_SURFACE_READY'))
+                xy=self._xy_status()
+                if xy.get('run_id') is None:raise MenuError('XY test did not establish a run')
+                self.active=dict(backend='nozzle_xy',object=self.board,run_id=xy['run_id'],action=action)
+            else:
+                obj=self._obj('inventure_alignment');args=dict(ACK='GEOMETRY_AND_MATERIALS_CHECKED',MODE='FULL',X_MODE='stock_reference')
+                args.update(params);self._call(obj,'cmd_start',**args)
+                self.active=dict(backend='align',object=obj,session=getattr(obj,'lease',None),action=action)
+        elif action=='spool_load':
+            tool=int(params['tool']);material_id=int(params['material_id'])
+            if material_id not in dict(SUPPORT_MATERIALS if tool else MODEL_MATERIALS):raise MenuError('Material is outside the audited tool catalogue')
+            materials=self._obj('inventure_materials');filament=self._obj('inventure_filament')
+            if not self._enabled('inventure_materials') or not self._enabled('inventure_filament'):raise MenuError('Spool menu requires enabled native P11/P13; R7 cartridge AUTO is not a spool loader')
+            selected=self._status('inventure_materials').get('selection')
+            if not selected or len(selected)!=2:raise MenuError('Select the model/support material pair before loading from spool')
+            args={'A':selected[0]['material_id'],'B':selected[1]['material_id'],
+                'A_SOURCE':selected[0]['source'],'B_SOURCE':selected[1]['source'],'ACK':'MATERIALS_AND_SOURCES_CHECKED'}
+            args['B' if tool else 'A']=material_id;args['B_SOURCE' if tool else 'A_SOURCE']='spool'
+            self._call(materials,'cmd_select',**args)
+            self._call(filament,'cmd_load',TOOL=tool,ACK='TRANSPORT_PATH_CHECKED')
+            self.active=dict(backend='filament',object=filament,job=filament.job,action=action)
+        elif action in ('door_lock','door_unlock'):
+            self._call(self.board,'cmd_door_policy',ENABLE=int(action=='door_lock'))
+        elif action=='fan_cancel':
+            return self._end_fan()
+        elif action.startswith('fan_'):
+            self._call(self.board,'cmd_fan_manual',CHANNEL=params.get('channel',0),ACTION=action[4:].upper(),ACK='COLD' if action=='fan_on' else 'OBSERVED')
+            if action=='fan_on':self.fan_session=dict(run=self.board.fan_manual_last['run'],channel=params.get('channel',0))
+        elif action in HOME_ACTIONS:
+            from .inventure_z_home import Z_HOME_ACK
+            axes = HOME_ACTIONS[action]
+            options = dict(params, ACK=Z_HOME_ACK) if 'Z' in axes else params
+            self._call(self._obj('inventure_native_z'), 'cmd_request_home', AXES=axes, **options)
+            self.last = dict(action=action, result='completed')
+            return self._info('Home '+axes+' complete', 'Homing procedure finished', action=action)
+        elif action.startswith('platform_'):
+            from .inventure_fluidd import move_platform
+            move_platform(self.board, action.split('_')[1],
+                          float(params.get('DISTANCE', self.platform_step)), float(params.get('SPEED', self.platform_speed)))
+        elif action in ('pause','resume','cancel_yes'):
+            obj=self._obj('inventure_cycle')
+            state=self._native_job()
+            expected='printing' if action=='pause' else 'paused' if action=='resume' else None
+            if state[0] is None or expected is not None and state[2]!=expected:
+                raise MenuError('No matching native print/paused job')
+            if self._enabled('inventure_cycle'):
+                self._call(obj,{'pause':'cmd_pause','resume':'cmd_resume','cancel_yes':'cmd_cancel'}[action],
+                    ACK={'pause':'PAUSE_PRINT','resume':'CHECKED_CURRENT_STATE','cancel_yes':'CONFIRM_STOP'}[action])
+            else:
+                # Dispatch registered native G-code so P02/P17 wrappers retain
+                # control; never call a raw PauseResume method past its owner.
+                self.gcode.run_script_from_command({'pause':'PAUSE','resume':'RESUME','cancel_yes':'CANCEL_PRINT'}[action])
+        elif action=='check_model':
+            sd=self._obj('virtual_sdcard');current=source_identity(sd.sdcard_dirname,params['name'])
+            if current!=params['identity']:raise MenuError('Model changed after preview')
+            obj=self._obj('inventure_preflight');self._call(obj,'cmd_check',MANIFEST=params['name'],ACK='JOB_AND_SPOOL_SUPPLY_CHECKED')
+            self.active=dict(backend='preflight',object=obj,epoch=obj.epoch,action=action)
+        elif action=='print_model':
+            obj=self._obj('inventure_preflight');status=obj.get_status(self.reactor.monotonic())
+            if status.get('token')!=params.get('owner_token'):raise MenuError('P15 job token changed')
+            self._call(obj,'cmd_start',TOKEN=params['owner_token'],ACK='START_CHECKED_JOB')
+        elif action in ('filecheck_on','filecheck_off','ignore_filament'):
+            cap=self.capability(action)
+            if not cap['available']:raise MenuError(cap['reason'])
+            obj=self._obj(cap['backend'])
+            if action.startswith('filecheck_'):obj.set_file_checking(action=='filecheck_on')
+            else:obj.set_ignore_endstops(not bool(obj.get_status(self.reactor.monotonic()).get('ignore_endstops')))
+        else:raise MenuError('No procedure handler for '+action)
+        self.last=dict(action=action,result='requested',physical_completion_verified=False)
+        if action.startswith('fan_'):self._fan_page(params.get('channel',0))
+        elif self.active is not None:self._running_view()
+        else:self._info('Command accepted','Read the current owner status; no physical result was inferred',action=action)
+
+    def _owns_active(self):
+        a=self.active
+        if a is None:return False
+        obj=a['object'];backend=a['backend']
+        if backend=='jam':return self._jam_status().get('run_id') == a['run_id']
+        if backend=='service':return getattr(self.board,'load_test_context',None) is obj
+        if backend=='filament':return getattr(obj,'job',None)==a['job']
+        if backend=='level':return getattr(obj,'session',None) is a['session']
+        if backend=='platform_level':return self._platform_status().get('run_id') == a['run_id']
+        if backend=='align':return getattr(obj,'lease',None)==a['session']
+        if backend=='nozzle_xy':return self._xy_status().get('run_id')==a['run_id']
+        if backend=='preflight':return getattr(obj,'epoch',None)==a['epoch']
+        return False
+
+    def _running_view(self):
+        active=self.active;obj=active['object'];backend=active['backend'];now=self.reactor.monotonic()
+        if not self._owns_active() and backend!='service':
+            self.active=None;return self._info('Owner changed','The previous procedure ended; no command was sent to its replacement')
+        options=[('Stop / cancel',('cancel_request',{}))];phase='running';detail={}
+        if backend=='service':
+            ctx=getattr(self.board,'load_test_context',None)
+            if ctx is not obj:
+                self.active=None;self.last=self.board.load_test_last
+                return self._info('Procedure ended',self.last.get('reason',self.last.get('phase','ended')),result=self.last)
+            detail=self.board._load_test_report(ctx);phase=(detail.get('factory') or {}).get('phase',detail['phase'])
+            service = getattr(self.board, 'material_service', None)
+            if service is not None and (ctx.get('factory') or {}).get('material_prompt') is not None:
+                state = service.status()
+                identity = dict(TOOL=state['tool'], SESSION=state['session'], PROMPT=state['prompt'])
+                options += [('Feed 5 mm', ('material', dict(identity, ACTION='MORE', DIR='LOAD'))),
+                            ('Retract 5 mm', ('material', dict(identity, ACTION='MORE', DIR='UNLOAD'))),
+                            ('Finish / heaters off', ('material', dict(identity, ACTION='FINISH')))]
+            if active['action'].startswith('heat_') and detail.get('ready_for_jog'):
+                options.append(('Finish / heaters off',('cancel',{})))
+                options += [('Feed 20mm',('jog',dict(reverse=False))),
+                    ('Retract 20mm',('jog',dict(reverse=True)))]
+            temperature=detail.get('temperature_c');target=detail.get('target_c')
+            if isinstance(temperature,(int,float)) and isinstance(target,(int,float)):
+                options.append(('T%d %.1f / %.0fC'%(ctx['tool'],temperature,target),None))
+            if detail.get('factory'):
+                operation = detail['factory'].get('operation')
+                if operation in ('JAM_CASSETTE', 'JAM_EXTERNAL'):
+                    options += [('%s / %s test' % (detail['tool'], operation[4:]), None),
+                                (str(phase).replace('_', ' '), None)]
+                steps=detail['factory'].get('e_sent_steps',0)
+                options.append(('E %.1fmm nominal'%(steps/960.),None))
+        elif backend == 'jam':
+            detail = self._jam_status()
+            phase = detail['phase']
+            if not detail.get('active'):
+                self.active = None
+                self.last = detail
+                return self._info('Filament recovery', detail['message'], result=detail)
+            # The first row is harmless when an operator presses OK to read a warning.
+            options = [('%s %s' % (detail['tool'], self._jam_title(detail)), None),
+                       ('Source: ' + detail['source'], None)]
+            options.extend((line, None) for line in textwrap.wrap(detail['message'], 25))
+            for label, params in self._jam_choices(detail):
+                verb = 'cancel_request' if params['ACTION'] == 'CANCEL' else 'jam_command'
+                options.append((label, (verb, params)))
+        elif backend == 'platform_level':
+            detail = self._platform_status()
+            phase = detail['phase']
+            if phase not in LEVEL_PHASE_TITLES:
+                self.active = None
+                self.last = detail
+                return self._info('Platform leveling', detail.get('error') or phase, result=detail)
+            if phase in ('await_knobs', 'adjust') and detail.get('awaiting_operator'):
+                if phase == 'adjust':
+                    identity = (detail['run_id'], detail['prompt_id'])
+                    if self.leveling_step[0] != identity:
+                        self.leveling_step = (identity, 0)
+                    instructions = detail.get('instructions', [])
+                    step = min(self.leveling_step[1], max(0, len(instructions)-1))
+                    for instruction in instructions[step:step+1]:
+                        knob = instruction['knob'].replace('_', ' ').title()
+                        arrow = 'CCW' if instruction['direction'] == 'counterclockwise' else 'CW'
+                        options += [(knob + ': ' + instruction['action'], None),
+                                    ('%.2f turns %s' % (instruction['turns'], arrow), None)]
+                    options.append(('Hot head / wear gloves', None))
+                if detail.get('door_pause'):
+                    options += [('Access now permitted', None), ('Leave selector in place', None),
+                                ('Seat tray, close doors', None), ('and lid before Next', None)]
+                if phase == 'adjust' and step+1 < len(instructions):
+                    options.append(('Next screw / view', ('leveling_screw', dict(index=step+1))))
+                else:
+                    label = 'Adjusted / next' if phase == 'adjust' else 'Knobs tightened / next'
+                    options.append((label, ('continue', dict(prompt=detail['prompt_id']))))
+                if phase == 'adjust' and step:
+                    options.append(('Previous screw', ('leveling_screw', dict(index=step-1))))
+            elif phase == 'candidate':
+                if detail.get('deformed'):
+                    options.append(('Replace deformed tray', None))
+                else:
+                    options.append(('Review / save result', ('commit_request', {})))
+                depth = detail.get('candidate_depth_um')
+                if depth is not None:
+                    options.append(('Depth %.3fmm' % (depth / 1000.), None))
+            elif detail.get('next_point') is not None:
+                options.append(('Pad %s' % detail['next_point'], None))
+        elif backend=='nozzle_xy':
+            detail=self._xy_status();phase=detail['phase']
+            if phase not in ('printing','select'):
+                self.active=None;self.last=detail
+                candidate=detail.get('candidate')
+                if phase=='applied' and candidate is not None:
+                    return self._info('XY alignment saved','X %+.3f / Y %+.3f mm'%(
+                        candidate['x_mm'],candidate['y_mm']),result=detail)
+                return self._info('XY alignment ended',detail.get('error') or detail.get('reason') or phase,result=detail)
+            if phase=='printing':
+                if detail.get('stage'):options.append((str(detail['stage']).replace('_',' ').title(),None))
+            else:
+                lines=detail.get('lines') or {}
+                candidate=detail.get('candidate')
+                if candidate is not None and all(lines.get(axis) is not None for axis in ('Y','X')):
+                    phase='review_xy'
+                    options += [('Review / save XY',('commit_request',{})),
+                        ('Change left Y',('xy_edit_line',dict(axis='Y'))),
+                        ('Change right X',('xy_edit_line',dict(axis='X'))),
+                        ('Left Y%d / Right X%d'%(lines['Y'],lines['X']),None)]
+                else:
+                    axis='Y' if lines.get('Y') is None else 'X'
+                    phase='choose_left_y' if axis=='Y' else 'choose_right_x'
+                    options += self._xy_line_options(axis,detail)
+        else:
+            detail=obj.get_status(now);phase=detail.get('state',detail.get('phase','running'))
+            if backend=='filament':
+                if obj.job!=active['job']:raise MenuError('Filament owner/job changed')
+                if not obj.running:
+                    self.active=None;self.last=detail;return self._info('Filament ended',obj.phase,result=detail)
+                prompt=getattr(obj,'prompt',None)
+                if prompt is not None:options.append(('Continue: '+str(prompt['kind']),('continue',dict(owner_token=prompt['token']))))
+            elif backend in ('level','align'):
+                if not getattr(obj,'running',False):
+                    self.active=None;self.last=detail;return self._info('Calibration ended',phase,result=detail)
+                if backend=='level':
+                    if phase=='candidate':options.append(('Review / save depth',('commit_request',dict(deformed=bool(detail.get('deformed'))))))
+                    else:options.append(('Adjusted / next sample' if phase=='adjust' else 'Measure next point',('continue',{})))
+                    if detail.get('next_point') is not None:options.append(('Next pad: %s'%detail['next_point'],None))
+                    if detail.get('candidate_depth_um') is not None:
+                        options.append(('Depth %.3fmm'%(detail['candidate_depth_um']/1000.),None))
+                    for instruction in detail.get('instructions',[]):
+                        options.append((str(instruction.get('knob','Screw')).replace('_',' ').title(),None))
+                        options.append(('%g turns %s'%(instruction['turns'],'CCW' if instruction['direction']=='counterclockwise' else 'CW'),None))
+                elif phase in ('choose_Y','choose_X'):
+                    axis=phase[-1]
+                    choices=(7,) if axis=='X' and getattr(obj,'x_mode','stock_reference')=='stock_reference' else range(1,14)
+                    options += [('Line %d%s'%(i,' (neutral)' if i==7 else ''),('line',dict(axis=axis,line=i))) for i in choices]
+                elif phase=='candidate':options.append(('Review / save alignment',('commit_request',{})))
+                else:options.append(('Continue calibration',('continue',{})))
+                if backend=='align':
+                    samples=detail.get('samples_steps',[[],[]])
+                    options.append(('T0 %d/2  T1 %d/3'%(len(samples[0]),len(samples[1])),None))
+            elif backend=='preflight':
+                if obj.epoch!=active['epoch']:raise MenuError('Model inspection generation changed')
+                phase=(detail.get('status') or {}).get('status','checking')
+                if detail.get('token'):options.append(('Start checked model',('request',dict(action='print_model',owner_token=detail['token']))))
+                elif not detail.get('busy'):
+                    self.active=None;self.last=detail;return self._info('File check ended',phase,result=detail)
+        modules = (detail.get('factory') or {}).get('module_stack') or ()
+        cleaning = 'clean' in modules
+        screen = (leveling_screen(detail, self.leveling_step[1])
+                  if backend == 'platform_level' else None)
+        key=(backend,phase,cleaning,tuple((x[0],repr(x[1])) for x in options),self._binding(),repr(screen))
+        if key!=self.last_native_key:
+            self.last_native_key=key
+            title = (LEVEL_PHASE_TITLES[phase] if backend == 'platform_level' else
+                     'Review XY' if phase=='review_xy' else str(phase).replace('_',' ').title())
+            if backend == 'platform_level' and phase in ('await_knobs', 'adjust') and not detail.get('awaiting_operator'):
+                title = 'Please wait'
+            if backend == 'jam':
+                title = self._jam_title(detail)
+            stage = str(phase).upper()
+            icon, animated = None, False
+            if cleaning or '_WIPE_' in stage or stage in ('CLEAN', 'WIPE', 'CLEANING'):
+                icon, animated = 'activity:clean_nozzle', True
+            elif stage in ('HEAT', 'HEATING', 'REHEATING', 'WAIT_HEAT', 'XYZ_HEAT'):
+                icon, animated = 'activity:heat_nozzle', True
+            elif stage.startswith('XYZ_COOL_') or stage in ('COOL', 'COOLING', 'COOLDOWN', 'WAIT_COOL'):
+                icon, animated = 'activity:cooling', True
+            elif backend == 'jam':
+                missing = detail.get('reason') in ('RUNOUT','MATERIAL_MISSING')
+                icon = 'activity:filament_runout' if missing else 'activity:filament_jam'
+            self._set_view('running',title,options,data=dict(backend=backend,phase=phase,leveling=screen),
+                           icon=icon or action_icon(active.get('action')),animated=animated)
+            if backend == 'platform_level':
+                # A short press advances the displayed prompt. Stop remains
+                # available by rotation and Back always asks before cancelling.
+                for index, (_, action) in enumerate(options):
+                    if action and action[0] in ('continue','leveling_screw','commit_request'):
+                        self.view.selected = index
+                        break
+        return self.view
+
+    def _cancel_active(self):
+        active=self.active
+        if active is None:self.view=None;return
+        obj=active['object'];backend=active['backend']
+        owned=self._owns_active()
+        self.active=None;self.view=None;self.last_native_key=None
+        if not owned:return self._info('Owner changed','Previous procedure no longer owns these resources')
+        if backend=='service':
+            if self.board.load_test_context is obj:self._call(self.board,'cmd_load_test',ACTION='STOP')
+        elif backend=='jam':
+            detail = self._jam_status()
+            self._call(obj, 'cmd', ACTION='CANCEL', RUN_ID=active['run_id'], PROMPT_ID=detail['prompt_id'])
+            return self._info('Filament recovery', self._jam_status()['message'])
+        elif backend=='filament':
+            if obj.job==active['job']:self._call(obj,'cmd_cancel')
+        elif backend in ('level','align'):self._call(obj,'cmd_cancel')
+        elif backend=='platform_level':self._call(obj, 'cmd_platform_level', ACTION='CANCEL', RUN_ID=active['run_id'])
+        elif backend=='nozzle_xy':self._call(obj,'cmd_nozzle_xy_test',ACTION='STOP',RUN_ID=active['run_id'])
+        elif backend=='preflight':
+            if obj.epoch==active['epoch']:self._call(obj,'cmd_cancel')
+        self._info('Operation cancelled','Current owner stopped; no recovery movement requested')
+
+    def _dispatch_choice(self,verb,args):
+        if verb == 'cassette_operation':
+            self._call(self.board.material_service, 'command', **args)
+            context = self.board.load_test_context
+            if context is None:
+                raise MenuError('The cassette procedure did not start')
+            self.active = dict(backend='service', object=context, action=args['ACTION'].lower())
+            return self._running_view()
+        if verb == 'operator_item':
+            return self._choose_operator_item(args['index'])
+        if verb == 'set_light':
+            self._call(self.board, 'cmd_rgb', MASK=args['mask'])
+            return self._info('Light', 'White' if args['mask'] else 'Off')
+        if verb == 'display_edit':
+            return self._display_editor(**args)
+        if verb == 'display_save':
+            oled = self._obj('inventure_oled')
+            self._call(oled, 'cmd_display_control', **args)
+            return self._info('OLED settings', 'Saved')
+        if verb=='close':
+            if self.active is not None:self.last_native_key=None;return self._running_view()
+            if self.fan_session is not None:return self._fan_page(self.fan_session['channel'])
+            if self.operator_page_open and self.menu_dialog_requested:
+                return self.open_operator_page()
+            self.view=None;return
+        if verb=='browse':return self._browse()
+        if verb=='preview':return self._preview(args['name'])
+        if verb=='fan_page':return self._fan_page(args['channel'])
+        if verb=='fan_end':return self._end_fan()
+        if verb=='request':
+            action=args['action'];params={k:v for k,v in args.items() if k!='action'}
+            if self.active is not None and action=='print_model':return self._confirm(action,params)
+            return self.open(action,**params)
+        if verb == 'exchange_steps':
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for step, label in [('UNLOAD', 'Unload filament'), ('LOAD', 'Load replacement'), ('WIPE', 'Wipe nozzle')]:
+                options.append((label, ('jam_test', dict(STEP=step))))
+            return self._set_view('choice', 'Replacement steps', options)
+        if verb == 'jam_test':
+            sources = self._jam_status().get('sources', {})
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for tool in ('T0', 'T1'):
+                for source, label in [('CASSETTE', 'Cartridge'), ('EXTERNAL', 'External spool')]:
+                    if sources.get(tool, 'UNKNOWN') in ('UNKNOWN', source):
+                        options.append((tool + ' / ' + label, ('jam_test_temperature', dict(args, TOOL=tool, SOURCE=source))))
+            return self._set_view('choice', 'Recovery test', options)
+        if verb == 'jam_test_temperature':
+            options = [('Back', ('jam_test', {k:v for k,v in args.items() if k == 'STEP'}))]
+            options.extend(('%d C' % target, ('jam_test_confirm', dict(args, TARGET=target)))
+                           for target in range(180, 311, 5))
+            return self._set_view('choice', 'Service temperature', options)
+        if verb == 'jam_test_confirm':
+            return self._set_view('confirm', ('Start ' + args['STEP'].lower() + '?') if 'STEP' in args else 'Start recovery test?',
+                [('No / Back', ('jam_test_temperature', {k:v for k,v in args.items() if k != 'TARGET'})),
+                 ('Start %s / %s' % (args['TOOL'], args['SOURCE']), ('jam_test_start', args)),
+                 ('Heat to %d C' % args['TARGET'], None)])
+        if verb == 'jam_test_start':
+            if 'STEP' in args:
+                self.gcode.run_script_from_command(
+                    'INVENTURE_JAM_SERVICE_STEP TOOL={TOOL} SOURCE={SOURCE} STEP={STEP} TARGET={TARGET}'.format(**args))
+            else:
+                self._call(self.board, 'cmd_procedure', ACTION='JAM_' + args['SOURCE'],
+                           TOOL=args['TOOL'], TARGET=args['TARGET'], SPEED_PROFILE='OEM')
+            if self.board.load_test_context is None:
+                raise MenuError('Recovery test did not start')
+            self.active = dict(backend='service', object=self.board.load_test_context, action='jam_test')
+            self.last_native_key = None
+            return self._running_view()
+        if verb == 'jam_report':
+            return self._set_view('confirm', 'Pause for a jam?',
+                [('No / Back', ('request', dict(action='filament_jam'))),
+                 ('Yes / report jam', ('jam_command', dict(ACTION='REPORT')))])
+        if verb == 'jam_source_menu':
+            tool = args['tool']
+            options = [('Back', ('request', dict(action='filament_jam')))]
+            for label, source in [('Cartridge', 'CASSETTE'), ('External spool', 'EXTERNAL'),
+                                  ('Clear selection', 'UNKNOWN')]:
+                options.append((label, ('jam_command', dict(ACTION='SOURCE', TOOL=tool, SOURCE=source))))
+            return self._set_view('choice', tool + ' material source', options)
+        if verb == 'jam_command':
+            self._call(self.board.filament_jam, 'cmd', **args)
+            self.last_native_key = None
+            if self.active is not None:
+                return self._running_view()
+            return self._jam_menu()
+        if verb=='cancel_request' and self.active and self.active['backend']=='jam':
+            if 'CANCEL' not in self._jam_status().get('allowed_actions', ()):
+                return
+            return self._set_view('confirm', 'End jam recovery?',
+                [('No / Back', ('close', {})), ('Yes / end recovery', ('cancel', {})),
+                 ('No automatic resume', None)])
+        if verb=='cancel_request':return self._set_view('confirm','Cancel operation?',
+            [('No / continue',('close',{})),('Yes / stop',('cancel',{}))])
+        if verb=='commit_request':
+            active=self.active
+            if active is None:raise MenuError('Calibration owner ended')
+            if active['backend'] == 'platform_level':
+                data = self._platform_status()
+                if data.get('phase') != 'candidate' or data.get('deformed'):
+                    raise MenuError('No valid leveling result to save')
+                return self._set_view('confirm', 'Save leveling result?',
+                    [('No / Back', ('close', {})), ('Yes / Save', ('commit', {}))])
+            if active['backend']=='nozzle_xy':
+                detail=self._xy_status()
+                candidate=detail.get('candidate');lines=detail.get('lines') or {}
+                if candidate is None or any(lines.get(axis) is None for axis in ('Y','X')):
+                    raise MenuError('Choose both pattern lines before saving XY')
+                labels=[('%s %+.3f mm'%(axis,candidate[axis.lower()+'_mm']),None) for axis in ('X','Y')]
+                return self._set_view('confirm','Save nozzle XY offset?',
+                    [('No / Back',('close',{})),('Yes / Save',('commit',{}))]+labels,
+                    data=dict(candidate=candidate))
+            state=active['object'].get_status(self.reactor.monotonic())
+            candidate=state.get('candidate_depth_um') if active['backend']=='level' else state.get('candidate')
+            labels=[]
+            if active['backend']=='level' and candidate is not None:labels=['Depth %.3fmm'%(candidate/1000.)]
+            elif isinstance(candidate,dict):labels=['%s: %s'%(axis,candidate.get(axis)) for axis in ('ox','oy','oz')]
+            return self._set_view('confirm','Accept deformed tray?' if args.get('deformed') else 'Save host calibration?',
+                [('No / Back',('close',{})),('Yes / Save',('commit',args))]+[(label,None) for label in labels],
+                data=dict(candidate=candidate,deformed=bool(args.get('deformed'))))
+        if verb=='cancel':return self._cancel_active()
+        if verb == 'leveling_screw':
+            detail = self._platform_status()
+            if (self.active is None or self.active['backend'] != 'platform_level'
+                    or detail.get('phase') != 'adjust' or not detail.get('awaiting_operator')
+                    or not 0 <= args['index'] < len(detail.get('instructions', ()))):
+                raise MenuError('The displayed screw instruction expired')
+            self.leveling_step = ((detail['run_id'],detail['prompt_id']),args['index'])
+            self.last_native_key = None
+            return self._running_view()
+        if verb=='execute':
+            return self._execute(args['action'],args['params'])
+        active=self.active
+        if active is None:raise MenuError('Procedure no longer active')
+        obj=active['object'];backend=active['backend']
+        if verb=='xy_edit_line' and backend=='nozzle_xy':
+            axis=args['axis']
+            return self._set_view('choice','Choose left Y' if axis=='Y' else 'Choose right X',
+                [('Back',('close',{}))]+self._xy_line_options(axis,self._xy_status()))
+        if verb=='continue':
+            if backend=='filament':self._call(obj,'cmd_continue',TOKEN=args['owner_token'])
+            elif backend=='platform_level':
+                self._call(obj, 'cmd_platform_level', ACTION='NEXT', RUN_ID=active['run_id'], PROMPT_ID=args['prompt'])
+            elif backend=='level':self._call(obj,'cmd_advance',ACK='ADJUSTED_AND_DOORS_CLOSED')
+            elif backend=='align':self._call(obj,'cmd_advance')
+            else:raise MenuError('This owner has no continuation')
+        elif verb=='material' and backend=='service':
+            if self.board.load_test_context is not obj:raise MenuError('Cassette procedure changed')
+            self.board.material_service.command(Command(self, **args))
+        elif verb=='jog' and backend=='service':
+            if self.board.load_test_context is not obj:raise MenuError('Heated service owner changed')
+            self._call(self.board,'cmd_load_test',ACTION='JOG',STEPS=19200,
+                DIR=obj['tool']^int(args['reverse']),RATE=2400)
+        elif verb=='line' and backend=='align':self._call(obj,'cmd_line',AXIS=args['axis'],LINE=args['line'])
+        elif verb=='line' and backend=='nozzle_xy':
+            self._call(obj,'cmd_nozzle_xy_test',ACTION='LINE',RUN_ID=active['run_id'],
+                AXIS=args['axis'],LINE=args['line'])
+        elif verb=='commit':
+            if backend=='platform_level':
+                self._call(obj, 'cmd_platform_level', ACTION='SAVE', RUN_ID=active['run_id'])
+            elif backend=='level':
+                params={'ACK':'SAVE_HOST_LEVELING'}
+                if args.get('deformed'):params['DEFORMATION_ACK']='ACCEPT_DEFORMED_TRAY'
+                self._call(obj,'cmd_commit',**params)
+            elif backend=='align':self._call(obj,'cmd_commit',ACK='SAVE_HOST_ALIGNMENT')
+            elif backend=='nozzle_xy':
+                self._call(obj,'cmd_nozzle_xy_test',ACTION='APPLY',RUN_ID=active['run_id'],ACK='XY_PATTERN_READ')
+            else:raise MenuError('This owner has no calibration commit')
+        else:raise MenuError('Unknown procedure control')
+        self.last_native_key=None;return self._running_view()
+
+    def save_display_value(self, gcmd):
+        view = self.view
+        if self.executing or view is None or 'oled_setting' not in view.data:
+            raise MenuError('Open the OLED setting again')
+        value = gcmd.get_int('VALUE', minval=1, maxval=view.data['max'])
+        view.claim(gcmd.get('TOKEN', ''), self.reactor.monotonic(), self._binding())
+        self._close_menu_dialog()
+        self._dispatch_choice('display_save', {view.data['oled_setting']: value})
+
+    def choose(self,token,index=None,confirm=False):
+        if self.executing:raise MenuError('A menu command is already executing')
+        view=self.view
+        if view is None:raise MenuError('No current menu view')
+        if token != view.token:
+            raise MenuError('Menu view expired or its procedure/job changed; open it again')
+        if confirm:
+            if view.kind!='confirm':raise MenuError('Current view is not a confirmation')
+            index=1
+        index=view.selected if index is None else index
+        if type(index) is not int or not 0<=index<len(view.options):raise MenuError('Menu choice is outside the current view')
+        choice=view.options[index][1]
+        if choice is None:return
+        view.claim(token,self.reactor.monotonic(),self._binding())
+        self._close_menu_dialog()
+        self.executing=True
+        try:return self._dispatch_choice(*choice)
+        except Exception as exc:
+            self.last=dict(result='failed',reason=str(exc))
+            self._info('Operation unavailable',str(exc));raise
+        finally:
+            self.executing=False
+            self._sync_menu_dialog()
+
+    def observe_buttons(self,mask,sequence):
+        if self.last_sequence is not None:
+            delta=(sequence-self.last_sequence)&0xffffffff
+            if not 0<delta<0x80000000:return False
+        self.last_sequence=sequence;self.last_buttons=mask
+        if self.view is not None and not mask&4:self.view.released=True
+        return True
+    def legacy_buttons(self,mask):
+        # P13's old level-triggered listener must not also consume menu OK.
+        obj=self._obj('inventure_filament')
+        return mask&~4 if obj is not None and getattr(obj,'running',False) and getattr(obj,'prompt',None) is not None else mask
+    def panel_select_command(self,acknowledged):
+        view=self.view
+        if view is None:return None
+        if not acknowledged or not view.released:raise MenuError('Wait for the displayed view and a new OK press')
+        view.released=False
+        return 'INVENTURE_ZORTRAX OP=CHOOSE TOKEN=%s INDEX=%d'%(view.token,view.selected)
+    def panel_move(self,direction):
+        if self.view is not None:
+            self.view.move(direction);self.view.released=not bool(self.last_buttons&4);self._wake()
+    def panel_back(self):
+        if self.active is not None:return self._dispatch_choice('cancel_request',{})
+        if self.fan_session is not None:return self._set_view('confirm','End fan test?',
+            [('No / continue',('close',{})),('Yes / restore cooling',('fan_end',{}))])
+        self.view=None;self._wake()
+    def view_status(self):
+        if self.view is None:
+            return None
+        rendered = self.view.render()
+        if self.view.data.get('leveling') is not None:
+            rendered['leveling'] = self.view.data['leveling']
+            rendered['icon'] = rendered['leveling']['icon']
+            rendered['animated'] = rendered['leveling']['animated']
+        return rendered
+
+    def _tick(self,eventtime):
+        if self.stopped:return self.reactor.NEVER
+        try:
+            filament=self._obj('inventure_filament')
+            ctx=getattr(self.board,'load_test_context',None)
+            xy=self._xy_status()
+            platform = self._platform_status()
+            jam = self._jam_status()
+            if jam.get('active'):
+                self._platform_fluidd_prompt({})
+                self._jam_fluidd_prompt(jam)
+                if (self.active is None or self.active['backend'] != 'jam'
+                        or self.active['run_id'] != jam['run_id']):
+                    self.active = dict(backend='jam', object=self.board.filament_jam,
+                                       action='filament_jam', run_id=jam['run_id'])
+                    self.view=None;self.last_native_key=None
+            else:
+                self._jam_fluidd_prompt({})
+                if platform.get('run_id') and platform.get('phase') in LEVEL_PHASE_TITLES:
+                    self._close_menu_dialog()
+                    self.menu_dialog_requested = False
+                self._platform_fluidd_prompt(platform)
+            # The live leveling owner takes the panel from the preceding Home
+            # result/service view. Its factory context is part of this run, not
+            # a second operation. Keep the existing jam-recovery priority.
+            if (not jam.get('active') and platform.get('run_id')
+                    and platform.get('phase') in LEVEL_PHASE_TITLES
+                    and (self.active is None or self.active['backend'] != 'platform_level'
+                         or self.active['run_id'] != platform['run_id'])):
+                self.active = dict(backend='platform_level', object=self.board,
+                                   run_id=platform['run_id'], action='leveling')
+                self.view=None;self.last_native_key=None
+            elif self.active is None and xy.get('phase') in ('printing','select'):
+                self.active=dict(backend='nozzle_xy',object=self.board,run_id=xy['run_id'],action='alignment')
+                self.view=None;self.last_native_key=None
+            elif self.active is None and ctx is not None:
+                action='heat_t%d'%ctx['tool'] if ctx.get('factory') is None and ctx.get('cassette_load') is None else 'external_service'
+                self.active=dict(backend='service',object=ctx,action=action)
+                self.view=None;self.last_native_key=None
+            elif self.active is None and filament is not None and getattr(filament,'running',False) and getattr(filament,'prompt',None) is not None:
+                self.active=dict(backend='filament',object=filament,job=filament.job,action='native_filament')
+                self.view=None;self.last_native_key=None
+            if self.active is not None and not self.executing:
+                if (self.active['backend'] in ('nozzle_xy','platform_level','jam') and self.view is not None
+                        and eventtime>=self.view.deadline):
+                    self.view=None;self.last_native_key=None
+                if (self.active['backend'] in ('platform_level','jam') and self.view is not None
+                        and self.view.kind == 'confirm' and self.view.binding != self._binding()):
+                    self.view=None;self.last_native_key=None
+                if self.view is None or self.view.kind=='running':self._running_view()
+            elif self.view is not None and self.reactor.monotonic()>=self.view.deadline:
+                self.view=None
+            elif self.view is None:
+                job=self._native_job()
+                if job[2]=='paused' and job!=self.last_pause_view:
+                    self.last_pause_view=job;self._job_view()
+        except Exception as exc:
+            reason=str(exc)
+            if self.active and self.active['backend'] == 'jam':
+                # Failure to render a view must not stop recovery or resume a print.
+                self.last_native_key = None
+                self._info('Recovery display', reason)
+            else:
+                try:self._cancel_active()
+                except Exception as cancel_error:reason+='; cancellation: '+str(cancel_error)
+                self._info('Procedure interrupted',reason)
+        self._sync_menu_dialog()
+        return self.reactor.monotonic()+.25
+    def get_status(self,now):
+        return dict(api=1,view=None if self.view is None else self.view.status(),
+            active=None if self.active is None else dict(backend=self.active['backend'],action=self.active['action']),
+            last=self.last,settings=self.settings.value,stopped=self.stopped,
+            fan_session=self.fan_session,
+            capabilities={a:self.capability(a) for a in sorted(ALL_ACTIONS) if a not in ('question_yes',)},
+            checkpoint_survives_restart=False,physical_hardware_tested=False)
+    def cmd(self,gcmd):
+        op=str(gcmd.get('OP','STATUS')).upper()
+        try:
+            if op=='OPEN':
+                from .inventure_factory_core import defaults
+                allowed={k.upper() for k in defaults()}|{'T0_TEMP','T1_TEMP','MODE','X_MODE','T0_PROFILE'}
+                if gcmd.get('ACTION') in ('platform_up', 'platform_down'):
+                    allowed.update(('DISTANCE', 'SPEED'))
+                if gcmd.get('ACTION') == 'leveling':
+                    allowed.add('ACTIVE_TOOL')
+                if gcmd.get('ACTION') == 'oled_icons':
+                    allowed.add('NAME')
+                query=getattr(gcmd,'get_command_parameters',None)
+                values=query() if query is not None else getattr(gcmd,'values',{})
+                show = gcmd.get_int('PROMPT', 0, minval=0, maxval=1)
+                if show and gcmd.get('ACTION') not in DISPLAY_ACTIONS | HOME_ACTIONS.keys() | {
+                        'light','help','sd_browser','current_procedure','oled_icons','fan_test','platform_up','platform_down','select_t0','select_t1','leveling',
+                        'heat_t0','heat_t1','clean_t0','clean_t1','purge_t0','purge_t1'}:
+                    raise MenuError('This procedure supplies its own operator interface')
+                params={k:v for k,v in values.items() if k not in ('OP','ACTION','PROMPT')}
+                if params and gcmd.get('ACTION') in HOME_ACTIONS:
+                    raise MenuError('Pass homing parameters to the INVENTURE_HOME_* macro')
+                if not set(params)<=allowed:raise MenuError('Unknown procedure parameter: '+', '.join(sorted(set(params)-allowed)))
+                self.operator_page_open = False
+                self.open(gcmd.get('ACTION'),**params)
+                if not show:
+                    self._close_menu_dialog()
+                self.menu_dialog_requested = bool(show)
+            elif op=='EXCHANGE_STEPS':
+                from .inventure_fluidd import require_idle
+                require_idle(self.board)
+                if self.stopped or self.active is not None or self.executing or self.fan_session is not None:
+                    raise MenuError('Finish the current operation before replacing filament')
+                self.operator_page_open = False
+                self._dispatch_choice('exchange_steps', {})
+                self.menu_dialog_requested = True
+            elif op=='OLED_SAVE':self.save_display_value(gcmd)
+            elif op=='CHOOSE':self.choose(gcmd.get('TOKEN',''),gcmd.get_int('INDEX'))
+            elif op=='CONFIRM':self.choose(gcmd.get('TOKEN',''),confirm=True)
+            elif op=='FAN_END':
+                self._close_menu_dialog()
+                self.menu_dialog_requested = False
+                if self.fan_session is not None:
+                    self._end_fan()
+                else:
+                    self._call(self.board, 'cmd_fan_manual_cancel')
+                    if self.view is not None and self.view.kind == 'fan':
+                        self.view = None
+            elif op=='BACK':self.panel_back()
+            elif op=='CANCEL':
+                if self.view is None:raise MenuError('No current cancellation token')
+                self.view.claim(gcmd.get('TOKEN',''),self.reactor.monotonic(),self._binding())
+                if self.fan_session is not None:self._end_fan()
+                else:self._cancel_active()
+            elif op not in ('STATUS','CATALOG'):raise MenuError('Use OP=OPEN, CHOOSE, CONFIRM, BACK, CANCEL, FAN_END, STATUS or CATALOG')
+        except (ValueError,TypeError,OSError) as exc:raise gcmd.error(str(exc))
+        self._sync_menu_dialog()
+        status=self.get_status(self.reactor.monotonic())
+        if op!='CATALOG':status.pop('capabilities',None)
+        raw=json.dumps(status,sort_keys=True,default=str)
+        if len(raw)<=1800:gcmd.respond_info('V9_ZORTRAX '+raw)
+        else:
+            for i in range(0,len(raw),1800):gcmd.respond_info('V9_ZORTRAX_PART %d/%d %s'%(i//1800+1,(len(raw)+1799)//1800,raw[i:i+1800]))

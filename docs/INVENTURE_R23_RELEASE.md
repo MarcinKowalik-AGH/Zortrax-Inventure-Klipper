@@ -1,5 +1,15 @@
 # Inventure MCU R23 OLED — points 1–5 candidate
 
+## Latest host update: preliminary leveling on the physical OLED
+
+[`inventure-r23-leveling-oled-rc3`](INVENTURE_R23_LEVELING_OLED.md) adds the
+original Inventure screw animations/messages and five-point result to the
+physical Zortrax menu and to runs started with `INVENTURE_LEVEL`. The existing
+MCU R23 application stays unchanged. This preliminary screw adjustment is
+separate from the future printing-compensation mesh in Tune. The owner has
+completed and saved the underlying measurement; the new OLED wizard still
+awaits physical panel acceptance.
+
 This candidate publishes the complete Inventure source and MCU application, including the previously separate R19–R22 changes and full-cycle acceptance. It targets the original Inventure STM32F207, dual-nozzle hardware, pads, sensors and OLED.
 
 | Agreed change | Included implementation |

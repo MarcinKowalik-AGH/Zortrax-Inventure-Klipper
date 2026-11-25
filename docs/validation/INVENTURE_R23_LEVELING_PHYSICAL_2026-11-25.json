@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-25",
+  "source_log": "klippy(6).log(2).zip",
+  "extracted_log_sha256": "7e116a5af85b7a41320999682fc19a1c7bdb87ee958d31825fa3742481bb6bee",
+  "physical_observation": "The owner completed and saved the existing five-point preliminary leveling procedure; the screenshot still showed the old Home OLED view.",
+  "saved_run": {
+    "run_id": "c74c8da245d144f580a317f02a571c15",
+    "phase": "saved",
+    "candidate_depth_um": 138408,
+    "center_depth_um": 138361,
+    "center_error_steps": 8,
+    "deformed": false,
+    "measurement_count": 5,
+    "instruction_count": 0,
+    "heights_steps": {
+      "0": -123,
+      "1": -87,
+      "2": -31,
+      "3": -2,
+      "4": 53
+    }
+  },
+  "new_oled_wizard_tested_on_printer": false,
+  "physical_screw_adjustment_observed": false,
+  "mesh_compensation": false
+}

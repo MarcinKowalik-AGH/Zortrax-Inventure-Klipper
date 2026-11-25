@@ -378,8 +378,20 @@ def inspect_home_to_leveling(printer, klipper):
                 'The installed level command did not reach the factory backend')
         require(any(row[0] == 'motor_off' for row in rig.model.calls[before:]),
                 'Leveling did not release the Klipper stepper owner')
+        # The external macro must take the physical OLED from the old Home
+        # result/service view, without starting another measurement owner.
+        rig.menu._tick(rig.menu.reactor.monotonic())
+        require(rig.menu.active['backend'] == 'platform_level',
+                'The OLED retained the old Home/service screen')
+        view = rig.menu.view_status()
+        require(view.get('leveling',{}).get('phase') == 'preparing',
+                'The OLED is not showing the live leveling phase')
+        package = type(rig.menu).__module__.rsplit('.',1)[0]
+        graphics = importlib.import_module(package+'.inventure_oled_graphics')
+        require(len(graphics.menu_wire(view)) == 8192, 'Missing physical OLED leveling buffer')
         rows.append(dict(origin=origin, status='PASS', service_acquired=True,
-                         native_enable_released=True, physical_interfaces='simulated'))
+                         native_enable_released=True, oled_adopted=True,
+                         oled_frame_bytes=8192, physical_interfaces='simulated'))
         rig.run('INVENTURE_LEVEL_STOP')
         require(rig.board.platform_level_status()['phase'] == 'cancelled',
                 'The installed cancel macro did not end the leveling session')
