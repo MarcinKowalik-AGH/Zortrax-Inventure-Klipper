@@ -97,8 +97,10 @@ def check_loaded(printer, config):
         status_command = native_gcode.create_gcode_command(name, name, {})
         status_command.respond_info = messages.append
         native_gcode.base_gcode_handlers[name](status_command)
-        assert json.loads(messages[-1].split(' ', 1)[1]) == {
-            'running': False, 'last_result': None, 'retained_refinement': None}
+        status = json.loads(messages[-1].split(' ', 1)[1])
+        assert status['running'] is False and status['last_result'] is None
+        assert status['retained_refinement'] is None
+        assert status['homing_safety_release'] == 'RC8-CONFIG-AUDIT-R23.5'
     native_gcode.ready_gcode_handlers['M117'](native_gcode.create_gcode_command('M117', 'M117 Display test', {}))
     native_gcode.ready_gcode_handlers['M73'](native_gcode.create_gcode_command('M73', 'M73 P25', {'P':'25'}))
     assert display.get_status(now) == {'message': 'Display test', 'progress': .25}
@@ -196,32 +198,11 @@ def check_loaded(printer, config):
 
 
 def prepare_runtime(destination):
-    source = b''.join(p.read_bytes() for p in sorted((ROOT/'source/parts').glob('part*.bin')))
-    expected, _ = (ROOT/'source/SHA256SUMS').read_text().strip().split()
-    assert sha256(source).hexdigest() == expected
-    with ZipFile(io.BytesIO(source)) as kit:
-        pinned = kit.read('baseline/SOURCE_FULL_KLIPPER_PINNED_P17_RC2.zip')
-    with ZipFile(io.BytesIO(pinned)) as archive:
-        for name in archive.namelist():
-            assert not Path(name).is_absolute() and '..' not in Path(name).parts
-        archive.extractall(destination)
-    klipper = destination/'klipper-inventure'
-    # Apply the same baseline host overlay and current adapter as the live stage.
-    for folder in ('host','orange_pi'):
-        for path in (ROOT/folder).iterdir():
-            if not path.is_file() or path.suffix not in ('.py','.json'):
-                continue
-            target = klipper/'klippy/serialhdl.py' if path.name == 'serialhdl.py' else klipper/'klippy/extras'/path.name
-            shutil.copyfile(path,target)
-    patch_spec = importlib.util.spec_from_file_location('jam_operations_patch',
-                    ROOT/'orange_pi/patch_jam_operations.py')
-    patch = importlib.util.module_from_spec(patch_spec)
-    patch_spec.loader.exec_module(patch)
-    operations = klipper/'klippy/extras/inventure_operations.py'
-    patched = patch.render(operations.read_bytes())
-    assert sha256(patched).hexdigest() == patch.PATCHED_SHA256
-    operations.write_bytes(patched)
-    return klipper
+    # Startup and PID reload must use the same authenticated overlays as the
+    # deployed runtime, including the current menu and homing contracts.
+    sys.path.insert(0,str(ROOT))
+    from inventure_bootstrap import prepare_host
+    return prepare_host(destination/'klipper-inventure',repo=ROOT)
 
 
 def check():

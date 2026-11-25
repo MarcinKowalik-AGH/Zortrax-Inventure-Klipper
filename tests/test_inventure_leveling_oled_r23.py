@@ -56,7 +56,7 @@ class InstalledLevelingWizard(baseline.LevelingUiTests):
         _, panel=oled_fixture()
         panel.board.zortrax=self.menu
         state=namespace['get_status'](panel,0.)
-        self.assertEqual(state['procedure_ui_release'],'RC8-OPERATOR-MENU-R23.4')
+        self.assertEqual(state['procedure_ui_release'],'RC8-CONFIG-AUDIT-R23.5')
         self.menu.ui_release='old-menu'
         self.assertIsNone(namespace['get_status'](panel,0.)['procedure_ui_release'])
 
@@ -92,7 +92,7 @@ class InstalledLevelingWizard(baseline.LevelingUiTests):
         self.assertTrue({'preparing','heating','selecting_t0'} <= activities,observed)
         self.assertTrue(any(str(activity).startswith('home_') for activity in activities),observed)
         self.assertTrue({'await_knobs','adjust','reference','measuring','finishing'} <= {phase for phase,_,_ in observed},observed)
-        self.assertEqual(menu.get_status(0)['ui_release'],'RC8-OPERATOR-MENU-R23.4')
+        self.assertEqual(menu.get_status(0)['ui_release'],'RC8-CONFIG-AUDIT-R23.5')
 
     def test_current_action_changes_the_graphics_even_while_the_public_phase_stays_heating(self):
         self.run.update(run_id='current',phase='heating')

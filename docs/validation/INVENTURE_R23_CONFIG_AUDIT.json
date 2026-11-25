@@ -1,0 +1,2636 @@
+{
+  "status": "SOFTWARE_VALIDATED_PHYSICAL_ACCEPTANCE_PENDING",
+  "ui_release": "RC8-CONFIG-AUDIT-R23.5",
+  "source_config_sha256": "81855822ae07280737507741f6c50cec50c9eb867e200736453d761b78c5a0cc",
+  "role_files": [
+    "inventure_base.cfg",
+    "inventure_chamber.cfg",
+    "inventure_cooling.cfg",
+    "inventure_display.cfg",
+    "inventure_heater_control.cfg",
+    "inventure_heater_monitors.cfg",
+    "inventure_heaters.cfg",
+    "inventure_operations.cfg",
+    "inventure_services.cfg",
+    "inventure_temperature_sensors.cfg",
+    "klipper_calibration.cfg",
+    "printer.cfg"
+  ],
+  "macro_count": 92,
+  "macros": [
+    {
+      "name": "INVENTURE_LEVEL",
+      "gcode_sha256": "aead5c3b60bee5e700e6305b39a671dbf57262263f7ec45868b3a0ef190d64dc",
+      "static_commands": [
+        "INVENTURE_PLATFORM_LEVEL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LEVEL_NEXT",
+      "gcode_sha256": "7f0efa3e2e3659729b7c6b76332098aeec212677000a48d84cc8c1ace933afa9",
+      "static_commands": [
+        "INVENTURE_PLATFORM_LEVEL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LEVEL_PROGRESS",
+      "gcode_sha256": "453dc7de9199aa01b68d2e9ff828283072a47f426607fe3d466d04a94691ee22",
+      "static_commands": [
+        "INVENTURE_PLATFORM_LEVEL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LEVEL_SAVE",
+      "gcode_sha256": "3a37cee600284dc3ce4c81fece6013f33e6e7bc8957b64bd94c5cc1c42bc24f7",
+      "static_commands": [
+        "INVENTURE_PLATFORM_LEVEL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LEVEL_STOP",
+      "gcode_sha256": "bbe6392daae2eedd37be97ead89c9d05f4174bcde38630afba2847d7fe8d8964",
+      "static_commands": [
+        "INVENTURE_PLATFORM_LEVEL"
+      ]
+    },
+    {
+      "name": "INVENTURE_DOOR_LOCK",
+      "gcode_sha256": "5c51ef4737f7b757a827dab72393ea2e78cc5b882dfaa4c5f2c7cda55b2b7af6",
+      "static_commands": [
+        "INVENTURE_DOOR_POLICY"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_STATUS",
+      "gcode_sha256": "b2abeed11bdcfbd1462f53b2e7f6e7768e1344434790956685fab816405af34e",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_REPORT",
+      "gcode_sha256": "4aad5fcedffb825449b2d76876c2b5ae876e16f3fecdb334a2b71d1679a7cca0",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_MISSING",
+      "gcode_sha256": "390285e7ae962278933cf31218dd03943f93d8f31d610abd38c357b94c48c39c",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_BROKEN",
+      "gcode_sha256": "417acbe3f0e1bca90511196838fa3a72ef75dfead6c5011eed1fcea52a2c0b60",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_SOURCE",
+      "gcode_sha256": "3d858f28498eb6c008f461038cec4d55c0cb6805551b4daac09b02363db6f202",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_RETRY",
+      "gcode_sha256": "7224ef36c7281c741279220c8605d3a8a3ffd2211fc4fd78e2614019b40b6f7a",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_CONFIRM_FLOW",
+      "gcode_sha256": "7f0e0405a2b322467a77356ebe365062e8659a8cab6eb3ee9861344273a51032",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_CANCEL",
+      "gcode_sha256": "10ec2b6e688673a523158eeef9f8dba7dc7ff1832a9466975051f4b6f12d7bed",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_SERVICE_TEST",
+      "gcode_sha256": "1c8f7d906c5c8e802bc40a423308e8304ee1eac416806bd4e46212a4010f03ca",
+      "static_commands": [
+        "INVENTURE_PROCEDURE"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_EXCHANGE",
+      "gcode_sha256": "b168f7db17b84315002a8195052fa4f601025e84e8f24f13afc21413c3b5ef54",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_UNLOAD",
+      "gcode_sha256": "2e832b2f99ef6885379d7eefd27ea07c8d813505ed5e8572d60f3330ea06a222",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_MORE_OUT",
+      "gcode_sha256": "602f3eead439940242eb04c6d0c6c3287b5171118bd26b5a42fc9dc4c48b3e7c",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_CLEARED",
+      "gcode_sha256": "5404c90f20229bedfbc87a3f45bdb6c7e8ebcf06c63599201553b31a2bbd3a5f",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_LOAD",
+      "gcode_sha256": "d408e665b0eec9c51548728f2b82dc06cb6677446a2b0da0ca6f802b726c6462",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_MORE_IN",
+      "gcode_sha256": "adc5364371443db41ba0a634397fe62904684b4d1bdf2ae9f93d6f46865af2fd",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_WIPE",
+      "gcode_sha256": "526a9cc7bfa050e6bb3426f9ab02b615f30e15689f020bffca11409c3e1c650f",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_FLOW",
+      "gcode_sha256": "37a00999bbaa6021c3bfbd7c31e36073c32f627f0a5a66001caaf6677da8b35b",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_CONTINUE",
+      "gcode_sha256": "de3d283d8c7c39d1f02665a1bf440ecc892f35cb33946d0945872c304ca65bcc",
+      "static_commands": [
+        "INVENTURE_FILAMENT_JAM"
+      ]
+    },
+    {
+      "name": "INVENTURE_JAM_SERVICE_STEP",
+      "gcode_sha256": "d2ea1030dab2c32e231f0e1aec84a5a6d795dcb2ef5e0a71e8e32ab35c8c05eb",
+      "static_commands": [
+        "INVENTURE_PROCEDURE"
+      ]
+    },
+    {
+      "name": "INVENTURE_FILAMENT_SAVE",
+      "gcode_sha256": "868915a5302ab4d9f98e80283cb0c0c0821fa07e03047e23048a7395a64ddaf5",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_CASSETTE_STATUS",
+      "gcode_sha256": "d584df082ebeae38f3af5754b866e7e72a942428cf1899d52f81b264bae90f66",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LOAD",
+      "gcode_sha256": "392b07a783678fa86fad4401ec2a8ef3ce090ffa52e4806fd07fd9d16e90fc12",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_UNLOAD",
+      "gcode_sha256": "8f3113abd0959ab799f1b213589730b20cf978e52751df9a33810f8b4d0fecf5",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_FEED_MORE",
+      "gcode_sha256": "276f86fa54a767ebb325e30ca5bf75b2366b6b6ab4e6df6e7eb8ee443890855e",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_RETRACT_MORE",
+      "gcode_sha256": "85bc96fa2aa011a333a8d581c92d10bd16ca139bb0ec02c923a471d4fc46b338",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_FILAMENT_FINISH",
+      "gcode_sha256": "64fa4a4a00aa712aad13e750ac0da784e0b194a198c0656032635b0312f932c9",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_CASSETTE_JOG",
+      "gcode_sha256": "f3f7808b1404b6177a84818567ebb59353a92fc64e45f37fe9b18c9b5bfcfe5e",
+      "static_commands": [
+        "INVENTURE_MATERIAL"
+      ]
+    },
+    {
+      "name": "INVENTURE_HOME_X",
+      "gcode_sha256": "c63168c479a5875e18a19b0cd8f9da6578a6604f2dbc4548a1a31fce44a84238",
+      "static_commands": [
+        "INVENTURE_HOME_REQUEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_HOME_Y",
+      "gcode_sha256": "0a0ffb6580eccf8c12c04a9c8b19cd420f791d981702d987f6fa4db36915b0b8",
+      "static_commands": [
+        "INVENTURE_HOME_REQUEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_HOME_XY",
+      "gcode_sha256": "fb36d6a43fd20153f11949d71b70a91ffdf5b356484a85e24370175137585580",
+      "static_commands": [
+        "INVENTURE_HOME_REQUEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_HOME_Z",
+      "gcode_sha256": "33461ba29d9b8ebfa2f4ca8d4b1ffcb669f637c5f5216a25c53e6456192068b8",
+      "static_commands": [
+        "INVENTURE_HOME_REQUEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_HOME_ALL",
+      "gcode_sha256": "761a57f5b41d19147a1447c3e98b7ae0f6a5fa226e6440637ee25f7b7197469c",
+      "static_commands": [
+        "INVENTURE_HOME_REQUEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_NOZZLE_Z",
+      "gcode_sha256": "4393a0a99abb47a658f4244eec5162b2492bcd359f5bf9d7ea556dfa0f804608",
+      "static_commands": [
+        "INVENTURE_NOZZLE_Z_TEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_PAD_CALIBRATE",
+      "gcode_sha256": "925c1b8878e0df6b0592c1d0a935538c9b63845bdb92c7f70927e87d85807a50",
+      "static_commands": [
+        "INVENTURE_NOZZLE_PAD_CALIBRATE"
+      ]
+    },
+    {
+      "name": "INVENTURE_NOZZLE_XY",
+      "gcode_sha256": "613c0cbb8122050e2c69e15cf775a08f313d4c98e0add473cfd6e3f8cf27b6d5",
+      "static_commands": [
+        "INVENTURE_NOZZLE_XY_TEST"
+      ]
+    },
+    {
+      "name": "INVENTURE_DIAGNOSTICS",
+      "gcode_sha256": "583898e87ac4ff38fe727059207990ded57e1526633dfe6d7f9abde468e4dc00",
+      "static_commands": [
+        "INVENTURE_COOLING_STATUS",
+        "INVENTURE_PANEL_IO_STATUS",
+        "INVENTURE_VERSION"
+      ]
+    },
+    {
+      "name": "INVENTURE_PRINTER_STATUS",
+      "gcode_sha256": "8c1be3e336d23278bc0a46d9bdc6ab942474611c248ffef371f7d3b93f6bb390",
+      "static_commands": [
+        "INVENTURE_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_PROCEDURES",
+      "gcode_sha256": "a41beac33b7f09ae06648e7f297e9f2eff98fdd54e8ae9e5b7e53faf971559ea",
+      "static_commands": [
+        "INVENTURE_PROCEDURE",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_HELP",
+      "gcode_sha256": "b02d846ff7c4d08474c1d92c70b65e8fac113c2fe38585c221c62731a1809605",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_FANS",
+      "gcode_sha256": "c5a15cbcf0853160c399172f820b281ca944b4f5209164f701f5a5e1115d1a28",
+      "static_commands": [
+        "INVENTURE_COOLING_STATUS",
+        "INVENTURE_PANEL_IO_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_FAN_TEST_START",
+      "gcode_sha256": "4ac1075a192122b5bb9a25ce623dcb9b9eb68f962d4f8893ea3259027ad4dbc3",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_FAN_TEST_END",
+      "gcode_sha256": "027ddb6a5765cceb0a1231e11934ba9e0039e4983d7bf231a0c6003ae3ed4b31",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_FAN_CHANNEL",
+      "gcode_sha256": "9758407a7ac5eb8279f5308d0f01716ca0f30afaadd60dcfe1c3f751a1969462",
+      "static_commands": [
+        "INVENTURE_FAN_MANUAL",
+        "INVENTURE_FAN_MANUAL_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_CHANGE",
+      "gcode_sha256": "cc408932a4d5f580d15cc52e4ed730e986dbdc5d5a11ed0467edb18cb1ef0676",
+      "static_commands": [
+        "INVENTURE_JAM_EXCHANGE",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_HEAT",
+      "gcode_sha256": "33b98e72ba6ce8b5e16d5727b30d636cd4ba7ebdbfd0c3c3068910f6ad562a77",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_CLEAN",
+      "gcode_sha256": "54f1ce286074931122ae69bcb18c0d971ea59955b46abf12836f03bb229c295b",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_NOZZLE_PURGE",
+      "gcode_sha256": "08ac08fa2f4a60a11a658999d13ea9a0c0389dc06abc9e04c49249b08d1bb529",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_NOZZLE_SELECT",
+      "gcode_sha256": "fab3e5726f1ec369dd390db8925e0d29ca8460ab2ce71fac08aeddd00cb46749",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_MENU_CONFIRM",
+      "gcode_sha256": "69858a35fe9838293cc5fab092c8201fd0d34cfb8d9628416244f0dae21b53a9",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_MENU_CHOOSE",
+      "gcode_sha256": "9dc3d36743d6e161cac82834a34acb6e937d5167eff4326161cd4837b7af1c05",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_MENU_BACK",
+      "gcode_sha256": "5d76709027385a2c0f22237b5660466b1d4c7045413fb1de9caef68fb86b13ca",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_LIGHT",
+      "gcode_sha256": "c652b47e60ffd31833a241475e7a8b86773084b01f527fa17cc2da860c998f5a",
+      "static_commands": [
+        "INVENTURE_RGB",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_MAIN_MENU",
+      "gcode_sha256": "f57f5021a15289e98698555fde25c90c68292096282b103915fea65c05177470",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_SETTINGS",
+      "gcode_sha256": "cadd6ae5d15af4aee883ab258e49369ce4a872d4d7ad817f2722605c8dffa151",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_INFORMATION",
+      "gcode_sha256": "4e922025f9e4504bcabda30ad331364de60575805720f2ee1913ab708c00b5be",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_LANGUAGE",
+      "gcode_sha256": "b4d03e68fa6f5e61ca0526c5971af93b65dc18e32ed77557294a8e4f9e8888e4",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_MODELS",
+      "gcode_sha256": "f1b40e641d1a243a3cb3f4ab41f5d320a04085aff8736dd6bce2fa72b3cb2b90",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_MODELS_SORT",
+      "gcode_sha256": "2ad456858ef611b6fc3ed60f62e1d96b6d0e8ee4de68771cba9fd80194451e12",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_SCREEN",
+      "gcode_sha256": "ef24a4cf4a3e25846cf80f3839d9d863081d63414ca46fd9c5ba3c5f69c8ac9e",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL",
+        "INVENTURE_MENU_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_OLED_BRIGHTNESS",
+      "gcode_sha256": "78d7275f05be5f7f4b8ccb7d041316872a71ca3cbd273f443bd84b42aa978847",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_OLED_ICONS",
+      "gcode_sha256": "165bf6d3f70a3e62011a48b9ae876f20f9d679dc68aca7fd174470779991aef4",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_SLEEP_MODE",
+      "gcode_sha256": "7f647ade1f639b123355ddd697d1716eb21d2e45430be9c9425758f46d64cdb8",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_OLED_TIMERS",
+      "gcode_sha256": "7efe4d7f8d6c391b543244b57ee927b9cfe80b69b5e85f557295eef76a9eb451",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL",
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_PLATFORM_UP",
+      "gcode_sha256": "744064702b722bb9a453bf1fdef4c419326c0295bd2a30627653d6e7406af3af",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "INVENTURE_PLATFORM_DOWN",
+      "gcode_sha256": "6f035d0bd5ce03bec3ce4c418e6591ab87c4524d3b46c2509fcbfe71da509a24",
+      "static_commands": [
+        "INVENTURE_ZORTRAX"
+      ]
+    },
+    {
+      "name": "OLED_TIMERS",
+      "gcode_sha256": "2ab7ff64d5fdcbf073c1778507d9481b3047c1038490857a84a94be1cff97105",
+      "static_commands": [
+        "INVENTURE_OLED_TIMERS"
+      ]
+    },
+    {
+      "name": "CANCEL_PRINT",
+      "gcode_sha256": "59987e4f4f00719b55c949f2a86bdde9ff7f9d012cc4cc8be09ad063684c046b",
+      "static_commands": [
+        "TURN_OFF_HEATERS"
+      ]
+    },
+    {
+      "name": "END_PRINT",
+      "gcode_sha256": "04e69de7d69fc4c2c8b91af38e3f6c8c36ba53122b8b0f985b196d3e61563f61",
+      "static_commands": [
+        "INVENTURE_NATIVE_END"
+      ]
+    },
+    {
+      "name": "M141",
+      "gcode_sha256": "c57ceb5da278f36e52bc27529dad99e2cf5c68b68491d5aad8166885a4905280",
+      "static_commands": [
+        "SET_HEATER_TEMPERATURE"
+      ]
+    },
+    {
+      "name": "M191",
+      "gcode_sha256": "8d3ba604619de7c92ebf1f6045cb6d4fe8df8610d0a7ef1ed7317751ca46ee4d",
+      "static_commands": [
+        "SET_HEATER_TEMPERATURE"
+      ]
+    },
+    {
+      "name": "INVENTURE_DIAG_VERSIONS",
+      "gcode_sha256": "d010072521b9fa3c9663f9609cf57f485d8080419de9270b74371ea9eb841862",
+      "static_commands": [
+        "INVENTURE_VERSION"
+      ]
+    },
+    {
+      "name": "INVENTURE_DIAG_STATUS",
+      "gcode_sha256": "8c1be3e336d23278bc0a46d9bdc6ab942474611c248ffef371f7d3b93f6bb390",
+      "static_commands": [
+        "INVENTURE_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_DIAG_INPUTS",
+      "gcode_sha256": "5bc80c315f8f4f98385c8525836ec10250e44f57fbccb6aed254828abcbe0264",
+      "static_commands": [
+        "INVENTURE_INPUTS"
+      ]
+    },
+    {
+      "name": "INVENTURE_DIAG_RFID_UART",
+      "gcode_sha256": "50b8687daa704414ec43301ebe68741c9770d2ced4733b27e993cc00b20048f4",
+      "static_commands": [
+        "INVENTURE_RFID_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_DISPLAY_STATUS",
+      "gcode_sha256": "26540dcf4043f5997469d1d85f95e52fc77852cf943aa2d481ea0db5399ddeb1",
+      "static_commands": [
+        "INVENTURE_OLED_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_DISPLAY_MENU",
+      "gcode_sha256": "fa74477ebe7ac87db7090f4b5ae7596b2d65dfed30f18242e5cd2b4e83096c55",
+      "static_commands": [
+        "INVENTURE_MENU_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_DISPLAY_TEXT_TEST",
+      "gcode_sha256": "05e2c662c734d8251dc8fa91a5de1aa29c656871d68bc2466472148bbe61b08a",
+      "static_commands": [
+        "INVENTURE_OLED_TEXT"
+      ]
+    },
+    {
+      "name": "INVENTURE_DISPLAY_REINIT",
+      "gcode_sha256": "8d6a0bb9257a7ceb097dac62dabe0ada033dcfeb67ef6b36344bcdb7ee595305",
+      "static_commands": [
+        "INVENTURE_OLED_REINIT"
+      ]
+    },
+    {
+      "name": "INVENTURE_CAL_LEVELING",
+      "gcode_sha256": "95ffde6ca5df27264a5f7ff99dbd49fd3483af64a765e7b5d916de455e892a8d",
+      "static_commands": [
+        "INVENTURE_LEVEL_PROGRESS",
+        "INVENTURE_LEVEL_STATUS"
+      ]
+    },
+    {
+      "name": "INVENTURE_KLIPPER_MENU",
+      "gcode_sha256": "a1a1a4f597a0fdc1d688b1ffc57f454ee765a9555493dd3beee084d7d1102ba3",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_MAINTENANCE",
+      "gcode_sha256": "130a981f35c0cf2186d0d28782e0f97033edf6b16bc7d3cebc812df91582ddd6",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "INVENTURE_MATERIAL_MENU",
+      "gcode_sha256": "6ffaef9d71b098e4bd5fe908eaa3b12581366508036a9a2805b2a725a0528d67",
+      "static_commands": [
+        "INVENTURE_DISPLAY_CONTROL"
+      ]
+    },
+    {
+      "name": "PID_HOTEND",
+      "gcode_sha256": "8664d18c368278ea55f9c48487e8bb46c78e3089a4e1f1e807a066505f467178",
+      "static_commands": [
+        "INVENTURE_NATIVE_PID"
+      ]
+    },
+    {
+      "name": "PID_STATUS",
+      "gcode_sha256": "eb7effc48c30e539501e3dee6c993588aadd08ac29c936c18ad6afc9cb4cddd7",
+      "static_commands": []
+    },
+    {
+      "name": "PID_SAVE",
+      "gcode_sha256": "dcafe15c9041e644ece906da91ff3acf7e0f56952f7b9b0e9b57a0f992c463fe",
+      "static_commands": [
+        "INVENTURE_NATIVE_IDLE",
+        "SAVE_CONFIG"
+      ]
+    },
+    {
+      "name": "PID_CHAMBER",
+      "gcode_sha256": "c49265c7034672f3235ba863e010f18142fe38a1f8ad13aa8963f107cb3c501a",
+      "static_commands": [
+        "INVENTURE_CHAMBER_PID"
+      ]
+    }
+  ],
+  "moonraker_files_preserved": [
+    "moonraker.conf"
+  ],
+  "configuration_cleanup": {
+    "roles": [
+      "inventure_base.cfg",
+      "inventure_temperature_sensors.cfg",
+      "inventure_heater_control.cfg",
+      "inventure_heaters.cfg",
+      "inventure_heater_monitors.cfg",
+      "inventure_cooling.cfg",
+      "inventure_chamber.cfg",
+      "inventure_services.cfg",
+      "inventure_operations.cfg",
+      "klipper_calibration.cfg",
+      "inventure_display.cfg"
+    ],
+    "effective_settings_preserved": true,
+    "save_config_preserved": true
+  },
+  "calibration_files": {
+    "inventure_platform_level.json": "f4b7efceac9c821018848e71f7c54f38368fddc8d65ae17450d3ed0948b4f256",
+    "inventure_nozzle_pad.json": "23e7455115071b3f8500d94f658a8c87e40c25aee8abd6dff0b4ac6848b1d157"
+  },
+  "copied_state_identical": true,
+  "retained_motion": {
+    "printer": {
+      "kinematics": "corexy",
+      "max_velocity": "30",
+      "max_accel": "200",
+      "max_z_velocity": "8.3",
+      "max_z_accel": "20",
+      "square_corner_velocity": "2"
+    },
+    "stepper_x": {
+      "step_pin": "PA7",
+      "dir_pin": "PB2",
+      "enable_pin": "PE10",
+      "microsteps": "16",
+      "rotation_distance": "5",
+      "endstop_pin": "^PB11",
+      "position_endstop": "0",
+      "position_min": "0",
+      "position_max": "138",
+      "homing_speed": "5",
+      "homing_retract_dist": "1",
+      "second_homing_speed": "2",
+      "step_pulse_duration": "0.000004"
+    },
+    "stepper_y": {
+      "step_pin": "PA6",
+      "dir_pin": "PB1",
+      "enable_pin": "PE10",
+      "microsteps": "16",
+      "rotation_distance": "5",
+      "endstop_pin": "^PC15",
+      "position_endstop": "0",
+      "position_min": "0",
+      "position_max": "138",
+      "homing_speed": "5",
+      "homing_retract_dist": "1",
+      "second_homing_speed": "2",
+      "step_pulse_duration": "0.000004"
+    },
+    "stepper_z": {
+      "step_pin": "PB8",
+      "dir_pin": "!PE7",
+      "enable_pin": "PE10",
+      "microsteps": "16",
+      "rotation_distance": "3.99002493766",
+      "endstop_pin": "^PE12",
+      "position_endstop": "139.35",
+      "position_min": "-0.70",
+      "position_max": "139.35",
+      "homing_positive_dir": "True",
+      "homing_speed": "8.2849",
+      "homing_retract_dist": "0",
+      "step_pulse_duration": "0.000004"
+    },
+    "inventure_native_z": {
+      "pad_x": "82.8",
+      "pad_y": "68.0",
+      "bottom_position": "139.35",
+      "coarse_speed": "8",
+      "fine_speed": "0.3117206983",
+      "nozzle_temperature": "200",
+      "repeat_count": "101"
+    }
+  },
+  "home_cycles": 36,
+  "home_refusals": [
+    {
+      "condition": "tray_absent",
+      "rejection": "Tray absent",
+      "status": "PASS"
+    },
+    {
+      "condition": "printing",
+      "rejection": "Inventure homing requires an idle printer",
+      "status": "PASS"
+    },
+    {
+      "condition": "paused",
+      "rejection": "Inventure homing requires an idle printer",
+      "status": "PASS"
+    },
+    {
+      "condition": "latched",
+      "rejection": "MCU blocked native control: fault=0 latched=1 reject=None",
+      "status": "PASS"
+    },
+    {
+      "condition": "disconnected",
+      "rejection": "MCU is disconnected",
+      "status": "PASS"
+    },
+    {
+      "condition": "cancel_and_replay",
+      "rejection": "No current menu view",
+      "status": "PASS"
+    },
+    {
+      "condition": "bad_handoff",
+      "rejection": "T0 selection and cleaning did not complete: MCU did not preserve the XY reference during native handoff",
+      "status": "PASS"
+    },
+    {
+      "condition": "contact_timeout",
+      "rejection": "Error during homing PE12 clearance: Communication timeout during homing",
+      "status": "PASS"
+    },
+    {
+      "condition": "shutdown",
+      "rejection": "No current menu view",
+      "status": "PASS"
+    }
+  ],
+  "xy_switch_refusals": [
+    {
+      "axis": "X",
+      "origin": "fluidd",
+      "reason": "Unexpected x_endstop before Z reference move (expected 1)",
+      "reference_invalidated": true,
+      "selector_not_started": true,
+      "status": "PASS"
+    },
+    {
+      "axis": "Y",
+      "origin": "fluidd",
+      "reason": "Unexpected y_endstop before Z reference move (expected 1)",
+      "reference_invalidated": true,
+      "selector_not_started": true,
+      "status": "PASS"
+    },
+    {
+      "axis": "X",
+      "origin": "oled",
+      "reason": "Unexpected x_endstop before Z reference move (expected 1)",
+      "reference_invalidated": true,
+      "selector_not_started": true,
+      "status": "PASS"
+    },
+    {
+      "axis": "Y",
+      "origin": "oled",
+      "reason": "Unexpected y_endstop before Z reference move (expected 1)",
+      "reference_invalidated": true,
+      "selector_not_started": true,
+      "status": "PASS"
+    }
+  ],
+  "oled_fluidd_parity": {
+    "hardware_tested": false,
+    "interface_language": "en",
+    "launcher": [
+      "Klipper",
+      "Zortrax Inventure"
+    ],
+    "original_records": 66,
+    "pages": [
+      {
+        "labels": [
+          "Back",
+          "Models",
+          "Maintenance",
+          "Material",
+          "Settings",
+          "Information"
+        ],
+        "macro": "INVENTURE_MAIN_MENU",
+        "page": "root"
+      },
+      {
+        "labels": [
+          "Back",
+          "Printer status",
+          "Print / Job",
+          "Temperatures",
+          "Control",
+          "Fans",
+          "Settings",
+          "Information",
+          "Diagnostics"
+        ],
+        "macro": "INVENTURE_KLIPPER_MENU",
+        "page": "klipper_main"
+      },
+      {
+        "labels": [
+          "Back",
+          "Platform leveling",
+          "Nozzle alignment calibration",
+          "Hotend maintenance",
+          "Home X",
+          "Home Y",
+          "Home Z",
+          "Home XY",
+          "Home XYZ",
+          "Heat the extruder",
+          "Move the platform",
+          "Fan test",
+          "Current procedure"
+        ],
+        "macro": "INVENTURE_MAINTENANCE",
+        "page": "maintenance"
+      },
+      {
+        "labels": [
+          "Back",
+          "Model",
+          "Support",
+          "Filament recovery"
+        ],
+        "macro": "INVENTURE_MATERIAL_MENU",
+        "page": "material"
+      },
+      {
+        "labels": [
+          "Back",
+          "Language",
+          "Models sorting",
+          "Door lock",
+          "File checking",
+          "Ignore material endstops",
+          "Light",
+          "Sleep mode",
+          "OLED brightness",
+          "OLED dim time",
+          "OLED sleep time",
+          "OLED timers",
+          "Sleep lighting",
+          "OLED icons"
+        ],
+        "macro": "INVENTURE_SETTINGS",
+        "page": "settings"
+      },
+      {
+        "labels": [
+          "Back",
+          "Firmware version",
+          "Printer information",
+          "Help"
+        ],
+        "macro": "INVENTURE_INFORMATION",
+        "page": "information"
+      },
+      {
+        "labels": [
+          "Back",
+          "English",
+          "Polski"
+        ],
+        "macro": "INVENTURE_LANGUAGE",
+        "page": "language"
+      },
+      {
+        "labels": [
+          "Back",
+          "Date/time \u2193",
+          "Date/time \u2191",
+          "File name",
+          "File size"
+        ],
+        "macro": "INVENTURE_MODELS_SORT",
+        "page": "sorting"
+      }
+    ],
+    "physical_interfaces": "simulated",
+    "procedures": [
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "SELECT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "SELECT",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "HEAT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "HEAT",
+          "parameters": null,
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "CLEAN",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "CLEAN",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "PURGE",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "PURGE",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "LOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 2.0,
+            "UNLOAD": 3.0
+          },
+          "operation": "AUTO",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 2.0,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 33.34298118668596,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 215.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 3.0,
+            "unload_speed2": 3.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 215.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "UNLOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 2.0,
+            "UNLOAD": 3.0
+          },
+          "operation": "UNLOAD",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 220.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 3.0,
+            "unload_speed2": 3.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 220.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "SELECT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "SELECT",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "HEAT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "HEAT",
+          "parameters": null,
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "CLEAN",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "CLEAN",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "PURGE",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "PURGE",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "LOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 4.0,
+            "UNLOAD": 5.0
+          },
+          "operation": "AUTO",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 4.0,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 225.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 5.0,
+            "unload_speed2": 5.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 225.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": false,
+        "cancel_verified": true,
+        "operation": "UNLOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 4.0,
+            "UNLOAD": 5.0
+          },
+          "operation": "UNLOAD",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 5.0,
+            "unload_speed2": 5.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "SELECT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "SELECT",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "HEAT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "HEAT",
+          "parameters": null,
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "CLEAN",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "CLEAN",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "PURGE",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "PURGE",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "LOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 2.0,
+            "UNLOAD": 3.0
+          },
+          "operation": "AUTO",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 2.0,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 33.34298118668596,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 215.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 3.0,
+            "unload_speed2": 3.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 215.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "UNLOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 2.0,
+            "UNLOAD": 3.0
+          },
+          "operation": "UNLOAD",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 139.5,
+            "center_x": 82.8,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 150.3,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 154.5,
+            "switch_y": 154.5,
+            "target": 220.0,
+            "target_requires_override": false,
+            "tool": 0,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 3.0,
+            "unload_speed2": 3.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 220.0,
+          "tool": 0
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 0
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "SELECT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "SELECT",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "HEAT",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "HEAT",
+          "parameters": null,
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "CLEAN",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "CLEAN",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "PURGE",
+        "signature": {
+          "interactive": false,
+          "manual_speeds": null,
+          "operation": "PURGE",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 1.0,
+            "unload_speed2": 1.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "LOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 4.0,
+            "UNLOAD": 5.0
+          },
+          "operation": "AUTO",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 4.0,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 225.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 5.0,
+            "unload_speed2": 5.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 225.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      },
+      {
+        "after_home": true,
+        "cancel_verified": true,
+        "operation": "UNLOAD",
+        "signature": {
+          "interactive": true,
+          "manual_speeds": {
+            "LOAD": 4.0,
+            "UNLOAD": 5.0
+          },
+          "operation": "UNLOAD",
+          "parameters": {
+            "a_timeout": 5.0,
+            "approach_x": 15.0,
+            "center_x": 72.0,
+            "center_y": 152.5,
+            "clean_after": 1,
+            "duration": 900.0,
+            "e_speed": 1.6,
+            "fallback": 1,
+            "feeder": 0,
+            "feeder_k": 1.75,
+            "feeder_ms": 1000,
+            "final_mm": 100.0,
+            "final_starts": 3,
+            "home_speed": 10.0,
+            "home_xy_max": 160.0,
+            "home_z_max": 250.0,
+            "l1_budget": 500.0,
+            "l1_portion": 20.0,
+            "l1_quiet": 3.0,
+            "l1_starts": 6,
+            "long_mm": 250.0,
+            "manual_dir": "LOAD",
+            "manual_mm": 20.0,
+            "material": "UNKNOWN",
+            "max_power": 40.0,
+            "max_x": 155.0,
+            "max_y": 155.0,
+            "min_x": -5.0,
+            "min_y": 0.0,
+            "monitor": 0,
+            "oem_material_target_c": 230,
+            "park_span": 100.0,
+            "procedure_timeout": 1800.0,
+            "pulse_count": 6,
+            "pulse_quiet": 2.0,
+            "purge_e_steps": 2073,
+            "purge_mm": 20.0,
+            "purge_span": 36.0,
+            "purge_speed": 50.0,
+            "service_x": 4.5,
+            "service_y": 2.5,
+            "speed_profile": "OEM",
+            "switch_speed": 4.166666666666667,
+            "switch_x": 0.0,
+            "switch_y": 154.5,
+            "target": 230.0,
+            "target_requires_override": false,
+            "tool": 1,
+            "travel_speed": 133.33333333333334,
+            "unload_a_timeout": 6.0,
+            "unload_l1": 30.0,
+            "unload_l2": 70.0,
+            "unload_quiet": 4.0,
+            "unload_speed1": 5.0,
+            "unload_speed2": 5.0,
+            "wipe_exit": 23.0,
+            "wipe_span": 100.0,
+            "wipe_y": 154.5,
+            "xy_input_frame": "OEM",
+            "z_speed": 2.0
+          },
+          "target": 230.0,
+          "tool": 1
+        },
+        "simulated_mcu_reached": true,
+        "status": "PASS",
+        "tool": 1
+      }
+    ],
+    "refusal_cases": [
+      {
+        "condition": "printing",
+        "origin": "fluidd",
+        "reason": "Service transport requires an idle printer; finish the native print first",
+        "status": "PASS"
+      },
+      {
+        "condition": "printing",
+        "origin": "oled",
+        "reason": "Service transport requires an idle printer; finish the native print first",
+        "status": "PASS"
+      }
+    ],
+    "stale_button_rejected": true,
+    "status": "PASS_INSTALLED_OLED_FLUIDD_MENU_PARITY"
+  },
+  "service_repair": {
+    "only_missing_inventure_registration_errors": true,
+    "deferred_mcu_validation_inside_rollback": true,
+    "atomic_service_override": true,
+    "live_runtime_module_paths_verified": true
+  },
+  "physical_incident": {
+    "home_xyz_collision_reported": true,
+    "home_collision_root_cause": "Not established from the surviving log",
+    "restart_failure": "Service selected klipper-inventure-candidate with missing inventure_r5 registration",
+    "supplied_systemd_override": "50-inventure-release.conf has no visible command; legacy inventure.conf selects candidate"
+  },
+  "mcu_updated": false,
+  "serial_opened": false,
+  "hardware_tested": false,
+  "local_verification": {
+    "tests": 986,
+    "status": "PASS",
+    "config_startup": "PASS_ACTUAL_AUTHENTICATED_RUNTIME",
+    "four_zone_pid_save_reload": "PASS",
+    "service_recovery_and_atomic_override": "PASS",
+    "mcu_source_changed": false
+  }
+}

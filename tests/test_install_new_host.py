@@ -218,8 +218,11 @@ class TransactionTests(unittest.TestCase):
         self.state, self.message = 'ready', 'Printer is ready'
         self.mcu = mcu_identity()
         self.board = {'host_revision': installer.bootstrap.HOST_REVISION, 'armed': 0, 'fault': 0,
-                      'connected': True, 'status_age': 0.1}
-        self.native_z, self.oled = {'running': False}, {
+                      'connected': True, 'status_age': 0.1,
+                      'host_module':str(self.host/'klippy/extras/inventure_mcu.py')}
+        self.native_z, self.oled = {'running': False,
+            'host_module':str(self.host/'klippy/extras/inventure_native_z.py'),
+            'homing_safety_release':installer.LEVELING_UI_RELEASE}, {
             'ui_transport': {'active_work': False},
             'procedure_ui_release': installer.LEVELING_UI_RELEASE,
             'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
@@ -470,6 +473,23 @@ class TransactionTests(unittest.TestCase):
         self.oled['operator_menu_root']='root'
         with self.assertRaisesRegex(RuntimeError,'requested Klipper / Zortrax Inventure menu'):
             self.activate(transaction)
+        self.assert_restored()
+
+    def test_ready_with_a_home_module_from_candidate_runtime_is_rolled_back(self):
+        self.native_z['host_module']='/home/klipper/klipper-inventure-candidate/klippy/extras/inventure_native_z.py'
+        with self.assertRaisesRegex(RuntimeError,'different Inventure MCU or Home module'):
+            self.activate(self.transaction())
+        self.assert_restored()
+
+    def test_missing_driver_recovery_validates_ready_mcu_inside_transaction(self):
+        result,_=self.activate(self.transaction(),recover_startup=True)
+        self.assertIn('recovered_mcu',result)
+        self.assertEqual(result['recovered_mcu']['mcu_release'],installer.MCU_RELEASE)
+
+    def test_startup_recovery_rejects_a_stale_mcu_status_and_rolls_back(self):
+        self.board['status_age']=2.0
+        with self.assertRaisesRegex(RuntimeError,'fresh Inventure MCU status'):
+            self.activate(self.transaction(),recover_startup=True)
         self.assert_restored()
 
     def test_dashboard_http_failure_restores_settings_and_existing_service_override(self):

@@ -398,6 +398,35 @@ def inspect_home_to_leveling(printer, klipper):
     return rows
 
 
+def inspect_xy_switch_refusals(printer, klipper):
+    """A reported G28 completion cannot authorize T0 without physical limits."""
+    rows=[]
+    for origin in ('fluidd','oled'):
+        for axis in ('X','Y'):
+            rig=InstalledRig(printer,klipper)
+            inputs=rig.board._fresh_inputs
+            def failed_switch(axis=axis):
+                reply=inputs();reply['raw'][axis.lower()+'_endstop']=0
+                return reply
+            rig.board._fresh_inputs=failed_switch
+            rejection=None
+            try:
+                if origin=='fluidd':rig.run('INVENTURE_HOME_ALL ACK=PAD_AND_CLEARANCE_CHECKED')
+                else:
+                    rig.menu.open('home_xyz');rig.confirm('oled')
+            except Exception as exc:rejection=str(exc)
+            require(rejection and axis.lower()+'_endstop' in rejection,
+                    'A missing physical XY limit was accepted: '+str(rejection))
+            require(rig.board.load_test_context is None and not rig.actions,
+                    'T0 preparation started without physical XY verification')
+            require(axis.lower() not in rig.model.axes, 'Failed XY reference remained usable')
+            require(not any(h.get_temp(0)[1] for h in rig.model.heaters.values()),
+                    'A failed XY reference started heating')
+            rows.append(dict(origin=origin,axis=axis,status='PASS',reason=rejection,
+                             selector_not_started=True,reference_invalidated=True))
+    return rows
+
+
 def inspect_cycles(klipper, config, repetitions):
     sys.path.insert(0, str(klipper / 'klippy'))
     import klippy
@@ -449,10 +478,12 @@ def inspect_cycles(klipper, config, repetitions):
             home_to_leveling = inspect_home_to_leveling(printer, klipper)
             from check_inventure_operator_menu import inspect_operator_menu
             operator_menu = inspect_operator_menu(printer, klipper)
+            xy_switch_refusals=inspect_xy_switch_refusals(printer,klipper)
         return dict(status='PASS_INSTALLED_R22_FULL_CYCLES', sessions=sessions,
                     cycle_count=sum(len(s['cycles']) for s in sessions),
                     refusals=refusals, home_to_leveling=home_to_leveling,
                     operator_menu=operator_menu,
+                    xy_switch_refusals=xy_switch_refusals,
                     physical_interfaces='simulated', serial_opened=False,
                     native_mesh_probe_configured=printer.lookup_object('probe', None) is not None,
                     firmware_flashed=False, hardware_tested=False,
@@ -473,10 +504,8 @@ def check(repetitions):
         root = Path(directory)
         host = prepare_host(root / 'host', repo=ROOT)
         source = root / 'original/printer.cfg'
-        source.parent.mkdir()
-        source.write_text('[mcu]\nserial: /dev/ttyS5\nbaud: 750000\n'
-                          '[printer]\nkinematics: none\nmax_velocity: 30\nmax_accel: 200\n'
-                          '[inventure_mcu]\nallow_actuators: False\n')
+        import shutil
+        shutil.copytree(ROOT/'tests/fixtures/field_config_20261125',source.parent)
         (root / 'gcodes').mkdir()
         config = stage_config(host, root / 'config', source, serial='/dev/ttyS5',
                               baud=750000, gcodes_path=root / 'gcodes',

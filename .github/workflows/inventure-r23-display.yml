@@ -18,6 +18,14 @@ on:
       - 'inventure_leveling_ui_restore.py'
       - 'inventure_leveling_stages_restore.py'
       - 'inventure_operator_menu_restore.py'
+      - 'inventure_configuration_audit_restore.py'
+      - 'inventure_config_cleanup.py'
+      - 'restored/configuration_audit_r23/**'
+      - 'tests/test_inventure_config_audit.py'
+      - 'tests/fixtures/field_config_20261125/**'
+      - 'ci/check_inventure_config_audit.py'
+      - 'ci/check_native_nozzle_startup.py'
+      - 'docs/INVENTURE_R23_CONFIG_AUDIT.md'
       - 'inventure_bootstrap_config.py'
       - 'restored/operator_menu_r23/**'
       - 'config/INVENTURE_DASHBOARD.cfg'
@@ -67,6 +75,8 @@ jobs:
         run: python ci/render_inventure_leveling_preview.py "$RUNNER_TEMP/r23-leveling-preview"
       - name: Render every installed Zortrax Inventure operator menu page
         run: python ci/render_inventure_operator_menu.py "$RUNNER_TEMP/r23-menu-preview"
+      - name: Validate the supplied field layout and retain the procedure audit
+        run: python ci/check_inventure_config_audit.py --destination "$RUNNER_TEMP/r23-config-audit" --cycles "$RUNNER_TEMP/r23-full-cycles.json"
       - name: Verify actual R23 SPI pixels and M300 asset identity
         env:
           INVENTURE_DISPLAY_CAPTURE_DIR: ${{ runner.temp }}/r23-captures
@@ -150,6 +160,7 @@ jobs:
             ${{ runner.temp }}/r23-full-cycles.json
             ${{ runner.temp }}/r23-leveling-preview/
             ${{ runner.temp }}/r23-menu-preview/
+            ${{ runner.temp }}/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json
           if-no-files-found: error
           retention-days: 14
   publish-candidate:
@@ -170,7 +181,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CANDIDATE_TAG: inventure-r23-oem-menu-rc5
+          CANDIDATE_TAG: inventure-r23-config-audit-rc6
           ARTIFACT_DIR: ${{ runner.temp }}/r23-release
         shell: bash
         run: |
@@ -191,7 +202,8 @@ jobs:
             "$ARTIFACT_DIR/r23-menu-preview/OLED_ZORTRAX_INVENTURE_MENU.png" \
             "$ARTIFACT_DIR/r23-menu-preview/INVENTURE_R23_OPERATOR_MENU_PREVIEW.json" \
             "$ARTIFACT_DIR/r23-full-cycles.json" \
+            "$ARTIFACT_DIR/r23-config-audit/INVENTURE_R23_5_CONFIG_AUDIT.json" \
             --repo "$GH_REPO" --target "$GITHUB_SHA" \
-            --title 'Inventure R23.4 host · Klipper and Zortrax Inventure OEM menu' \
-            --notes-file docs/INVENTURE_R23_OPERATOR_MENU.md \
+            --title 'Inventure R23.5 host · startup repair and configuration audit' \
+            --notes-file docs/INVENTURE_R23_CONFIG_AUDIT.md \
             --prerelease --latest=false

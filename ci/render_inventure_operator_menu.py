@@ -69,7 +69,7 @@ def render(destination):
                      launcher=[n.label for n in catalog.MENU['launcher'][2]],
                      zortrax_title=catalog.MENU['root'][0],
                      original_record_count=len(original), original_bindings=catalog.OEM_RECORD_BINDINGS,
-                     restoration=metadata['runtime_restorations']['operator_menu_r23'],
+                     restoration=metadata['runtime_restorations']['configuration_audit_r23'],
                      pages=pages, frames=frames, gallery=gallery,
                      physical_interfaces='not_accessed', hardware_tested=False)
         (destination/'INVENTURE_R23_OPERATOR_MENU_PREVIEW.json').write_text(json.dumps(proof, indent=2)+'\n')

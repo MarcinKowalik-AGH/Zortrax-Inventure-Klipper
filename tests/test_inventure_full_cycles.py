@@ -37,6 +37,9 @@ class InstalledCycleTests(unittest.TestCase):
                                 for r in menu['procedures']))
             self.assertEqual(len(menu['refusal_cases']), 2)
             self.assertTrue(menu['stale_button_rejected'])
+            self.assertEqual(len(proof['xy_switch_refusals']),4)
+            self.assertTrue(all(r['reference_invalidated'] and r['selector_not_started']
+                                for r in proof['xy_switch_refusals']))
             self.assertFalse(proof['serial_opened'])
             self.assertFalse(proof['firmware_flashed'])
             self.assertFalse(proof['hardware_tested'])

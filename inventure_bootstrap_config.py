@@ -312,6 +312,8 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
         changes = updater.nozzle_limit_updates(host, main, True, True)
         updater.add_fluidd_controls(host, main, changes, dashboard=True)
         layout.organize_klipper(module, main, changes)
+        from inventure_config_cleanup import normalize_layout
+        cleanup = normalize_layout(module, main, changes)
         for path, (before, after) in changes.items():
             if not path.is_relative_to(temporary):
                 raise ValueError('Configuration planner escaped the staging directory')
@@ -342,6 +344,7 @@ def stage_config(host_path, destination_directory, source_config, *, serial, bau
             source_snapshot=snapshot,
             macros=sorted(s.split(None, 1)[1] for s in effective.sections()
                           if s.lower().startswith('gcode_macro ')),
+            configuration_cleanup=cleanup,
             serial=serial, baud=baud, gcodes_path=str(gcodes),
         )
         if destination.exists() or destination.is_symlink():

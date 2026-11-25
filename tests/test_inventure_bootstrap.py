@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from hashlib import sha256
 import importlib.util
+import ast
 import io
 import json
 import os
@@ -18,6 +19,7 @@ from zipfile import ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_TARGETS = {Path('klippy/extras/inventure_menu_service.py'),
+              Path('klippy/extras/inventure_native_z.py'),
               Path('klippy/extras/inventure_oled_graphics.py'),
               Path('klippy/extras/inventure_oled.py'),
               Path('klippy/extras/inventure_oem_menu.py'),Path('klippy/extras/inventure_menu_core.py')}
@@ -152,6 +154,7 @@ class RealHostBootstrapTests(unittest.TestCase):
             shutil.copyfile(ROOT/'inventure_leveling_ui_restore.py', source/'inventure_leveling_ui_restore.py')
             shutil.copyfile(ROOT/'inventure_leveling_stages_restore.py', source/'inventure_leveling_stages_restore.py')
             shutil.copyfile(ROOT/'inventure_operator_menu_restore.py', source/'inventure_operator_menu_restore.py')
+            shutil.copyfile(ROOT/'inventure_configuration_audit_restore.py', source/'inventure_configuration_audit_restore.py')
             # Reuse only the read-only object database; no shared worktree/index operation.
             gitdir = subprocess.check_output(
                 ['git', '-C', str(ROOT), 'rev-parse', '--absolute-git-dir'], text=True).strip()
@@ -195,9 +198,13 @@ class RealHostBootstrapTests(unittest.TestCase):
         policy=self.metadata['runtime_restorations']['safety_policy_r22']
         self.assertEqual(policy['release'],'RC8-SERVICE-NATIVE-POLICY-R22')
         for target,record in scheduler['files'].items():
-            if target!=policy['target']:
+            if target!=policy['target'] and target not in self.metadata['runtime_restorations']['configuration_audit_r23']['files']:
                 self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),
                                  record['sha256'])
+        audit=self.metadata['runtime_restorations']['configuration_audit_r23']
+        self.assertEqual(audit['release'],'RC8-CONFIG-AUDIT-R23.5')
+        for target,record in audit['files'].items():
+            self.assertEqual(sha256((self.stage/target).read_bytes()).hexdigest(),record['sha256'])
         entry=self.metadata['runtime_restorations']['operator_service_r23']
         self.assertEqual(entry['prior_blob'],policy['installed_blob'])
         self.assertEqual(sha256((self.stage/entry['target']).read_bytes()).hexdigest(),
@@ -396,7 +403,15 @@ class RealHostBootstrapTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(),old)
                 path.write_bytes(new)
             self.assertEqual((stage/'klippy/extras/inventure_oled_render.py').read_bytes(),oled)
-            self.assertEqual((stage/'klippy/extras/inventure_native_z.py').read_bytes(),z)
+            current=(stage/'klippy/extras/inventure_native_z.py').read_bytes()
+            old_methods={n.name:ast.dump(n,include_attributes=False) for c in ast.parse(z).body
+                         if isinstance(c,ast.ClassDef) and c.name=='InventureNativeZ'
+                         for n in c.body if isinstance(n,ast.FunctionDef)}
+            new_methods={n.name:ast.dump(n,include_attributes=False) for c in ast.parse(current).body
+                         if isinstance(c,ast.ClassDef) and c.name=='InventureNativeZ'
+                         for n in c.body if isinstance(n,ast.FunctionDef)}
+            for name in ('_home_axes','_prepare_t0','cmd_home','_move_to','_home_bottom'):
+                self.assertEqual(old_methods[name],new_methods[name])
             self.assertEqual((stage/'klippy/extras/inventure_z_home.py').read_bytes(),factory)
             self.assertEqual(bootstrap.verify_host(stage,repo=ROOT)['status'],'VERIFIED_HOST')
             for path,(old,new) in plan['files'].items():

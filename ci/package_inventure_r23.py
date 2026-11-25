@@ -70,7 +70,8 @@ def package(build, previews, output, leveling_previews=None, menu_previews=None,
         'INVENTUR.IVB', 'klipper.bin', 'klipper.dict', 'BUILD_REPORT.json',
         'THERMAL_TEST_VERIFY.json', 'build.config', 'source_manifest.json')}
     files['README_PL.md'] = (ROOT/'docs/INVENTURE_R23_M300_DISPLAY_PARITY.md').read_bytes()
-    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_OPERATOR_MENU.md').read_bytes()
+    files['HOST_UPDATE.md'] = (ROOT/'docs/INVENTURE_R23_CONFIG_AUDIT.md').read_bytes()
+    files['HOST_OPERATOR_MENU_RC5.md'] = (ROOT/'docs/INVENTURE_R23_OPERATOR_MENU.md').read_bytes()
     files['HOST_LEVELING_RC4.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_STAGES.md').read_bytes()
     files['HOST_LEVELING_RC3.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_OLED.md').read_bytes()
     files['HOST_SERVICE_ENTRY.md'] = (ROOT/'docs/INVENTURE_R23_LEVELING_SERVICE_ENTRY.md').read_bytes()
@@ -139,7 +140,7 @@ def package(build, previews, output, leveling_previews=None, menu_previews=None,
         'application_bytes': metadata['payload_bytes'],
         'application_slot_free_bytes': LIMIT-len(binary),
         'preview_source': 'Compiled MCU C code / simulated SPI / SSD1322 GDDRAM',
-        'operator_ui_release': 'RC8-OPERATOR-MENU-R23.4',
+        'operator_ui_release': 'RC8-CONFIG-AUDIT-R23.5',
         'operator_menu_hardware_tested': False,
         'prior_leveling_ui_operator_accepted': True,
         'mcu_update_required_from_r23': False,
