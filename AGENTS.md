@@ -13,3 +13,25 @@ The physical OLED and Fluidd must expose the same actions and settings for share
 Exercise the literal commands emitted by Fluidd buttons and the corresponding OLED selections through the installed Klipper macros. Cover normal use after restart and after the preceding procedure, including confirmation, cancellation and refusal under a real interlock condition. Record which stages reached the hardware interface in simulation and which were observed on the printer.
 
 [Reference M300 project](https://github.com/MarcinKowalik-AGH/Zortrax-m300-Klipper)
+
+## Preserve procedures accepted on the physical printer
+
+An instruction to integrate an accepted procedure into the project, OLED menu,
+Fluidd macros or a macro group authorizes that integration. Preserve the
+procedure's existing sequence, coordinates, speeds, distances, temperatures,
+timing, ownership transfers, reference calculations and acceptance conditions.
+Use the same existing public entry point for OLED and Fluidd. Do not replace or
+reconstruct its motion logic while performing UI or configuration integration.
+
+An OEM or M300 presentation reference does not authorize rewriting an already
+accepted Inventure procedure. Treat a suspected movement defect as a separate
+investigation: identify the physically accepted version and show the exact
+behavioral difference before changing it. Simulation results do not replace
+physical acceptance or authorize speculative motion changes.
+
+Keep accepted implementation references and execution evidence separate from
+new candidates. Do not label a source file physically accepted solely because
+it resembles a successful log; recover its exact identity from release/runtime
+records or backups. Record any unresolved identity rather than inventing it.
+For the current Home incident, start with
+[the three completed runs and regression scope](docs/INVENTURE_ACCEPTED_HOME_2026-11-25.md).
