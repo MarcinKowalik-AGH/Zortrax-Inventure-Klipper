@@ -15,7 +15,8 @@ import inventure_bootstrap as bootstrap
 ROOT=Path(__file__).resolve().parents[1]
 UI_FILES={'klippy/extras/'+name for name in
           ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py',
-           'inventure_menu_core.py','inventure_oled.py','inventure_home_ui.py','inventure_home_sprites.json')}
+           'inventure_menu_core.py','inventure_oled.py','inventure_home_ui.py','inventure_home_sprites.json',
+           'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')}
 
 class OperatorHomeR24Tests(unittest.TestCase):
     def test_installed_fluidd_and_oled_independent_axes_then_z(self):
@@ -28,6 +29,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(report['status'],'PASS_INSTALLED_R24_HOME_CYCLES')
             self.assertEqual(report['case_count'],800)
             self.assertEqual(report['refusal_count'],184)
+            self.assertEqual(report['shared_menu']['status'],'PASS_R24_SHARED_MENU_OWNERS')
+            self.assertEqual(report['shared_menu']['starts'],24)
+            self.assertTrue(report['shared_menu']['alignment_review_same'])
             for row in report['cases']:
                 self.assertEqual(row['xy_seek'],row['xy_release'])
                 self.assertEqual(row['xy_seek'],row['xy_backoff'])
@@ -72,7 +76,10 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(sha256(bootstrap._metadata_bytes(metadata)).hexdigest(),
                              manifest_hash)
             _,new,_=bootstrap._plan(ROOT,procedure_profile='operator-home-r24')
-            changed=UI_FILES|({'klippy/extras/inventure_operator_home.py'} if revision!='rc5' else set())
+            changed=(set(UI_FILES) if revision!='rc6' else {'klippy/extras/'+name for name in
+                     ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py','inventure_oled.py',
+                      'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
+            if revision not in ('rc5','rc6'):changed|={'klippy/extras/inventure_operator_home.py'}
             self.assertEqual({name for name in old.keys()|new.keys() if old.get(name)!=new.get(name)},changed)
             # In particular, every byte of native Z, its generator and the
             # T0/factory driver is identical to the preceding release.
@@ -112,6 +119,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
 
     def test_rc5_upgrade_changes_only_ui_and_manifest_and_rolls_back_exactly(self):
         self.check_prior_upgrade('rc5','3e5eb8242f65d5a341397b04f486642ca8f342651a143d55943ce4ccbc142dc6')
+
+    def test_rc6_upgrade_changes_only_menu_presentation_and_exact_rollback(self):
+        self.check_prior_upgrade('rc6','84c89b09e907979e0fbdacdab7e5e8cdd35f29b646c2e5d8d0da28c540edeaa3')
 
     def test_rc4_homing_implementation_changes_only_the_requested_operator_routing(self):
         frozen=(ROOT/'restored/operator_home_r24/rc4/inventure_operator_home.py').read_bytes()

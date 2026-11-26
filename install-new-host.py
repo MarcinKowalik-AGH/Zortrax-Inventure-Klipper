@@ -51,7 +51,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R24.5'
+INSTALLER_RELEASE = 'R24.6'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -581,7 +581,18 @@ def require_identical_configuration(host, original, staged):
     module = updater.klipper_config_module(host)
     before, _ = layout.active_klipper(module, original, {})
     after, _ = layout.active_klipper(module, staged, {})
-    if layout.config_values(before) != layout.config_values(after):
+    previous, proposed = layout.config_values(before), layout.config_values(after)
+    # One explicitly reviewed UI entry is new in the menu audit. Every
+    # pre-existing setting and macro must still compare exactly.
+    import configparser
+    controls = configparser.RawConfigParser()
+    controls.read(ROOT/'config/INVENTURE_DASHBOARD.cfg')
+    addition = 'gcode_macro INVENTURE_NOZZLE_ALIGNMENT'
+    expected = layout.config_values(controls).get(addition)
+    if addition not in previous and expected is not None and proposed.get(addition) == expected:
+        proposed = dict(proposed)
+        proposed.pop(addition)
+    if previous != proposed:
         raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
 
 

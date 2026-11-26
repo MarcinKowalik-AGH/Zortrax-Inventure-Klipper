@@ -51,7 +51,7 @@ def inspect(klipper,config,preview=None):
     loop=reactor.Reactor()
     printer=klippy.Printer(loop,None,dict(config_file=str(config),debuginput=True,
                            start_reason='startup',software_version='offline-r24-operator-home'))
-    rows=[];refusals=[];screens={}
+    rows=[];refusals=[];screens={};shared_menu=None
     try:
         printer._read_config()
         printer.lookup_object('inventure_native_z')._install_g28()
@@ -421,9 +421,35 @@ def inspect(klipper,config,preview=None):
                                 actual_corexy_limits_checked=True,
                                 xy_backoff_mm=5.,enable_held=True,targets_unchanged=True,
                                 z_certified=name in ('Z','ALL'),motion_interfaces='simulated'))
+                            if (shared_menu is None and origin=='fluidd' and not hot and machine=='A'
+                                    and sequence==('XY','Z') and name=='Z'):
+                                from check_inventure_shared_menu_r24 import inspect_shared_menu
+                                def render_running():
+                                    view=rig.menu.view_status()
+                                    symbol=graphics._symbol(view['icon'])
+                                    count=len(symbol['frames']) if symbol else 1
+                                    frames=[graphics.menu_wire(view,index=i) for i in range(count)]
+                                    held_before=panel.thermal_test_hold
+                                    panel.thermal_test_hold=True
+                                    try:
+                                        display_clock[0]=max(display_clock[0],panel.reactor.monotonic())
+                                        for _ in range(2000):
+                                            now=display_clock[0];due=panel._tick(now)
+                                            require(panel.thermal_test_hold,'Menu cleared the thermal hold flag')
+                                            if (panel.stream.previous==panel.stream.latest==panel._render_wire
+                                                    and bytes(lcd.ram)==panel._render_wire):break
+                                            display_clock[0]=max(now+.0001,min(now+.01,due))
+                                        else:raise AssertionError('Menu OLED froze during thermal hold')
+                                        require(panel._render_wire in frames,'OLED did not render its running owner')
+                                        require(panel.stream.active_work,'Menu bypassed the work UART budget')
+                                    finally:panel.thermal_test_hold=held_before
+                                ui._phase=original_phase
+                                try:shared_menu=inspect_shared_menu(rig,panel,package,render_running)
+                                finally:ui._phase=record_phase
         require(set(screens)=={'X','Y','XY','Z','XYZ'},'A Home icon has no installed render evidence')
         if preview is not None:save_oled_preview(screens,preview)
         return dict(status='PASS_INSTALLED_R24_HOME_CYCLES',case_count=len(rows),cases=rows,
+                    shared_menu=shared_menu,
                     oled_screens={axis:dict(message=screen['message'],
                                            frame_sha256=[sha256(frame).hexdigest() for frame in screen['frames']])
                                   for axis,screen in screens.items()},

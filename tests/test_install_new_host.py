@@ -522,7 +522,8 @@ class TransactionTests(unittest.TestCase):
                          {str(marker)}|{str(self.host/'klippy/extras'/name) for name in
                              ('inventure_operator_home.py','inventure_menu_service.py','inventure_oled_graphics.py',
                               'inventure_oem_menu.py','inventure_menu_core.py','inventure_oled.py',
-                              'inventure_home_ui.py','inventure_home_sprites.json')})
+                              'inventure_home_ui.py','inventure_home_sprites.json',
+                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

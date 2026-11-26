@@ -25,6 +25,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Retain installed R24 macros, G28 and physical OLED cycle evidence
         run: python ci/check_inventure_home_r24.py --destination "$RUNNER_TEMP/r24-home"
+      - name: Audit every installed operator menu and save actual OLED pixels
+        run: python ci/check_inventure_menu_audit.py "$RUNNER_TEMP/r24-menu"
       - name: Verify unchanged native configuration startup
         run: python ci/check_native_nozzle_startup.py
       - name: Run existing R23 MCU regression engines
@@ -62,6 +64,9 @@ jobs:
           cp "$GITHUB_WORKSPACE/docs/INVENTURE_HOME_R24.md" HOST_UPDATE.md
           cp "$RUNNER_TEMP/r24-home/R24_HOME_CYCLES.json" .
           cp "$RUNNER_TEMP/r24-home/R24_HOME_OLED.png" .
+          cp "$RUNNER_TEMP/r24-menu/INVENTURE_MENU_AUDIT.json" .
+          cp "$RUNNER_TEMP/r24-menu/INVENTURE_MENU_AUDIT.png" .
+          cp "$GITHUB_WORKSPACE/docs/INVENTURE_MENU_AUDIT_R24_RC7_2026-11-26.md" MENU_AUDIT.md
           python - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile,ZIP_DEFLATED
@@ -69,7 +74,8 @@ jobs:
           with ZipFile(root.parent/'INVENTURE_HOME_R24_BOOT17.zip','w',ZIP_DEFLATED) as out:
               for name in ('INVENTUR.IVB','klipper.bin','klipper.dict','SHA256SUMS',
                            'R24_HOME_BUILD.json','R24_HOME_CYCLES.json','R24_HOME_OLED.png','HOST_UPDATE.md',
-                           'BUILD_REPORT.json','THERMAL_TEST_VERIFY.json'):
+                           'BUILD_REPORT.json','THERMAL_TEST_VERIFY.json',
+                           'INVENTURE_MENU_AUDIT.json','INVENTURE_MENU_AUDIT.png','MENU_AUDIT.md'):
                   out.write(root/name,name)
           PY
       - uses: actions/upload-artifact@v4
@@ -84,6 +90,8 @@ jobs:
             ${{ runner.temp }}/r24-build/R24_HOME_BUILD.json
             ${{ runner.temp }}/r24-home/R24_HOME_CYCLES.json
             ${{ runner.temp }}/r24-home/R24_HOME_OLED.png
+            ${{ runner.temp }}/r24-menu/INVENTURE_MENU_AUDIT.json
+            ${{ runner.temp }}/r24-menu/INVENTURE_MENU_AUDIT.png
           if-no-files-found: error
           retention-days: 30
   publish:
@@ -110,7 +118,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-home-r24-rc6 \
+          gh release create inventure-home-r24-rc7 \
             "$RUNNER_TEMP/r24-release/INVENTURE_HOME_R24_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -119,6 +127,8 @@ jobs:
             "$RUNNER_TEMP/r24-release/r24-build/R24_HOME_BUILD.json" \
             "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_CYCLES.json" \
             "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_OLED.png" \
+            "$RUNNER_TEMP/r24-release/r24-menu/INVENTURE_MENU_AUDIT.json" \
+            "$RUNNER_TEMP/r24-release/r24-menu/INVENTURE_MENU_AUDIT.png" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R24 RC6: shared M300-style Home menu and animations, no start review' \
+            --title 'Inventure R24 RC7: complete OEM menu artwork and shared OLED/Fluidd audit' \
             --notes-file docs/INVENTURE_HOME_R24.md

@@ -1,4 +1,11 @@
-# Inventure Home R24 RC6 — shared Home menu and M300 animations
+# Inventure R24 RC7 — complete menu artwork and shared OLED/Fluidd audit
+
+RC7 audits all 66 OEM menu records, restores missing original artwork, enables
+existing project animations, synchronizes scrolling and adds the shared nozzle
+XY calibration macro. Its changes preserve all four RC6 Home/engine files.
+See the [complete menu and capability report](INVENTURE_MENU_AUDIT_R24_RC7_2026-11-26.md).
+
+The following Home integration was delivered in RC6 and remains unchanged.
 
 RC6 completes the Home UI integration: the Zortrax OLED choices, shared Fluidd
 menu, Home buttons and macros start the existing Inventure Home owner. The
@@ -149,17 +156,19 @@ Fluidd and wait for Ready. Install before another Home or heating operation:
 ```bash
 cd "$HOME/inventure-src" &&
 git fetch origin --tags &&
-git switch --detach inventure-home-r24-rc6 &&
+git switch --detach inventure-home-r24-rc7 &&
 python3 install-new-host.py --repair-home-procedures --serial /dev/ttyS5 --baud 750000 --apply
 ```
 
-The installer recognizes the authenticated RC1, RC2/RC3, RC4 and RC5 runtimes. Its R24.5
-revision retains RC3's original-backup verification fix and the complete apply
-regression. Upgrading RC5 changes only seven presentation files and the runtime
-manifest; the four Home/engine files are unchanged. The indexed original R38.6 backup, effective configuration, offline startup
-and actual service/PID/path/Ready/profile are verified inside the existing
-activation/rollback transaction. Saved P4 baud, PID, calibration JSON, split
-configurations, Fluidd groups and the other OLED procedures are preserved.
+The installer recognizes authenticated RC1, RC2/RC3, RC4, RC5 and RC6 runtimes.
+Its R24.6 revision retains original-backup verification and complete apply/rollback
+regressions. From RC6 only six menu/graphics files change (including two new
+resources); the four Home/engine files are byte-identical. The only permitted
+configuration addition is the exact canonical, previously absent
+`INVENTURE_NOZZLE_ALIGNMENT` macro. Every existing effective option and macro,
+calibration JSON, saved P4 baud/PID, split configuration and user Fluidd group
+is preserved. Actual service/PID/path/Ready/profile checks remain inside the
+activation/rollback transaction.
 
 ## Readback
 
@@ -170,6 +179,7 @@ INVENTURE_ZORTRAX OP=STATUS
 ```
 
 Expected MCU: `RC8-CONTROL-R7-HOME-R24-OLED`.
+Menu marker: `menu_audit_release: RC8-OPERATOR-MENU-R24.5`.
 Home release: `RC8-HOME-XY-RELEASE-ZERO-R24.3-XY5MM`.
 Profile: `operator-home-r24`; `xy_reference_frame`: `measured_release`.
 The menu also reports `home_ui_release: RC8-HOME-MENU-R24.4`. Its existing
@@ -209,7 +219,7 @@ accepts the translated physical boundary and rejects one further step.
 Selected input failure, absent/zero release, excessive overrun, failed park and
 invalid held-entry receipts discard references and prevent T0/Z certification.
 
-Authenticated upgrades from RC1, RC3, RC4 and RC5 and exact rollback are tested.
+Authenticated upgrades from RC1, RC3, RC4, RC5 and RC6 and exact rollback are tested.
 An accepted-source invariant limits helper changes to operator routing and
 checks the other helper methods and all three engine files unchanged. The
 complete installer --apply regression includes real backup auditing, runtime
@@ -217,6 +227,11 @@ and configuration staging, offline Klipper startup, systemd parsing, atomic
 activation and Fluidd setup with simulated HTTP/process/service boundaries.
 MCU C ownership/guard regressions and ARM compilation remain in CI.
 
-These are software and register-model checks of RC6's menu/presentation
-behavior. The operator's physical RC4 acceptance is recorded separately; it
-does not claim a physical test of RC6.
+RC7 additionally checks 133 static cursor positions and 161 dialog positions,
+with no missing artwork or disabled project animation. After actual R24 Home,
+24 literal Fluidd/OLED service starts compare parameters, cancellation and stale
+token refusal; running pixels reach the modelled OLED during thermal hold.
+The new alignment macro opens the same review as its physical OLED entry.
+
+These are software and register-model checks. The operator's physical RC4
+acceptance is recorded separately; no physical acceptance of RC7 is claimed.

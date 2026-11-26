@@ -349,6 +349,14 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['operator_home_r24'] = provenance
+        if operator_home_revision == 'current':
+            path = repo/'inventure_menu_audit_restore.py'
+            presentation = _module('inventure_bootstrap_menu_audit', path, _regular_bytes(path))
+            updates, provenance = presentation.restored_menu_audit(repo, files)
+            files.update(updates)
+            for target, (data, mode) in updates.items():
+                metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+            metadata['runtime_restorations']['menu_audit_r24'] = provenance
     return source, files, metadata
 
 
@@ -541,6 +549,7 @@ def _predecessor_plans(repo):
         yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc2')
         yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc4')
         yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc5')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc6')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
@@ -591,7 +600,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                "klippy/extras/inventure_mcu.py"}
     if _procedure_profile.get() == 'operator-home-r24':
         allowed.update('klippy/extras/'+name for name in
-                       ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json'))
+                       ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
+                        'inventure_menu_presentation.py','inventure_oem_menu_sprites.json'))
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
@@ -600,7 +610,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
         if name not in previous_files:
             _require(_procedure_profile.get() == 'operator-home-r24'
                      and name in {'klippy/extras/'+n for n in
-                                  ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json')}
+                                  ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
+                                   'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')}
                      and not destination_file.exists() and not destination_file.is_symlink(),
                      "Unexpected new runtime module: " + name)
             before = None
