@@ -13,6 +13,9 @@ import unittest
 import inventure_bootstrap as bootstrap
 
 ROOT=Path(__file__).resolve().parents[1]
+UI_FILES={'klippy/extras/'+name for name in
+          ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py',
+           'inventure_menu_core.py','inventure_oled.py','inventure_home_ui.py','inventure_home_sprites.json')}
 
 class OperatorHomeR24Tests(unittest.TestCase):
     def test_installed_fluidd_and_oled_independent_axes_then_z(self):
@@ -23,8 +26,8 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             report=json.loads((output/'R24_HOME_CYCLES.json').read_text())
             self.assertEqual(report['status'],'PASS_INSTALLED_R24_HOME_CYCLES')
-            self.assertEqual(report['case_count'],456)
-            self.assertEqual(report['refusal_count'],112)
+            self.assertEqual(report['case_count'],800)
+            self.assertEqual(report['refusal_count'],184)
             for row in report['cases']:
                 self.assertEqual(row['xy_seek'],row['xy_release'])
                 self.assertEqual(row['xy_seek'],row['xy_backoff'])
@@ -34,17 +37,20 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertTrue(row['release_origin_dynamic'])
                 self.assertTrue(row['physical_z_pad_unchanged'])
                 self.assertTrue(row['actual_corexy_limits_checked'])
-                if row['origin'] in ('fluidd','gcode'):
-                    self.assertFalse(row['initial_review'])
+                self.assertFalse(row['initial_review'])
+                self.assertTrue(row['oled_progress_rendered'])
+                self.assertTrue(row['m300_axis_animation'])
+                self.assertEqual(row['home_ui_release'],'RC8-HOME-MENU-R24.4')
+            self.assertEqual((output/'R24_HOME_OLED.png').read_bytes()[:8],b'\x89PNG\r\n\x1a\n')
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']
-            self.assertEqual(len(after_xy),12)
+            self.assertEqual(len(after_xy),20)
             self.assertTrue(all(row['xy_seek']==[] for row in after_xy))
             combined=[row for row in report['cases'] if row['sequence']==['X','Y','ALL'] and row['request']=='ALL']
-            self.assertEqual(len(combined),12)
+            self.assertEqual(len(combined),20)
             self.assertTrue(all(row['xy_seek']==[] for row in combined))
             for axis,missing in (('X','Y'),('Y','X')):
                 partial=[row for row in report['cases'] if row['sequence']==[axis,'ALL'] and row['request']=='ALL']
-                self.assertEqual(len(partial),12)
+                self.assertEqual(len(partial),20)
                 self.assertTrue(all(row['xy_seek']==[missing] for row in partial))
             missing=[row for row in report['cases'] if row['sequence']==['Z']]
             self.assertTrue(all(row['xy_seek']==['Y','X'] for row in missing))
@@ -65,8 +71,8 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(sha256(bootstrap._metadata_bytes(metadata)).hexdigest(),
                              manifest_hash)
             _,new,_=bootstrap._plan(ROOT,procedure_profile='operator-home-r24')
-            self.assertEqual({name for name in old if old[name]!=new[name]},
-                             {'klippy/extras/inventure_operator_home.py'})
+            changed=UI_FILES|({'klippy/extras/inventure_operator_home.py'} if revision!='rc5' else set())
+            self.assertEqual({name for name in old.keys()|new.keys() if old.get(name)!=new.get(name)},changed)
             # In particular, every byte of native Z, its generator and the
             # T0/factory driver is identical to the preceding release.
             for name in ('inventure_native_z.py','inventure_z_home.py','inventure_mcu.py'):
@@ -83,22 +89,27 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertEqual(provenance['status'],'VERIFIED_HOST')
                 self.assertNotEqual(staged,host)
                 self.assertEqual({p.relative_to(host).as_posix() for p in updates},
-                                 {'klippy/extras/inventure_operator_home.py',bootstrap.MANIFEST_NAME})
+                                 changed|{bootstrap.MANIFEST_NAME})
                 self.assertEqual({p.relative_to(host):p.read_bytes() for p in host.rglob('*') if p.is_file()},original)
                 for path,(_,after) in updates.items():path.write_bytes(after)
                 self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
-                for path,(before,_) in updates.items():path.write_bytes(before)
+                for path,(before,_) in updates.items():
+                    if before is None:path.unlink()
+                    else:path.write_bytes(before)
                 self.assertEqual(bootstrap.verify_host(host,allow_legacy=True)['status'],'VERIFIED_LEGACY_HOST')
             self.assertEqual({p.relative_to(host):p.read_bytes() for p in host.rglob('*') if p.is_file()},original)
 
-    def test_rc1_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
+    def test_rc1_upgrade_changes_only_operator_routing_and_ui_and_rolls_back_exactly(self):
         self.check_prior_upgrade('rc1','9a62f3171da978d6cf7842eeecd5a07a2a348f69da7c5b5f89ada7937598ab92')
 
-    def test_rc3_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
+    def test_rc3_upgrade_changes_only_operator_routing_and_ui_and_rolls_back_exactly(self):
         self.check_prior_upgrade('rc2','f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
 
     def test_physically_confirmed_rc4_upgrade_and_exact_rollback(self):
         self.check_prior_upgrade('rc4','dd427a00e334c679f7aee69075f960e1d91db6c5294529a63bcd38c6e1bdbd44')
+
+    def test_rc5_upgrade_changes_only_ui_and_manifest_and_rolls_back_exactly(self):
+        self.check_prior_upgrade('rc5','3e5eb8242f65d5a341397b04f486642ca8f342651a143d55943ce4ccbc142dc6')
 
     def test_rc4_homing_implementation_changes_only_the_requested_operator_routing(self):
         frozen=(ROOT/'restored/operator_home_r24/rc4/inventure_operator_home.py').read_bytes()

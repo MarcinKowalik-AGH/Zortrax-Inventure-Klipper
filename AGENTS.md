@@ -62,3 +62,13 @@ as the preservation baseline. Keep that report separate from later candidate
 validation. The newly authorized changes are reuse of valid held XY before
 Z/XYZ and removal of the initial direct Fluidd Home confirmation. Preserve the
 accepted homing/measurement engines and all tray/ownership interlocks.
+
+## Home presentation follow-up, 26 November 2026
+
+The operator reported the remaining Fluidd menu Home review and requested the
+accepted X/Y/XY/Z procedures under the Zortrax OLED menu, with M300 appearance,
+animations and direct-start menu logic. RC6 integrates those entry points through
+the existing Home macros. It preserves all four RC5 Home/engine files byte for
+byte and adds presentation observers around the original bound methods. Keep
+this UI integration separate from the physical acceptance record. The Home menu
+now starts directly on both OLED and Fluidd; reviews for other procedures remain.

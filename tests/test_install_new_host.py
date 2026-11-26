@@ -519,7 +519,10 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(sha256(bootstrap._metadata_bytes(previous)).hexdigest(),
                          'f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
         self.assertEqual(set(result['restored_runtime_files']),
-                         {str(marker),str(self.host/'klippy/extras/inventure_operator_home.py')})
+                         {str(marker)}|{str(self.host/'klippy/extras'/name) for name in
+                             ('inventure_operator_home.py','inventure_menu_service.py','inventure_oled_graphics.py',
+                              'inventure_oem_menu.py','inventure_menu_core.py','inventure_oled.py',
+                              'inventure_home_ui.py','inventure_home_sprites.json')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

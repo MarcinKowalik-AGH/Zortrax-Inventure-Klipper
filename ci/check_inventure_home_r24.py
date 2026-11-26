@@ -5,21 +5,42 @@ Only physical interfaces are simulated. No UART, flash or running host is used.
 """
 import argparse
 from contextlib import redirect_stdout
+from hashlib import sha256
 import importlib
 import io
 import json
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import types
+import zlib
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'ci'),str(ROOT/'tests')]
 
-def inspect(klipper,config):
+def save_oled_preview(screens,destination):
+    """Actual 256x64 OLED wires, five requests and four M300 animation frames."""
+    width,height=256*4,64*5
+    pixels=[]
+    for axis in ('X','Y','XY','Z','XYZ'):
+        for y in range(64):
+            row=bytearray()
+            for frame in screens[axis]['frames']:
+                for packed in frame[y*128:(y+1)*128]:
+                    row.extend(((packed>>4)*17,(packed&15)*17))
+            pixels.append(b'\0'+row)
+    def chunk(name,data):
+        return struct.pack('>I',len(data))+name+data+struct.pack('>I',zlib.crc32(name+data)&0xffffffff)
+    png=(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,0,0,0,0))
+         +chunk(b'IDAT',zlib.compress(b''.join(pixels),9))+chunk(b'IEND',b''))
+    destination.write_bytes(png)
+
+
+def inspect(klipper,config,preview=None):
     sys.path.insert(0,str(klipper/'klippy'))
     import klippy,reactor
     from check_inventure_full_cycles import InstalledRig,require
@@ -29,7 +50,7 @@ def inspect(klipper,config):
     loop=reactor.Reactor()
     printer=klippy.Printer(loop,None,dict(config_file=str(config),debuginput=True,
                            start_reason='startup',software_version='offline-r24-operator-home'))
-    rows=[];refusals=[]
+    rows=[];refusals=[];screens={}
     try:
         printer._read_config()
         printer.lookup_object('inventure_native_z')._install_g28()
@@ -39,7 +60,7 @@ def inspect(klipper,config):
         actual_kin=printer.lookup_object('toolhead').get_kinematics()
         maximum_z_speed=actual_kin.max_z_velocity
         motion=importlib.import_module(package+'.homing')
-        sequences=(('X','Y','Z'),('Y','X','Z'),('X','Z'),('Y','Z'),('Z',),
+        sequences=(('X','Y','Z'),('Y','X','Z'),('XY','Z'),('X','Z'),('Y','Z'),('Z',),
                    ('ALL',),('ALL','Z'),('X','Y','Z','Z'),('X','Y','DRIVE_RELEASE','Z'),
                    ('X','Y','X','Z'),('X','Y','Y','Z'),('X','Y','ALL'),
                    ('X','ALL'),('Y','ALL'),('ALL','ALL'))
@@ -49,7 +70,7 @@ def inspect(klipper,config):
             (('X',),'backoff_x'),(('Y',),'backoff_y'),(('X',),'overrun_x'),
             (('Z',),'tray_missing'),(('Z',),'bad_ack')]
         cases=[(sequence,fault,machine) for machine in ('A','B') for sequence,fault in cases]
-        for origin in ('fluidd','oled','gcode'):
+        for origin in ('fluidd','oled','gcode','fluidd_open','fluidd_menu'):
             for hot in (False,True):
                 for sequence,fault,machine in cases:
                     if fault=='bad_ack' and origin!='fluidd':continue
@@ -166,7 +187,36 @@ def inspect(klipper,config):
                                 return model.get_position()
                             return super().homing_move(position,speed,probe_pos,triggered,check_triggered)
                         def check_no_movement(self):return None
-                    panel=attach_panel(rig) if origin=='oled' else None
+                    panel=attach_panel(rig)
+                    rig.menu._attach_home_ui()
+                    ui=rig.menu.home_ui
+                    original_phase=type(ui)._phase.__get__(ui)
+                    rendered=[];render_errors=[]
+                    graphics=importlib.import_module(package+'.inventure_oled_graphics')
+                    def record_phase(message):
+                        original_phase(message)
+                        if not ui.busy:return
+                        try:
+                            view=rig.menu.view_status()
+                            frames=[graphics.menu_wire(view,index=i) for i in range(4)]
+                            require(len(set(frames))==4,'Home has no four-frame axis animation')
+                            now=panel.reactor.monotonic()
+                            panel._render(now)
+                            require(panel._render_wire==graphics.menu_wire(view,index=graphics.activity_index(view,now)),
+                                    'The physical OLED did not render the current Home progress')
+                            rendered.append(dict(axes=ui.axes,message=message,icon=view['icon']))
+                            if message.startswith('Homing ') or message=='Refining Z reference':
+                                screens.setdefault(ui.axes,dict(message=message,frames=frames))
+                                if message=='Refining Z reference':
+                                    screens[ui.axes]=dict(message=message,frames=frames)
+                            # The running view consumes no encoder action or stale confirmation.
+                            page,selected=panel.oem_menu.page,panel.oem_menu.selected
+                            panel._select(now);panel._navigate(1,now)
+                            require((panel.oem_menu.page,panel.oem_menu.selected)==(page,selected),
+                                    'Encoder acted on the borrowed Home display')
+                        except Exception as exc:
+                            render_errors.append(str(exc))
+                    ui._phase=record_phase
                     with patch.object(motion,'Homing',Approach),patch.object(motion,'HomingMove',PhysicalMove):
                         for name in sequence:
                             if name=='DRIVE_RELEASE':
@@ -176,10 +226,14 @@ def inspect(klipper,config):
                                 require(not native.xy_frame_release_mm,'Drive release retained an origin translation')
                                 continue
                             if rig.menu.view is not None:
-                                require(rig.menu.view.kind=='info','Unexpected modal between completed Homes')
-                                rig.menu.view.selected,rig.menu.view.released=0,True
-                                rig.run(rig.menu.panel_select_command(acknowledged=True))
+                                if origin=='fluidd_menu' and rig.menu.view.data.get('operator_page'):
+                                    require(rig.menu.view.kind=='choice','Home did not restore the Fluidd menu')
+                                else:
+                                    require(rig.menu.view.kind=='info','Unexpected modal between completed Homes')
+                                    rig.menu.view.selected,rig.menu.view.released=0,True
+                                    rig.run(rig.menu.panel_select_command(acknowledged=True))
                             start=len(model.calls);action_start=len(rig.actions)
+                            ui_start=len(rendered)
                             rig.lines.clear()
                             before=set(native.xy_references)
                             before_position=model.get_position()
@@ -187,18 +241,29 @@ def inspect(klipper,config):
                             try:
                                 if origin=='fluidd':rig.run('INVENTURE_HOME_'+name+(' ACK=INVALID' if fault=='bad_ack' else ''))
                                 elif origin=='gcode':rig.run('G28'+('' if name=='ALL' else ' '+' '.join(name)))
+                                elif origin=='fluidd_open':
+                                    action='home_xyz' if name=='ALL' else 'home_'+name.lower()
+                                    rig.run('INVENTURE_ZORTRAX OP=OPEN ACTION='+action+' PROMPT=1')
+                                elif origin=='fluidd_menu':
+                                    rig.run('INVENTURE_MAINTENANCE')
+                                    view=rig.menu.view
+                                    label='Home XYZ' if name=='ALL' else 'Home '+name
+                                    index=next(i for i,(text,_) in enumerate(view.options) if text==label)
+                                    rig.lines.clear()
+                                    rig.run('INVENTURE_ZORTRAX OP=CHOOSE TOKEN=%s INDEX=%d'%(view.token,index))
                                 else:
-                                    panel.oem_menu.open_page('klipper_control');panel.oem_display_mode='menu'
+                                    panel.oem_menu.open_page('maintenance');panel.oem_display_mode='menu'
                                     label='Home XYZ' if name=='ALL' else 'Home '+name
                                     panel.oem_menu.selected=next(i for i,n in enumerate(panel.oem_menu.items()) if n.label==label)
                                     panel._select(panel.reactor.monotonic())
                                 initial_review=rig.menu.view is not None and rig.menu.view.kind=='confirm'
-                                if origin in ('fluidd','gcode'):
-                                    require(not initial_review,'Direct Home still requires an initial confirmation')
-                                    require(not any('action:prompt_begin' in line or 'Confirm Home ' in line for line in rig.lines),
-                                            'Direct Home emitted the removed Fluidd confirmation')
-                                elif initial_review:
-                                    rig.confirm(origin)
+                                require(not initial_review,'Home still requires an initial confirmation')
+                                require(not any('Pad and clearance OK?' in line or 'Yes / Start|' in line
+                                                or 'Confirm Home ' in line for line in rig.lines),
+                                        'Home emitted the removed confirmation')
+                                if origin!='fluidd_menu':
+                                    require(not any('action:prompt_begin' in line for line in rig.lines),
+                                            'Home phase opened an unexpected Fluidd dialog')
                             except Exception as exc:
                                 if fault is None:raise
                                 require(not native.xy_references,'Rejected Home retained an XY reference')
@@ -210,6 +275,16 @@ def inspect(klipper,config):
                                 refusals.append(dict(origin=origin,machine=machine,fault=fault,reason=str(exc),reference_invalid=True))
                                 continue
                             if fault is not None:raise AssertionError('Expected refusal: '+fault)
+                            require(not render_errors,'Home OLED render failed: '+repr(render_errors))
+                            require(len(rendered)>ui_start,'The installed Home did not present OLED progress')
+                            require(not ui.busy,'Home retained a running display after completion')
+                            expected_axes='XYZ' if name=='ALL' else name
+                            require(all(r['icon']=='home:home_'+expected_axes.lower() for r in rendered[ui_start:]),
+                                    'OLED showed an animation for a different Home request')
+                            if origin in ('oled','fluidd_menu'):
+                                require(panel.oem_menu.page=='maintenance' and panel.oem_menu.items()[panel.oem_menu.selected].label
+                                        ==('Home XYZ' if name=='ALL' else 'Home '+name),
+                                        'Home did not return to its selected Zortrax menu row')
                             calls=model.calls[start:]
                             seeks=[c[1] for c in calls if c[0]=='xy_seek']
                             expected=([a for a in 'YX' if a not in before] if name in ('Z','ALL')
@@ -282,7 +357,6 @@ def inspect(klipper,config):
                             require(not any(a['kind'] in ('home','home_release','z_contact_move') for a in actions),
                                     'Retained T0 preparation repeated SERVICE homing/clearance')
                             if name in ('Z','ALL'):
-                                if origin=='oled':require(initial_review,'OLED lost its explicit menu confirmation')
                                 require(native.last_result and native.last_result.get('coordinate_saved'),'Z not certified')
                                 require(model.position[2]==native.park_z,'Z did not park at its existing setting')
                                 require(model.physical_tool==0,'T0 was not physically selected')
@@ -306,13 +380,20 @@ def inspect(klipper,config):
                             require(set(native.xy_references).issuperset(before|set(seeks)),'Held XY reference was discarded')
                             rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
                                 initial_review=initial_review,
+                                home_ui_release=rig.menu.get_status(0.)['home_ui_release'],
+                                oled_progress_rendered=True,m300_axis_animation=True,
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
                                 measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
                                 release_origin_dynamic=True,physical_z_pad_unchanged=True,
                                 actual_corexy_limits_checked=True,
                                 xy_backoff_mm=5.,enable_held=True,targets_unchanged=True,
                                 z_certified=name in ('Z','ALL'),motion_interfaces='simulated'))
+        require(set(screens)=={'X','Y','XY','Z','XYZ'},'A Home icon has no installed render evidence')
+        if preview is not None:save_oled_preview(screens,preview)
         return dict(status='PASS_INSTALLED_R24_HOME_CYCLES',case_count=len(rows),cases=rows,
+                    oled_screens={axis:dict(message=screen['message'],
+                                           frame_sha256=[sha256(frame).hexdigest() for frame in screen['frames']])
+                                  for axis,screen in screens.items()},
                     refusal_count=len(refusals),refusals=refusals,
                     serial_opened=False,firmware_flashed=False,hardware_tested=False)
     finally:
@@ -338,7 +419,8 @@ def check(destination):
                                  baud=750000,gcodes_path=gcodes)['config_path'])
         installer.require_identical_configuration(host,source/'printer.cfg',config)
         before={p:p.read_bytes() for p in config.parent.rglob('*') if p.is_file()}
-        result=subprocess.run([sys.executable,__file__,'--klipper',str(host),'--config',str(config)],
+        result=subprocess.run([sys.executable,__file__,'--klipper',str(host),'--config',str(config),
+                               '--oled-preview',str(destination/'R24_HOME_OLED.png')],
                               text=True,capture_output=True,timeout=120)
         (destination/'cycles.log').write_text(result.stdout+result.stderr)
         if result.returncode:raise RuntimeError(result.stdout+'\n'+result.stderr)
@@ -355,8 +437,9 @@ if __name__=='__main__':
     parser.add_argument('--destination',type=Path)
     parser.add_argument('--klipper',type=Path)
     parser.add_argument('--config',type=Path)
+    parser.add_argument('--oled-preview',type=Path)
     args=parser.parse_args()
-    if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute())
+    if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview)
     elif args.destination:
         with redirect_stdout(io.StringIO()):report=check(args.destination.absolute())
     else:
