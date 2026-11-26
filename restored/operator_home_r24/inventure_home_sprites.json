@@ -1,6 +1,6 @@
 {
   "source": "Zortrax-m300-Klipper/orange-pi/M300_HOST/payload/m300_cartesian_graphics.py",
-  "source_sha256": "f55a8fa02531501d6cb525e5d1b31c77e98e443aa6031d11f356cb28f2d1d28c",
+  "source_sha256": "127d6daab9b5b21192930053b780a846701b0aa5a1dfce5280ecf294f57a92c4",
   "symbols": {
     "home_x": {
       "width": 50,

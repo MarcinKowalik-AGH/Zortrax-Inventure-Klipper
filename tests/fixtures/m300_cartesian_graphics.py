@@ -130,4 +130,3 @@ class CartesianGraphics:
             now = 0.
         index = int(max(now,0.) / FRAME_SECONDS) % 4
         return self.frame(name,index)
-
