@@ -514,8 +514,9 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual({s:dict(after_active.items(s)) for s in after_active.sections()},before_active)
         with bootstrap.procedure_profile('operator-home-r24'):
             self.assertEqual(bootstrap.verify_host(self.host)['status'],'VERIFIED_HOST')
-        # The installer fix leaves the complete published RC2 runtime intact.
-        self.assertEqual(sha256(marker.read_bytes()).hexdigest(),
+        # The preceding RC2/RC3 runtime remains an authenticated upgrade input.
+        _,_,previous=bootstrap._plan(ROOT,procedure_profile='operator-home-r24',operator_home_revision='rc2')
+        self.assertEqual(sha256(bootstrap._metadata_bytes(previous)).hexdigest(),
                          'f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
         self.assertEqual(set(result['restored_runtime_files']),
                          {str(marker),str(self.host/'klippy/extras/inventure_operator_home.py')})

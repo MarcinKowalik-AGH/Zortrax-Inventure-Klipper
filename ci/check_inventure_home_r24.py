@@ -36,23 +36,46 @@ def inspect(klipper,config):
         gcode=printer.lookup_object('gcode')
         gcode.gcode_handlers=gcode.ready_gcode_handlers;gcode.is_printer_ready=True
         package=type(printer.lookup_object('inventure_native_z')).__module__.rsplit('.',1)[0]
-        maximum_z_speed=printer.lookup_object('toolhead').get_kinematics().max_z_velocity
+        actual_kin=printer.lookup_object('toolhead').get_kinematics()
+        maximum_z_speed=actual_kin.max_z_velocity
         motion=importlib.import_module(package+'.homing')
         sequences=(('X','Y','Z'),('Y','X','Z'),('X','Z'),('Y','Z'),('Z',),
-                   ('ALL',),('ALL','Z'),('X','Y','Z','Z'),('X','Y','DRIVE_RELEASE','Z'))
+                   ('ALL',),('ALL','Z'),('X','Y','Z','Z'),('X','Y','DRIVE_RELEASE','Z'),
+                   ('X','Y','X','Z'),('X','Y','Y','Z'),('X','Y','ALL'))
         cases=[(sequence,None) for sequence in sequences]+[
             (('X',),'seek_x'),(('X',),'release_x'),(('Y',),'release_y'),
             (('X',),'early_release_x'),(('Z',),'held_receipt'),
-            (('X',),'backoff_x'),(('Y',),'backoff_y')]
+            (('X',),'backoff_x'),(('Y',),'backoff_y'),(('X',),'overrun_x')]
+        cases=[(sequence,fault,machine) for machine in ('A','B') for sequence,fault in cases]
         for origin in ('fluidd','oled','gcode'):
             for hot in (False,True):
-                for sequence,fault in cases:
+                for sequence,fault,machine in cases:
                     rig=InstalledRig(printer,klipper,hot=hot)
                     native,model,board=rig.native,rig.model,rig.board
                     model.max_z_velocity=maximum_z_speed
-                    native.xy_references={};native.xy_clearance_position=None
+                    native.xy_references={};native.xy_frame_release_mm={};native.xy_clearance_position=None
                     native.requested_home_axes=None
                     model.axes='';model.position[2]=0.;model.physical_z=80.
+                    configured_pad=[native.pad_x,native.pad_y]
+                    # Emulate CoreXY's native position/range interfaces. The
+                    # real installed adapter and all T0/Z engines remain in use.
+                    model.limits=[(1.,-1.)]*3
+                    model.axes_min=gcode.Coord([r.get_range()[0] for r in native.kin.rails])
+                    model.axes_max=gcode.Coord([r.get_range()[1] for r in native.kin.rails])
+                    set_position,clear_homing=model.set_position,model.clear_homing_state
+                    def set_native_position(position,homing_axes=''):
+                        model.calls.append(('frame_set',tuple(position),homing_axes))
+                        set_position(position,homing_axes)
+                        for index,axis in enumerate('xyz'):
+                            if axis in homing_axes:model.limits[index]=model.axis_rails[index].get_range()
+                    def clear_native_homing(axes):
+                        clear_homing(axes)
+                        for index,axis in enumerate('xyz'):
+                            if axis in axes:model.limits[index]=(1.,-1.)
+                    model.set_position=set_native_position
+                    model.clear_homing_state=clear_native_homing
+                    rounds={'X':0,'Y':0};pending_release=[]
+                    overrun_steps=1 if machine=='A' else 7
                     pins={axis:types.SimpleNamespace(active=False) for axis in 'XY'}
                     for i,axis in enumerate('XY'):
                         pin=pins[axis]
@@ -82,8 +105,15 @@ def inspect(klipper,config):
                     def checked_move(position,speed):
                         for index,axis in enumerate('XY'):
                             if (fault=='backoff_'+axis.lower() and position[index] is not None
-                                    and abs(position[index]-model.position[index]-5.)<1e-9):
+                                    and pending_release==[axis]):
                                 raise ValueError('Selected axis post-home backoff failed')
+                            if position[index] is not None:
+                                require(model.limits[index][0]<=position[index]<=model.limits[index][1],
+                                        'Native motion exceeded the translated physical envelope')
+                                if axis in native.xy_frame_release_mm:
+                                    require(abs([native.pad_x,native.pad_y][index]
+                                                +native.xy_frame_release_mm[axis]-configured_pad[index])<1e-9,
+                                            'The physical Z pad shifted during the post-release park')
                         return manual_move(position,speed)
                     model.manual_move=checked_move
                     class Approach:
@@ -105,12 +135,17 @@ def inspect(klipper,config):
                                 i='XY'.index(axis)
                                 require(not triggered and check_triggered and speed==1.,'Invalid OEM reverse release')
                                 require(abs(position[i]-model.position[i]-5000./640.)<1e-9,'Release bound changed')
-                                value=(80 if axis=='X' else 120)/640.
+                                strokes={'A':{'X':(80,112),'Y':(120,152)},
+                                         'B':{'X':(233,169),'Y':(41,89)}}
+                                value=strokes[machine][axis][rounds[axis]%2]/640.
+                                rounds[axis]+=1
                                 if fault=='release_'+axis.lower():raise ValueError('Selected endstop did not release')
                                 if fault=='early_release_'+axis.lower():value=0.
+                                pending_release[:]=[axis]
                                 model.calls.append(('xy_release',axis,round(value*640)))
                                 measured=model.get_position();measured[i]=value
-                                model.position[i]=value+1./640.;self.pin.active=False
+                                overrun=6. if fault=='overrun_'+axis.lower() else overrun_steps/640.
+                                model.position[i]=value+overrun;self.pin.active=False
                                 return measured
                             if self.pin is model.bottom:
                                 if triggered:
@@ -134,6 +169,7 @@ def inspect(klipper,config):
                                 native._xy_enable_changed(model.get_last_move_time(),False)
                                 model.shared_enable=False
                                 require(not native.xy_references and not model.axes,'Drive release left a reusable reference')
+                                require(not native.xy_frame_release_mm,'Drive release retained an origin translation')
                                 continue
                             if rig.menu.view is not None:
                                 require(rig.menu.view.kind=='info','Unexpected modal between completed Homes')
@@ -156,11 +192,12 @@ def inspect(klipper,config):
                             except Exception as exc:
                                 if fault is None:raise
                                 require(not native.xy_references,'Rejected Home retained an XY reference')
+                                require(not native.xy_frame_release_mm,'Rejected Home retained an origin translation')
                                 require(not native.last_result or not native.last_result.get('reference_established'),
                                         'Rejected Home certified Z')
                                 require(board.load_test_context is None,'Rejected Home retained a factory owner')
                                 require(not rig.actions,'Rejected XY/entry started T0 motion')
-                                refusals.append(dict(origin=origin,fault=fault,reason=str(exc),reference_invalid=True))
+                                refusals.append(dict(origin=origin,machine=machine,fault=fault,reason=str(exc),reference_invalid=True))
                                 continue
                             if fault is not None:raise AssertionError('Expected refusal: '+fault)
                             calls=model.calls[start:]
@@ -180,16 +217,49 @@ def inspect(klipper,config):
                                 require(not any(c[0] in ('xy_seek','held_service') for c in following[:move_index]),
                                         'Next procedure started before the '+axis+' backoff')
                                 target=[None,None,None,None]
-                                target[index]=call[2]/640.+1./640.+5.
+                                target[index]=5.
                                 require(backoff[1]==tuple(target) and backoff[2]==1.,
                                         'Backoff moved another axis, changed speed or was not 5 mm: '+repr(backoff))
                                 ref=native.xy_references[axis]
+                                # Later explicit rehomes may supersede this
+                                # axis's earlier measurement in the same request.
                                 require(ref['release_steps']==call[2] and ref['post_home_backoff_mm']==5.,
                                         'Backoff changed the measured datum')
+                                rebases=[c for c in following[:move_index] if c[0]=='frame_set']
+                                require(len(rebases)==1 and rebases[0][2]==axis.lower(),
+                                        'Release did not rebase just the measured axis')
+                                require(abs(rebases[0][1][index]-overrun_steps/640.)<1e-9,
+                                        'Stop overrun was mistaken for the measured release edge')
                                 require(abs(ref['parked_native_mm']-target[index])<1e-9,'Wrong retained park')
                                 if name in ('X','Y','XY'):
                                     require(model.position[index]==target[index],'Standalone XY did not stay parked')
                                 backoffs.append(axis)
+                            for index,axis in enumerate('XY'):
+                                if axis not in native.xy_references:continue
+                                ref=native.xy_references[axis]
+                                require(ref['reference_native_mm']==0.,'Configured reference changed')
+                                release=ref['release_mm']
+                                require(abs(native.kin.limits[index][0]+release)<1e-9
+                                        and abs(native.kin.limits[index][1]+release-138.)<1e-9,
+                                        'Rebasing changed the original physical travel envelope')
+                                require(abs([native.pad_x,native.pad_y][index]+release-configured_pad[index])<1e-9,
+                                        'Rebasing moved the configured physical Z pad')
+                                # Execute the actual pinned CoreXY bounds
+                                # checker, using this run's translated limits.
+                                saved_limits=actual_kin.limits
+                                actual_kin.limits=list(model.limits)
+                                try:
+                                    point=model.get_position();point[index]=model.limits[index][1]
+                                    axes_d=[0.,0.,0.,0.];axes_d[index]=1.
+                                    move=types.SimpleNamespace(end_pos=point,axes_d=axes_d,
+                                        move_error=lambda: ValueError('outside physical travel'))
+                                    actual_kin.check_move(move)
+                                    point[index]+=1./640.
+                                    try:actual_kin.check_move(move)
+                                    except ValueError:pass
+                                    else:raise AssertionError('CoreXY accepted movement past the original physical limit')
+                                finally:
+                                    actual_kin.limits=saved_limits
                             require(not any(c[0]=='motor_off' for c in calls),'A successful Home released motors')
                             if name in ('X','Y'):
                                 other=1 if name=='X' else 0
@@ -208,9 +278,19 @@ def inspect(klipper,config):
                                 require(len([c for c in calls if c[0]=='held_service'])==1,'Missing held entry')
                                 require([c[1] for c in calls if c[0]=='G28']==['Z'],'Full PE12 reference repeated')
                                 require(board.load_test_context is None,'Factory owner survived completion')
+                                pad_moves=[a for a in actions if a['kind']=='move' and a.get('leg')=='z_contact_pad']
+                                require(bool(pad_moves),'Missing original service pad leg')
+                                for pad_move in pad_moves:
+                                    for index,axis in enumerate('XY'):
+                                        release=native.xy_references[axis]['release_mm']
+                                        require(abs(pad_move[axis.lower()]+release-configured_pad[index])<1e-9,
+                                                'T0/Z pad leg changed physical position or counted release twice')
                             require(set(native.xy_references).issuperset(before|set(seeks)),'Held XY reference was discarded')
-                            rows.append(dict(origin=origin,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
+                            rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
+                                measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
+                                release_origin_dynamic=True,physical_z_pad_unchanged=True,
+                                actual_corexy_limits_checked=True,
                                 xy_backoff_mm=5.,enable_held=True,targets_unchanged=True,
                                 z_certified=name in ('Z','ALL'),motion_interfaces='simulated'))
         return dict(status='PASS_INSTALLED_R24_HOME_CYCLES',case_count=len(rows),cases=rows,

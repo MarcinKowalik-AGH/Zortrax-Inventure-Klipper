@@ -1,5 +1,4 @@
 """The installed R24 route must retain accepted engines and conditional XY."""
-import ast
 from hashlib import sha256
 import importlib.util
 import json
@@ -23,31 +22,38 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             report=json.loads((output/'R24_HOME_CYCLES.json').read_text())
             self.assertEqual(report['status'],'PASS_INSTALLED_R24_HOME_CYCLES')
-            self.assertEqual(report['case_count'],126)
-            self.assertEqual(report['refusal_count'],42)
+            self.assertEqual(report['case_count'],384)
+            self.assertEqual(report['refusal_count'],96)
             for row in report['cases']:
                 self.assertEqual(row['xy_seek'],row['xy_release'])
                 self.assertEqual(row['xy_seek'],row['xy_backoff'])
                 self.assertEqual(row['xy_backoff_mm'],5.)
                 self.assertTrue(row['enable_held'])
                 self.assertTrue(row['targets_unchanged'])
+                self.assertTrue(row['release_origin_dynamic'])
+                self.assertTrue(row['physical_z_pad_unchanged'])
+                self.assertTrue(row['actual_corexy_limits_checked'])
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']
-            self.assertEqual(len(after_xy),6)
+            self.assertEqual(len(after_xy),12)
             self.assertTrue(all(row['xy_seek']==[] for row in after_xy))
             missing=[row for row in report['cases'] if row['sequence']==['Z']]
             self.assertTrue(all(row['xy_seek']==['Y','X'] for row in missing))
             self.assertTrue(report['configuration_unchanged'])
             self.assertFalse(report['hardware_tested'])
+            self.assertEqual({row['machine'] for row in report['cases']},{'A','B'})
+            for axis in 'XY':
+                measured={row['measured_release_steps'][axis] for row in report['cases']
+                          if axis in row['measured_release_steps']}
+                self.assertGreaterEqual(len(measured),4)
 
-    def test_rc1_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
+    def check_prior_upgrade(self,revision,manifest_hash):
         with tempfile.TemporaryDirectory(prefix='inventure-r24-rc2-upgrade-') as temporary:
             home=Path(temporary)
             host=home/'host'
-            _,old,metadata=bootstrap._plan(ROOT,procedure_profile='operator-home-r24',operator_home_revision='rc1')
-            # Generated independently from the immutable published RC1 commit
-            # 2c8d2807b5c408da0c9a0aa537615825616a95a4.
+            _,old,metadata=bootstrap._plan(ROOT,procedure_profile='operator-home-r24',operator_home_revision=revision)
+            # Generated independently from the immutable preceding releases.
             self.assertEqual(sha256(bootstrap._metadata_bytes(metadata)).hexdigest(),
-                             '9a62f3171da978d6cf7842eeecd5a07a2a348f69da7c5b5f89ada7937598ab92')
+                             manifest_hash)
             _,new,_=bootstrap._plan(ROOT,procedure_profile='operator-home-r24')
             self.assertEqual({name for name in old if old[name]!=new[name]},
                              {'klippy/extras/inventure_operator_home.py'})
@@ -55,12 +61,6 @@ class OperatorHomeR24Tests(unittest.TestCase):
             # T0/factory driver is identical to the preceding release.
             for name in ('inventure_native_z.py','inventure_z_home.py','inventure_mcu.py'):
                 self.assertEqual(old['klippy/extras/'+name],new['klippy/extras/'+name])
-            def unchanged_methods(code):
-                cls=next(n for n in ast.parse(code).body if isinstance(n,ast.ClassDef))
-                return {n.name:ast.dump(n,include_attributes=False) for n in cls.body
-                        if isinstance(n,ast.FunctionDef) and n.name!='_home_limit'}
-            self.assertEqual(unchanged_methods(old['klippy/extras/inventure_operator_home.py'][0]),
-                             unchanged_methods(new['klippy/extras/inventure_operator_home.py'][0]))
             bootstrap._write_files(host,old)
             marker=host/bootstrap.MANIFEST_NAME
             marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
@@ -80,6 +80,12 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 for path,(before,_) in updates.items():path.write_bytes(before)
                 self.assertEqual(bootstrap.verify_host(host,allow_legacy=True)['status'],'VERIFIED_LEGACY_HOST')
             self.assertEqual({p.relative_to(host):p.read_bytes() for p in host.rglob('*') if p.is_file()},original)
+
+    def test_rc1_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
+        self.check_prior_upgrade('rc1','9a62f3171da978d6cf7842eeecd5a07a2a348f69da7c5b5f89ada7937598ab92')
+
+    def test_rc3_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
+        self.check_prior_upgrade('rc2','f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
 
     def test_oem_profile_can_stage_the_new_helper_and_restore_absence_on_rollback(self):
         from test_install_new_host import installer

@@ -538,6 +538,7 @@ def _predecessor_plans(repo):
         yield _plan(repo, procedure_profile='oem-home-r38.6')
     if _procedure_profile.get() == 'operator-home-r24':
         yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc1')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc2')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:

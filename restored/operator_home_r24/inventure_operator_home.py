@@ -12,7 +12,7 @@ from . import homing
 from .inventure_factory_core import FactoryError, XY_RELEASE_MM, XY_RELEASE_SPEED
 from .inventure_z_home import OEM_Z_BOTTOM_SPEED
 
-RELEASE = 'RC8-HOME-XY-RELEASE-Z-REUSE-R24.1-XY5MM'
+RELEASE = 'RC8-HOME-XY-RELEASE-ZERO-R24.2-XY5MM'
 PROFILE = 'operator-home-r24'
 ENTRY_COMMAND = 'inventure_native_held_service owner=%u'
 ENTRY_RESPONSE = 'inventure_native_held_service_state owner=%u mode=%c enabled=%c reject=%c'
@@ -24,11 +24,42 @@ XY_POST_HOME_BACKOFF_MM = 5.
 class OperatorHome:
     def __init__(self, config):
         self.xy_references = {}
+        self.xy_frame_release_mm = {}
         self.xy_clearance_position = None
         self.held_service = None
         self.requested_home_axes = None
         self._g28_installed = False
         super().__init__(config)
+
+    @property
+    def pad_x(self):
+        return self._configured_pad_x - self.xy_frame_release_mm.get('X', 0.)
+
+    @pad_x.setter
+    def pad_x(self, value):
+        self._configured_pad_x = value
+
+    @property
+    def pad_y(self):
+        return self._configured_pad_y - self.xy_frame_release_mm.get('Y', 0.)
+
+    @pad_y.setter
+    def pad_y(self, value):
+        self._configured_pad_y = value
+
+    def _apply_release_ranges(self):
+        """Translate the existing physical envelope, never enlarge its travel."""
+        if self.kin is None:
+            return
+        lower, upper = list(self.kin.axes_min), list(self.kin.axes_max)
+        homed = self.kin.get_status(self.reactor.monotonic())['homed_axes']
+        for index, axis in enumerate('XY'):
+            release = self.xy_frame_release_mm.get(axis, 0.)
+            lower[index], upper[index] = (value - release for value in self.kin.rails[index].get_range())
+            if axis.lower() in homed and axis in self.xy_frame_release_mm:
+                self.kin.limits[index] = (lower[index], upper[index])
+        self.kin.axes_min = type(self.kin.axes_min)(lower)
+        self.kin.axes_max = type(self.kin.axes_max)(upper)
 
     def _install_g28(self):
         if self._g28_installed:return
@@ -71,6 +102,7 @@ class OperatorHome:
 
     def _lost_enable(self):
         self.xy_references.clear()
+        self.xy_frame_release_mm.clear()
         self.xy_clearance_position = None
         if self.kin is not None:
             self._invalidate_native_homing()
@@ -78,8 +110,10 @@ class OperatorHome:
 
     def _invalidate_native_homing(self):
         self.xy_references.clear()
+        self.xy_frame_release_mm.clear()
         self.xy_clearance_position = None
         super()._invalidate_native_homing()
+        self._apply_release_ranges()
 
     def _home_rails_begin(self, state, rails):
         super()._home_rails_begin(state, rails)
@@ -87,18 +121,24 @@ class OperatorHome:
             for axis, rail in zip('XY', self.kin.rails[:2]):
                 if rail in rails:
                     self.xy_references.pop(axis, None)
+                    self.xy_frame_release_mm.pop(axis, None)
 
     def get_status(self, eventtime):
         result = super().get_status(eventtime)
         result.update(homing_safety_release=RELEASE, procedure_restore_release=RELEASE,
                       home_procedure_profile=PROFILE, operator_home_module=__file__,
                       g28_dispatch='shared_operator_home_r24' if self._g28_installed else 'pending_connect',
+                      xy_reference_frame='measured_release',
+                      xy_frame_release_mm=dict(self.xy_frame_release_mm),
+                      configured_pad_xy_mm=[self._configured_pad_x, self._configured_pad_y],
+                      working_pad_xy_mm=[self.pad_x, self.pad_y],
                       xy_references={axis:dict(value) for axis,value in self.xy_references.items()})
         return result
 
     def _xy_valid(self, axis):
         state = self.board._control_query()
         return (axis in self.xy_references
+                and self.xy_frame_release_mm.get(axis) == self.xy_references[axis]['release_mm']
                 and axis.lower() in self.kin.get_status(self.reactor.monotonic())['homed_axes']
                 and state['mode'] == 'NATIVE' and state['armed']
                 and not state['fault'] and not state['latched'])
@@ -179,12 +219,19 @@ class OperatorHome:
             release = measured[index] - info.position_endstop
             actual = self.toolhead.get_position()[index] - info.position_endstop
             if (not 0 < release <= actual <= XY_RELEASE_MM
+                    or actual - release >= XY_POST_HOME_BACKOFF_MM
                     or move.check_no_movement() is not None or self._is_triggered(pin)):
                 raise FactoryError(axis+' did not establish a fresh, bounded limit release')
-            # The measured release remains the datum. Park another 5 mm
-            # inward with the drives held, without resetting either axis.
+            # Rebase only this axis to its freshly measured release. Retain
+            # any stop overrun as real travel past that edge, then complete
+            # the 5 mm park from the edge instead of adding it a second time.
+            position = self.toolhead.get_position()
+            position[index] -= release
+            self.xy_frame_release_mm[axis] = release
+            self.toolhead.set_position(position, homing_axes=axis.lower())
+            self._apply_release_ranges()
             target = [None, None, None, None]
-            target[index] = self.toolhead.get_position()[index] + XY_POST_HOME_BACKOFF_MM
+            target[index] = info.position_endstop + XY_POST_HOME_BACKOFF_MM
             self._move_to(target, XY_RELEASE_SPEED)
             self._require_native()
             if self._is_triggered(pin):
@@ -193,10 +240,12 @@ class OperatorHome:
             # Its release-to-trigger translation is measured, never assumed.
             self.xy_references[axis] = dict(release_mm=release,
                 release_steps=round(release * XY_STEPS_PER_MM), halt_mm=actual,
+                reference_native_mm=info.position_endstop,
                 post_home_backoff_mm=XY_POST_HOME_BACKOFF_MM,
                 parked_native_mm=self.toolhead.get_position()[index],
                 reference='measured_reverse_release', enable_held=True)
             self._remember_clearance()
+            self._apply_release_ranges()
         except Exception:
             self.printer.lookup_object('stepper_enable').motor_off()
             self._invalidate_native_homing()
@@ -236,6 +285,9 @@ class OperatorHome:
             raise gcmd.error(str(exc)) from exc
         finally:
             self.requested_home_axes = previous
+            # The frozen Z handback marks XY homed using the rail's stored
+            # ranges. Reapply this run's coordinate translation afterwards.
+            self._apply_release_ranges()
 
     def _prepare_t0(self, gcmd, heaters, target, xy_factor=None, pad_speed=None):
         from .inventure_fluidd import require_idle, native_control_state, select_native_control
@@ -254,10 +306,14 @@ class OperatorHome:
         for axis in 'YX':
             if self.requested_home_axes == 'XYZ' or not self._xy_valid(axis):
                 self._home_limit(axis,self.xy_speed_factor if xy_factor is None else xy_factor)
-        endstops = [rail.get_homing_info().position_endstop for rail in self.kin.rails[:2]]
         releases = {axis:self.xy_references[axis]['release_mm'] for axis in 'XY'}
+        references = [rail.get_homing_info().position_endstop for rail in self.kin.rails[:2]]
+        # The frozen generator adds measured release to endstops when it
+        # translates SERVICE coordinates. Native XY already has that shift;
+        # account for it here exactly once without rewriting the generator.
+        endstops = [references[i] - releases[axis] for i,axis in enumerate('XY')]
         position = self.toolhead.get_position()
-        service_xy = [position[i] - endstops[i] - releases[axis] for i,axis in enumerate('XY')]
+        service_xy = [position[i] - references[i] for i in (0, 1)]
         owner = self.board._control_next_token()
         if self.held_service is None:
             raise FactoryError('Matching R24 MCU held-service command is unavailable')
