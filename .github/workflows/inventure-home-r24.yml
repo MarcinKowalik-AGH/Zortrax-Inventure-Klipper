@@ -108,7 +108,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-home-r24-rc4 \
+          gh release create inventure-home-r24-rc5 \
             "$RUNNER_TEMP/r24-release/INVENTURE_HOME_R24_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -117,5 +117,5 @@ jobs:
             "$RUNNER_TEMP/r24-release/r24-build/R24_HOME_BUILD.json" \
             "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_CYCLES.json" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R24 RC4: dynamic X/Y reference at measured endstop release' \
+            --title 'Inventure R24 RC5: reuse known XY before Z and start Fluidd Home directly' \
             --notes-file docs/INVENTURE_HOME_R24.md

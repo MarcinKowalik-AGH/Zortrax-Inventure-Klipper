@@ -1,4 +1,5 @@
 """The installed R24 route must retain accepted engines and conditional XY."""
+import ast
 from hashlib import sha256
 import importlib.util
 import json
@@ -22,8 +23,8 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             report=json.loads((output/'R24_HOME_CYCLES.json').read_text())
             self.assertEqual(report['status'],'PASS_INSTALLED_R24_HOME_CYCLES')
-            self.assertEqual(report['case_count'],384)
-            self.assertEqual(report['refusal_count'],96)
+            self.assertEqual(report['case_count'],456)
+            self.assertEqual(report['refusal_count'],112)
             for row in report['cases']:
                 self.assertEqual(row['xy_seek'],row['xy_release'])
                 self.assertEqual(row['xy_seek'],row['xy_backoff'])
@@ -33,9 +34,18 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertTrue(row['release_origin_dynamic'])
                 self.assertTrue(row['physical_z_pad_unchanged'])
                 self.assertTrue(row['actual_corexy_limits_checked'])
+                if row['origin'] in ('fluidd','gcode'):
+                    self.assertFalse(row['initial_review'])
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']
             self.assertEqual(len(after_xy),12)
             self.assertTrue(all(row['xy_seek']==[] for row in after_xy))
+            combined=[row for row in report['cases'] if row['sequence']==['X','Y','ALL'] and row['request']=='ALL']
+            self.assertEqual(len(combined),12)
+            self.assertTrue(all(row['xy_seek']==[] for row in combined))
+            for axis,missing in (('X','Y'),('Y','X')):
+                partial=[row for row in report['cases'] if row['sequence']==[axis,'ALL'] and row['request']=='ALL']
+                self.assertEqual(len(partial),12)
+                self.assertTrue(all(row['xy_seek']==[missing] for row in partial))
             missing=[row for row in report['cases'] if row['sequence']==['Z']]
             self.assertTrue(all(row['xy_seek']==['Y','X'] for row in missing))
             self.assertTrue(report['configuration_unchanged'])
@@ -86,6 +96,23 @@ class OperatorHomeR24Tests(unittest.TestCase):
 
     def test_rc3_upgrade_changes_only_operator_helper_and_manifest_and_rolls_back_exactly(self):
         self.check_prior_upgrade('rc2','f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
+
+    def test_physically_confirmed_rc4_upgrade_and_exact_rollback(self):
+        self.check_prior_upgrade('rc4','dd427a00e334c679f7aee69075f960e1d91db6c5294529a63bcd38c6e1bdbd44')
+
+    def test_rc4_homing_implementation_changes_only_the_requested_operator_routing(self):
+        frozen=(ROOT/'restored/operator_home_r24/rc4/inventure_operator_home.py').read_bytes()
+        self.assertEqual(sha256(frozen).hexdigest(),
+                         'a8db616130e7bf4f90e791af275e073b5369714295136d6485e9044720f47132')
+        current=(ROOT/'restored/operator_home_r24/inventure_operator_home.py').read_bytes()
+        def methods(code):
+            cls=next(n for n in ast.parse(code).body if isinstance(n,ast.ClassDef))
+            return {(n.name,tuple(ast.dump(d,include_attributes=False) for d in n.decorator_list)):
+                    ast.dump(n,include_attributes=False) for n in cls.body if isinstance(n,ast.FunctionDef)}
+        old,new=methods(frozen),methods(current)
+        self.assertEqual(set(old),set(new))
+        self.assertEqual({name for name,decorators in old if old[name,decorators]!=new[name,decorators]},
+                         {'_install_g28','_home_axes','_prepare_t0'})
 
     def test_oem_profile_can_stage_the_new_helper_and_restore_absence_on_rollback(self):
         from test_install_new_host import installer

@@ -41,21 +41,25 @@ def inspect(klipper,config):
         motion=importlib.import_module(package+'.homing')
         sequences=(('X','Y','Z'),('Y','X','Z'),('X','Z'),('Y','Z'),('Z',),
                    ('ALL',),('ALL','Z'),('X','Y','Z','Z'),('X','Y','DRIVE_RELEASE','Z'),
-                   ('X','Y','X','Z'),('X','Y','Y','Z'),('X','Y','ALL'))
+                   ('X','Y','X','Z'),('X','Y','Y','Z'),('X','Y','ALL'),
+                   ('X','ALL'),('Y','ALL'),('ALL','ALL'))
         cases=[(sequence,None) for sequence in sequences]+[
             (('X',),'seek_x'),(('X',),'release_x'),(('Y',),'release_y'),
             (('X',),'early_release_x'),(('Z',),'held_receipt'),
-            (('X',),'backoff_x'),(('Y',),'backoff_y'),(('X',),'overrun_x')]
+            (('X',),'backoff_x'),(('Y',),'backoff_y'),(('X',),'overrun_x'),
+            (('Z',),'tray_missing'),(('Z',),'bad_ack')]
         cases=[(sequence,fault,machine) for machine in ('A','B') for sequence,fault in cases]
         for origin in ('fluidd','oled','gcode'):
             for hot in (False,True):
                 for sequence,fault,machine in cases:
+                    if fault=='bad_ack' and origin!='fluidd':continue
                     rig=InstalledRig(printer,klipper,hot=hot)
                     native,model,board=rig.native,rig.model,rig.board
                     model.max_z_velocity=maximum_z_speed
                     native.xy_references={};native.xy_frame_release_mm={};native.xy_clearance_position=None
                     native.requested_home_axes=None
                     model.axes='';model.position[2]=0.;model.physical_z=80.
+                    if fault=='tray_missing':model.tray=1
                     configured_pad=[native.pad_x,native.pad_y]
                     # Emulate CoreXY's native position/range interfaces. The
                     # real installed adapter and all T0/Z engines remain in use.
@@ -181,14 +185,20 @@ def inspect(klipper,config):
                             before_position=model.get_position()
                             targets={n:h.get_temp(0.)[1] for n,h in model.heaters.items()}
                             try:
-                                if origin=='fluidd':rig.run('INVENTURE_HOME_'+name)
+                                if origin=='fluidd':rig.run('INVENTURE_HOME_'+name+(' ACK=INVALID' if fault=='bad_ack' else ''))
                                 elif origin=='gcode':rig.run('G28'+('' if name=='ALL' else ' '+' '.join(name)))
                                 else:
                                     panel.oem_menu.open_page('klipper_control');panel.oem_display_mode='menu'
                                     label='Home XYZ' if name=='ALL' else 'Home '+name
                                     panel.oem_menu.selected=next(i for i,n in enumerate(panel.oem_menu.items()) if n.label==label)
                                     panel._select(panel.reactor.monotonic())
-                                if rig.menu.view is not None and rig.menu.view.kind=='confirm':rig.confirm(origin)
+                                initial_review=rig.menu.view is not None and rig.menu.view.kind=='confirm'
+                                if origin in ('fluidd','gcode'):
+                                    require(not initial_review,'Direct Home still requires an initial confirmation')
+                                    require(not any('action:prompt_begin' in line or 'Confirm Home ' in line for line in rig.lines),
+                                            'Direct Home emitted the removed Fluidd confirmation')
+                                elif initial_review:
+                                    rig.confirm(origin)
                             except Exception as exc:
                                 if fault is None:raise
                                 require(not native.xy_references,'Rejected Home retained an XY reference')
@@ -202,8 +212,8 @@ def inspect(klipper,config):
                             if fault is not None:raise AssertionError('Expected refusal: '+fault)
                             calls=model.calls[start:]
                             seeks=[c[1] for c in calls if c[0]=='xy_seek']
-                            expected=(['Y','X'] if name=='ALL' else [a for a in 'YX' if a not in before]
-                                      if name=='Z' else [a for a in 'YX' if a in name])
+                            expected=([a for a in 'YX' if a not in before] if name in ('Z','ALL')
+                                      else [a for a in 'YX' if a in name])
                             require(seeks==expected,'Wrong requested/retained XY: '+repr((sequence,name,seeks,expected)))
                             require([c[1] for c in calls if c[0]=='xy_release']==seeks,'Missing release after approach')
                             backoffs=[]
@@ -272,12 +282,20 @@ def inspect(klipper,config):
                             require(not any(a['kind'] in ('home','home_release','z_contact_move') for a in actions),
                                     'Retained T0 preparation repeated SERVICE homing/clearance')
                             if name in ('Z','ALL'):
+                                if origin=='oled':require(initial_review,'OLED lost its explicit menu confirmation')
                                 require(native.last_result and native.last_result.get('coordinate_saved'),'Z not certified')
                                 require(model.position[2]==native.park_z,'Z did not park at its existing setting')
                                 require(model.physical_tool==0,'T0 was not physically selected')
                                 require(len([c for c in calls if c[0]=='held_service'])==1,'Missing held entry')
                                 require([c[1] for c in calls if c[0]=='G28']==['Z'],'Full PE12 reference repeated')
                                 require(board.load_test_context is None,'Factory owner survived completion')
+                                progress=[json.loads(line.split('V9_NATIVE_Z_PROGRESS ',1)[1]) for line in rig.lines
+                                          if 'V9_NATIVE_Z_PROGRESS ' in line]
+                                prepared=[row for row in progress if row.get('stage')=='T0 selection and cleaning']
+                                require(len(prepared)==1 and prepared[0]['xy_homed_axes']==seeks,
+                                        'Home progress does not report the actual missing axes')
+                                require(prepared[0]['xy_reused_axes']==[axis for axis in 'YX' if axis in before],
+                                        'Home progress lost a reused, held reference')
                                 pad_moves=[a for a in actions if a['kind']=='move' and a.get('leg')=='z_contact_pad']
                                 require(bool(pad_moves),'Missing original service pad leg')
                                 for pad_move in pad_moves:
@@ -287,6 +305,7 @@ def inspect(klipper,config):
                                                 'T0/Z pad leg changed physical position or counted release twice')
                             require(set(native.xy_references).issuperset(before|set(seeks)),'Held XY reference was discarded')
                             rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
+                                initial_review=initial_review,
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
                                 measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
                                 release_origin_dynamic=True,physical_z_pad_unchanged=True,

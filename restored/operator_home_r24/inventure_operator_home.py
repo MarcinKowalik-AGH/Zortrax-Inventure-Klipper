@@ -10,9 +10,9 @@ from contextlib import nullcontext
 
 from . import homing
 from .inventure_factory_core import FactoryError, XY_RELEASE_MM, XY_RELEASE_SPEED
-from .inventure_z_home import OEM_Z_BOTTOM_SPEED
+from .inventure_z_home import OEM_Z_BOTTOM_SPEED, Z_HOME_ACK
 
-RELEASE = 'RC8-HOME-XY-RELEASE-ZERO-R24.2-XY5MM'
+RELEASE = 'RC8-HOME-XY-RELEASE-ZERO-R24.3-XY5MM'
 PROFILE = 'operator-home-r24'
 ENTRY_COMMAND = 'inventure_native_held_service owner=%u'
 ENTRY_RESPONSE = 'inventure_native_held_service_state owner=%u mode=%c enabled=%c reject=%c'
@@ -65,7 +65,7 @@ class OperatorHome:
         if self._g28_installed:return
         gcode=self.printer.lookup_object('gcode')
         gcode.register_command('G28',None)
-        gcode.register_command('G28',self.cmd_G28,desc='Inventure OEM release homing; Z/XYZ share operator confirmation')
+        gcode.register_command('G28',self.cmd_G28,desc='Inventure release homing; Z/XYZ reuse valid held XY')
         self._g28_installed=True
 
     def cmd_G28(self,gcmd):
@@ -259,6 +259,14 @@ class OperatorHome:
         self.requested_home_axes = axes
         try:
             if axes not in ('X', 'Y', 'XY'):
+                # Direct Fluidd/G28 operator requests start without the old
+                # review dialog. The OLED menu keeps its own confirmation;
+                # all existing physical and ownership checks still run below.
+                params = dict(gcmd.get_command_parameters())
+                if operator and 'Z' in axes and 'ACK' not in params:
+                    params['ACK'] = Z_HOME_ACK
+                    gcmd = self.printer.lookup_object('gcode').create_gcode_command(
+                        'INVENTURE_HOME_REQUEST', 'INVENTURE_HOME_REQUEST AXES='+axes, params)
                 return super()._home_axes(gcmd, operator)
             from .inventure_fluidd import require_idle, native_control_state, select_native_control
             unknown = gcmd.get_command_parameters().keys() - {'AXES','XY_SPEED_FACTOR','XY_CLEARANCE'}
@@ -303,9 +311,14 @@ class OperatorHome:
         self.toolhead.wait_moves()
         self._require_native()
         self._operator_clearance(self.xy_clearance)
+        homed_axes = []
+        reused_axes = []
         for axis in 'YX':
-            if self.requested_home_axes == 'XYZ' or not self._xy_valid(axis):
+            if not self._xy_valid(axis):
                 self._home_limit(axis,self.xy_speed_factor if xy_factor is None else xy_factor)
+                homed_axes.append(axis)
+            else:
+                reused_axes.append(axis)
         releases = {axis:self.xy_references[axis]['release_mm'] for axis in 'XY'}
         references = [rail.get_homing_info().position_endstop for rail in self.kin.rails[:2]]
         # The frozen generator adds measured release to endstops when it
@@ -342,7 +355,8 @@ class OperatorHome:
         frame = dict(owner=owner,service_xy=service_xy,release_mm=releases)
         try:
             gcmd.respond_info('V9_NATIVE_Z_PROGRESS '+json.dumps(dict(stage='T0 selection and cleaning',
-                                xy_reference='retained_release',xy_rehomed=self.requested_home_axes=='XYZ')))
+                                xy_reference='retained_release',xy_rehomed=bool(homed_axes),
+                                xy_homed_axes=homed_axes,xy_reused_axes=reused_axes)))
             context = self.board._factory_start(command,operation='CLEAN',native_homing=dict(
                 pad_xy=[self.pad_x,self.pad_y],endstops=endstops,
                 pad_speed=self.pad_speed if pad_speed is None else pad_speed,held_xy=frame))

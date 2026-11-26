@@ -53,3 +53,12 @@ Read [the R24 contract and verification limits](docs/INVENTURE_HOME_R24.md).
 The new combination still needs physical acceptance. Preserve its tested
 sequence during later UI/configuration integration; a source comparison or
 simulation alone does not establish acceptance on the actual printer.
+
+## Reported physical Home acceptance, 26 November 2026
+
+The operator confirmed working X, Y and Z after the RC4 field-test instructions.
+Use [the pinned RC4 source and acceptance record](docs/INVENTURE_ACCEPTED_HOME_R24_RC4_2026-11-26.md)
+as the preservation baseline. Keep that report separate from later candidate
+validation. The newly authorized changes are reuse of valid held XY before
+Z/XYZ and removal of the initial direct Fluidd Home confirmation. Preserve the
+accepted homing/measurement engines and all tray/ownership interlocks.
