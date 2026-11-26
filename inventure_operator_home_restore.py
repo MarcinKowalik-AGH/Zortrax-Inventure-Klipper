@@ -4,9 +4,11 @@ from hashlib import sha256
 from pathlib import Path
 
 PROFILE='operator-home-r24'
-RELEASE='RC8-HOME-XY-RELEASE-Z-REUSE-R24'
+RELEASE='RC8-HOME-XY-RELEASE-Z-REUSE-R24.1-XY5MM'
+RC1_RELEASE='RC8-HOME-XY-RELEASE-Z-REUSE-R24'
 BASELINE_BLOB='9355e8f2de8880f80c5302f4270f34fbc7d5cf93'
-OPERATOR_SHA256='d5c97c401e538f4b5012b967e51805c43bff1b153ed60bcfc12c82b08900c9e3'
+OPERATOR_SHA256='ab4a5a694825b7603d61c29e291728f590ef67fc0c08119abaa6c860d38e6054'
+RC1_OPERATOR_SHA256='d5c97c401e538f4b5012b967e51805c43bff1b153ed60bcfc12c82b08900c9e3'
 
 def require_reference_backup(repo,home,host):
     from inventure_oem_home_restore import require_reference_backup as verify
@@ -16,8 +18,10 @@ def replace(data,before,after):
     if data.count(before)!=1:raise ValueError('Unexpected frozen OEM Home anchor: '+before[:70])
     return data.replace(before,after,1)
 
-def restored_operator_home(repo,files):
+def restored_operator_home(repo,files,*,revision='current'):
     repo=Path(repo)
+    if revision not in ('current','rc1'):
+        raise ValueError('Unknown operator Home revision: '+revision)
     native='klippy/extras/inventure_native_z.py'
     driver='klippy/extras/inventure_mcu.py'
     program='klippy/extras/inventure_z_home.py'
@@ -61,8 +65,11 @@ def restored_operator_home(repo,files):
 '''
     data=replace(data,anchor,insertion+anchor)
     updates[driver]=(data.encode(),0o644)
-    code=(repo/'restored/operator_home_r24/inventure_operator_home.py').read_bytes()
-    if sha256(code).hexdigest()!=OPERATOR_SHA256:
+    helper=repo/'restored/operator_home_r24'
+    if revision=='rc1':helper=helper/'rc1'
+    code=(helper/'inventure_operator_home.py').read_bytes()
+    expected=RC1_OPERATOR_SHA256 if revision=='rc1' else OPERATOR_SHA256
+    if sha256(code).hexdigest()!=expected:
         raise ValueError('The reviewed R24 operator Home source changed')
     updates[extension]=(code,0o644)
     # Apart from the preparation dispatcher, every accepted engine method
@@ -75,7 +82,7 @@ def restored_operator_home(repo,files):
                     and n.name not in allowed}
         if methods(old)!=methods(new):raise ValueError('R24 changed an accepted engine outside operator preparation')
     for name,(data,_) in updates.items():compile(data,name,'exec')
-    return updates,dict(release=RELEASE,profile=PROFILE,baseline_blob=BASELINE_BLOB,
+    return updates,dict(release=RC1_RELEASE if revision=='rc1' else RELEASE,profile=PROFILE,baseline_blob=BASELINE_BLOB,
         required_mcu='RC8-CONTROL-R7-HOME-R24-OLED',required_held_service_abi=1,
         accepted_z_and_factory_engine_ast_unchanged=True,
         files={name:sha256(data).hexdigest() for name,(data,_) in updates.items()},hardware_tested=False)

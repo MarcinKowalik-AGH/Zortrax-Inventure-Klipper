@@ -45,6 +45,14 @@ jobs:
         run: |
           python ci/prepare_kit.py --destination "$RUNNER_TEMP/pinned-kit"
           python ci/build_inventure_home_r24.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r24-build"
+      - name: Verify RC2 retains the exact RC1 MCU application and dictionary
+        run: |
+          cd "$RUNNER_TEMP/r24-build"
+          sha256sum --check <<'SUMS'
+          ceadbff262e6e37f5f380ccb5c896fbdfc4ebc301bef1d4e83aae00f9e18cb07  INVENTUR.IVB
+          7d4ac770f6cf7fa87300d9c70e28f8b0677a02509118d3930c2ae6751a6474ff  klipper.bin
+          af9f03aa9961b3bc97c820404836af6675c54a9d0202da9c9995181cf148cf24  klipper.dict
+          SUMS
       - name: Package the reviewed firmware, identity and installation instructions
         shell: bash
         run: |
@@ -100,7 +108,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-home-r24-rc1 \
+          gh release create inventure-home-r24-rc2 \
             "$RUNNER_TEMP/r24-release/INVENTURE_HOME_R24_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -109,5 +117,5 @@ jobs:
             "$RUNNER_TEMP/r24-release/r24-build/R24_HOME_BUILD.json" \
             "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_CYCLES.json" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R24 RC1: OEM X/Y release, held motors and retained XY for Z' \
+            --title 'Inventure R24 RC2: 5 mm XY backoff with held motors; Z unchanged' \
             --notes-file docs/INVENTURE_HOME_R24.md

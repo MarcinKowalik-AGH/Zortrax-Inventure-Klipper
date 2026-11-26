@@ -51,7 +51,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R24.0'
+INSTALLER_RELEASE = 'R24.1'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 

@@ -149,7 +149,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
-          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True):
+          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
+          operator_home_revision='current'):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -343,7 +344,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
     if profile == 'operator-home-r24':
         path = repo/'inventure_operator_home_restore.py'
         restoration = _module('inventure_bootstrap_operator_home', path, _regular_bytes(path))
-        updates, provenance = restoration.restored_operator_home(repo, files)
+        updates, provenance = restoration.restored_operator_home(repo, files, revision=operator_home_revision)
         files.update(updates)
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
@@ -535,6 +536,8 @@ def _predecessor_plans(repo):
     yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
     if _procedure_profile.get() in ('current', 'operator-home-r24'):
         yield _plan(repo, procedure_profile='oem-home-r38.6')
+    if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc1')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
@@ -583,14 +586,23 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                "klippy/extras/inventure_native_z.py",
                "klippy/extras/inventure_z_home.py",
                "klippy/extras/inventure_mcu.py"}
+    if _procedure_profile.get() == 'operator-home-r24':
+        allowed.add('klippy/extras/inventure_operator_home.py')
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
     for name in changed:
         destination_file = target/name
-        before = _regular_bytes(destination_file)
-        _require(before == previous_files[name][0],
-                 "Runtime module changed while preparing restoration: " + name)
+        if name not in previous_files:
+            _require(_procedure_profile.get() == 'operator-home-r24'
+                     and name == 'klippy/extras/inventure_operator_home.py'
+                     and not destination_file.exists() and not destination_file.is_symlink(),
+                     "Unexpected new runtime module: " + name)
+            before = None
+        else:
+            before = _regular_bytes(destination_file)
+            _require(before == previous_files[name][0],
+                     "Runtime module changed while preparing restoration: " + name)
         updates[destination_file] = before, files[name][0]
     manifest = target/MANIFEST_NAME
     manifest_before = _regular_bytes(manifest)

@@ -42,7 +42,8 @@ def inspect(klipper,config):
                    ('ALL',),('ALL','Z'),('X','Y','Z','Z'),('X','Y','DRIVE_RELEASE','Z'))
         cases=[(sequence,None) for sequence in sequences]+[
             (('X',),'seek_x'),(('X',),'release_x'),(('Y',),'release_y'),
-            (('X',),'early_release_x'),(('Z',),'held_receipt')]
+            (('X',),'early_release_x'),(('Z',),'held_receipt'),
+            (('X',),'backoff_x'),(('Y',),'backoff_y')]
         for origin in ('fluidd','oled','gcode'):
             for hot in (False,True):
                 for sequence,fault in cases:
@@ -77,6 +78,14 @@ def inspect(klipper,config):
                         require(set(native.xy_references)=={'X','Y'},'Status polling discarded held XY')
                         return dict(owner=owner+(fault=='held_receipt'),mode=2,enabled=1,reject=0)
                     native.held_service=Wire(held_entry)
+                    manual_move=model.manual_move
+                    def checked_move(position,speed):
+                        for index,axis in enumerate('XY'):
+                            if (fault=='backoff_'+axis.lower() and position[index] is not None
+                                    and abs(position[index]-model.position[index]-5.)<1e-9):
+                                raise ValueError('Selected axis post-home backoff failed')
+                        return manual_move(position,speed)
+                    model.manual_move=checked_move
                     class Approach:
                         def __init__(self,p):self.axes=[]
                         def set_axes(self,axes):self.axes=axes
@@ -133,6 +142,7 @@ def inspect(klipper,config):
                             start=len(model.calls);action_start=len(rig.actions)
                             rig.lines.clear()
                             before=set(native.xy_references)
+                            before_position=model.get_position()
                             targets={n:h.get_temp(0.)[1] for n,h in model.heaters.items()}
                             try:
                                 if origin=='fluidd':rig.run('INVENTURE_HOME_'+name)
@@ -159,7 +169,32 @@ def inspect(klipper,config):
                                       if name=='Z' else [a for a in 'YX' if a in name])
                             require(seeks==expected,'Wrong requested/retained XY: '+repr((sequence,name,seeks,expected)))
                             require([c[1] for c in calls if c[0]=='xy_release']==seeks,'Missing release after approach')
+                            backoffs=[]
+                            for offset,call in enumerate(calls):
+                                if call[0]!='xy_release':continue
+                                axis=call[1];index='XY'.index(axis)
+                                following=calls[offset+1:]
+                                moves=[(i,c) for i,c in enumerate(following) if c[0]=='move']
+                                require(bool(moves),'Missing 5 mm move after '+axis+' release')
+                                move_index,backoff=moves[0]
+                                require(not any(c[0] in ('xy_seek','held_service') for c in following[:move_index]),
+                                        'Next procedure started before the '+axis+' backoff')
+                                target=[None,None,None,None]
+                                target[index]=call[2]/640.+1./640.+5.
+                                require(backoff[1]==tuple(target) and backoff[2]==1.,
+                                        'Backoff moved another axis, changed speed or was not 5 mm: '+repr(backoff))
+                                ref=native.xy_references[axis]
+                                require(ref['release_steps']==call[2] and ref['post_home_backoff_mm']==5.,
+                                        'Backoff changed the measured datum')
+                                require(abs(ref['parked_native_mm']-target[index])<1e-9,'Wrong retained park')
+                                if name in ('X','Y','XY'):
+                                    require(model.position[index]==target[index],'Standalone XY did not stay parked')
+                                backoffs.append(axis)
                             require(not any(c[0]=='motor_off' for c in calls),'A successful Home released motors')
+                            if name in ('X','Y'):
+                                other=1 if name=='X' else 0
+                                require(model.position[other]==before_position[other],
+                                        'Single-axis Home displaced the other axis')
                             require(model.shared_enable,'Successful Home did not hold PE10')
                             require(board._control_query()['mode']=='NATIVE','Home did not return NATIVE')
                             require(targets=={n:h.get_temp(0.)[1] for n,h in model.heaters.items()},'Targets changed')
@@ -175,7 +210,8 @@ def inspect(klipper,config):
                                 require(board.load_test_context is None,'Factory owner survived completion')
                             require(set(native.xy_references).issuperset(before|set(seeks)),'Held XY reference was discarded')
                             rows.append(dict(origin=origin,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
-                                request=name,xy_seek=seeks,xy_release=seeks,enable_held=True,targets_unchanged=True,
+                                request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
+                                xy_backoff_mm=5.,enable_held=True,targets_unchanged=True,
                                 z_certified=name in ('Z','ALL'),motion_interfaces='simulated'))
         return dict(status='PASS_INSTALLED_R24_HOME_CYCLES',case_count=len(rows),cases=rows,
                     refusal_count=len(refusals),refusals=refusals,

@@ -12,12 +12,13 @@ from . import homing
 from .inventure_factory_core import FactoryError, XY_RELEASE_MM, XY_RELEASE_SPEED
 from .inventure_z_home import OEM_Z_BOTTOM_SPEED
 
-RELEASE = 'RC8-HOME-XY-RELEASE-Z-REUSE-R24'
+RELEASE = 'RC8-HOME-XY-RELEASE-Z-REUSE-R24.1-XY5MM'
 PROFILE = 'operator-home-r24'
 ENTRY_COMMAND = 'inventure_native_held_service owner=%u'
 ENTRY_RESPONSE = 'inventure_native_held_service_state owner=%u mode=%c enabled=%c reject=%c'
 XY_STEPS_PER_MM = 640.
 XY_SEEK_MM = 160.
+XY_POST_HOME_BACKOFF_MM = 5.
 
 
 class OperatorHome:
@@ -180,10 +181,20 @@ class OperatorHome:
             if (not 0 < release <= actual <= XY_RELEASE_MM
                     or move.check_no_movement() is not None or self._is_triggered(pin)):
                 raise FactoryError(axis+' did not establish a fresh, bounded limit release')
+            # The measured release remains the datum. Park another 5 mm
+            # inward with the drives held, without resetting either axis.
+            target = [None, None, None, None]
+            target[index] = self.toolhead.get_position()[index] + XY_POST_HOME_BACKOFF_MM
+            self._move_to(target, XY_RELEASE_SPEED)
+            self._require_native()
+            if self._is_triggered(pin):
+                raise FactoryError(axis+' limit became active during the post-home backoff')
             # Preserve the native/pad datum used by the accepted R38.6 frame.
             # Its release-to-trigger translation is measured, never assumed.
             self.xy_references[axis] = dict(release_mm=release,
                 release_steps=round(release * XY_STEPS_PER_MM), halt_mm=actual,
+                post_home_backoff_mm=XY_POST_HOME_BACKOFF_MM,
+                parked_native_mm=self.toolhead.get_position()[index],
                 reference='measured_reverse_release', enable_held=True)
             self._remember_clearance()
         except Exception:
