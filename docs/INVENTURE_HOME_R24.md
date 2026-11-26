@@ -1,4 +1,19 @@
-# Inventure Home R24 RC2 — XY 5 mm backoff
+# Inventure Home R24 RC3 — installer backup verification
+
+RC3 fixes the host installer's missing `BASELINE_SHA256` export, used when
+adding the authenticated original Home backup to the installation snapshot.
+RC2 could raise `AttributeError` here before stopping Klipper or changing the
+active configuration. R24.2 of the installer uses the same original R38.6
+backup identity as the OEM verifier. No homing, configuration or MCU code
+changes relative to RC2; its complete runtime manifest is unchanged.
+
+The regression runs the public `--repair-home-procedures --apply` entry from
+a real authenticated RC1 runtime through backup verification, runtime/config
+staging, offline Klipper startup, systemd unit parsing, atomic activation,
+Fluidd setup and Ready/profile readback. Only HTTP/process/privileged service
+boundaries and web downloading are simulated. It checks the original backup
+snapshot hash, unchanged effective settings, no G-code execution and the
+exact RC2 runtime manifest after installation.
 
 After the measured limit release, each homed X/Y axis now moves another
 **5 mm inward**, at the existing release speed (1 mm/s), with motors held.
@@ -7,8 +22,8 @@ axis is not moved. Home Z, T0 selection/cleaning, PC14 refinement, PE12
 reference and final Z parking keep the exact RC1 engine files.
 
 **Already running the R24 MCU from RC1? Install only the host update below.**
-No application or bootloader reflash is needed. RC2 contains the same R24 MCU
-application and dictionary; CI checks their SHA256 against RC1. The installer
+No application or bootloader reflash is needed. RC2 and RC3 contain the same
+R24 MCU application and dictionary; CI checks their SHA256 against RC1. The installer
 authenticates RC1, stages its replacement and changes only the operator helper
 and runtime manifest, with rollback to the original bytes.
 
@@ -76,7 +91,7 @@ capability. An existing R24 application needs no reflash.
 ```bash
 cd "$HOME/inventure-src" &&
 git fetch origin --tags &&
-git switch --detach inventure-home-r24-rc2 &&
+git switch --detach inventure-home-r24-rc3 &&
 python3 install-new-host.py --repair-home-procedures --serial /dev/ttyS5 --baud 750000 --apply
 ```
 

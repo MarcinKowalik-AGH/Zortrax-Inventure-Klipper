@@ -120,20 +120,10 @@ class OperatorHomeR24Tests(unittest.TestCase):
     def test_installer_accepts_r24_only_with_its_capability_and_retains_old_validation(self):
         spec=importlib.util.spec_from_file_location('r24_mcu_identity_installer',ROOT/'install-new-host.py')
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-        from test_install_new_host import mcu_identity
+        from test_install_new_host import r24_mcu_identity
         # The existing R23 validator is exercised using the same fixture,
         # then R24 adds its independent held-entry capability requirement.
-        fixture=mcu_identity()['mcu_constants']
-        fixture.update(INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
-            INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,INVENTURE_FAULT_REASON_ABI=1,
-            INVENTURE_SCHEDULER_ABI=1,INVENTURE_SCHEDULER_NATIVE_HZ=10000,
-            INVENTURE_SCHEDULER_SERVICE_HZ=20000,INVENTURE_SCHEDULER_GUARD_MS=10,
-            INVENTURE_SERVICE_NATIVE_SPLIT_ABI=1,INVENTURE_POLICY_STATUS_ABI=1,
-            INVENTURE_DISPLAY_ERROR_ABI=1,INVENTURE_LOCAL_OLED_ANIMATION_ABI=1,
-            INVENTURE_LOCAL_OLED_NATIVE_GRAY4=1,INVENTURE_LOCAL_SPLASH_ABI=1,
-            INVENTURE_OLED_HOSTLINK_TIMEOUT_MS=1500)
-        data=dict(mcu_version='r24',mcu_constants=dict(fixture,
-            INVENTURE_MCU_RELEASE='RC8-CONTROL-R7-HOME-R24-OLED',INVENTURE_NATIVE_HELD_SERVICE_ABI=1))
+        data=r24_mcu_identity()
         self.assertEqual(module.require_mcu(data)['native_held_service_abi'],1)
         data['mcu_constants'].pop('INVENTURE_NATIVE_HELD_SERVICE_ABI')
         with self.assertRaisesRegex(ValueError,'held-service'):module.require_mcu(data)

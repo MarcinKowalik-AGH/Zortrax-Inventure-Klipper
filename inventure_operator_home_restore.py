@@ -2,6 +2,7 @@
 import ast
 from hashlib import sha256
 from pathlib import Path
+from inventure_oem_home_restore import BASELINE_SHA256
 
 PROFILE='operator-home-r24'
 RELEASE='RC8-HOME-XY-RELEASE-Z-REUSE-R24.1-XY5MM'

@@ -45,7 +45,7 @@ jobs:
         run: |
           python ci/prepare_kit.py --destination "$RUNNER_TEMP/pinned-kit"
           python ci/build_inventure_home_r24.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r24-build"
-      - name: Verify RC2 retains the exact RC1 MCU application and dictionary
+      - name: Verify the installer repair retains the exact R24 MCU application and dictionary
         run: |
           cd "$RUNNER_TEMP/r24-build"
           sha256sum --check <<'SUMS'
@@ -108,7 +108,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-home-r24-rc2 \
+          gh release create inventure-home-r24-rc3 \
             "$RUNNER_TEMP/r24-release/INVENTURE_HOME_R24_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -117,5 +117,5 @@ jobs:
             "$RUNNER_TEMP/r24-release/r24-build/R24_HOME_BUILD.json" \
             "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_CYCLES.json" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R24 RC2: 5 mm XY backoff with held motors; Z unchanged' \
+            --title 'Inventure R24 RC3: repair backup verification in the host installer' \
             --notes-file docs/INVENTURE_HOME_R24.md
