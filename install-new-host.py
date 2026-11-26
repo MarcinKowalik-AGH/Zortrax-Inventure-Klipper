@@ -36,6 +36,7 @@ import fluidd_web
 from inventure_configuration_audit_restore import RELEASE as LEVELING_UI_RELEASE
 import inventure_accepted_home_restore as accepted_home
 import inventure_oem_home_restore as oem_home
+import inventure_operator_home_restore as operator_home
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -50,7 +51,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R23.7.1'
+INSTALLER_RELEASE = 'R24.6'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -81,6 +82,11 @@ def verify_snapshot(snapshot):
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
     release = constants.get('INVENTURE_MCU_RELEASE')
+    if release == 'RC8-CONTROL-R7-HOME-R24-OLED':
+        if str(constants.get('INVENTURE_NATIVE_HELD_SERVICE_ABI')) != '1':
+            raise ValueError('R24 MCU lacks the held-service handoff capability')
+        compatible=dict(mcu,mcu_constants=dict(constants,INVENTURE_MCU_RELEASE=MCU_DISPLAY_RELEASE))
+        return dict(require_mcu(compatible),mcu_release=release,native_held_service_abi=1)
     expected = {'INVENTURE_NATIVE_XY_HANDOFF_ABI': 1,
                 'INVENTURE_NATIVE_Z_CLEARANCE_ABI': 1}
     wrong = {key: constants.get(key) for key, value in expected.items()
@@ -323,7 +329,8 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                 if board.get('host_revision') != bootstrap.HOST_REVISION:
                     raise RuntimeError('Ready process has the wrong Inventure host revision')
                 native = values.get('inventure_native_z', {})
-                home_reference = (oem_home if bootstrap.current_procedure_profile() == oem_home.PROFILE
+                home_reference = (operator_home if bootstrap.current_procedure_profile() == operator_home.PROFILE
+                                  else oem_home if bootstrap.current_procedure_profile() == oem_home.PROFILE
                                   else accepted_home)
                 if (Path(board.get('host_module','')).resolve() != host/'klippy/extras/inventure_mcu.py'
                         or Path(native.get('host_module','')).resolve() != host/'klippy/extras/inventure_native_z.py'
@@ -332,8 +339,8 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                 if (native.get('procedure_restore_release') != home_reference.RELEASE
                         or native.get('procedure_baseline_blob') != home_reference.BASELINE_BLOB):
                     raise RuntimeError('Ready process did not load the selected recorded Home procedure')
-                if (home_reference is oem_home
-                        and native.get('home_procedure_profile') != oem_home.PROFILE):
+                if (home_reference in (oem_home,operator_home)
+                        and native.get('home_procedure_profile') != home_reference.PROFILE):
                     raise RuntimeError('Ready process did not activate the complete OEM Home profile')
                 if values.get('inventure_oled', {}).get('procedure_ui_release') != LEVELING_UI_RELEASE:
                     raise RuntimeError('Ready Klipper did not load the matching OLED procedure UI: '
@@ -574,15 +581,27 @@ def require_identical_configuration(host, original, staged):
     module = updater.klipper_config_module(host)
     before, _ = layout.active_klipper(module, original, {})
     after, _ = layout.active_klipper(module, staged, {})
-    if layout.config_values(before) != layout.config_values(after):
+    previous, proposed = layout.config_values(before), layout.config_values(after)
+    # One explicitly reviewed UI entry is new in the menu audit. Every
+    # pre-existing setting and macro must still compare exactly.
+    import configparser
+    controls = configparser.RawConfigParser()
+    controls.read(ROOT/'config/INVENTURE_DASHBOARD.cfg')
+    addition = 'gcode_macro INVENTURE_NOZZLE_ALIGNMENT'
+    expected = layout.config_values(controls).get(addition)
+    if addition not in previous and expected is not None and proposed.get(addition) == expected:
+        proposed = dict(proposed)
+        proposed.pop(addition)
+    if previous != proposed:
         raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
 
 
 def run(args):
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
-    if restore_oem and getattr(args, 'restore_accepted_home', False):
+    repair = bool(getattr(args, 'repair_home_procedures', False))
+    if sum((restore_oem,repair,bool(getattr(args, 'restore_accepted_home', False)))) > 1:
         raise ValueError('Select exactly one Home recovery profile')
-    with bootstrap.procedure_profile(oem_home.PROFILE if restore_oem else 'current'):
+    with bootstrap.procedure_profile(operator_home.PROFILE if repair else oem_home.PROFILE if restore_oem else 'current'):
         return _run(args)
 
 
@@ -603,9 +622,12 @@ def _run(args):
         mcu_identity, requirement = {'mcu_version': mcu.get('mcu_version')}, str(exc)
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
+    repair = bool(getattr(args, 'repair_home_procedures', False))
+    if repair and (recovery or mcu_identity.get('mcu_release') != 'RC8-CONTROL-R7-HOME-R24-OLED'):
+        raise ValueError('Install and verify the matching R24 MCU before activating --repair-home-procedures; active host unchanged')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
-    home_reference = oem_home if restore_oem else accepted_home
-    restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem)
+    home_reference = operator_home if repair else oem_home if restore_oem else accepted_home
+    restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem or repair)
     reference_backup = None
     if restore_home:
         if recovery or args.destination.expanduser().absolute() != live['host']:
@@ -748,6 +770,8 @@ def main():
                         help='Require the retained pre-R23.5 Home backup and preserve every effective printer setting')
     parser.add_argument('--restore-oem-home', action='store_true',
                         help='Restore the complete frozen R38.6 Home set with XY release; require its retained backup and preserve all settings')
+    parser.add_argument('--repair-home-procedures', action='store_true',
+                        help='R24: OEM X/Y reverse release with held motors; reuse valid XY for the frozen T0/Z sequence')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')
@@ -761,8 +785,12 @@ def main():
             print('R38.6 installed. The MCU configuration latch remains shut down. Review its reason, '
                   'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
         elif args.apply:
-            print('Complete R38.6 host with the dual-thermal OLED installed and verified. '
-                  'In Fluidd run INVENTURE_VERSION and INVENTURE_OLED_STATUS.')
+            if args.repair_home_procedures:
+                print('R24 Home procedures installed and Ready/source/profile verified. '
+                      'Read INVENTURE_VERSION and INVENTURE_HOME_Z_STATUS in Fluidd.')
+            else:
+                print('Complete R38.6 host with the dual-thermal OLED installed and verified. '
+                      'In Fluidd run INVENTURE_VERSION and INVENTURE_OLED_STATUS.')
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         raise SystemExit('Inventure installation failed: '+str(exc))
 

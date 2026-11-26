@@ -35,6 +35,20 @@ def mcu_identity():
     })
 
 
+def r24_mcu_identity():
+    constants=mcu_identity()['mcu_constants']
+    constants.update(INVENTURE_MCU_RELEASE='RC8-CONTROL-R7-HOME-R24-OLED',
+        INVENTURE_NATIVE_HELD_SERVICE_ABI=1,INVENTURE_NATIVE_SERVICE_HANDOFF_ABI=1,
+        INVENTURE_NATIVE_THERMAL_PROFILE_ABI=1,INVENTURE_FAULT_REASON_ABI=1,
+        INVENTURE_SCHEDULER_ABI=1,INVENTURE_SCHEDULER_NATIVE_HZ=10000,
+        INVENTURE_SCHEDULER_SERVICE_HZ=20000,INVENTURE_SCHEDULER_GUARD_MS=10,
+        INVENTURE_SERVICE_NATIVE_SPLIT_ABI=1,INVENTURE_POLICY_STATUS_ABI=1,
+        INVENTURE_DISPLAY_ERROR_ABI=1,INVENTURE_LOCAL_OLED_ANIMATION_ABI=1,
+        INVENTURE_LOCAL_OLED_NATIVE_GRAY4=1,INVENTURE_LOCAL_SPLASH_ABI=1,
+        INVENTURE_OLED_HOSTLINK_TIMEOUT_MS=1500)
+    return dict(mcu_version='r24',mcu_constants=constants)
+
+
 class PureGuardsTests(unittest.TestCase):
     def test_systemd_arguments_preserve_spaces_quotes_expansions_and_empty_args(self):
         data = installer.unit_text([
@@ -312,6 +326,8 @@ class TransactionTests(unittest.TestCase):
             return self.info()
         if path == '/server/info':
             return {'klippy_connected': True}
+        if path == '/machine/update/status':
+            return {'version_info': {}}
         if path == '/printer/objects/list':
             return {'objects': ['mcu', 'inventure_mcu', 'print_stats', 'idle_timeout', 'extruder',
                                 'inventure_native_z', 'inventure_oled']}
@@ -422,6 +438,92 @@ class TransactionTests(unittest.TestCase):
             observation = json.loads((self.report/name).read_text())
             self.assertEqual(observation['mismatches'], {})
             self.assertEqual(observation['observed']['process_id'], 81)
+
+    def test_complete_r24_apply_authenticates_backup_stages_and_activates_the_real_runtime(self):
+        """Run the public installer, not just its individual stage/activate helpers.
+
+        Files, backup audit, config parsing, offline Klipper validation, unit
+        parsing, atomic updates and dashboard groups are real. HTTP/process
+        introspection, privileged service calls and web downloading are simulated.
+        """
+        from inventure_bootstrap_config import stage_config,_set_scalar
+        bootstrap=installer.bootstrap
+        shutil.rmtree(self.host)
+        _,files,metadata=bootstrap._plan(ROOT,procedure_profile='operator-home-r24',operator_home_revision='rc1')
+        bootstrap._write_files(self.host,files)
+        marker=self.host/bootstrap.MANIFEST_NAME
+        marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+        gcodes=self.root/'gcodes';gcodes.mkdir()
+        source=self.root/'field-source'
+        shutil.copytree(ROOT/'tests/fixtures/field_config_20261125',source)
+        module=installer.updater.klipper_config_module(self.host)
+        _set_scalar(module,source/'printer.cfg','virtual_sdcard','path',str(gcodes))
+        initial=stage_config(self.host,self.root/'initial-config',source/'printer.cfg',
+                             serial=self.serial,baud=self.baud,gcodes_path=gcodes)
+        shutil.copytree(Path(initial['config_path']).parent,self.config.parent,dirs_exist_ok=True)
+        self.before_config=self.config.read_bytes()
+        active,_=installer.layout.active_klipper(module,self.config,{})
+        self.macros={s.removeprefix('gcode_macro ') for s in active.sections() if s.startswith('gcode_macro ')}
+        before_active={s:dict(active.items(s)) for s in active.sections()}
+        backup=self.root/'inventure-installations/20261124T142803.217006Z'
+        (backup/'before').mkdir(parents=True)
+        saved=backup/'before/0'
+        saved.write_bytes((ROOT/'orange_pi/inventure_native_z.py').read_bytes())
+        (backup/'backup.json').write_text(json.dumps({'files':{
+            str(self.host/'klippy/extras/inventure_native_z.py'):str(saved)}}))
+        self.mcu=r24_mcu_identity()
+        self.native_z.update(homing_safety_release=installer.operator_home.RELEASE,
+            procedure_restore_release=installer.operator_home.RELEASE,
+            procedure_baseline_blob=installer.operator_home.BASELINE_BLOB,
+            home_procedure_profile=installer.operator_home.PROFILE)
+        real_run=subprocess.run
+        real_transaction=installer.InstallTransaction
+        def process_boundary(argv,**kwargs):
+            if argv==['sudo','-v']:
+                return subprocess.CompletedProcess(argv,0,stdout='',stderr='')
+            return real_run(argv,**kwargs)
+        def transaction_boundary(*args,**kwargs):
+            return real_transaction(*args,dropin=self.dropin,**kwargs)
+        old_umask=os.umask(0o077)
+        self.addCleanup(os.umask,old_umask)
+        args=SimpleNamespace(apply=True,repair_home_procedures=True,destination=self.host,
+            serial=self.serial,baud=self.baud,restore_field_profile=False,fluidd_root=self.web,fluidd_zip=None)
+        with patch.object(installer.os,'geteuid',return_value=1000), \
+             patch.object(Path,'home',return_value=self.root), \
+             patch.object(installer.subprocess,'run',side_effect=process_boundary), \
+             patch.object(installer.fluidd_web,'web_root',return_value=self.web), \
+             patch.object(installer.fluidd_web,'release_bundle',return_value=self.source), \
+             patch.object(installer.updater,'running_moonraker_config',return_value=self.moon), \
+             patch.object(installer,'InstallTransaction',side_effect=transaction_boundary):
+            result=installer.run(args)
+        self.assertEqual(result['status'],'INSTALLED_INVENTURE_R38_6')
+        self.assertEqual(result['installer_release'],installer.INSTALLER_RELEASE)
+        self.assertEqual(result['home_procedure_profile'],'operator-home-r24')
+        self.assertEqual(result['procedure_restore_release'],installer.operator_home.RELEASE)
+        self.assertEqual(result['accepted_home_backup']['saved_file'],str(saved))
+        report=Path(result['report_directory'])
+        plan=json.loads((report/'plan.json').read_text())
+        self.assertEqual(plan['config']['source_snapshot'][str(saved)],sha256(saved.read_bytes()).hexdigest())
+        self.assertTrue((report/'offline-validation.log').is_file())
+        self.assertTrue((report/'systemd-validation/verification.log').is_file())
+        self.assertEqual(self.service_calls.count(('start','klipper')),1)
+        self.assertFalse(result['mcu_flashed'])
+        self.assertFalse(result['automatic_motion_or_heating'])
+        self.assertFalse(any('gcode' in endpoint for endpoint,_ in self.http_calls))
+        after_active,_=installer.layout.active_klipper(module,self.config,{})
+        self.assertEqual({s:dict(after_active.items(s)) for s in after_active.sections()},before_active)
+        with bootstrap.procedure_profile('operator-home-r24'):
+            self.assertEqual(bootstrap.verify_host(self.host)['status'],'VERIFIED_HOST')
+        # The preceding RC2/RC3 runtime remains an authenticated upgrade input.
+        _,_,previous=bootstrap._plan(ROOT,procedure_profile='operator-home-r24',operator_home_revision='rc2')
+        self.assertEqual(sha256(bootstrap._metadata_bytes(previous)).hexdigest(),
+                         'f78fcb822c91c1111f181655ad205722b42e373b8220739ae3e3b15b52ee9ca0')
+        self.assertEqual(set(result['restored_runtime_files']),
+                         {str(marker)}|{str(self.host/'klippy/extras'/name) for name in
+                             ('inventure_operator_home.py','inventure_menu_service.py','inventure_oled_graphics.py',
+                              'inventure_oem_menu.py','inventure_menu_core.py','inventure_oled.py',
+                              'inventure_home_ui.py','inventure_home_sprites.json',
+                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

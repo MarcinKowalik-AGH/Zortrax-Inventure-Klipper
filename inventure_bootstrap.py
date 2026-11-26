@@ -28,7 +28,7 @@ _procedure_profile = ContextVar('inventure_procedure_profile', default='current'
 
 @contextmanager
 def procedure_profile(name):
-    if name not in ('current', 'oem-home-r38.6'):
+    if name not in ('current', 'oem-home-r38.6', 'operator-home-r24'):
         raise ValueError('Unknown Inventure procedure profile: ' + str(name))
     token = _procedure_profile.set(name)
     try:
@@ -149,7 +149,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_motion_owner=None, restore_service_excursion=None,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
-          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True):
+          restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
+          operator_home_revision='current'):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -330,8 +331,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['accepted_home_r23'] = provenance
     profile = _procedure_profile.get() if procedure_profile is None else procedure_profile
-    _require(profile in ('current', 'oem-home-r38.6'), 'Unknown procedure profile')
-    if profile == 'oem-home-r38.6':
+    _require(profile in ('current', 'oem-home-r38.6', 'operator-home-r24'), 'Unknown procedure profile')
+    if profile in ('oem-home-r38.6', 'operator-home-r24'):
         _require(restore_accepted_home, 'OEM recovery requires the authenticated current runtime input')
         path = repo/'inventure_oem_home_restore.py'
         restoration = _module('inventure_bootstrap_oem_home', path, _regular_bytes(path))
@@ -340,6 +341,22 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['oem_home_r38_6'] = provenance
+    if profile == 'operator-home-r24':
+        path = repo/'inventure_operator_home_restore.py'
+        restoration = _module('inventure_bootstrap_operator_home', path, _regular_bytes(path))
+        updates, provenance = restoration.restored_operator_home(repo, files, revision=operator_home_revision)
+        files.update(updates)
+        for target, (data, mode) in updates.items():
+            metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+        metadata.setdefault('runtime_restorations', {})['operator_home_r24'] = provenance
+        if operator_home_revision == 'current':
+            path = repo/'inventure_menu_audit_restore.py'
+            presentation = _module('inventure_bootstrap_menu_audit', path, _regular_bytes(path))
+            updates, provenance = presentation.restored_menu_audit(repo, files)
+            files.update(updates)
+            for target, (data, mode) in updates.items():
+                metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+            metadata['runtime_restorations']['menu_audit_r24'] = provenance
     return source, files, metadata
 
 
@@ -525,8 +542,14 @@ def _predecessor_plans(repo):
     if _procedure_profile.get() != 'current':
         yield _plan(repo, procedure_profile='current')
     yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
-    if _procedure_profile.get() == 'current':
+    if _procedure_profile.get() in ('current', 'operator-home-r24'):
         yield _plan(repo, procedure_profile='oem-home-r38.6')
+    if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc1')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc2')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc4')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc5')
+        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc6')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
@@ -575,14 +598,27 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                "klippy/extras/inventure_native_z.py",
                "klippy/extras/inventure_z_home.py",
                "klippy/extras/inventure_mcu.py"}
+    if _procedure_profile.get() == 'operator-home-r24':
+        allowed.update('klippy/extras/'+name for name in
+                       ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
+                        'inventure_menu_presentation.py','inventure_oem_menu_sprites.json'))
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
     for name in changed:
         destination_file = target/name
-        before = _regular_bytes(destination_file)
-        _require(before == previous_files[name][0],
-                 "Runtime module changed while preparing restoration: " + name)
+        if name not in previous_files:
+            _require(_procedure_profile.get() == 'operator-home-r24'
+                     and name in {'klippy/extras/'+n for n in
+                                  ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
+                                   'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')}
+                     and not destination_file.exists() and not destination_file.is_symlink(),
+                     "Unexpected new runtime module: " + name)
+            before = None
+        else:
+            before = _regular_bytes(destination_file)
+            _require(before == previous_files[name][0],
+                     "Runtime module changed while preparing restoration: " + name)
         updates[destination_file] = before, files[name][0]
     manifest = target/MANIFEST_NAME
     manifest_before = _regular_bytes(manifest)

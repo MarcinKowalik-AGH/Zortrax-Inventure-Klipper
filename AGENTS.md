@@ -41,3 +41,34 @@ The original r0323 binary independently confirms that the XY reference is
 assigned after the reverse release phase. Keep this firmware fact separate
 from which Klipper entry point actually implements it; see
 [the instruction-level evidence](docs/INVENTURE_OEM_XY_RELEASE_EVIDENCE_2026-11-26.md).
+
+## R24 operator Home repair
+
+The operator explicitly requested separate firmware-style X/Y release homing,
+held drives, and the accepted T0/Z sequence with reuse of valid XY. The
+`operator-home-r24` profile implements that routing around the frozen R38.6
+engines. It requires the matched R24 MCU held-service capability; do not
+activate its host on R23 or remove motor disable from ordinary SERVICE entry.
+Read [the R24 contract and verification limits](docs/INVENTURE_HOME_R24.md).
+The new combination still needs physical acceptance. Preserve its tested
+sequence during later UI/configuration integration; a source comparison or
+simulation alone does not establish acceptance on the actual printer.
+
+## Reported physical Home acceptance, 26 November 2026
+
+The operator confirmed working X, Y and Z after the RC4 field-test instructions.
+Use [the pinned RC4 source and acceptance record](docs/INVENTURE_ACCEPTED_HOME_R24_RC4_2026-11-26.md)
+as the preservation baseline. Keep that report separate from later candidate
+validation. The newly authorized changes are reuse of valid held XY before
+Z/XYZ and removal of the initial direct Fluidd Home confirmation. Preserve the
+accepted homing/measurement engines and all tray/ownership interlocks.
+
+## Home presentation follow-up, 26 November 2026
+
+The operator reported the remaining Fluidd menu Home review and requested the
+accepted X/Y/XY/Z procedures under the Zortrax OLED menu, with M300 appearance,
+animations and direct-start menu logic. RC6 integrates those entry points through
+the existing Home macros. It preserves all four RC5 Home/engine files byte for
+byte and adds presentation observers around the original bound methods. Keep
+this UI integration separate from the physical acceptance record. The Home menu
+now starts directly on both OLED and Fluidd; reviews for other procedures remain.
