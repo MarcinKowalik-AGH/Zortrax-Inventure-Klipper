@@ -511,7 +511,9 @@ class TransactionTests(unittest.TestCase):
         self.assertFalse(result['automatic_motion_or_heating'])
         self.assertFalse(any('gcode' in endpoint for endpoint,_ in self.http_calls))
         after_active,_=installer.layout.active_klipper(module,self.config,{})
-        self.assertEqual({s:dict(after_active.items(s)) for s in after_active.sections()},before_active)
+        effective={s:dict(after_active.items(s)) for s in after_active.sections()}
+        self.assertEqual(effective.pop('inventure_information'),{})
+        self.assertEqual(effective,before_active)
         with bootstrap.procedure_profile('operator-home-r24'):
             self.assertEqual(bootstrap.verify_host(self.host)['status'],'VERIFIED_HOST')
         # The preceding RC2/RC3 runtime remains an authenticated upgrade input.
@@ -523,7 +525,9 @@ class TransactionTests(unittest.TestCase):
                              ('inventure_operator_home.py','inventure_menu_service.py','inventure_oled_graphics.py',
                               'inventure_oem_menu.py','inventure_menu_core.py','inventure_oled.py',
                               'inventure_home_ui.py','inventure_home_sprites.json',
-                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
+                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+                              'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+                              'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

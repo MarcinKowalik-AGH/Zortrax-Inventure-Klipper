@@ -15,7 +15,7 @@ MAP_KEYS = ('nozzle_reference_mv', 'nozzle_mv_per_c', 'thermistor_thresholds')
 ZONE_PINS = {'inventure_r5:HEATER_T0': 't0', 'inventure_r5:HEATER_T1': 't1',
              'inventure_r5:HEATER_PC9': 'chamber_l', 'inventure_r5:HEATER_PC8': 'chamber_r'}
 TUNE_LINE = re.compile(r'^(control|pid_kp|pid_ki|pid_kd|max_delta)[ \t]*[:=]', re.I)
-SERVICES = {'inventure_native_z', 'inventure_operations', 'inventure_preflight',
+SERVICES = {'inventure_information', 'inventure_native_z', 'inventure_operations', 'inventure_preflight',
             'inventure_filament', 'inventure_motion', 'inventure_nozzle_xy'}
 HEATER_OPTIONS = re.compile(r'^(?:heater_pin|sensor_type|sensor_channel|pwm_cycle_time|smooth_time|'
                             r'max_power|min_temp|max_temp)[ \t]*[:=]', re.I)

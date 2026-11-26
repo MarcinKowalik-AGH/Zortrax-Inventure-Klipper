@@ -51,7 +51,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R24.6'
+INSTALLER_RELEASE = 'R25.1'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -82,7 +82,9 @@ def verify_snapshot(snapshot):
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
     release = constants.get('INVENTURE_MCU_RELEASE')
-    if release == 'RC8-CONTROL-R7-HOME-R24-OLED':
+    if release in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED'):
+        if release == 'RC8-CONTROL-R7-HOME-R25-INFO-OLED' and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
+            raise ValueError('R25 MCU lacks its factory information/counter capability')
         if str(constants.get('INVENTURE_NATIVE_HELD_SERVICE_ABI')) != '1':
             raise ValueError('R24 MCU lacks the held-service handoff capability')
         compatible=dict(mcu,mcu_constants=dict(constants,INVENTURE_MCU_RELEASE=MCU_DISPLAY_RELEASE))
@@ -582,16 +584,19 @@ def require_identical_configuration(host, original, staged):
     before, _ = layout.active_klipper(module, original, {})
     after, _ = layout.active_klipper(module, staged, {})
     previous, proposed = layout.config_values(before), layout.config_values(after)
-    # One explicitly reviewed UI entry is new in the menu audit. Every
-    # pre-existing setting and macro must still compare exactly.
+    # Allow only previously absent, exact canonical Info/UI additions.
+    # Existing options, macro overrides, tuning and calibration stay identical.
     import configparser
     controls = configparser.RawConfigParser()
-    controls.read(ROOT/'config/INVENTURE_DASHBOARD.cfg')
-    addition = 'gcode_macro INVENTURE_NOZZLE_ALIGNMENT'
-    expected = layout.config_values(controls).get(addition)
-    if addition not in previous and expected is not None and proposed.get(addition) == expected:
-        proposed = dict(proposed)
-        proposed.pop(addition)
+    controls.read([ROOT/'config/INVENTURE_DASHBOARD.cfg', ROOT/'config/INVENTURE_INFORMATION.cfg'])
+    allowed = ('gcode_macro INVENTURE_NOZZLE_ALIGNMENT',
+               'gcode_macro INVENTURE_PRINTER_INFORMATION',
+               'gcode_macro INVENTURE_FIRMWARE_VERSION', 'inventure_information')
+    canonical = layout.config_values(controls)
+    proposed = dict(proposed)
+    for addition in allowed:
+        if addition not in previous and addition in canonical and proposed.get(addition) == canonical[addition]:
+            proposed.pop(addition)
     if previous != proposed:
         raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
 
@@ -623,7 +628,7 @@ def _run(args):
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
     repair = bool(getattr(args, 'repair_home_procedures', False))
-    if repair and (recovery or mcu_identity.get('mcu_release') != 'RC8-CONTROL-R7-HOME-R24-OLED'):
+    if repair and (recovery or mcu_identity.get('mcu_release') not in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED')):
         raise ValueError('Install and verify the matching R24 MCU before activating --repair-home-procedures; active host unchanged')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     home_reference = operator_home if repair else oem_home if restore_oem else accepted_home

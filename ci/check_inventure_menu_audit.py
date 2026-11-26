@@ -35,6 +35,8 @@ def check(destination):
         from test_orange_pi_zortrax_menu import MenuFixture, Config
         from test_orange_pi_oled_fast import Printer, Config as PanelConfig
         board, _ = MenuFixture().host()
+        from check_inventure_information_r25 import cached_information_fixture
+        cached_information_fixture(board, package.__name__, Path(temporary)/'information.json')
         board.gcode.register_command('INVENTURE_ZORTRAX', None)
         service = service_module.ZortraxMenuService(board, Config())
         board.zortrax = service
@@ -113,7 +115,8 @@ def check(destination):
                        'spool_catalog_model', 'spool_catalog_support', 'light', 'oled_timers',
                        'oled_brightness', 'oled_sleep_mode', 'oled_sleep_light', 'help', 'version',
                        'printer_info', 'language_pl', 'clean_t0', 'purge_t0', 'select_t0', 'heat_t0',
-                       'clean_t1', 'purge_t1', 'select_t1', 'heat_t1', 'alignment'):
+                       'clean_t1', 'purge_t1', 'select_t1', 'heat_t1', 'alignment',
+                       'information_errors', *('information_error_%d'%i for i in range(14))):
             service.open(action)
             for index, (label, _) in enumerate(service.view.options):
                 service.view.selected = index
