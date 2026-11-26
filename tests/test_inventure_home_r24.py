@@ -3,6 +3,7 @@ import ast
 from hashlib import sha256
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -81,6 +82,7 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertEqual({p.relative_to(host):p.read_bytes() for p in host.rglob('*') if p.is_file()},original)
 
     def test_oem_profile_can_stage_the_new_helper_and_restore_absence_on_rollback(self):
+        from test_install_new_host import installer
         with tempfile.TemporaryDirectory(prefix='inventure-r24-first-upgrade-') as temporary:
             host=Path(temporary)/'host'
             with bootstrap.procedure_profile('oem-home-r38.6'):
@@ -91,7 +93,14 @@ class OperatorHomeR24Tests(unittest.TestCase):
             with bootstrap.procedure_profile('operator-home-r24'):
                 update=bootstrap.prepare_runtime_update(host)
                 self.assertIsNone(update['files'][helper][0])
-                for path,(_,after) in update['files'].items():path.write_bytes(after)
+                # Exercise the installer's real atomic creation, including
+                # its explicit mode, under a restrictive host umask.
+                previous_umask=os.umask(0o077)
+                try:
+                    for path,(before,after) in update['files'].items():
+                        installer.updater.atomic_config_write(path,after,create=before is None)
+                finally:
+                    os.umask(previous_umask)
                 self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
                 for path,(before,_) in update['files'].items():
                     if before is None:path.unlink()
