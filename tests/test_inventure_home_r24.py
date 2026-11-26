@@ -40,6 +40,7 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertFalse(row['initial_review'])
                 self.assertTrue(row['oled_progress_rendered'])
                 self.assertTrue(row['m300_axis_animation'])
+                self.assertTrue(row['oled_delivered_during_thermal_hold'])
                 self.assertEqual(row['home_ui_release'],'RC8-HOME-MENU-R24.4')
             self.assertEqual((output/'R24_HOME_OLED.png').read_bytes()[:8],b'\x89PNG\r\n\x1a\n')
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']
@@ -91,7 +92,8 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertEqual({p.relative_to(host).as_posix() for p in updates},
                                  changed|{bootstrap.MANIFEST_NAME})
                 self.assertEqual({p.relative_to(host):p.read_bytes() for p in host.rglob('*') if p.is_file()},original)
-                for path,(_,after) in updates.items():path.write_bytes(after)
+                for path,(before,after) in updates.items():
+                    installer.updater.atomic_config_write(path,after,create=before is None)
                 self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
                 for path,(before,_) in updates.items():
                     if before is None:path.unlink()

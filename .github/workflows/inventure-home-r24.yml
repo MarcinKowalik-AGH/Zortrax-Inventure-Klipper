@@ -45,7 +45,7 @@ jobs:
         run: |
           python ci/prepare_kit.py --destination "$RUNNER_TEMP/pinned-kit"
           python ci/build_inventure_home_r24.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r24-build"
-      - name: Verify the host coordinate update retains the exact R24 MCU application and dictionary
+      - name: Verify the exact unchanged R24 MCU application and dictionary
         run: |
           cd "$RUNNER_TEMP/r24-build"
           sha256sum --check <<'SUMS'

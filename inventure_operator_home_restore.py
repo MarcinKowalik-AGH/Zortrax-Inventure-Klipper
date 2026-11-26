@@ -14,7 +14,7 @@ OPERATOR_SHA256='79dc8b712cf54f0e86b67936d1569690071345e8662a29d4ae026236acc5335
 RC1_OPERATOR_SHA256='d5c97c401e538f4b5012b967e51805c43bff1b153ed60bcfc12c82b08900c9e3'
 RC2_OPERATOR_SHA256='ab4a5a694825b7603d61c29e291728f590ef67fc0c08119abaa6c860d38e6054'
 RC4_OPERATOR_SHA256='a8db616130e7bf4f90e791af275e073b5369714295136d6485e9044720f47132'
-HOME_UI_SHA256='a4aa0087f43e3c0a075fec0bfc71bcf6cf20aeba765489382a8675af7e86634f'
+HOME_UI_SHA256='948e7633f93f5c2e9b9ca6d53238e0767580f931923bdf23d925bb4ea90a8fb2'
 HOME_SPRITES_SHA256='1adc28e016675670870cb779214e5c38e370d39ec78eb8c5e61a8fc42f2f41db'
 
 def require_reference_backup(repo,home,host):
@@ -128,6 +128,11 @@ class ZortraxMenuService(HomeMenuUI, ZortraxMenuService):
             section=replace(section,anchor,anchor+
                 "        if zortrax is not None and getattr(getattr(zortrax,'home_ui',None),'busy',False):return\n")
             data=data[:start]+section+data[stop:]
+        data+='''\n# Home presentation uses the original bounded UART transport and thermal hold.
+from .inventure_home_ui import HomeOLEDUI
+class InventureOLED(HomeOLEDUI, InventureOLED):
+    pass
+'''
         updates[oled]=(data.encode(),0o644)
         for filename,digest in (('inventure_home_ui.py',HOME_UI_SHA256),('inventure_home_sprites.json',HOME_SPRITES_SHA256)):
             code=(repo/'restored/operator_home_r24'/filename).read_bytes()

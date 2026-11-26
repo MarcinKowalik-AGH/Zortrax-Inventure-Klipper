@@ -73,6 +73,38 @@ class HomePresentationTests(unittest.TestCase):
         self.assertTrue(view['animated'])
         self.assertEqual(view['labels'], ['Home Z', 'Cleaning nozzle T0', 'Please wait'])
 
+    def test_home_pixels_continue_during_hold_without_changing_its_query_schedule(self):
+        class OriginalOLED:
+            def _tick(self, now):
+                if now >= self.next_query:
+                    self.queries.append(now)
+                    self.next_query = now + .5
+                return now + .1
+            def _active_work(self, now):
+                return False
+        class OLED(ui.HomeOLEDUI, OriginalOLED):
+            pass
+        oled = OLED()
+        home = types.SimpleNamespace(busy=True)
+        oled.board = types.SimpleNamespace(zortrax=types.SimpleNamespace(home_ui=home))
+        oled.connected, oled.shutdown_latched, oled.thermal_test_hold, oled.fast = True, False, True, True
+        oled.next_query = oled.render_at = 0.
+        oled.queries, rendered, pumped = [], [], []
+        oled._render = rendered.append
+        oled._pump = pumped.append
+        oled.stream = types.SimpleNamespace(enabled=True, active_work=False, next_wakeup=lambda now: now+.1)
+        for now in (0., .1, .2, .3, .4, .5):
+            oled._tick(now)
+        self.assertEqual(oled.queries, [0., .5])
+        self.assertEqual(rendered, [0., .5])
+        self.assertEqual(len(pumped), 6)
+        self.assertTrue(oled.thermal_test_hold)
+        self.assertTrue(oled.stream.active_work)
+        home.busy = False
+        oled._tick(.6)
+        self.assertEqual(rendered, [0., .5])
+        self.assertEqual(len(pumped), 6)
+
 
 if __name__ == '__main__':
     unittest.main()

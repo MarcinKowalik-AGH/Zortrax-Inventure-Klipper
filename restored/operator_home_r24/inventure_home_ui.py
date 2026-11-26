@@ -189,3 +189,35 @@ class HomeMenuUI:
         result['home_ui_release'] = UI_RELEASE
         result['home_progress'] = self.home_ui.render() if self.home_ui is not None else None
         return result
+
+
+class HomeOLEDUI:
+    """Continue bounded Home pixels while the original thermal hold stays set."""
+    def _home_busy(self):
+        menu = getattr(getattr(self, 'board', None), 'zortrax', None)
+        return bool(getattr(getattr(menu, 'home_ui', None), 'busy', False))
+
+    def _active_work(self, now):
+        # Retain the existing 15 kB/s work budget for every Home phase.
+        return self._home_busy() or super()._active_work(now)
+
+    def _tick(self, now):
+        if self.connected and not self.shutdown_latched and self._home_busy() and self.fast:
+            self.stream.active_work = True
+        due = super()._tick(now)
+        if (not self.connected or self.shutdown_latched or not self.thermal_test_hold
+                or not self._home_busy() or not self.stream.enabled):
+            return due
+        # The original hold branch already serviced its 500 ms ping/query and
+        # buttons. Keep that schedule and its recovery freeze; add only pixels
+        # through the existing background-priority, ACK-windowed transport.
+        try:
+            if now >= self.render_at:
+                self._render(now)
+                self.render_at = now + .5
+            self._pump(now)
+            if self.fast:
+                due = min(due, now + .05, max(now + .0001, self.stream.next_wakeup(now)))
+        except Exception:
+            logging.exception('Inventure Home OLED update unavailable')
+        return due

@@ -76,6 +76,13 @@ there. Encoder actions cannot execute an old menu choice on the progress view.
 An error remains visible as a failed Home; it never offers automatic resume.
 Home phase changes do not create Fluidd modal dialogs, matching M300.
 
+The original thermal display-hold flag stays set during T0 heating and Z.
+Home alone continues sending pixels through the existing background-priority,
+four-packet ACK window and configured work UART budget (15 kB/s by default).
+The original 500 ms ping/query schedule and recovery freeze are retained;
+other thermal trials still hold bulk pixels. This fixes the otherwise frozen
+Home screen during heating/contact measurement without changing either owner.
+
 `R24_HOME_OLED.png` in the release contains the installed renderer's actual
 256x64 buffers: rows X, Y, XY, Z and XYZ; columns the four animation frames.
 
@@ -181,8 +188,11 @@ Installed-config simulation exercises 800 completed requests and 184 refusals
 across two independent switch-stroke and stop-overrun profiles. It uses the
 literal installed macros, G28, physical Zortrax Maintenance choices,
 `OP=OPEN ... PROMPT=1`, and `INVENTURE_MAINTENANCE` followed by its emitted
-`OP=CHOOSE` button. Every request renders the actual installed OLED progress
-and its four distinct M300 frames. Encoder blocking and return to the same
+`OP=CHOOSE` button. Every request exercises the actual installed OLED timer
+during thermal hold, original UART pump, modelled MCU ACKs and SSD1322 RAM.
+Its delivered screen matches the renderer and the four distinct M300 frames;
+the hold flag, work budget and background priority remain active.
+Encoder blocking and return to the same
 selected row are checked while the original engines run.
 It covers X→Y→Z, Y→X→Z, missing axes, repeated Z, explicit rehoming of X or Y
 with different measured release values, partial/already-known XY before

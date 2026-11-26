@@ -45,6 +45,7 @@ def inspect(klipper,config,preview=None):
     import klippy,reactor
     from check_inventure_full_cycles import InstalledRig,require
     from check_inventure_home_xy import attach_panel
+    from test_orange_pi_oled_fast import Panel
     from test_orange_pi_native_z import HomingMove as ContactMove,Z_STEPS_PER_MM
     from test_orange_pi_load_test import Wire
     loop=reactor.Reactor()
@@ -193,6 +194,22 @@ def inspect(klipper,config,preview=None):
                     original_phase=type(ui)._phase.__get__(ui)
                     rendered=[];render_errors=[]
                     graphics=importlib.import_module(package+'.inventure_oled_graphics')
+                    lcd=Panel(panel.stream.previous)
+                    display_clock=[panel.reactor.monotonic()]
+                    delivered=[]
+                    for kind in ('begin','control','burst'):
+                        if kind not in panel.commands:continue
+                        original_send=panel.commands[kind].send
+                        def send_pixels(args,*,kind=kind,original_send=original_send,**kwargs):
+                            require(kwargs.get('reqclock')==0x7fffffff00000000,
+                                    'Home pixels lost background UART priority')
+                            original_send(args,**kwargs)
+                            generation=(args[0]<<32)|args[1];token=args[2]
+                            lcd.apply((kind,token,args[3:]))
+                            require(panel.stream.ack(token,display_clock[0],generation),'MCU rejected Home OLED packet')
+                            panel._fast_tx.pop(token,None)
+                            delivered.append((kind,token))
+                        panel.commands[kind]=types.SimpleNamespace(send=send_pixels)
                     def record_phase(message):
                         original_phase(message)
                         if not ui.busy:return
@@ -200,10 +217,26 @@ def inspect(klipper,config,preview=None):
                             view=rig.menu.view_status()
                             frames=[graphics.menu_wire(view,index=i) for i in range(4)]
                             require(len(set(frames))==4,'Home has no four-frame axis animation')
-                            now=panel.reactor.monotonic()
-                            panel._render(now)
-                            require(panel._render_wire==graphics.menu_wire(view,index=graphics.activity_index(view,now)),
-                                    'The physical OLED did not render the current Home progress')
+                            # Exercise the actual OLED timer during the thermal
+                            # hold, including its original bounded transport.
+                            # Only the MCU wire/SSD1322 RAM and ACKs are modelled.
+                            held_before=panel.thermal_test_hold
+                            panel.thermal_test_hold=True
+                            try:
+                                display_clock[0]=max(display_clock[0],panel.reactor.monotonic())
+                                for _ in range(2000):
+                                    now=display_clock[0]
+                                    due=panel._tick(now)
+                                    require(panel.thermal_test_hold,'Home cleared the thermal display-hold flag')
+                                    if (panel.stream.previous==panel.stream.latest
+                                            and panel.stream.previous==panel._render_wire
+                                            and bytes(lcd.ram)==panel._render_wire):break
+                                    display_clock[0]=max(now+.0001,min(now+.01,due))
+                                else:raise AssertionError('Home OLED pixels stayed frozen during thermal hold')
+                            finally:
+                                panel.thermal_test_hold=held_before
+                            require(panel._render_wire in frames,'OLED rendered the wrong Home phase')
+                            require(panel.stream.active_work,'Home bypassed the existing work UART budget')
                             rendered.append(dict(axes=ui.axes,message=message,icon=view['icon']))
                             if message.startswith('Homing ') or message=='Refining Z reference':
                                 screens.setdefault(ui.axes,dict(message=message,frames=frames))
@@ -381,7 +414,7 @@ def inspect(klipper,config,preview=None):
                             rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
                                 initial_review=initial_review,
                                 home_ui_release=rig.menu.get_status(0.)['home_ui_release'],
-                                oled_progress_rendered=True,m300_axis_animation=True,
+                                oled_progress_rendered=True,m300_axis_animation=True,oled_delivered_during_thermal_hold=True,
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
                                 measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
                                 release_origin_dynamic=True,physical_z_pad_unchanged=True,
