@@ -52,9 +52,13 @@ MCU_NATIVE_PROFILE_RELEASE = 'RC8-CONTROL-R7-HOMING-R18'
 MCU_SCHEDULER_RELEASE = 'RC8-CONTROL-R7-HOMING-R21'
 MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
+MCU_XY_STEP_RELEASE = 'RC8-CONTROL-R7-HOME-R28-XY-TIMERS'
+HOME_RELEASES = ('RC8-CONTROL-R7-HOME-R24-OLED', 'RC8-CONTROL-R7-HOME-R25-INFO-OLED',
+                 'RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED', 'RC8-CONTROL-R7-HOME-R27-UART-OLED',
+                 MCU_XY_STEP_RELEASE)
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R27.1'
+INSTALLER_RELEASE = 'R28'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -85,12 +89,17 @@ def verify_snapshot(snapshot):
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
     release = constants.get('INVENTURE_MCU_RELEASE')
-    if release in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED','RC8-CONTROL-R7-HOME-R27-UART-OLED'):
-        if release == 'RC8-CONTROL-R7-HOME-R27-UART-OLED' and any(str(constants.get(key))!='1' for key in ('INVENTURE_UART_TIMER_WINDOW_ABI','INVENTURE_OLED_COEXISTENCE_ABI')):
+    if release in HOME_RELEASES:
+        if release == MCU_XY_STEP_RELEASE and (
+            str(constants.get('INVENTURE_XY_STEP_TIMER_ABI')) != '1'
+            or str(constants.get('INVENTURE_XY_STEP_MIN_TICKS')) != '1200'
+        ):
+            raise ValueError('R28 MCU lacks its CoreXY STEP timer capability')
+        if release in HOME_RELEASES[3:] and any(str(constants.get(key))!='1' for key in ('INVENTURE_UART_TIMER_WINDOW_ABI','INVENTURE_OLED_COEXISTENCE_ABI')):
             raise ValueError('R27 MCU lacks its sampler/UART priority-window capability')
         if release == 'RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED' and str(constants.get('INVENTURE_OLED_COEXISTENCE_ABI')) != '1':
             raise ValueError('R26 MCU lacks its cooperative DMA transport capability')
-        if release in ('RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED','RC8-CONTROL-R7-HOME-R27-UART-OLED') and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
+        if release in HOME_RELEASES[1:] and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
             raise ValueError('R25 MCU lacks its factory information/counter capability')
         if str(constants.get('INVENTURE_NATIVE_HELD_SERVICE_ABI')) != '1':
             raise ValueError('R24 MCU lacks the held-service handoff capability')
@@ -683,9 +692,12 @@ def require_identical_configuration(host, original, staged):
 def run(args):
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     repair = bool(getattr(args, 'repair_home_procedures', False))
+    xy_timers = bool(getattr(args, 'with_xy_step_timers', False))
     if sum((restore_oem,repair,bool(getattr(args, 'restore_accepted_home', False)))) > 1:
         raise ValueError('Select exactly one Home recovery profile')
-    with bootstrap.procedure_profile(operator_home.PROFILE if repair else oem_home.PROFILE if restore_oem else 'current'):
+    if xy_timers and not repair:
+        raise ValueError('--with-xy-step-timers requires --repair-home-procedures')
+    with bootstrap.procedure_profile(operator_home.PROFILE if repair else oem_home.PROFILE if restore_oem else 'current'), bootstrap.xy_step_timers(xy_timers):
         return _run(args)
 
 
@@ -707,8 +719,10 @@ def _run(args):
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
     repair = bool(getattr(args, 'repair_home_procedures', False))
-    if repair and (recovery or mcu_identity.get('mcu_release') not in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED','RC8-CONTROL-R7-HOME-R27-UART-OLED')):
-        raise ValueError('Install and verify the matching R24/R25/R26/R27 MCU before activating the shared Home/transport profile; active host unchanged')
+    if getattr(args, 'with_xy_step_timers', False) and mcu_identity.get('mcu_release') != MCU_XY_STEP_RELEASE:
+        raise ValueError('--with-xy-step-timers requires the matched R28 MCU')
+    if repair and (recovery or mcu_identity.get('mcu_release') not in HOME_RELEASES):
+        raise ValueError('Install and verify the matching R24–R28 MCU before activating the shared Home/transport profile')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     home_reference = operator_home if repair else oem_home if restore_oem else accepted_home
     restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem or repair)
@@ -866,6 +880,8 @@ def main():
                         help='Restore the complete frozen R38.6 Home set with XY release; require its retained backup and preserve all settings')
     parser.add_argument('--repair-home-procedures', '--repair-transport', action='store_true',
                         help='Update transport/Info/UI while preserving the accepted R24 X/Y and frozen T0/Z sequence')
+    parser.add_argument('--with-xy-step-timers', action='store_true',
+                        help='Use the paired R28 CoreXY STEP timers with the accepted Home profile')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

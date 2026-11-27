@@ -461,14 +461,14 @@ def inspect(klipper,config,preview=None,transport_r26=False):
         if executor is not None:executor._handle_disconnect()
         loop.finalize()
 
-def check(destination,transport_r26=False):
+def check(destination,transport_r26=False,xy_step_timers=False):
     import inventure_bootstrap as bootstrap
     from inventure_bootstrap_config import stage_config,_set_scalar
     destination.mkdir(parents=True,exist_ok=False)
     source=destination/'source'
     shutil.copytree(ROOT/'tests/fixtures/field_config_20261125',source)
     gcodes=destination/'gcodes';gcodes.mkdir()
-    with bootstrap.procedure_profile('operator-home-r24'):
+    with bootstrap.procedure_profile('operator-home-r24'), bootstrap.xy_step_timers(xy_step_timers):
         host=bootstrap.prepare_host(destination/'runtime')
         import importlib.util
         spec=importlib.util.spec_from_file_location('r24_installer',ROOT/'install-new-host.py')
@@ -490,6 +490,7 @@ def check(destination,transport_r26=False):
             raise RuntimeError('Cycle test changed printer configuration')
         bootstrap.verify_host(host)
     report['configuration_unchanged']=True
+    report['xy_step_host_loaded']=xy_step_timers
     (destination/'R24_HOME_CYCLES.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 
@@ -500,11 +501,13 @@ if __name__=='__main__':
     parser.add_argument('--config',type=Path)
     parser.add_argument('--oled-preview',type=Path)
     parser.add_argument('--transport-r26',action='store_true')
+    parser.add_argument('--xy-step-timers',action='store_true',
+                        help='Stage the authenticated R28 CoreXY host for the Home regression')
     args=parser.parse_args()
     if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview,transport_r26=args.transport_r26)
     elif args.destination:
-        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26)
+        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26,xy_step_timers=args.xy_step_timers)
     else:
         with tempfile.TemporaryDirectory(prefix='inventure-r24-home-') as temp:
-            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified',transport_r26=args.transport_r26)
+            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified',transport_r26=args.transport_r26,xy_step_timers=args.xy_step_timers)
     print(json.dumps(report,indent=2))
