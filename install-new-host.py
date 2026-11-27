@@ -54,7 +54,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R25.4'
+INSTALLER_RELEASE = 'R26.1'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -85,8 +85,10 @@ def verify_snapshot(snapshot):
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
     release = constants.get('INVENTURE_MCU_RELEASE')
-    if release in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED'):
-        if release == 'RC8-CONTROL-R7-HOME-R25-INFO-OLED' and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
+    if release in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED'):
+        if release == 'RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED' and str(constants.get('INVENTURE_OLED_COEXISTENCE_ABI')) != '1':
+            raise ValueError('R26 MCU lacks its cooperative DMA transport capability')
+        if release in ('RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED') and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
             raise ValueError('R25 MCU lacks its factory information/counter capability')
         if str(constants.get('INVENTURE_NATIVE_HELD_SERVICE_ABI')) != '1':
             raise ValueError('R24 MCU lacks the held-service handoff capability')
@@ -358,6 +360,9 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                     if (panel.get('communication_guard_release') != COMMUNICATION_RELEASE
                             or information.get('communication_guard_release') != COMMUNICATION_RELEASE):
                         raise RuntimeError('Ready Klipper did not load the matching communication guard')
+                    if (str(values.get('mcu',{}).get('mcu_constants',{}).get('INVENTURE_OLED_COEXISTENCE_ABI'))=='1'
+                            and panel.get('oled_transport_mode')!='cooperative_dma'):
+                        raise RuntimeError('Ready Klipper did not activate the paired cooperative DMA transport')
                     if (information.get('information_release')!=INFORMATION_RELEASE
                             or Path(information.get('host_module','')).resolve()!=host/'klippy/extras/inventure_information.py'
                             or 'inventure_information' not in values.get('configfile',{}).get('config',{})):
@@ -700,8 +705,8 @@ def _run(args):
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
     repair = bool(getattr(args, 'repair_home_procedures', False))
-    if repair and (recovery or mcu_identity.get('mcu_release') not in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED')):
-        raise ValueError('Install and verify the matching R24 MCU before activating --repair-home-procedures; active host unchanged')
+    if repair and (recovery or mcu_identity.get('mcu_release') not in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED','RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED')):
+        raise ValueError('Install and verify the matching R24/R25/R26 MCU before activating the shared Home/transport profile; active host unchanged')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     home_reference = operator_home if repair else oem_home if restore_oem else accepted_home
     restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem or repair)
@@ -857,8 +862,8 @@ def main():
                         help='Require the retained pre-R23.5 Home backup and preserve every effective printer setting')
     parser.add_argument('--restore-oem-home', action='store_true',
                         help='Restore the complete frozen R38.6 Home set with XY release; require its retained backup and preserve all settings')
-    parser.add_argument('--repair-home-procedures', action='store_true',
-                        help='R24: OEM X/Y reverse release with held motors; reuse valid XY for the frozen T0/Z sequence')
+    parser.add_argument('--repair-home-procedures', '--repair-transport', action='store_true',
+                        help='Update transport/Info/UI while preserving the accepted R24 X/Y and frozen T0/Z sequence')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

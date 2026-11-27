@@ -553,6 +553,7 @@ def _predecessor_plans(repo):
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc4')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc3')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc1')
         for revision in ('rc7', 'rc6', 'rc5', 'rc4', 'rc2', 'rc1'):

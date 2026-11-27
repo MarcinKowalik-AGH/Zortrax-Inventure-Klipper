@@ -54,7 +54,12 @@ struct spi_config spi_setup(uint32_t bus,uint8_t mode,uint32_t rate){
  assert(bus==0&&mode==0&&rate==OLED_TEST_SPI_RATE);
  return (struct spi_config){SPI2,(rate==500000 ? (5u<<3) : 1u)};
 }
-void spi_prepare(struct spi_config c){assert(c.spi==SPI2);}
+void spi_prepare(struct spi_config c){
+ assert(c.spi==SPI2);
+#ifdef TEST_SPI_PREPARE_HOOK
+ TEST_SPI_PREPARE_HOOK();
+#endif
+}
 void spi_transfer(struct spi_config c,uint8_t receive,uint8_t len,uint8_t *data){
  assert(!irq_depth);assert(c.spi==SPI2&&!receive&&len>0&&len<=32);
  if(OLED_TEST_SPI_RATE==500000)assert(len<=8);
