@@ -25,6 +25,7 @@ from zipfile import BadZipFile, ZipFile
 
 ROOT = Path(__file__).resolve().parent
 _procedure_profile = ContextVar('inventure_procedure_profile', default='current')
+_xy_step_timers = ContextVar('inventure_xy_step_timers', default=False)
 
 
 @contextmanager
@@ -40,6 +41,15 @@ def procedure_profile(name):
 
 def current_procedure_profile():
     return _procedure_profile.get()
+
+
+@contextmanager
+def xy_step_timers(enabled):
+    token = _xy_step_timers.set(enabled)
+    try:
+        yield
+    finally:
+        _xy_step_timers.reset(token)
 
 SOURCE_COMMIT = "ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f"
 SOURCE_TAG = "inventure-homing-r38.6"
@@ -151,7 +161,8 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
           restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
-          operator_home_revision='current', information_revision='current'):
+          operator_home_revision='current', information_revision='current',
+          use_xy_step_timers=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -366,6 +377,15 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
             for target, (data, mode) in updates.items():
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
             metadata['runtime_restorations']['information_r25'] = provenance
+            xy_timers = _xy_step_timers.get() if use_xy_step_timers is None else use_xy_step_timers
+            if xy_timers and information_revision == 'current':
+                path = repo/'inventure_xy_step_restore.py'
+                restoration = _module('inventure_bootstrap_xy_step', path, _regular_bytes(path))
+                target = restoration.TARGET
+                data, provenance = restoration.restore(repo, files[target][0])
+                files[target] = (data, 0o644)
+                metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
+                metadata['runtime_restorations']['xy_step_r28'] = provenance
     return source, files, metadata
 
 
@@ -547,12 +567,15 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
     return _verify_runtime(target, source, metadata, restoration_required=False)
 
 
-def _predecessor_plans(repo):
+def _predecessor_plans(repo, recorded_xy_timers=False):
     """Every authenticated prefix through the published R23.5 runtime."""
     # Try the recent public operator runtimes first. Rebuilding every older
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
+        if _xy_step_timers.get() != recorded_xy_timers:
+            yield _plan(repo, procedure_profile='operator-home-r24',
+                        use_xy_step_timers=recorded_xy_timers)
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='r26')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc4')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc3')
@@ -582,7 +605,8 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    for source, _, metadata in _predecessor_plans(repo):
+    recorded_xy_timers = 'xy_step_r28' in recorded.get('runtime_restorations', {})
+    for source, _, metadata in _predecessor_plans(repo, recorded_xy_timers):
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -599,7 +623,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    for source, files, metadata in _predecessor_plans(repo):
+    recorded_xy_timers = 'xy_step_r28' in recorded.get('runtime_restorations', {})
+    for source, files, metadata in _predecessor_plans(repo, recorded_xy_timers):
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
@@ -620,6 +645,7 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                "klippy/extras/inventure_z_home.py",
                "klippy/extras/inventure_mcu.py"}
     if _procedure_profile.get() == 'operator-home-r24':
+        allowed.add('klippy/kinematics/corexy.py')
         allowed.update('klippy/extras/'+name for name in
                        ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
                         'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
