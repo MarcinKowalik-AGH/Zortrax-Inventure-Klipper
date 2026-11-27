@@ -12,7 +12,7 @@ RELEASE = 'RC8-COMMUNICATION-R27.1'
 BACKGROUND_PRIORITY_CLOCK=0x7fffffff00000000
 COEXIST_RESPONSE=('inventure_oled_coexist_state irq_ticks=%u blocks=%u wire_bytes=%u errors=%u '
     'peak=%c uart_overruns=%u uart_noise=%u uart_framing=%u uart_rx_overflows=%u')
-WINDOW_RESPONSE=('inventure_uart_window_state windows=%u peak_ticks=%u rx=%u shutdowns=%u active=%c')
+WINDOW_RESPONSE=('inventure_uart_window_state windows=%u peak_ticks=%u rx=%u shutdowns=%u active=%c group=%c')
 
 
 class CommunicationQuietOLED:
@@ -51,7 +51,7 @@ class CommunicationQuietOLED:
             self.mcu.register_serial_response(self._uart_window_response,WINDOW_RESPONSE)
 
     def _uart_window_response(self,params):
-        data={key:params[key] for key in ('windows','peak_ticks','rx','shutdowns','active')}
+        data={key:params[key] for key in ('windows','peak_ticks','rx','shutdowns','active','group')}
         received=params.get('#receive_time',self.reactor.monotonic())
         def deliver(now):
             if self.connected and not self.shutdown_latched:

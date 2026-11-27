@@ -48,6 +48,9 @@ receives/transmits serial bytes and wakes tasks; it does not dispatch received
 commands, edit the timer list, change ownership or write motor pins. PRIMASK
 and BASEPRI are restored to their caller values. A shutdown hook clears the
 ceiling if a guard exits the callback through the scheduler's longjmp path.
+Startup normalizes NVIC grouping so these are distinct preemption priorities
+regardless of the bootloader's inherited grouping. All eight inherited
+groupings and both caller PRIMASK states are checked in the ARM model.
 
 All accepted X/Y/Z Python executors, the native motion/PC14 state machines,
 coordinates, speeds, opening-edge reference, dynamic zero, 5 mm XY parking,
@@ -100,6 +103,7 @@ Expected MCU: `RC8-CONTROL-R7-HOME-R27-UART-OLED`; transport component:
 `uart_priority_window.windows` counts sampler windows and `rx` counts USART
 receptions while those windows run. `peak_ticks` measures whole preemptible
 work duration, not globally blocked IRQ time. Divide by 120 for nominal us.
+`uart_priority_window.group` must be 0 after the application initializes.
 UART error counters remain cumulative; faults are not cleared by reading them.
 
 CI gates publication on all host/MCU regressions, installed Home/OLED/menu/Info

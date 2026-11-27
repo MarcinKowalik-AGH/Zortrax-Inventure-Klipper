@@ -5,6 +5,15 @@
 static volatile uint32_t uart_sample_windows,uart_sample_peak,uart_sample_rx,uart_sample_resets;
 static volatile uint8_t uart_sample_active;
 
+void noinline inventure_sampler_uart_init(void) {
+    irqstatus_t flags=irq_save();
+    /* Do not inherit a bootloader's subpriority grouping: UART 0, SysTick 2
+     * and DMA 4 must be distinct preemption priorities on every F207 board. */
+    NVIC_SetPriorityGrouping(0);__DSB();__ISB();
+    irq_restore(flags);
+}
+DECL_INIT(inventure_sampler_uart_init);
+
 void inventure_sampler_uart_irq(uint32_t status) {
     if(uart_sample_active && (status&(USART_SR_RXNE|USART_SR_ORE)))uart_sample_rx++;
 }
@@ -43,9 +52,10 @@ void command_inventure_uart_window_query(uint32_t *args) {
     (void)args;irqstatus_t flags=irq_save();
     uint32_t windows=uart_sample_windows,peak=uart_sample_peak,rx=uart_sample_rx,resets=uart_sample_resets;
     uint8_t active=uart_sample_active;
+    uint8_t group=NVIC_GetPriorityGrouping();
     irq_restore(flags);
-    sendf("inventure_uart_window_state windows=%u peak_ticks=%u rx=%u shutdowns=%u active=%c",
-        windows,peak,rx,resets,active);
+    sendf("inventure_uart_window_state windows=%u peak_ticks=%u rx=%u shutdowns=%u active=%c group=%c",
+        windows,peak,rx,resets,active,group);
 }
 DECL_COMMAND_FLAGS(command_inventure_uart_window_query,HF_IN_SHUTDOWN,"inventure_uart_window_query");
 DECL_CONSTANT("INVENTURE_UART_TIMER_WINDOW_ABI",1);

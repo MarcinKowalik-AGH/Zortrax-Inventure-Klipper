@@ -32,6 +32,9 @@ class Image:
             uc.mem_map(base,size)
         for typ,off,va,pa,fs,ms,fl,al in self.loads:
             if typ==1 and fs:uc.mem_write(va,self.data[off:off+fs])
+        if 'inventure_sampler_uart_init' in self.symbols:
+            uc.reg_write(UC_ARM_REG_SP,0x2001f800);uc.reg_write(UC_ARM_REG_LR,STOP|1)
+            uc.emu_start(self.symbols['inventure_sampler_uart_init'][0]|1,STOP,count=1000)
         return uc
 
 def inspect(image,hot,tach,phase,initial_base=0,mode=1):
@@ -71,7 +74,7 @@ def inspect(image,hot,tach,phase,initial_base=0,mode=1):
             state['context']=u.context_save();state['event']='interrupt';u.emu_stop();return
         if not root_done and not state['interrupt'] and not u.reg_read(UC_ARM_REG_PRIMASK):
             state['open_cycles']+=1
-            if not u.reg_read(UC_ARM_REG_BASEPRI):state['open_without_ceiling']+=1
+            if u.reg_read(UC_ARM_REG_BASEPRI)!=16:state['open_without_ceiling']+=1
         instruction=struct.unpack('<H',u.mem_read(address,2))[0]
         state['cycles']+=int(instruction&0xff00!=0xbf00)
         word(0xe0001004,NOW+state['cycles'])
@@ -138,12 +141,24 @@ def check(baseline,candidate,nm):
     assert uc.reg_read(UC_ARM_REG_BASEPRI)==0 and uc.reg_read(UC_ARM_REG_PRIMASK)==1
     assert bytes(uc.mem_read(new.symbols['uart_sample_active'][0],1))==b'\x00'
     del uc;gc.collect()
+    # Normalize all possible inherited AIRCR groupings without changing the
+    # caller's PRIMASK. Otherwise a bootloader can make UART/SysTick share
+    # preemption priority despite their distinct NVIC priority numbers.
+    for grouping in range(8):
+        for primask in (0,1):
+            uc=new.cpu();uc.mem_write(0xe000ed0c,struct.pack('<I',grouping<<8))
+            uc.reg_write(UC_ARM_REG_SP,0x2001f800);uc.reg_write(UC_ARM_REG_LR,STOP|1)
+            uc.reg_write(UC_ARM_REG_PRIMASK,primask)
+            uc.emu_start(new.symbols['inventure_sampler_uart_init'][0]|1,STOP,count=1000)
+            assert struct.unpack('<I',uc.mem_read(0xe000ed0c,4))[0]&(7<<8)==0
+            assert uc.reg_read(UC_ARM_REG_PRIMASK)==primask
+            del uc;gc.collect()
     return dict(status='PASS_REAL_F207_SAMPLER_UART_PRIORITY_WINDOW',cases=len(rows),
         baseline_overrun_cases=sum(bool(row['before']['overruns']) for row in rows),
         candidate_overruns=0,uart_byte_cycles=1600,clock_hz=120000000,
         timing_model='one useful instruction/cycle; IT/hints zero; not a physical measurement',
         lower_bound_native_cycles=min(row['before']['guard_cycles'] for row in rows if row['before']['mode']==1),
-        shutdown_priority_restoration=True,hardware_tested=False,rows=rows)
+        inherited_priority_groups_checked=8,shutdown_priority_restoration=True,hardware_tested=False,rows=rows)
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('baseline',type=Path);p.add_argument('candidate',type=Path)

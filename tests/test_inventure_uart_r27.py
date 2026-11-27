@@ -30,7 +30,7 @@ class UARTWindowHostTests(unittest.TestCase):
         p,oled=self.fixture(True)
         with self.assertNoLogs(level='ERROR'):oled._tick(10.)
         self.assertTrue(any(name=='inventure_uart_window_query' for name,_,_ in p.mcu.calls))
-        packet=dict(windows=100,peak_ticks=2200,rx=2,shutdowns=0,active=0)
+        packet=dict(windows=100,peak_ticks=2200,rx=2,shutdowns=0,active=0,group=0)
         oled._uart_window_response(dict(packet,**{'#receive_time':10.}));p.reactor.flush()
         self.assertEqual(oled.get_status(10.)['uart_priority_window'],packet)
         sent=len(p.mcu.calls)
