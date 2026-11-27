@@ -1,8 +1,8 @@
-"""Keep optional UART traffic out of native endstop moves.
+"""Keep optional UART traffic out of Home and native endstop moves.
 
 Observe Klipper's existing begin/end events; do not wrap or change a motion
 owner, step deadline, coordinate, heater or motor enable. The physical OLED
-keeps its last image during the short native homing move. Lease pings, panel
+keeps its last image throughout Home, including local PC14 refinement. Lease pings, panel
 buttons, MCU safety and cached Fluidd progress remain available.
 """
 import logging
@@ -43,18 +43,27 @@ class CommunicationQuietOLED:
     def _send_one(self, now):
         # The ACK callback also pumps the transport. Gating _tick alone would
         # leave that second pixel producer running during a homing move.
-        if self._quiet_homing_moves:
+        if self._home_pixels_paused():
             return False
         return super()._send_one(now)
 
+    def _home_sequence_active(self):
+        # Cached owner flags cover heat, SERVICE handoff and MCU-local PC14,
+        # which emit no Klipper HomingMove events. Never query the MCU here.
+        native = self.printer.lookup_object('inventure_native_z', None)
+        return bool(native is not None and (native.sequence_running or native.running))
+
+    def _home_pixels_paused(self):
+        return bool(self._quiet_homing_moves) or self._home_sequence_active()
+
     def _next_tick(self, now):
         # A queued image must not turn the paused sender into a 100 us loop.
-        if self._quiet_homing_moves:
+        if self._home_pixels_paused():
             return now+.1
         return super()._next_tick(now)
 
     def _tick(self, now):
-        if not self._quiet_homing_moves:
+        if not self._home_pixels_paused():
             return super()._tick(now)
         if not self.connected or self.shutdown_latched:
             return self.reactor.NEVER
@@ -80,6 +89,8 @@ class CommunicationQuietOLED:
     def get_status(self, now):
         result = super().get_status(now)
         result.update(communication_guard_release=RELEASE,
+            home_sequence_pixels_paused=self._home_sequence_active(),
+            home_pixels_paused=self._home_pixels_paused(),
             native_homing_pixels_paused=bool(self._quiet_homing_moves),
             native_homing_quiet_count=self._quiet_homing_count,
             native_homing_quiet_seconds=self._quiet_homing_seconds + (

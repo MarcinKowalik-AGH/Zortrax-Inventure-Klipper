@@ -77,6 +77,25 @@ class CommunicationGuardTests(unittest.TestCase):
         self.assertTrue(oled.stream.enabled)
         self.assertIsNone(oled.stream.failure)
 
+    def test_entire_home_including_local_pc14_is_quiet_without_native_move_events(self):
+        printer, oled = self.fixture()
+        native = types.SimpleNamespace(sequence_running=True, running=False)
+        printer.objects['inventure_native_z'] = native
+        oled._render(10.)
+        # Heat/SERVICE, the operator's MCU-local PC14 phase, and direct local Z.
+        for sequence_running, running in ((True, False), (True, True), (False, True)):
+            native.sequence_running, native.running = sequence_running, running
+            for now in (10., 10.5, 11.):
+                self.assertEqual(oled._tick(now), now+.1)
+                self.assertFalse(oled._send_one(now))
+                self.assertEqual(oled._next_tick(now), now+.1)
+            self.assertTrue(oled.get_status(11.)['home_sequence_pixels_paused'])
+            self.assertFalse(oled.get_status(11.)['native_homing_pixels_paused'])
+        self.assertFalse(any(name == 'inventure_oled_burst' for name, _, _ in printer.mcu.calls))
+        native.sequence_running = native.running = False
+        oled._pump(12.)
+        self.assertTrue(any(name == 'inventure_oled_burst' for name, _, _ in printer.mcu.calls))
+
     def test_nested_moves_and_shutdown_leave_no_stale_pause_on_reconnect(self):
         printer, oled = self.fixture()
         a, b = object(), object()

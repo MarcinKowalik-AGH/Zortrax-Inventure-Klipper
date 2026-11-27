@@ -36,20 +36,30 @@ przypisać tę awarię zmianie liczby dotknięć PC14.
 W tej samej historii są dwie wcześniejsze udane pętle po 102 cykle.
 Ich powodzenie nie potwierdza ostatniej próby ani niezawodności po aktualizacji.
 
+Drugi dostarczony zapis z 10:36:27 pokazuje osobne przerwanie. Przygotowanie
+T0 znów kończy się poprawnie; tym razem przechodzą dolna krańcówka i dojazd
+PC14. O 10:36:23 zaczyna się `PC14 refinement`, a po około czterech sekundach
+Klipper zgłasza `No communication with MCU`; nie otrzymuje końcowego rekordu
+Z. Ten wycinek konsoli nie zawiera zrzutu transportu ani przyczyny resetu MCU.
+Nie można utożsamić jego przyczyny z pierwszym `Timer too close`.
+
 ## Zakres poprawki
 
 Osobny moduł obserwuje zdarzenia `homing:homing_move_begin` i
 `homing:homing_move_end` istniejącego Klippera. Na czas natywnego ruchu
 bazującego wstrzymuje nowe porcje pikseli OLED, również z callbacku ACK.
+Ponadto odczytuje istniejące, buforowane flagi `sequence_running` i `running`
+właściciela Home. Wyciszenie obejmuje całe bazowanie, łącznie z przygotowaniem
+T0 i lokalną pętlą PC14, która nie emituje zdarzeń `HomingMove`.
 Pozostawia ostatni obraz fizycznego ekranu. Obsługa przycisków, podtrzymanie
 sesji ekranu co 500 ms, oddzielne heartbeat MCU, krańcówki i zatrzymanie
 pozostają u dotychczasowych wykonawców. Podgląd Fluidd może odświeżać swój
 bufor. Kolejka obrazu nie tworzy aktywnej pętli timera podczas pauzy.
 
-Po zakończeniu ruchu grafika wraca do dotychczasowego nadawcy. Oznacza to
-świadomą pauzę animacji na fizycznym OLED podczas natywnych dojazdów do
-krańcówek. Grzanie, wybór T0, czyszczenie i lokalna pętla PC14 zachowują
-dotychczasową prezentację.
+Po zakończeniu Home grafika wraca do dotychczasowego nadawcy. Oznacza to
+świadomą pauzę animacji na fizycznym OLED przez całe bazowanie, także podczas
+grzania, wyboru T0, czyszczenia i lokalnej pętli PC14. Zwykła nawigacja poza
+Home zachowuje dotychczasową prezentację.
 
 Okresowy synchronizator Info odkłada cały odczyt/synchronizację licznika
 podczas Home, ruchu, procedury SERVICE i druku. Odczyt zapisanych danych i
@@ -78,6 +88,8 @@ pakietami w locie. Podczas dziesięciosekundowego symulowanego bazowania
 nie wychodzą nowe piksele, działają przyciski i podtrzymanie, a timer nie
 wpada w aktywną pętlę. Sprawdzane są zagnieżdżone ruchy, błąd/rozłączenie,
 wznowienie obrazu, odroczenie Info oraz dokładna aktualizacja i wycofanie RC3.
+Osobny test obejmuje całe Home i samodzielną lokalną pętlę Z bez zdarzeń
+`HomingMove`, aby nie ominąć etapu drugiej zgłoszonej awarii.
 Zachowane testy obejmują wspólne Home z G28, makr Fluidd i menu OLED oraz
 interlocki, instalację i tożsamość firmware.
 
@@ -107,5 +119,6 @@ INVENTURE_OLED_STATUS
 
 Oba statusy mają zawierać `communication_guard_release` równe
 `RC8-COMMUNICATION-GUARD-R25.3`. Status OLED pokazuje też
+`home_pixels_paused`, `home_sequence_pixels_paused`,
 `native_homing_pixels_paused`, `native_homing_quiet_count` i
 `native_homing_quiet_seconds`. Dane tożsamości i czasu pracy nie są zerowane.
