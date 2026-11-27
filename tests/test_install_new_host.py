@@ -319,8 +319,10 @@ class TransactionTests(unittest.TestCase):
             'procedure_baseline_blob':installer.accepted_home.BASELINE_BLOB}, {
             'ui_transport': {'active_work': False},
             'procedure_ui_release': installer.LEVELING_UI_RELEASE,
+            'communication_guard_release':installer.COMMUNICATION_RELEASE,
             'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
         self.information=dict(information_release=installer.INFORMATION_RELEASE,
+            communication_guard_release=installer.COMMUNICATION_RELEASE,
             host_module=str(self.host/'klippy/extras/inventure_information.py'),factory_counter_sync='CURRENT')
         self.command_help={'INVENTURE_INFO':'Read Inventure factory identity and printing time'}
         self.serial, self.baud = '/dev/ttyS5', 750000
@@ -479,6 +481,11 @@ class TransactionTests(unittest.TestCase):
             home_procedure_profile=installer.operator_home.PROFILE)
         with installer.bootstrap.procedure_profile(installer.operator_home.PROFILE):
             installer.wait_ready(self.host,self.config,seconds=0)
+            for status in (self.oled, self.information):
+                status['communication_guard_release']='old'
+                with self.assertRaisesRegex(RuntimeError,'communication guard'):
+                    installer.wait_ready(self.host,self.config,seconds=0)
+                status['communication_guard_release']=installer.COMMUNICATION_RELEASE
             self.information['information_release']='old'
             with self.assertRaisesRegex(RuntimeError,'Information service'):
                 installer.wait_ready(self.host,self.config,seconds=0)
@@ -603,7 +610,8 @@ class TransactionTests(unittest.TestCase):
                               'inventure_home_ui.py','inventure_home_sprites.json',
                               'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
                               'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
-                              'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')})
+                              'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                              'inventure_communication_guard.py')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

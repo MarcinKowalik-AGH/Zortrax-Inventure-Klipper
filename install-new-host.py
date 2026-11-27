@@ -39,6 +39,7 @@ import inventure_accepted_home_restore as accepted_home
 import inventure_oem_home_restore as oem_home
 import inventure_operator_home_restore as operator_home
 from inventure_information_restore import RELEASE as INFORMATION_RELEASE
+from inventure_information_restore import COMMUNICATION_RELEASE
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -53,7 +54,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R25.3'
+INSTALLER_RELEASE = 'R25.4'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -354,6 +355,9 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                     raise RuntimeError('Ready Klipper did not activate the requested Klipper / Zortrax Inventure menu')
                 if home_reference is operator_home:
                     information=values.get('inventure_information',{})
+                    if (panel.get('communication_guard_release') != COMMUNICATION_RELEASE
+                            or information.get('communication_guard_release') != COMMUNICATION_RELEASE):
+                        raise RuntimeError('Ready Klipper did not load the matching communication guard')
                     if (information.get('information_release')!=INFORMATION_RELEASE
                             or Path(information.get('host_module','')).resolve()!=host/'klippy/extras/inventure_information.py'
                             or 'inventure_information' not in values.get('configfile',{}).get('config',{})):

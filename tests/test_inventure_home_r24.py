@@ -18,7 +18,7 @@ UI_FILES={'klippy/extras/'+name for name in
            'inventure_menu_core.py','inventure_oled.py','inventure_home_ui.py','inventure_home_sprites.json',
            'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
            'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
-           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')}
+           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')}
 
 class OperatorHomeR24Tests(unittest.TestCase):
     def test_information_rc1_rc2_upgrade_changes_only_info_and_firmware_rows(self):
@@ -33,9 +33,10 @@ class OperatorHomeR24Tests(unittest.TestCase):
             marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
             update=bootstrap.prepare_runtime_update(host)
             self.assertEqual(set(update['files']),{marker,host/'klippy/extras/inventure_information.py',
-                host/'klippy/extras/inventure_information_ui.py'})
+                host/'klippy/extras/inventure_information_ui.py',host/'klippy/extras/inventure_oled.py',
+                host/'klippy/extras/inventure_communication_guard.py'})
             for path,(before,after) in update['files'].items():
-                installer.updater.atomic_config_write(path,after,create=False)
+                installer.updater.atomic_config_write(path,after,create=before is None)
             self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
 
     def test_installed_fluidd_and_oled_independent_axes_then_z(self):
@@ -110,12 +111,12 @@ class OperatorHomeR24Tests(unittest.TestCase):
                      ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py','inventure_oled.py',
                       'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
            'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
-           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')})
+           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')})
             changed.add('klippy/extras/inventure_menu_core.py')
             if revision == 'rc7':
-                changed={'klippy/extras/inventure_menu_service.py','klippy/extras/inventure_menu_core.py'}
+                changed={'klippy/extras/inventure_menu_service.py','klippy/extras/inventure_menu_core.py','klippy/extras/inventure_oled.py'}
             changed|={'klippy/extras/'+name for name in ('inventure_information.py','inventure_information_ui.py',
-                         'inventure_info_store.py','inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')}
+                         'inventure_info_store.py','inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')}
             if revision not in ('rc5','rc6','rc7'):changed|={'klippy/extras/inventure_operator_home.py'}
             self.assertEqual({name for name in old.keys()|new.keys() if old.get(name)!=new.get(name)},changed)
             # In particular, every byte of native Z, its generator and the

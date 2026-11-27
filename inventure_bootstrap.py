@@ -553,6 +553,7 @@ def _predecessor_plans(repo):
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc3')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc1')
         for revision in ('rc7', 'rc6', 'rc5', 'rc4', 'rc2', 'rc1'):
             yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision=revision)
@@ -621,7 +622,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                        ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
                         'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
                                     'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
-                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py'))
+                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                                    'inventure_communication_guard.py'))
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
@@ -633,7 +635,8 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
                                   ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
                                    'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
                                     'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
-                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')}
+                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                                    'inventure_communication_guard.py')}
                      and not destination_file.exists() and not destination_file.is_symlink(),
                      "Unexpected new runtime module: " + name)
             before = None

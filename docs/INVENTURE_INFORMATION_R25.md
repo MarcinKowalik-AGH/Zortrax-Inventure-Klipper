@@ -169,7 +169,7 @@ Dotychczasowy R24 nie ma tych poleceń. Nowy host może nadal wystartować
 z R24, ale wtedy zgłasza `MCU_INFO_UPDATE_REQUIRED` i nie zapisuje Flash.
 
 Przy bezczynnej drukarce wyłącz cele grzania. Wgraj `INVENTUR.IVB` z wydania
-`inventure-information-r25-rc3` dotychczasową procedurą InventureBoot 1.7.
+`inventure-information-r25-rc4` dotychczasową procedurą InventureBoot 1.7.
 MCU R25 z RC1 ma dokładnie tę samą aplikację i nie wymaga ponownego wgrania.
 Zachowaj ustawione P4 750000. Po ponownym uruchomieniu MCU wykonaj aktualizację
 hosta przed Home lub grzaniem:
@@ -177,7 +177,7 @@ hosta przed Home lub grzaniem:
 ```bash
 cd ~/inventure-src &&
 git fetch origin --tags &&
-git switch --detach inventure-information-r25-rc3 &&
+git switch --detach inventure-information-r25-rc4 &&
 python3 install-new-host.py --repair-home-procedures --serial /dev/ttyS5 --baud 750000 --apply
 ```
 

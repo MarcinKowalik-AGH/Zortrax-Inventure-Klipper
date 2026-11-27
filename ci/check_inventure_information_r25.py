@@ -110,6 +110,16 @@ def inspect(klipper, config, destination):
         start_reason='startup',software_version='offline-inventure-info-r25'))
     try:
         printer._read_config()
+        # Use the real installed panel/Printer event dispatcher before the
+        # physical-interface rig replaces the panel with its model.
+        installed_panel=printer.lookup_object('inventure_oled')
+        move=object()
+        printer.send_event('homing:homing_move_begin',move)
+        require(installed_panel._quiet_homing_moves=={move},'Installed panel did not observe native homing')
+        require(installed_panel._send_one(0.) is False,'Installed ACK/pixel producer was not paused')
+        require(installed_panel._next_tick(0.)==.1,'Paused installed panel would spin its timer')
+        printer.send_event('homing:homing_move_end',move)
+        require(not installed_panel._quiet_homing_moves,'Installed panel did not resume after native homing')
         gcode=printer.lookup_object('gcode');gcode.gcode_handlers=gcode.ready_gcode_handlers;gcode.is_printer_ready=True
         rig=InstalledRig(printer,klipper)
         package=type(rig.board).__module__.rsplit('.',1)[0]

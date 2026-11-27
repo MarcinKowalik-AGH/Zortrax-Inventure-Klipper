@@ -2,13 +2,14 @@
 from hashlib import sha256
 
 RELEASE = 'RC8-INFORMATION-R25.2'
+COMMUNICATION_RELEASE = 'RC8-COMMUNICATION-GUARD-R25.3'
 PREDECESSOR_MANIFEST = '25a2219212e19c3b01d26e5888784b423185759c981b64d7b6e3da3fc009cb5e'
 FILES = ('inventure_information.py', 'inventure_information_ui.py', 'inventure_info_store.py',
          'inventure_runtime.py', 'inventure_counter_sync.py', 'inventure_information_errors.py')
 
 
 def restore(repo, files, *, revision='current'):
-    if revision not in ('current', 'rc1'):
+    if revision not in ('current', 'rc1', 'rc3'):
         raise ValueError('Unknown Information revision: '+str(revision))
     updates = {}
     for name in FILES:
@@ -18,6 +19,22 @@ def restore(repo, files, *, revision='current'):
         data = (source/name).read_bytes()
         compile(data, name, 'exec')
         updates['klippy/extras/'+name] = (data, 0o644)
+    if revision == 'current':
+        data = (repo/'restored/information_r25/inventure_communication_guard.py').read_bytes()
+        compile(data, 'inventure_communication_guard.py', 'exec')
+        updates['klippy/extras/inventure_communication_guard.py'] = (data, 0o644)
+        name = 'klippy/extras/inventure_information.py'
+        updates[name] = (updates[name][0]+b'''
+from .inventure_communication_guard import CommunicationQuietInformation
+class InventureInformation(CommunicationQuietInformation, InventureInformation):
+    pass
+''', 0o644)
+        name = 'klippy/extras/inventure_oled.py'
+        updates[name] = (files[name][0]+b'''
+from .inventure_communication_guard import CommunicationQuietOLED
+class InventureOLED(CommunicationQuietOLED, InventureOLED):
+    pass
+''', 0o644)
     core = 'klippy/extras/inventure_menu_core.py'
     updates[core] = (files[core][0]+b"\nREAD_ACTIONS = READ_ACTIONS | frozenset(('information_errors',)) | frozenset('information_error_%d' % i for i in range(14))\nALL_ACTIONS = ALL_ACTIONS | READ_ACTIONS\n", 0o644)
     menu = 'klippy/extras/inventure_menu_service.py'
@@ -38,6 +55,6 @@ class ZortraxMenuService(InformationMenu, ZortraxMenuService):
     pass
 '''
     updates[menu] = (data, 0o644)
-    return updates, dict(release=RELEASE if revision == 'current' else 'RC8-INFORMATION-R25.1', hardware_tested=False,
+    return updates, dict(release=RELEASE if revision != 'rc1' else 'RC8-INFORMATION-R25.1', hardware_tested=False,
         m300_reference='1f9d77432cbbdc9ae69298b6e4815b4bd819e963',
         files={name:sha256(data).hexdigest() for name,(data,_) in updates.items()})
