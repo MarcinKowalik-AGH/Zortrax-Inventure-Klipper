@@ -21,6 +21,23 @@ UI_FILES={'klippy/extras/'+name for name in
            'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py')}
 
 class OperatorHomeR24Tests(unittest.TestCase):
+    def test_information_rc1_rc2_upgrade_changes_only_info_and_firmware_rows(self):
+        from test_install_new_host import installer
+        with tempfile.TemporaryDirectory() as temporary, bootstrap.procedure_profile('operator-home-r24'):
+            host=Path(temporary)/'host'
+            _,old,metadata=bootstrap._plan(ROOT,information_revision='rc1')
+            self.assertEqual(sha256(bootstrap._metadata_bytes(metadata)).hexdigest(),
+                'dde8443ba43a11fbd9d40ce5dd857a1da840aa0123ac97b8a2aa855a8d722ad5')
+            bootstrap._write_files(host,old)
+            marker=host/bootstrap.MANIFEST_NAME
+            marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+            update=bootstrap.prepare_runtime_update(host)
+            self.assertEqual(set(update['files']),{marker,host/'klippy/extras/inventure_information.py',
+                host/'klippy/extras/inventure_information_ui.py'})
+            for path,(before,after) in update['files'].items():
+                installer.updater.atomic_config_write(path,after,create=False)
+            self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
+
     def test_installed_fluidd_and_oled_independent_axes_then_z(self):
         with tempfile.TemporaryDirectory(prefix='r24-operator-home-test-') as temp:
             output=Path(temp)/'verified'
@@ -70,6 +87,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
             information=json.loads((output/'info/R25_INFORMATION.json').read_text())
             self.assertEqual(information['status'],'PASS_INSTALLED_R25_INFORMATION')
             self.assertTrue(information['oled_fluidd_same'])
+            self.assertEqual(information['startup']['status'],'PASS_GENERIC_HEATER_STARTUP')
+            self.assertTrue(information['startup']['original_exception_reproduced'])
+            self.assertEqual(information['startup']['active_target_and_pwm_refusals'],8)
             self.assertFalse(information['serial_opened'])
             self.assertEqual({row['machine'] for row in report['cases']},{'A','B'})
             for axis in 'XY':

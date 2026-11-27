@@ -1,16 +1,21 @@
 """Add Info after the authenticated RC7 menu; never edit a movement engine."""
 from hashlib import sha256
 
-RELEASE = 'RC8-INFORMATION-R25.1'
+RELEASE = 'RC8-INFORMATION-R25.2'
 PREDECESSOR_MANIFEST = '25a2219212e19c3b01d26e5888784b423185759c981b64d7b6e3da3fc009cb5e'
 FILES = ('inventure_information.py', 'inventure_information_ui.py', 'inventure_info_store.py',
          'inventure_runtime.py', 'inventure_counter_sync.py', 'inventure_information_errors.py')
 
 
-def restore(repo, files):
+def restore(repo, files, *, revision='current'):
+    if revision not in ('current', 'rc1'):
+        raise ValueError('Unknown Information revision: '+str(revision))
     updates = {}
     for name in FILES:
-        data = (repo/'restored/information_r25'/name).read_bytes()
+        source = repo/'restored/information_r25'
+        if revision == 'rc1' and name in ('inventure_information.py','inventure_information_ui.py'):
+            source = source/'rc1'
+        data = (source/name).read_bytes()
         compile(data, name, 'exec')
         updates['klippy/extras/'+name] = (data, 0o644)
     core = 'klippy/extras/inventure_menu_core.py'
@@ -33,6 +38,6 @@ class ZortraxMenuService(InformationMenu, ZortraxMenuService):
     pass
 '''
     updates[menu] = (data, 0o644)
-    return updates, dict(release=RELEASE, hardware_tested=False,
+    return updates, dict(release=RELEASE if revision == 'current' else 'RC8-INFORMATION-R25.1', hardware_tested=False,
         m300_reference='1f9d77432cbbdc9ae69298b6e4815b4bd819e963',
         files={name:sha256(data).hexdigest() for name,(data,_) in updates.items()})

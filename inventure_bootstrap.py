@@ -151,7 +151,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
           restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
-          operator_home_revision='current'):
+          operator_home_revision='current', information_revision='current'):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -361,7 +361,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         if operator_home_revision == 'current':
             path = repo/'inventure_information_restore.py'
             info = _module('inventure_bootstrap_information', path, _regular_bytes(path))
-            updates, provenance = info.restore(repo, files)
+            updates, provenance = info.restore(repo, files, revision=information_revision)
             files.update(updates)
             for target, (data, mode) in updates.items():
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
@@ -553,6 +553,7 @@ def _predecessor_plans(repo):
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc1')
         for revision in ('rc7', 'rc6', 'rc5', 'rc4', 'rc2', 'rc1'):
             yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision=revision)
     if _procedure_profile.get() in ('current', 'operator-home-r24'):

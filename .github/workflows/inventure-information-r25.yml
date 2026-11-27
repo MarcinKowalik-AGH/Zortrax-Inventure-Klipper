@@ -64,6 +64,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-build"
           sha256sum INVENTUR.IVB klipper.bin klipper.dict > SHA256SUMS
           cp "$GITHUB_WORKSPACE/docs/INVENTURE_INFORMATION_R25.md" HOST_UPDATE.md
+          cp "$GITHUB_WORKSPACE/docs/INVENTURE_INFORMATION_R25_RC3.md" INVENTURE_INFORMATION_R25_RC3.md
           cp "$RUNNER_TEMP/r24-home/R24_HOME_CYCLES.json" .
           cp "$RUNNER_TEMP/r24-home/R24_HOME_OLED.png" .
           cp "$RUNNER_TEMP/r24-menu/INVENTURE_MENU_AUDIT.json" .
@@ -80,7 +81,8 @@ jobs:
                            'R24_HOME_BUILD.json','R24_HOME_CYCLES.json','R24_HOME_OLED.png','HOST_UPDATE.md',
                            'BUILD_REPORT.json','THERMAL_TEST_VERIFY.json',
                            'INVENTURE_MENU_AUDIT.json','INVENTURE_MENU_AUDIT.png','MENU_AUDIT.md',
-                           'R25_INFO_BUILD.json','R25_INFORMATION.json','R25_INFORMATION_OLED.png'):
+                           'R25_INFO_BUILD.json','R25_INFORMATION.json','R25_INFORMATION_OLED.png',
+                           'INVENTURE_INFORMATION_R25_RC3.md'):
                   out.write(root/name,name)
           PY
       - uses: actions/upload-artifact@v4
@@ -126,7 +128,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-information-r25-rc2 \
+          gh release create inventure-information-r25-rc3 \
             "$RUNNER_TEMP/r24-release/INVENTURE_INFORMATION_R25_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -141,5 +143,5 @@ jobs:
             "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION.json" \
             "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION_OLED.png" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R25 RC2: repair Python cache validation and trim repeated backups' \
-            --notes-file docs/INVENTURE_INFORMATION_R25_RC2.md
+            --title 'Inventure R25 RC3: fix generic-heater Info startup and reuse verified C helper' \
+            --notes-file docs/INVENTURE_INFORMATION_R25_RC3.md

@@ -10,7 +10,7 @@ class InformationMenu:
                     'Total printing time: '+info['total_printing_time']]
         release = str(info['mcu_release'] or 'Unavailable')
         label = 'R25-INFO-OLED' if 'R25-INFO' in release else 'R24-OLED' if 'HOME-R24' in release else release
-        return ['Host R38.6 / Info R25.1', 'MCU '+label,
+        return ['Host R38.6 / Info R25.2', 'MCU '+label,
                 'Klipper ee2c6fb6b00b', 'OEM reference 1.6.1 r0323']
 
     def _refresh_information(self):

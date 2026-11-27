@@ -11,6 +11,78 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'ci'),str(ROOT/'tests')]
 
 
+def inspect_startup(owner, printer, package, require):
+    """Run the real Info synchronizer against the installed heater registry."""
+    heaters=printer.lookup_object('heaters')
+    names=heaters.get_all_heaters()
+    require(all('heater_generic '+n in names for n in ('inventure_t1','chamber_l','chamber_r')),
+            'Startup fixture does not cover Inventure generic heaters')
+    original_printer,original_board,original_mcu=owner.printer,owner.board,owner.mcu
+    original_reactor,original_executor=owner.reactor,owner.executor
+    # Use an isolated real reactor/executor. The parser's reactor still has
+    # Klippy's physical _connect callback queued and must never be started.
+    import reactor
+    from extras.aio_executor import Executor
+    startup_loop=reactor.Reactor()
+    startup_executor=Executor(startup_loop,'information-startup-test')
+    owner.reactor,owner.executor=startup_loop,startup_executor
+    idle=types.SimpleNamespace(check_busy=lambda now:(0.,0.,True))
+    owner.printer=types.SimpleNamespace(is_shutdown=lambda:False,
+        lookup_object=lambda name,default=None:heaters if name=='heaters' else idle if name=='toolhead' else default)
+    owner.board=types.SimpleNamespace(load_test_context=None,zortrax=None,
+        _control_query=lambda:dict(mode='OFF',armed=0,latched=0,fault=0))
+    owner.mcu=types.SimpleNamespace(estimated_print_time=lambda now:0.,print_time_to_clock=lambda now:0)
+    blocked=[]
+    try:
+        owner.verified_identity=True;owner.ready=True
+        # Independently reproduce the field exception using the exact RC1/RC2
+        # method and the real Klipper registry, before testing its correction.
+        old=types.ModuleType(package+'.information_rc1_oracle')
+        old.__package__=package
+        exec(compile((ROOT/'restored/information_r25/rc1/inventure_information.py').read_bytes(),
+                     'rc1-information-oracle','exec'),old.__dict__)
+        try:
+            old.InventureInformation.blocker(owner,0.)
+        except Exception as exc:
+            require(str(exc)=="Unknown heater 'heater_generic inventure_t1'",'Unexpected old startup failure: '+str(exc))
+        else:
+            raise AssertionError('The original field exception was not reproduced')
+        require(owner.blocker(0.) is None,'Cold, idle generic-heater configuration was refused')
+        for section in names:
+            heater=heaters.lookup_heater(section.split()[-1])
+            for attribute,value in (('target_temp',100.),('last_pwm_value',.1)):
+                previous=getattr(heater,attribute)
+                try:
+                    setattr(heater,attribute,value)
+                    require(owner.blocker(0.)==section,'An active heater did not defer factory writes: '+section)
+                    blocked.append((section,attribute))
+                finally:
+                    setattr(heater,attribute,previous)
+        require(len(blocked)==8,'Not all four native/generic heater guards were checked')
+        owner.verified_identity=False
+        def query(kind='state'):
+            if kind=='identity':return dict(valid=1,serial=0x1234abcd,hardware=9,
+                uid0=0x11223344,uid1=0x55667788,uid2=0x99aabbcc)
+            return dict(serial=0x1234abcd,state=1,source=0,print_minutes=321,settings_crc=42)
+        owner.transport=types.SimpleNamespace(query=query)
+        def synchronize(now):
+            try:
+                owner.synchronize(now)
+            finally:
+                startup_loop.end()
+        startup_loop.register_callback(synchronize)
+        startup_loop.run()
+        require(owner.verified_identity and owner.sync.status=='CURRENT','Info startup did not complete')
+        require(owner.get_status(0.)['total_printing_time']=='5 h 21 min','Startup lost factory printing time')
+        return dict(status='PASS_GENERIC_HEATER_STARTUP',original_exception_reproduced=True,
+            heater_sections=names,active_target_and_pwm_refusals=len(blocked),counter_sync=owner.sync.status)
+    finally:
+        startup_executor.join()
+        startup_loop.finalize()
+        owner.reactor,owner.executor=original_reactor,original_executor
+        owner.printer,owner.board,owner.mcu=original_printer,original_board,original_mcu
+
+
 def cached_information_fixture(board, package, path):
     """Only simulated physical readings; use the actual installed data owner."""
     module=importlib.import_module(package+'.inventure_information')
@@ -45,6 +117,7 @@ def inspect(klipper, config, destination):
         owner=printer.lookup_object('inventure_information')
         require(Path(sys.modules[type(owner).__module__].__file__).resolve()==klipper/'klippy/extras/inventure_information.py',
                 'Info did not load the installed module')
+        startup=inspect_startup(owner,printer,package,require)
         rig.board.printer.objects['inventure_information']=owner
         owner.board=rig.board
         rig.board.mcu_release='RC8-CONTROL-R7-HOME-R25-INFO-OLED'
@@ -100,6 +173,7 @@ def inspect(klipper, config, destination):
         image=b''.join(b''.join(frames[i][y*128:(y+1)*128] for i in (0,2,4)) for y in range(64))
         (destination/'R25_INFORMATION_OLED.png').write_bytes(png(image,scale=2,width=768,height=64))
         result=dict(status='PASS_INSTALLED_R25_INFORMATION',rows=rows,information=owner.get_status(0.),
+            startup=startup,
             serial_values_are_simulated=True,read_only_render=True,oled_fluidd_same=True,
             live_cached_refresh=True,
             serial_opened=False,firmware_flashed=False,hardware_tested=False)

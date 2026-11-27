@@ -1,6 +1,6 @@
 # Inventure R25 — Info, numer seryjny i trwały czas druku
 
-Instalator poprawiony w RC2: [cache Pythona, zakres kopii i pomiar Z](INVENTURE_INFORMATION_R25_RC2.md).
+Aktualna poprawka RC3: [start Info, czas instalacji i potwierdzone pomiary Z](INVENTURE_INFORMATION_R25_RC3.md).
 
 Zakładka **Information** odtwarza aktywny, wspólny interfejs M300: OLED i Fluidd
 korzystają z tych samych pól, kolejności, wyborów i powrotów. Zatwierdzone
@@ -10,7 +10,7 @@ wykonawcy bazowania X/Y/Z, przełączania T0 i czyszczenia pozostają bez zmian.
 | --- | --- |
 | MCU | `RC8-CONTROL-R7-HOME-R25-INFO-OLED` |
 | Rdzeń hosta i wykonawcy Home | `RC8-CONTROL-R7-HOMING-R38.6`, profil `operator-home-r24` |
-| Nowa funkcja Info | `RC8-INFORMATION-R25.1` |
+| Nowa funkcja Info | `RC8-INFORMATION-R25.2` |
 | Bootloader / P4 | istniejący InventureBoot 1.7, `/dev/ttyS5`, 750000 baud |
 
 ## Ekrany — jak w M300
@@ -149,8 +149,11 @@ Cztery pliki wykonawcze hosta pozostają identyczne z RC7:
 i `inventure_z_home.py`. MCU dodaje odrębne polecenia Info i transakcję
 licznika; dotychczasowe sekwencje ruchu i przekazania właściciela są zachowane.
 
-Wszystkie nowe próby są **programowe**. Nie odczytano jeszcze numeru ani
-licznika fizycznej drukarki w R25 i nie wykonano na niej nowego zapisu Flash.
+Nowe próby RC3 są **programowe**. Dostarczony później log i stan hosta
+potwierdziły udany odczyt oraz zapis tożsamości z OTP w RC1/RC2, po którym
+wystąpił naprawiony w RC3 wyjątek nazwy grzałki. Odczyt licznika i nowy
+start RC3 na fizycznej drukarce pozostają do potwierdzenia. Nie wykonano
+zdalnie na niej nowego zapisu Flash.
 Galeria `R25_INFORMATION_OLED.png` pokazuje rzeczywisty renderer z jawnie
 symulowanymi wartościami — `Z1234ABCD` jest wartością testową.
 
@@ -166,7 +169,7 @@ Dotychczasowy R24 nie ma tych poleceń. Nowy host może nadal wystartować
 z R24, ale wtedy zgłasza `MCU_INFO_UPDATE_REQUIRED` i nie zapisuje Flash.
 
 Przy bezczynnej drukarce wyłącz cele grzania. Wgraj `INVENTUR.IVB` z wydania
-`inventure-information-r25-rc2` dotychczasową procedurą InventureBoot 1.7.
+`inventure-information-r25-rc3` dotychczasową procedurą InventureBoot 1.7.
 MCU R25 z RC1 ma dokładnie tę samą aplikację i nie wymaga ponownego wgrania.
 Zachowaj ustawione P4 750000. Po ponownym uruchomieniu MCU wykonaj aktualizację
 hosta przed Home lub grzaniem:
@@ -174,7 +177,7 @@ hosta przed Home lub grzaniem:
 ```bash
 cd ~/inventure-src &&
 git fetch origin --tags &&
-git switch --detach inventure-information-r25-rc2 &&
+git switch --detach inventure-information-r25-rc3 &&
 python3 install-new-host.py --repair-home-procedures --serial /dev/ttyS5 --baud 750000 --apply
 ```
 
@@ -186,7 +189,7 @@ INVENTURE_INFO
 ```
 
 Oczekiwane: MCU `RC8-CONTROL-R7-HOME-R25-INFO-OLED`,
-`information_release: RC8-INFORMATION-R25.1`, `identity_verified: true` oraz
+`information_release: RC8-INFORMATION-R25.2`, `identity_verified: true` oraz
 rzeczywiste `serial_number`, `hardware_version`, `factory_print_minutes`
 i `total_printing_time`. Świeży start zwykle ustala potwierdzenia w pierwszym
 cyklu odczytu; kontrola wykonuje się co 5 sekund.

@@ -10,7 +10,7 @@ from .inventure_runtime import PrintClock, CHECKPOINT_SECONDS, DRAIN_POLL_SECOND
 from .inventure_counter_sync import (CounterJournal, CounterSync, RUNTIME_QUERY_FORMAT,
     RUNTIME_STATE_FORMAT, RUNTIME_COMMIT_FORMAT, RUNTIME_RESULT_FORMAT)
 
-RELEASE = 'RC8-INFORMATION-R25.1'
+RELEASE = 'RC8-INFORMATION-R25.2'
 INFO_FORMAT = 'inventure_factory_info token=%u valid=%c serial=%u hardware=%hi uid0=%u uid1=%u uid2=%u'
 PROJECT_URL = 'https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper'
 
@@ -115,7 +115,8 @@ class InventureInformation:
         for event in ('klippy:shutdown', 'gcode:request_restart'):
             self.printer.register_event_handler(event, self.stop)
         self.printer.register_event_handler('klippy:disconnect', self.disconnect)
-        self.gcode.register_command('INVENTURE_INFO', self.cmd_info, when_not_ready=True)
+        self.gcode.register_command('INVENTURE_INFO', self.cmd_info, when_not_ready=True,
+            desc='Read Inventure factory identity and durable printing time')
         self.gcode.register_command('INVENTURE_COUNTER_RECONCILE', self.cmd_reconcile)
 
     def configure(self):
@@ -260,8 +261,10 @@ class InventureInformation:
             return 'service'
         heaters = self.printer.lookup_object('heaters')
         for name in heaters.get_all_heaters():
-            status = heaters.lookup_heater(name).get_status(now)
-            heater = heaters.lookup_heater(name)
+            # get_all_heaters returns config sections, e.g. "heater_generic
+            # inventure_t1". setup_heater registers by the final name token.
+            heater = heaters.lookup_heater(name.split()[-1])
+            status = heater.get_status(now)
             pwm = getattr(heater, 'mcu_pwm', None)
             native = getattr(pwm, 'native', getattr(pwm, 'physical', pwm))
             current = self.mcu.print_time_to_clock(self.mcu.estimated_print_time(now))
