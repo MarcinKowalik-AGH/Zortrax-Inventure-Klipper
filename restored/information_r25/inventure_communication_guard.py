@@ -6,11 +6,13 @@ Home animation active. Older MCU keeps its last image throughout Home. Lease
 pings, panel buttons, MCU safety and cached Fluidd progress remain available.
 """
 import logging
+import json
 
-RELEASE = 'RC8-COMMUNICATION-R26.1'
+RELEASE = 'RC8-COMMUNICATION-R27.1'
 BACKGROUND_PRIORITY_CLOCK=0x7fffffff00000000
 COEXIST_RESPONSE=('inventure_oled_coexist_state irq_ticks=%u blocks=%u wire_bytes=%u errors=%u '
     'peak=%c uart_overruns=%u uart_noise=%u uart_framing=%u uart_rx_overflows=%u')
+WINDOW_RESPONSE=('inventure_uart_window_state windows=%u peak_ticks=%u rx=%u shutdowns=%u active=%c')
 
 
 class CommunicationQuietOLED:
@@ -23,7 +25,11 @@ class CommunicationQuietOLED:
         self._coexist_state={}
         self._coexist_received=None
         self._coexist_query_at=0.
+        self._uart_window={}
+        self._uart_window_received=None
         super().__init__(*args, **kwargs)
+        self.gcode.register_command('INVENTURE_TRANSPORT_STATUS',self._transport_status,when_not_ready=True)
+        self.printer.register_event_handler('klippy:shutdown',self._transport_snapshot)
         self.printer.register_event_handler('homing:homing_move_begin', self._quiet_homing_begin)
         self.printer.register_event_handler('homing:homing_move_end', self._quiet_homing_end)
         for event in ('klippy:shutdown', 'klippy:disconnect'):
@@ -31,12 +37,40 @@ class CommunicationQuietOLED:
 
     def _build_config(self):
         super()._build_config()
-        self._coexistence=str(self.mcu.get_constants().get('INVENTURE_OLED_COEXISTENCE_ABI'))=='1'
+        constants=self.mcu.get_constants()
+        self._coexistence=(str(constants.get('INVENTURE_OLED_COEXISTENCE_ABI'))=='1'
+            and str(constants.get('INVENTURE_UART_TIMER_WINDOW_ABI'))=='1')
         if self._coexistence:
             if not self.mcu.check_valid_response(COEXIST_RESPONSE):
                 raise self.printer.config_error('Inventure cooperative OLED lacks its transport diagnostics')
             self.commands['coexist_query']=self.mcu.lookup_command('inventure_oled_coexist_query',cq=self.cq)
             self.mcu.register_serial_response(self._coexist_response,COEXIST_RESPONSE)
+            if not self.mcu.check_valid_response(WINDOW_RESPONSE):
+                raise self.printer.config_error('Inventure MCU lacks its UART priority-window diagnostics')
+            self.commands['uart_window_query']=self.mcu.lookup_command('inventure_uart_window_query',cq=self.cq)
+            self.mcu.register_serial_response(self._uart_window_response,WINDOW_RESPONSE)
+
+    def _uart_window_response(self,params):
+        data={key:params[key] for key in ('windows','peak_ticks','rx','shutdowns','active')}
+        received=params.get('#receive_time',self.reactor.monotonic())
+        def deliver(now):
+            if self.connected and not self.shutdown_latched:
+                self._uart_window=data;self._uart_window_received=received
+        self.reactor.register_async_callback(deliver)
+
+    def _transport_status(self,gcmd):
+        status=self.get_status(self.reactor.monotonic())
+        keys=('communication_guard_release','oled_transport_mode','transport_health',
+            'transport_health_age','uart_priority_window','uart_priority_window_age')
+        gcmd.respond_info('INVENTURE_TRANSPORT '+json.dumps({key:status.get(key) for key in keys},sort_keys=True))
+
+    def _transport_snapshot(self,*args):
+        now=self.reactor.monotonic()
+        logging.error('Inventure transport at shutdown: %s',json.dumps(dict(
+            release=RELEASE,mode='cooperative_dma' if self._coexistence else 'legacy_quiet',
+            health=self._coexist_state,window=self._uart_window,
+            health_age=None if self._coexist_received is None else max(0.,now-self._coexist_received),
+            window_age=None if self._uart_window_received is None else max(0.,now-self._uart_window_received)),sort_keys=True))
 
     def _coexist_response(self,params):
         data={key:params[key] for key in ('irq_ticks','blocks','wire_bytes','errors','peak',
@@ -98,6 +132,7 @@ class CommunicationQuietOLED:
             due=super()._tick(now)
             if self._coexistence and self.connected and not self.shutdown_latched and now>=self._coexist_query_at:
                 self.commands['coexist_query'].send([],reqclock=BACKGROUND_PRIORITY_CLOCK)
+                self.commands['uart_window_query'].send([],reqclock=BACKGROUND_PRIORITY_CLOCK)
                 self._coexist_query_at=now+2.
             return due
         if not self.connected or self.shutdown_latched:
@@ -127,6 +162,8 @@ class CommunicationQuietOLED:
             oled_transport_mode='cooperative_dma' if self._coexistence else 'legacy_quiet',
             transport_health=dict(self._coexist_state),
             transport_health_age=None if self._coexist_received is None else max(0.,now-self._coexist_received),
+            uart_priority_window=dict(self._uart_window),
+            uart_priority_window_age=None if self._uart_window_received is None else max(0.,now-self._uart_window_received),
             home_sequence_pixels_paused=self._home_sequence_active() and not self._coexistence,
             home_pixels_paused=self._home_pixels_paused(),
             native_homing_pixels_paused=bool(self._quiet_homing_moves) and not self._coexistence,
@@ -173,4 +210,5 @@ class CommunicationQuietInformation:
         if oled is not None:
             result['oled_transport_mode']='cooperative_dma' if getattr(oled,'_coexistence',False) else 'legacy_quiet'
             result['transport_health']=dict(getattr(oled,'_coexist_state',{}))
+            result['uart_priority_window']=dict(getattr(oled,'_uart_window',{}))
         return result

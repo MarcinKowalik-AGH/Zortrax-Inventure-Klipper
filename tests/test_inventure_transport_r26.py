@@ -19,7 +19,7 @@ class PairedHostR26Tests(unittest.TestCase):
         from test_inventure_communication_guard import GuardedOLED,guard
         from test_orange_pi_oled_fast import Printer,Config,ready_stream
         p=Printer();original=p.mcu.get_constants
-        p.mcu.get_constants=lambda:dict(original(),INVENTURE_OLED_COEXISTENCE_ABI=1)
+        p.mcu.get_constants=lambda:dict(original(),INVENTURE_OLED_COEXISTENCE_ABI=1,INVENTURE_UART_TIMER_WINDOW_ABI=1)
         oled=GuardedOLED(Config(p));oled._build_config();oled.connected=True;oled.stream=ready_stream()
         p.board.zortrax=types.SimpleNamespace(home_ui=types.SimpleNamespace(busy=True),view=None)
         oled.thermal_test_hold=True;oled.next_query=oled.render_at=0.

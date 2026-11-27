@@ -1,0 +1,171 @@
+name: Verify and publish Inventure UART R27
+on:
+  push:
+    branches: [fix/inventure-native-uart-r27]
+  workflow_dispatch:
+concurrency:
+  group: inventure-uart-r27-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned test dependencies
+        run: python -m pip install 'cffi==1.17.1' 'greenlet==3.2.4' 'pyserial==3.5' 'jinja2==3.1.6' 'unicorn==2.1.4'
+      - name: Fetch hash-pinned GNU Arm 14.2.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --connect-timeout 20 \
+            --output "$RUNNER_TEMP/toolchain.tar.xz" \
+            'https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz'
+          cd "$RUNNER_TEMP"
+          printf '%s  %s\n' '62a63b981fe391a9cbad7ef51b17e49aeaa3e7b0d029b36ca1e9c3b2a9b78823' toolchain.tar.xz | sha256sum --check
+          mkdir -p gcc-arm
+          tar -xf toolchain.tar.xz -C gcc-arm --strip-components=1
+          echo "$RUNNER_TEMP/gcc-arm/bin" >> "$GITHUB_PATH"
+      - name: Compile the R26 baseline and the paired R27 MCU twice
+        run: |
+          python ci/prepare_kit.py --destination "$RUNNER_TEMP/pinned-kit"
+          python ci/build_inventure_transport_r26.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r26-baseline"
+          python ci/build_inventure_uart_r27.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r24-build"
+          python ci/build_inventure_uart_r27.py "$RUNNER_TEMP/pinned-kit" "$RUNNER_TEMP/r26-rebuilt"
+      - name: Verify reproducible compiled transport, application and dictionary
+        run: |
+          cmp "$RUNNER_TEMP/r24-build/INVENTUR.IVB" "$RUNNER_TEMP/r26-rebuilt/INVENTUR.IVB"
+          cmp "$RUNNER_TEMP/r24-build/klipper.bin" "$RUNNER_TEMP/r26-rebuilt/klipper.bin"
+          cmp "$RUNNER_TEMP/r24-build/klipper.dict" "$RUNNER_TEMP/r26-rebuilt/klipper.dict"
+      - name: Reproduce R26 RX loss and verify actual R27 ARM UART preemption
+        run: python ci/check_inventure_uart_window_r27.py "$RUNNER_TEMP/r26-baseline/klipper.elf" "$RUNNER_TEMP/r24-build/klipper.elf" --output "$RUNNER_TEMP/R27_ARM_UART_PROOF.json"
+      - name: Run every host regression, including installed R24 Home and C ownership tests
+        run: python -m unittest discover -s tests -v
+      - name: Verify installed Home macros, G28 and rendered OLED pixels
+        run: python ci/check_inventure_home_r24.py --destination "$RUNNER_TEMP/r24-home"
+      - name: Exercise paired R27 Home and OLED animation together
+        run: python ci/check_inventure_home_r24.py --transport-r26 --destination "$RUNNER_TEMP/r26-home"
+      - name: Audit every installed operator menu and save actual OLED pixels
+        run: python ci/check_inventure_menu_audit.py "$RUNNER_TEMP/r24-menu"
+      - name: Compare literal Info macros, physical selections and Back navigation
+        run: python ci/check_inventure_information_r25.py --klipper "$RUNNER_TEMP/r24-home/runtime" --config "$RUNNER_TEMP/r24-home/config/printer.cfg" --destination "$RUNNER_TEMP/r25-info"
+      - name: Verify unchanged native configuration startup
+        run: python ci/check_native_nozzle_startup.py
+      - name: Run existing R23 MCU regression engines
+        run: python service_mcu/control_r6/TESTS/run_mcu_tests.py
+      - name: Package the reviewed firmware, identity and installation instructions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r24-build"
+          sha256sum INVENTUR.IVB klipper.bin klipper.dict > SHA256SUMS
+          cp "$GITHUB_WORKSPACE/docs/INVENTURE_UART_R27.md" HOST_UPDATE.md
+          cp "$GITHUB_WORKSPACE/docs/INVENTURE_UART_R27.md" INVENTURE_UART_R27.md
+          cp "$RUNNER_TEMP/R27_ARM_UART_PROOF.json" .
+          cp "$RUNNER_TEMP/r26-home/R24_HOME_CYCLES.json" R27_HOME_CYCLES.json
+          cp "$RUNNER_TEMP/r26-home/R24_HOME_OLED.png" R27_HOME_OLED.png
+          cp "$RUNNER_TEMP/r24-home/R24_HOME_CYCLES.json" .
+          cp "$RUNNER_TEMP/r24-home/R24_HOME_OLED.png" .
+          cp "$RUNNER_TEMP/r24-menu/INVENTURE_MENU_AUDIT.json" .
+          cp "$RUNNER_TEMP/r24-menu/INVENTURE_MENU_AUDIT.png" .
+          cp "$GITHUB_WORKSPACE/docs/INVENTURE_MENU_AUDIT_R24_RC7_2026-11-26.md" MENU_AUDIT.md
+          cp "$RUNNER_TEMP/r25-info/R25_INFORMATION.json" .
+          cp "$RUNNER_TEMP/r25-info/R25_INFORMATION_OLED.png" .
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile,ZIP_DEFLATED
+          root=Path.cwd()
+          with ZipFile(root.parent/'INVENTURE_UART_R27_BOOT17.zip','w',ZIP_DEFLATED) as out:
+              for name in ('INVENTUR.IVB','klipper.bin','klipper.dict','SHA256SUMS',
+                           'R24_HOME_BUILD.json','R24_HOME_CYCLES.json','R24_HOME_OLED.png','HOST_UPDATE.md',
+                           'BUILD_REPORT.json','THERMAL_TEST_VERIFY.json',
+                           'INVENTURE_MENU_AUDIT.json','INVENTURE_MENU_AUDIT.png','MENU_AUDIT.md',
+                           'R25_INFO_BUILD.json','R25_INFORMATION.json','R25_INFORMATION_OLED.png',
+                           'INVENTURE_UART_R27.md','R27_UART_BUILD.json','R27_ARM_UART_PROOF.json','R27_HOME_CYCLES.json','R27_HOME_OLED.png'):
+                  out.write(root/name,name)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: INVENTURE_UART_R27_BOOT17
+          path: |
+            ${{ runner.temp }}/INVENTURE_UART_R27_BOOT17.zip
+            ${{ runner.temp }}/r24-build/INVENTUR.IVB
+            ${{ runner.temp }}/r24-build/klipper.bin
+            ${{ runner.temp }}/r24-build/klipper.dict
+            ${{ runner.temp }}/r24-build/SHA256SUMS
+            ${{ runner.temp }}/r24-build/R24_HOME_BUILD.json
+            ${{ runner.temp }}/r24-home/R24_HOME_CYCLES.json
+            ${{ runner.temp }}/r24-home/R24_HOME_OLED.png
+            ${{ runner.temp }}/r24-menu/INVENTURE_MENU_AUDIT.json
+            ${{ runner.temp }}/r24-menu/INVENTURE_MENU_AUDIT.png
+            ${{ runner.temp }}/r24-build/R25_INFO_BUILD.json
+            ${{ runner.temp }}/r24-build/R27_UART_BUILD.json
+            ${{ runner.temp }}/r24-build/R27_ARM_UART_PROOF.json
+            ${{ runner.temp }}/r24-build/R27_HOME_CYCLES.json
+            ${{ runner.temp }}/r24-build/R27_HOME_OLED.png
+            ${{ runner.temp }}/r25-info/R25_INFORMATION.json
+            ${{ runner.temp }}/r25-info/R25_INFORMATION_OLED.png
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    needs: verify-build
+    if: github.repository == 'MarcinKowalik-AGH/Zortrax-Inventure-Klipper' && github.ref == 'refs/heads/fix/inventure-native-uart-r27'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: INVENTURE_UART_R27_BOOT17
+          path: ${{ runner.temp }}/r24-release
+      - name: Publish the checked application and matching host revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/r24-release/r24-build"
+          sha256sum --check SHA256SUMS
+          cd "$GITHUB_WORKSPACE"
+          gh release view inventure-transport-r26-rc1 --json body --jq .body > "$RUNNER_TEMP/r26-prior-notes.md"
+          python - <<'PYNOTE'
+          import os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          prior=(root/'r26-prior-notes.md').read_text()
+          note='**Physical R26 RC1 acceptance failed:** Home X stopped with MCU Timer too close and UART receive overruns. The passing R26 software tests did not reproduce that failure. R27 adds a linked-ARM regression that reproduces RX loss in R26 and verifies the sampler/UART priority adaptation. R27 physical acceptance remains pending. See [R27](https://github.com/MarcinKowalik-AGH/Zortrax-Inventure-Klipper/releases/tag/inventure-native-uart-r27-rc1).\n\n'
+          (root/'r26-field-notes.md').write_text(note+prior)
+          PYNOTE
+          gh release edit inventure-transport-r26-rc1 --title 'Inventure R26 RC1 - physical acceptance failed' --notes-file "$RUNNER_TEMP/r26-field-notes.md"
+          gh release create inventure-native-uart-r27-rc1 \
+            "$RUNNER_TEMP/r24-release/INVENTURE_UART_R27_BOOT17.zip" \
+            "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
+            "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
+            "$RUNNER_TEMP/r24-release/r24-build/klipper.dict" \
+            "$RUNNER_TEMP/r24-release/r24-build/SHA256SUMS" \
+            "$RUNNER_TEMP/r24-release/r24-build/R24_HOME_BUILD.json" \
+            "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_CYCLES.json" \
+            "$RUNNER_TEMP/r24-release/r24-home/R24_HOME_OLED.png" \
+            "$RUNNER_TEMP/r24-release/r24-menu/INVENTURE_MENU_AUDIT.json" \
+            "$RUNNER_TEMP/r24-release/r24-menu/INVENTURE_MENU_AUDIT.png" \
+            "$RUNNER_TEMP/r24-release/r24-build/R25_INFO_BUILD.json" \
+            "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION.json" \
+            "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION_OLED.png" \
+            "$RUNNER_TEMP/r24-release/r24-build/R27_UART_BUILD.json" \
+            "$RUNNER_TEMP/r24-release/r24-build/R27_ARM_UART_PROOF.json" \
+            "$RUNNER_TEMP/r24-release/r24-build/R27_HOME_CYCLES.json" \
+            "$RUNNER_TEMP/r24-release/r24-build/R27_HOME_OLED.png" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title 'Inventure R27 RC1: UART priority during the unchanged F207 sampler' \
+            --notes-file docs/INVENTURE_UART_R27.md

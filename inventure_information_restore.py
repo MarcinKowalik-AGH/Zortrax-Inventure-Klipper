@@ -2,14 +2,14 @@
 from hashlib import sha256
 
 RELEASE = 'RC8-INFORMATION-R25.2'
-COMMUNICATION_RELEASE = 'RC8-COMMUNICATION-R26.1'
+COMMUNICATION_RELEASE = 'RC8-COMMUNICATION-R27.1'
 PREDECESSOR_MANIFEST = '25a2219212e19c3b01d26e5888784b423185759c981b64d7b6e3da3fc009cb5e'
 FILES = ('inventure_information.py', 'inventure_information_ui.py', 'inventure_info_store.py',
          'inventure_runtime.py', 'inventure_counter_sync.py', 'inventure_information_errors.py')
 
 
 def restore(repo, files, *, revision='current'):
-    if revision not in ('current', 'rc1', 'rc3', 'rc4'):
+    if revision not in ('current', 'rc1', 'rc3', 'rc4', 'r26'):
         raise ValueError('Unknown Information revision: '+str(revision))
     updates = {}
     for name in FILES:
@@ -19,9 +19,9 @@ def restore(repo, files, *, revision='current'):
         data = (source/name).read_bytes()
         compile(data, name, 'exec')
         updates['klippy/extras/'+name] = (data, 0o644)
-    if revision in ('current', 'rc4'):
+    if revision in ('current', 'rc4', 'r26'):
         folder=repo/'restored/information_r25'
-        if revision=='rc4':folder=folder/'rc4'
+        if revision in ('rc4','r26'):folder=folder/revision
         data = (folder/'inventure_communication_guard.py').read_bytes()
         compile(data, 'inventure_communication_guard.py', 'exec')
         updates['klippy/extras/inventure_communication_guard.py'] = (data, 0o644)

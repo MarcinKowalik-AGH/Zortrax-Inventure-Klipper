@@ -757,7 +757,9 @@ class RealHostBootstrapTests(unittest.TestCase):
              patch.object(bootstrap, '_plan', return_value=('source', 'files', 'metadata')) as plan:
             candidates = bootstrap._predecessor_plans(ROOT)
             self.assertEqual(next(candidates), ('source', 'files', 'metadata'))
-            plan.assert_called_once_with(ROOT, procedure_profile='operator-home-r24', information_revision='rc4')
+            plan.assert_called_once_with(ROOT, procedure_profile='operator-home-r24', information_revision='r26')
+            next(candidates)
+            self.assertEqual(plan.call_args.kwargs, dict(procedure_profile='operator-home-r24',information_revision='rc4'))
             next(candidates)
             self.assertEqual(plan.call_args.kwargs, dict(procedure_profile='operator-home-r24',information_revision='rc3'))
             next(candidates)

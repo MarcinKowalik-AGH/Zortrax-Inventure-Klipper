@@ -34,7 +34,7 @@ def attach_panel(rig,transport_r26=False):
     fixture=Printer()
     if transport_r26:
         constants=fixture.mcu.get_constants()
-        fixture.mcu.get_constants=lambda:dict(constants,INVENTURE_OLED_COEXISTENCE_ABI=1)
+        fixture.mcu.get_constants=lambda:dict(constants,INVENTURE_OLED_COEXISTENCE_ABI=1,INVENTURE_UART_TIMER_WINDOW_ABI=1)
     panel=module.InventureOLED(Config(fixture))
     panel._build_config()
     panel.board,panel.printer,panel.reactor=rig.board,rig.board.printer,rig.board.reactor
