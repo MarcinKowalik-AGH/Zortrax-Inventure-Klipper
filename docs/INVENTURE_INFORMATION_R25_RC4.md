@@ -43,6 +43,24 @@ Klipper zgłasza `No communication with MCU`; nie otrzymuje końcowego rekordu
 Z. Ten wycinek konsoli nie zawiera zrzutu transportu ani przyczyny resetu MCU.
 Nie można utożsamić jego przyczyny z pierwszym `Timer too close`.
 
+## Stwierdzona różnica względem zatwierdzonego Home
+
+Wykonawca Z ustawia `board._thermal_display_hold(True)` przed PC14. W
+późniejszym dodatku `restored/operator_home_r24/inventure_home_ui.py`,
+`HomeOLEDUI._tick` uruchamiał ponownie `_render` i `_pump`, gdy Home było
+aktywne, mimo wciąż ustawionej blokady. Jest to konkretna zmiana zachowania
+integracji obrazu względem blokady istniejącego właściciela Z. Historyczny
+test dodatku wręcz wymagał przesyłania pikseli w tym stanie. Nowe testy
+zachowują ten kod jako wzorzec regresji i sprawdzają, że zainstalowana klasa
+nadrzędna respektuje blokadę przed wywołaniem starego dodatku.
+
+Porównano aktywny host M300 z gałęzi `orange-pi` i jego MCU ze źródła
+`d1616a9e7007b44dda2a737cc0297b7f66a77b63`: nadawanie ACK, cztery kredyty DMA,
+priorytet tła, budżet z rzeczywistego baud oraz obsługę alarmu DMA. Wspólne
+mechanizmy transportu nie uzasadniają omijania blokady właściciela Inventure.
+Ta poprawka przywraca jej respektowanie. Nie jest to dowód, że każda utrata
+łączności ma jedno źródło; druga konsola nie podaje przyczyny zerwania MCU.
+
 ## Zakres poprawki
 
 Osobny moduł obserwuje zdarzenia `homing:homing_move_begin` i

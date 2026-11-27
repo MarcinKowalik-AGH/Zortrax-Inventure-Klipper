@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import inventure_bootstrap as bootstrap
 from test_orange_pi_oled_fast import Config, Printer, o, ready_stream
+from test_inventure_home_ui import ui as historical_ui
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('communication_guard_test',
@@ -17,7 +18,7 @@ guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
 
-class GuardedOLED(guard.CommunicationQuietOLED, o.InventureOLED):
+class GuardedOLED(guard.CommunicationQuietOLED, historical_ui.HomeOLEDUI, o.InventureOLED):
     pass
 
 
@@ -95,6 +96,18 @@ class CommunicationGuardTests(unittest.TestCase):
         native.sequence_running = native.running = False
         oled._pump(12.)
         self.assertTrue(any(name == 'inventure_oled_burst' for name, _, _ in printer.mcu.calls))
+
+    def test_guard_precedes_the_frozen_home_wrapper_that_resumed_pixels_during_hold(self):
+        printer, oled = self.fixture()
+        home = types.SimpleNamespace(busy=True)
+        printer.board.zortrax = types.SimpleNamespace(home_ui=home)
+        oled.thermal_test_hold = True
+        self.assertEqual(oled._tick(10.), 10.1)
+        self.assertFalse(oled._send_one(10.))
+        self.assertTrue(oled.thermal_test_hold)
+        self.assertFalse(any(name == 'inventure_oled_burst' for name, _, _ in printer.mcu.calls))
+        home.busy = False
+        self.assertFalse(oled._home_pixels_paused())
 
     def test_nested_moves_and_shutdown_leave_no_stale_pause_on_reconnect(self):
         printer, oled = self.fixture()

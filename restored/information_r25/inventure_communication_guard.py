@@ -51,7 +51,10 @@ class CommunicationQuietOLED:
         # Cached owner flags cover heat, SERVICE handoff and MCU-local PC14,
         # which emit no Klipper HomingMove events. Never query the MCU here.
         native = self.printer.lookup_object('inventure_native_z', None)
-        return bool(native is not None and (native.sequence_running or native.running))
+        menu = getattr(self.board, 'zortrax', None)
+        presentation = getattr(menu, 'home_ui', None)
+        return bool(getattr(presentation, 'busy', False) or
+                    native is not None and (native.sequence_running or native.running))
 
     def _home_pixels_paused(self):
         return bool(self._quiet_homing_moves) or self._home_sequence_active()

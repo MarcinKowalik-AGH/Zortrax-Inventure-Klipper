@@ -64,7 +64,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertFalse(row['initial_review'])
                 self.assertTrue(row['oled_progress_rendered'])
                 self.assertTrue(row['m300_axis_animation'])
-                self.assertTrue(row['oled_delivered_during_thermal_hold'])
+                self.assertFalse(row['oled_delivered_during_thermal_hold'])
+                self.assertTrue(row['oled_pixels_paused_during_home'])
+                self.assertTrue(row['oled_cached_home_progress'])
                 self.assertEqual(row['home_ui_release'],'RC8-HOME-MENU-R24.4')
             self.assertEqual((output/'R24_HOME_OLED.png').read_bytes()[:8],b'\x89PNG\r\n\x1a\n')
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']

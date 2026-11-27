@@ -73,7 +73,10 @@ class HomePresentationTests(unittest.TestCase):
         self.assertTrue(view['animated'])
         self.assertEqual(view['labels'], ['Home Z', 'Cleaning nozzle T0', 'Please wait'])
 
-    def test_home_pixels_continue_during_hold_without_changing_its_query_schedule(self):
+    def test_frozen_rc6_wrapper_resumes_pixels_during_hold_as_regression_oracle(self):
+        # RC4's Z owner explicitly holds this display. The frozen RC6 wrapper
+        # bypassed that hold; the installed communication guard must precede
+        # it in the MRO. The composed adapter is tested separately.
         class OriginalOLED:
             def _tick(self, now):
                 if now >= self.next_query:
