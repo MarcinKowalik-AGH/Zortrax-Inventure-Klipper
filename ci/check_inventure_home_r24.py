@@ -40,7 +40,7 @@ def save_oled_preview(screens,destination):
     destination.write_bytes(png)
 
 
-def inspect(klipper,config,preview=None):
+def inspect(klipper,config,preview=None,transport_r26=False):
     sys.path.insert(0,str(klipper/'klippy'))
     import klippy,reactor
     from check_inventure_full_cycles import InstalledRig,require
@@ -188,7 +188,8 @@ def inspect(klipper,config,preview=None):
                                 return model.get_position()
                             return super().homing_move(position,speed,probe_pos,triggered,check_triggered)
                         def check_no_movement(self):return None
-                    panel=attach_panel(rig)
+                    panel=attach_panel(rig,transport_r26=transport_r26)
+                    require(panel._coexistence==transport_r26,'Incorrect paired OLED transport mode')
                     rig.menu._attach_home_ui()
                     ui=rig.menu.home_ui
                     original_phase=type(ui)._phase.__get__(ui)
@@ -425,8 +426,8 @@ def inspect(klipper,config,preview=None):
                             rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
                                 initial_review=initial_review,
                                 home_ui_release=rig.menu.get_status(0.)['home_ui_release'],
-                                oled_progress_rendered=True,m300_axis_animation=True,oled_delivered_during_thermal_hold=False,
-                                oled_pixels_paused_during_home=True,oled_cached_home_progress=True,
+                                oled_progress_rendered=True,m300_axis_animation=True,oled_delivered_during_thermal_hold=transport_r26,
+                                oled_pixels_paused_during_home=not transport_r26,oled_cached_home_progress=True,
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
                                 measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
                                 release_origin_dynamic=True,physical_z_pad_unchanged=True,
@@ -453,13 +454,14 @@ def inspect(klipper,config,preview=None):
                                            frame_sha256=[sha256(frame).hexdigest() for frame in screen['frames']])
                                   for axis,screen in screens.items()},
                     refusal_count=len(refusals),refusals=refusals,
+                    transport_mode='cooperative_dma' if transport_r26 else 'legacy_quiet',
                     serial_opened=False,firmware_flashed=False,hardware_tested=False)
     finally:
         executor=printer.lookup_object('aio_executor',None)
         if executor is not None:executor._handle_disconnect()
         loop.finalize()
 
-def check(destination):
+def check(destination,transport_r26=False):
     import inventure_bootstrap as bootstrap
     from inventure_bootstrap_config import stage_config,_set_scalar
     destination.mkdir(parents=True,exist_ok=False)
@@ -478,7 +480,8 @@ def check(destination):
         installer.require_identical_configuration(host,source/'printer.cfg',config)
         before={p:p.read_bytes() for p in config.parent.rglob('*') if p.is_file()}
         result=subprocess.run([sys.executable,__file__,'--klipper',str(host),'--config',str(config),
-                               '--oled-preview',str(destination/'R24_HOME_OLED.png')],
+                               '--oled-preview',str(destination/'R24_HOME_OLED.png')]
+                              +(['--transport-r26'] if transport_r26 else []),
                               text=True,capture_output=True,timeout=120)
         (destination/'cycles.log').write_text(result.stdout+result.stderr)
         if result.returncode:raise RuntimeError(result.stdout+'\n'+result.stderr)
@@ -496,11 +499,12 @@ if __name__=='__main__':
     parser.add_argument('--klipper',type=Path)
     parser.add_argument('--config',type=Path)
     parser.add_argument('--oled-preview',type=Path)
+    parser.add_argument('--transport-r26',action='store_true')
     args=parser.parse_args()
-    if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview)
+    if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview,transport_r26=args.transport_r26)
     elif args.destination:
-        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute())
+        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26)
     else:
         with tempfile.TemporaryDirectory(prefix='inventure-r24-home-') as temp:
-            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified')
+            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified',transport_r26=args.transport_r26)
     print(json.dumps(report,indent=2))
