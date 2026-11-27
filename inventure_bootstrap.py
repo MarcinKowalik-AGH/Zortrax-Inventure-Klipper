@@ -15,6 +15,7 @@ import io
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 import stat
 import shutil
 import subprocess
@@ -395,7 +396,8 @@ def _core_check(target, source, temporary, *, native_restored=False, single_owne
         verification_target = temporary/"core-compat-host"
         extras = verification_target/"klippy/extras"
         extras.parent.mkdir(parents=True)
-        shutil.copytree(target/"klippy/extras", extras)
+        shutil.copytree(target/"klippy/extras", extras,
+                        ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copy2(target/"klippy/serialhdl.py",
                      verification_target/"klippy/serialhdl.py")
         for name in (("inventure_native_z.py","inventure_z_home.py","inventure_mcu.py")
@@ -419,8 +421,15 @@ def _generated_file(name, expected):
     path = PurePosixPath(name)
     if name == "klippy/chelper/c_helper.so":
         return True
-    if path.parent.name == "__pycache__" and path.suffix == ".pyc":
-        return str(path.parent.parent/(path.name.split(".", 1)[0] + ".py")) in expected
+    if (path.parent.name == "__pycache__"
+            and re.fullmatch(r"[A-Za-z_]\w*\.cpython-\d+(?:\.opt-[12])?\.pyc", path.name, re.ASCII)):
+        # A rolled-back/newer module can leave a PEP 3147 cache after its .py
+        # was removed. CPython never imports that orphan from __pycache__.
+        # Accept caches only inside an authenticated Python source directory;
+        # source files, extension modules, symlinks and other extras stay checked.
+        return any(PurePosixPath(source).suffix == ".py"
+                   and PurePosixPath(source).parent == path.parent.parent
+                   for source in expected)
     return False
 
 
@@ -540,25 +549,24 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
 
 def _predecessor_plans(repo):
     """Every authenticated prefix through the published R23.5 runtime."""
+    # Try the recent public operator runtimes first. Rebuilding every older
+    # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
+    # Matching and verifying the complete authenticated manifest is unchanged.
+    if _procedure_profile.get() == 'operator-home-r24':
+        for revision in ('rc7', 'rc6', 'rc5', 'rc4', 'rc2', 'rc1'):
+            yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision=revision)
+    if _procedure_profile.get() in ('current', 'operator-home-r24'):
+        yield _plan(repo, procedure_profile='oem-home-r38.6')
+    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
+    if _procedure_profile.get() != 'current':
+        yield _plan(repo, procedure_profile='current')
     names = ('restore_oled', 'restore_native_z', 'restore_motion_owner',
              'restore_service_excursion', 'restore_scheduler', 'restore_safety_policy',
              'restore_operator_service', 'restore_leveling_ui', 'restore_leveling_stages',
              'restore_operator_menu', 'restore_configuration_audit')
-    for enabled in range(len(names)+1):
+    for enabled in range(len(names), -1, -1):
         yield _plan(repo, restore_accepted_home=False, procedure_profile='current',
                     **{name: index < enabled for index, name in enumerate(names)})
-    if _procedure_profile.get() != 'current':
-        yield _plan(repo, procedure_profile='current')
-    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
-    if _procedure_profile.get() in ('current', 'operator-home-r24'):
-        yield _plan(repo, procedure_profile='oem-home-r38.6')
-    if _procedure_profile.get() == 'operator-home-r24':
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc1')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc2')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc4')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc5')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc6')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc7')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:

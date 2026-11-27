@@ -51,7 +51,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R25.1'
+INSTALLER_RELEASE = 'R25.2'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -644,11 +644,13 @@ def _run(args):
     directory.mkdir(parents=True, mode=0o700)
     print('Preparing verified runtime and configuration. Report directory: '+str(directory), flush=True)
     host = args.destination.expanduser().absolute()
+    print('Verifying the installed runtime and preparing an isolated update.', flush=True)
     validation_host, provenance, runtime_updates, runtime_before = stage_runtime(host, directory)
     config = live['config']
     gcodes = config.parent.parent/'gcodes'
     if not gcodes.is_dir():
         raise ValueError('Expected the existing G-code directory: '+str(gcodes))
+    print('Staging active configuration includes and printer state.', flush=True)
     plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
                         gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
     staged = Path(plan['config_path'])
@@ -663,6 +665,7 @@ def _run(args):
                 raise ValueError('Startup repair refuses automatic delayed G-code: '+section)
     if staged.name != config.name:
         raise ValueError('Recovery requires the active main config to be named printer.cfg')
+    print('Validating Klipper configuration offline; no MCU commands are sent.', flush=True)
     validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
                                  '--klipper', str(validation_host), '--config', str(staged)],
                                 check=False, text=True, capture_output=True, timeout=120)
@@ -707,9 +710,11 @@ def _run(args):
     if set(moon_updates).intersection(updates):
         raise ValueError('Klipper and Moonraker unexpectedly share a modified file')
     updates.update(moon_updates)
-    # The selective rollback below owns only touched files. Keep a full private
-    # copy as well, including operator JSON and inactive configuration files.
-    shutil.copytree(config.parent, directory/'before-config', symlinks=True)
+    # InstallTransaction retains every changed file, the service override and
+    # Fluidd settings. Do not copy the whole config folder as a second backup:
+    # it can contain large historical ZIPs and unrelated inactive files which
+    # this transaction never writes. Existing backups remain untouched.
+    print('Backing up changed files and service settings only.', flush=True)
     transaction = InstallTransaction(directory, updates, unit, bool(moon_updates), web_root,
                                      before_start=lambda: bootstrap.verify_host(host))
     verify_snapshot(plan['source_snapshot'])
@@ -791,8 +796,8 @@ def main():
                   'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
         elif args.apply:
             if args.repair_home_procedures:
-                print('R24 Home procedures installed and Ready/source/profile verified. '
-                      'Read INVENTURE_VERSION and INVENTURE_HOME_Z_STATUS in Fluidd.')
+                print('R25 Info host installed and Ready/source/profile verified; R24 Home engines preserved. '
+                      'Read INVENTURE_VERSION and INVENTURE_INFO in Fluidd.')
             else:
                 print('Complete R38.6 host with the dual-thermal OLED installed and verified. '
                       'In Fluidd run INVENTURE_VERSION and INVENTURE_OLED_STATUS.')

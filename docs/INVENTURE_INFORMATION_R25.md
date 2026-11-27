@@ -1,4 +1,6 @@
-# Inventure R25 RC1 — Info, numer seryjny i trwały czas druku
+# Inventure R25 — Info, numer seryjny i trwały czas druku
+
+Instalator poprawiony w RC2: [cache Pythona, zakres kopii i pomiar Z](INVENTURE_INFORMATION_R25_RC2.md).
 
 Zakładka **Information** odtwarza aktywny, wspólny interfejs M300: OLED i Fluidd
 korzystają z tych samych pól, kolejności, wyborów i powrotów. Zatwierdzone
@@ -164,14 +166,15 @@ Dotychczasowy R24 nie ma tych poleceń. Nowy host może nadal wystartować
 z R24, ale wtedy zgłasza `MCU_INFO_UPDATE_REQUIRED` i nie zapisuje Flash.
 
 Przy bezczynnej drukarce wyłącz cele grzania. Wgraj `INVENTUR.IVB` z wydania
-`inventure-information-r25-rc1` dotychczasową procedurą InventureBoot 1.7.
+`inventure-information-r25-rc2` dotychczasową procedurą InventureBoot 1.7.
+MCU R25 z RC1 ma dokładnie tę samą aplikację i nie wymaga ponownego wgrania.
 Zachowaj ustawione P4 750000. Po ponownym uruchomieniu MCU wykonaj aktualizację
 hosta przed Home lub grzaniem:
 
 ```bash
 cd ~/inventure-src &&
 git fetch origin --tags &&
-git switch --detach inventure-information-r25-rc1 &&
+git switch --detach inventure-information-r25-rc2 &&
 python3 install-new-host.py --repair-home-procedures --serial /dev/ttyS5 --baud 750000 --apply
 ```
 

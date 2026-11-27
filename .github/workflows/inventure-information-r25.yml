@@ -126,7 +126,7 @@ jobs:
           cd "$RUNNER_TEMP/r24-release/r24-build"
           sha256sum --check SHA256SUMS
           cd "$GITHUB_WORKSPACE"
-          gh release create inventure-information-r25-rc1 \
+          gh release create inventure-information-r25-rc2 \
             "$RUNNER_TEMP/r24-release/INVENTURE_INFORMATION_R25_BOOT17.zip" \
             "$RUNNER_TEMP/r24-release/r24-build/INVENTUR.IVB" \
             "$RUNNER_TEMP/r24-release/r24-build/klipper.bin" \
@@ -141,5 +141,5 @@ jobs:
             "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION.json" \
             "$RUNNER_TEMP/r24-release/r25-info/R25_INFORMATION_OLED.png" \
             --target "$GITHUB_SHA" --prerelease \
-            --title 'Inventure R25 RC1: M300-style Info, OEM serial and durable printing time' \
-            --notes-file docs/INVENTURE_INFORMATION_R25.md
+            --title 'Inventure R25 RC2: repair Python cache validation and trim repeated backups' \
+            --notes-file docs/INVENTURE_INFORMATION_R25_RC2.md

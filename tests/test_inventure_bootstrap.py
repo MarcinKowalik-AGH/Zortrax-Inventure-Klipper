@@ -712,6 +712,53 @@ class RealHostBootstrapTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Symlink'):
                 bootstrap.verify_host(stage, repo=ROOT)
 
+    def test_verification_accepts_cpython_313_cache_left_by_a_removed_overlay(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.stage, stage)
+            source = stage/'klippy/extras/inventure_home_ui.py'
+            self.assertFalse(source.exists())
+            cache = source.parent/'__pycache__/inventure_home_ui.cpython-313.pyc'
+            cache.parent.mkdir(exist_ok=True)
+            cache.write_bytes(b'orphaned generated cache; never imported')
+            result = bootstrap.verify_host(stage, repo=ROOT)
+            self.assertIn(cache.relative_to(stage).as_posix(), result['generated_files'])
+            # A PEP 3147 cache without a source is not importable by CPython.
+            from importlib.machinery import PathFinder
+            self.assertIsNone(PathFinder.find_spec('inventure_home_ui', [str(source.parent)]))
+            self.assertEqual(cache.read_bytes(), b'orphaned generated cache; never imported')
+            source.write_text('raise RuntimeError("unreviewed code")')
+            with self.assertRaisesRegex(ValueError, 'Unexpected file'):
+                bootstrap.verify_host(stage, repo=ROOT)
+
+    def test_cache_exception_does_not_admit_code_links_or_arbitrary_files(self):
+        expected = {'klippy/extras/reviewed.py': {}}
+        for name in ('inventure_home_ui.cpython-313.pyc',
+                     'reviewed.cpython-311.opt-1.pyc', 'reviewed.cpython-312.opt-2.pyc'):
+            self.assertTrue(bootstrap._generated_file('klippy/extras/__pycache__/'+name, expected))
+        for name in ('klippy/extras/__pycache__/unreviewed.py',
+                     'klippy/extras/__pycache__/unreviewed.so',
+                     'klippy/extras/__pycache__/unknown.pyc',
+                     'klippy/extras/__pycache__/settings.json',
+                     'unknown/__pycache__/reviewed.cpython-313.pyc',
+                     'klippy/extras/inventure_home_ui.pyc'):
+            self.assertFalse(bootstrap._generated_file(name, expected), name)
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)/'host'
+            shutil.copytree(self.stage, stage)
+            cache = stage/'klippy/extras/__pycache__/inventure_home_ui.cpython-313.pyc'
+            cache.parent.mkdir(exist_ok=True)
+            cache.symlink_to(stage/'klippy/util.py')
+            with self.assertRaisesRegex(ValueError, 'Symlink'):
+                bootstrap.verify_host(stage, repo=ROOT)
+
+    def test_latest_operator_predecessor_is_checked_before_older_archives(self):
+        with bootstrap.procedure_profile('operator-home-r24'), \
+             patch.object(bootstrap, '_plan', return_value=('source', 'files', 'metadata')) as plan:
+            candidates = bootstrap._predecessor_plans(ROOT)
+            self.assertEqual(next(candidates), ('source', 'files', 'metadata'))
+            plan.assert_called_once_with(ROOT, procedure_profile='operator-home-r24', operator_home_revision='rc7')
+
 
 if __name__ == '__main__':
     unittest.main()

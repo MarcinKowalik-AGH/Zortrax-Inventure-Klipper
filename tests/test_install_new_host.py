@@ -453,6 +453,11 @@ class TransactionTests(unittest.TestCase):
         bootstrap._write_files(self.host,files)
         marker=self.host/bootstrap.MANIFEST_NAME
         marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+        # Real failed/rolled-back upgrades can leave a 3.13 overlay cache even
+        # when this authenticated RC1 manifest has no corresponding source.
+        cache=self.host/'klippy/extras/__pycache__/inventure_home_ui.cpython-313.pyc'
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_bytes(b'previous interpreter cache; not executable without source')
         gcodes=self.root/'gcodes';gcodes.mkdir()
         source=self.root/'field-source'
         shutil.copytree(ROOT/'tests/fixtures/field_config_20261125',source)
@@ -465,6 +470,8 @@ class TransactionTests(unittest.TestCase):
         active,_=installer.layout.active_klipper(module,self.config,{})
         self.macros={s.removeprefix('gcode_macro ') for s in active.sections() if s.startswith('gcode_macro ')}
         before_active={s:dict(active.items(s)) for s in active.sections()}
+        unrelated=self.config.parent/'old-config-archive.zip'
+        unrelated.write_bytes(b'unrelated historical archive; leave in place')
         backup=self.root/'inventure-installations/20261124T142803.217006Z'
         (backup/'before').mkdir(parents=True)
         saved=backup/'before/0'
@@ -502,6 +509,14 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(result['procedure_restore_release'],installer.operator_home.RELEASE)
         self.assertEqual(result['accepted_home_backup']['saved_file'],str(saved))
         report=Path(result['report_directory'])
+        self.assertFalse((report/'before-config').exists())
+        self.assertEqual(unrelated.read_bytes(), b'unrelated historical archive; leave in place')
+        receipt=json.loads((report/'backup.json').read_text())
+        self.assertNotIn(str(unrelated), receipt['files'])
+        for path,saved_path in receipt['files'].items():
+            if saved_path is not None:
+                self.assertTrue(Path(saved_path).is_file(), path)
+        self.assertEqual(cache.read_bytes(), b'previous interpreter cache; not executable without source')
         plan=json.loads((report/'plan.json').read_text())
         self.assertEqual(plan['config']['source_snapshot'][str(saved)],sha256(saved.read_bytes()).hexdigest())
         self.assertTrue((report/'offline-validation.log').is_file())
