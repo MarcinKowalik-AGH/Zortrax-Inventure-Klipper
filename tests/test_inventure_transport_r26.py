@@ -21,12 +21,13 @@ class PairedHostR26Tests(unittest.TestCase):
         p=Printer();original=p.mcu.get_constants
         p.mcu.get_constants=lambda:dict(original(),INVENTURE_OLED_COEXISTENCE_ABI=1)
         oled=GuardedOLED(Config(p));oled._build_config();oled.connected=True;oled.stream=ready_stream()
-        p.board.zortrax=types.SimpleNamespace(home_ui=types.SimpleNamespace(busy=True))
+        p.board.zortrax=types.SimpleNamespace(home_ui=types.SimpleNamespace(busy=True),view=None)
         oled.thermal_test_hold=True;oled.next_query=oled.render_at=0.
         oled._render=lambda now:oled.stream.request(b'\x55'*8192,True)
         oled._held_keys=lambda now:None
         oled._quiet_homing_begin(object())
-        oled._tick(10.)
+        with self.assertNoLogs(level='ERROR'):
+            oled._tick(10.)
         names=[name for name,_,_ in p.mcu.calls]
         self.assertIn('inventure_oled_burst',names)
         self.assertIn('inventure_oled_coexist_query',names)

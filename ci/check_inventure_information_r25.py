@@ -93,6 +93,7 @@ def cached_information_fixture(board, package, path):
     owner.clock=module.PrintClock();owner.saved=(0.,0)
     owner.sync=module.CounterSync();owner.sync.minutes=321;owner.sync.committed_seconds=120
     owner.sync.status='CURRENT';owner.verified_identity=True;owner.board=board
+    owner.printer=board.printer
     owner.error=owner.wait_reason=None
     board.printer.objects['inventure_information']=owner
     return owner
