@@ -486,6 +486,14 @@ class TransactionTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'communication guard'):
                     installer.wait_ready(self.host,self.config,seconds=0)
                 status['communication_guard_release']=installer.COMMUNICATION_RELEASE
+            self.mcu['mcu_constants']['INVENTURE_OLED_COEXISTENCE_ABI']=1
+            self.mcu['mcu_constants']['INVENTURE_UART_TIMER_WINDOW_ABI']=1
+            with self.assertRaisesRegex(RuntimeError,'paired cooperative DMA'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.oled['oled_transport_mode']='cooperative_dma'
+            installer.wait_ready(self.host,self.config,seconds=0)
+            del self.mcu['mcu_constants']['INVENTURE_OLED_COEXISTENCE_ABI']
+            del self.mcu['mcu_constants']['INVENTURE_UART_TIMER_WINDOW_ABI']
             self.information['information_release']='old'
             with self.assertRaisesRegex(RuntimeError,'Information service'):
                 installer.wait_ready(self.host,self.config,seconds=0)

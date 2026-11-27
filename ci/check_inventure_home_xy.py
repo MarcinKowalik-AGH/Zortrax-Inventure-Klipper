@@ -26,12 +26,16 @@ REFERENCE=ROOT/'restored/scheduler_r21/inventure_native_z.py'
 REFERENCE_BLOB='3fc954974a4a375e003b50c8624304301457f1de'
 
 
-def attach_panel(rig):
+def attach_panel(rig,transport_r26=False):
     from test_orange_pi_oled_fast import Printer,Config,ready_stream
     package=type(rig.board).__module__.rsplit('.',1)[0]
     module=importlib.import_module(package+'.inventure_oled')
     catalog=importlib.import_module(package+'.inventure_oem_menu')
-    panel=module.InventureOLED(Config(Printer()))
+    fixture=Printer()
+    if transport_r26:
+        constants=fixture.mcu.get_constants()
+        fixture.mcu.get_constants=lambda:dict(constants,INVENTURE_OLED_COEXISTENCE_ABI=1,INVENTURE_UART_TIMER_WINDOW_ABI=1)
+    panel=module.InventureOLED(Config(fixture))
     panel._build_config()
     panel.board,panel.printer,panel.reactor=rig.board,rig.board.printer,rig.board.reactor
     panel.connected,panel.stream=True,ready_stream()
