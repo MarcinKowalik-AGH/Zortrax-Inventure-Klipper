@@ -42,7 +42,7 @@ def save_oled_preview(screens,destination):
 
 def inspect(klipper,config,preview=None,transport_r26=False):
     sys.path.insert(0,str(klipper/'klippy'))
-    import klippy,reactor
+    import klippy,reactor,toolhead
     from check_inventure_full_cycles import InstalledRig,require
     from check_inventure_home_xy import attach_panel
     from test_orange_pi_oled_fast import Panel
@@ -58,7 +58,43 @@ def inspect(klipper,config,preview=None,transport_r26=False):
         gcode=printer.lookup_object('gcode')
         gcode.gcode_handlers=gcode.ready_gcode_handlers;gcode.is_printer_ready=True
         package=type(printer.lookup_object('inventure_native_z')).__module__.rsplit('.',1)[0]
-        actual_kin=printer.lookup_object('toolhead').get_kinematics()
+        actual_toolhead=printer.lookup_object('toolhead')
+        actual_kin=actual_toolhead.get_kinematics()
+        xy_route=getattr(actual_kin,'_inventure_xy_step',None)
+        oem_xy=None
+        if getattr(xy_route,'OEM_XY_ACCELERATION',None)==1500.:
+            saved_mcu=xy_route._mcu
+            configured=[]
+            xy_route._mcu=types.SimpleNamespace(
+                get_constants=lambda:dict(INVENTURE_XY_STEP_TIMER_ABI=2,
+                    INVENTURE_XY_STEP_MIN_TICKS=660,INVENTURE_XY_STEP_HIGH_TICKS=294,
+                    CLOCK_FREQ=120000000),
+                add_config_cmd=configured.append,is_fileoutput=lambda:False,
+                lookup_query_command=lambda *_:types.SimpleNamespace(send=lambda:dict(verified=3,enabled=1)))
+            old_velocity,old_accel=actual_toolhead.get_max_velocity()
+            old_limits=actual_kin.limits
+            try:
+                xy_route._configure()
+                xy_route._connect()
+                require(configured==['inventure_xy_step_config'],'The paired OEM STEP setup was not queued')
+                actual_toolhead.set_max_velocities(200.,1500.,None,None)
+                actual_kin.limits=[rail.get_range() for rail in actual_kin.rails]
+                plan={}
+                for name,point in (('axis',(115.,25.,10.,0.)),
+                                   ('diagonal_a',(115.,115.,10.,0.)),
+                                   ('diagonal_b',(115.,25.,10.,0.))):
+                    start=(25.,115.,10.,0.) if name=='diagonal_b' else (25.,25.,10.,0.)
+                    move=toolhead.Move(actual_toolhead,start,point,200.)
+                    actual_kin.check_move(move)
+                    plan[name]=move.max_cruise_v2**0.5
+                    require(move.accel==1500.,'OEM XY acceleration did not reach the planner')
+                require(plan['axis']==200. and all(abs(plan[key]-200./2.**0.5)<1.e-9
+                    for key in ('diagonal_a','diagonal_b')),'OEM CoreXY rate did not reach Klipper')
+                oem_xy=plan
+            finally:
+                xy_route._mcu=saved_mcu
+                actual_toolhead.set_max_velocities(old_velocity,old_accel,None,None)
+                actual_kin.limits=old_limits
         maximum_z_speed=actual_kin.max_z_velocity
         motion=importlib.import_module(package+'.homing')
         sequences=(('X','Y','Z'),('Y','X','Z'),('XY','Z'),('X','Z'),('Y','Z'),('Z',),
@@ -380,13 +416,12 @@ def inspect(klipper,config,preview=None,transport_r26=False):
                                 actual_kin.limits=list(model.limits)
                                 try:
                                     point=model.get_position();point[index]=model.limits[index][1]
-                                    axes_d=[0.,0.,0.,0.];axes_d[index]=1.
-                                    move=types.SimpleNamespace(end_pos=point,axes_d=axes_d,
-                                        move_error=lambda: ValueError('outside physical travel'))
+                                    previous=list(point);previous[index]-=1.
+                                    move=toolhead.Move(actual_toolhead,previous,point,5.)
                                     actual_kin.check_move(move)
                                     point[index]+=1./640.
-                                    try:actual_kin.check_move(move)
-                                    except ValueError:pass
+                                    try:actual_kin.check_move(toolhead.Move(actual_toolhead,previous,point,5.))
+                                    except printer.command_error:pass
                                     else:raise AssertionError('CoreXY accepted movement past the original physical limit')
                                 finally:
                                     actual_kin.limits=saved_limits
@@ -455,6 +490,7 @@ def inspect(klipper,config,preview=None,transport_r26=False):
                                   for axis,screen in screens.items()},
                     refusal_count=len(refusals),refusals=refusals,
                     transport_mode='cooperative_dma' if transport_r26 else 'legacy_quiet',
+                    oem_xy_planner_mm_s=oem_xy,
                     serial_opened=False,firmware_flashed=False,hardware_tested=False)
     finally:
         executor=printer.lookup_object('aio_executor',None)
@@ -490,7 +526,9 @@ def check(destination,transport_r26=False,xy_step_timers=False):
             raise RuntimeError('Cycle test changed printer configuration')
         bootstrap.verify_host(host)
     report['configuration_unchanged']=True
-    report['xy_step_host_loaded']=xy_step_timers
+    report['xy_step_host_loaded']=bool(xy_step_timers)
+    if xy_step_timers:
+        report['xy_step_host_revision']='r29' if xy_step_timers == 'r29' else 'r28'
     (destination/'R24_HOME_CYCLES.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 
@@ -501,13 +539,14 @@ if __name__=='__main__':
     parser.add_argument('--config',type=Path)
     parser.add_argument('--oled-preview',type=Path)
     parser.add_argument('--transport-r26',action='store_true')
-    parser.add_argument('--xy-step-timers',action='store_true',
-                        help='Stage the authenticated R28 CoreXY host for the Home regression')
+    parser.add_argument('--xy-step-timers',nargs='?',const='r28',choices=('r28','r29'),
+                        help='Stage the selected paired CoreXY host for the Home regression')
     args=parser.parse_args()
+    xy_timers='r29' if args.xy_step_timers=='r29' else bool(args.xy_step_timers)
     if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview,transport_r26=args.transport_r26)
     elif args.destination:
-        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26,xy_step_timers=args.xy_step_timers)
+        with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26,xy_step_timers=xy_timers)
     else:
         with tempfile.TemporaryDirectory(prefix='inventure-r24-home-') as temp:
-            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified',transport_r26=args.transport_r26,xy_step_timers=args.xy_step_timers)
+            with redirect_stdout(io.StringIO()):report=check(Path(temp)/'verified',transport_r26=args.transport_r26,xy_step_timers=xy_timers)
     print(json.dumps(report,indent=2))

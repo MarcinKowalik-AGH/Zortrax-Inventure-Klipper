@@ -382,10 +382,11 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
                 path = repo/'inventure_xy_step_restore.py'
                 restoration = _module('inventure_bootstrap_xy_step', path, _regular_bytes(path))
                 target = restoration.TARGET
-                data, provenance = restoration.restore(repo, files[target][0])
+                revision = 'r29' if xy_timers == 'r29' else 'r28'
+                data, provenance = restoration.restore(repo, files[target][0], revision=revision)
                 files[target] = (data, 0o644)
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
-                metadata['runtime_restorations']['xy_step_r28'] = provenance
+                metadata['runtime_restorations']['xy_step_' + revision] = provenance
     return source, files, metadata
 
 
@@ -596,6 +597,11 @@ def _predecessor_plans(repo, recorded_xy_timers=False):
                     **{name: index < enabled for index, name in enumerate(names)})
 
 
+def _recorded_xy_step_timers(metadata):
+    restorations = metadata.get('runtime_restorations', {})
+    return 'r29' if 'xy_step_r29' in restorations else 'xy_step_r28' in restorations
+
+
 def verify_legacy_host(destination, repo=ROOT) -> dict:
     """Recognize only the two authenticated predecessor runtime layouts.
 
@@ -605,7 +611,7 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     target = Path(destination).expanduser().absolute()
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
-    recorded_xy_timers = 'xy_step_r28' in recorded.get('runtime_restorations', {})
+    recorded_xy_timers = _recorded_xy_step_timers(recorded)
     for source, _, metadata in _predecessor_plans(repo, recorded_xy_timers):
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
@@ -623,7 +629,7 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
-    recorded_xy_timers = 'xy_step_r28' in recorded.get('runtime_restorations', {})
+    recorded_xy_timers = _recorded_xy_step_timers(recorded)
     for source, files, metadata in _predecessor_plans(repo, recorded_xy_timers):
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)

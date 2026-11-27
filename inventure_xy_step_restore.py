@@ -6,7 +6,7 @@ RELEASE = 'RC8-XYSTEP-R28'
 BASE_SHA256 = '0c2db1d8c0ab6aa00a0efd7142584f7879e53e5f6b1f45a1b1d386bef3ccbcd6'
 
 
-def restore(repo, original):
+def restore(repo, original, *, revision='r28'):
     if sha256(original).hexdigest() != BASE_SHA256:
         raise ValueError('Unexpected pinned CoreXY kinematics for Inventure XY timers')
     text = original.decode()
@@ -16,7 +16,13 @@ def restore(repo, original):
     check = '        if not move.axes_d[2]:\n'
     text = text.replace(check, '        self._inventure_xy_step.check_move(move)\n' + check, 1)
     body = (repo/'restored/xy_step_r28/inventure_xy_step.py').read_text()
+    release = RELEASE
+    if revision == 'r29':
+        body += '\n\n' + (repo/'restored/xy_step_r29/inventure_xy_profile.py').read_text()
+        release = 'RC8-XYSTEP-R29'
+    elif revision != 'r28':
+        raise ValueError('Unknown Inventure CoreXY STEP revision')
     data = (text + '\n\n' + body).encode()
     compile(data, TARGET, 'exec')
-    return data, dict(release=RELEASE, sha256=sha256(data).hexdigest(),
+    return data, dict(release=release, sha256=sha256(data).hexdigest(),
                       source_sha256=BASE_SHA256, hardware_tested=False)
