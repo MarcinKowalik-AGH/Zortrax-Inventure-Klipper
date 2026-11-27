@@ -32,6 +32,8 @@ STATE_FILES = (
     'inventure_nozzle_xy.json',
     'inventure_nozzle_pad.json',
     'inventure_platform_level.json',
+    'inventure_information.json', 'inventure_information.json.checkpoint',
+    'inventure_information.json.runtime-sync', 'inventure_information.json.runtime-sync.checkpoint',
 )
 OPTION = re.compile(r'^([ \t]*)([^#;:=\s][^:=]*?)[ \t]*[:=][ \t]*(.*?)(\r?\n)?$')
 BOARD_HEATER_KEYS = tuple(zone + '_' + key for zone in ('t0', 't1', 'chamber_l', 'chamber_r')

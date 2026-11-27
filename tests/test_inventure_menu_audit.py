@@ -18,7 +18,7 @@ class MenuAuditTests(unittest.TestCase):
             report = check(Path(directory))
             self.assertEqual(report['original_records'], 66)
             self.assertEqual(report['static_positions'], 133)
-            self.assertEqual(report['dynamic_positions'], 161)
+            self.assertEqual(report['dynamic_positions'], 221)
             self.assertEqual(report['missing_icons'], 0)
             self.assertTrue(all(row['oled_fluidd_same'] for row in report['rows']))
             self.assertFalse(report['hardware_tested'])

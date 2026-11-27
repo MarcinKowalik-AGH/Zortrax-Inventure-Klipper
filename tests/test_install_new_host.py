@@ -50,6 +50,32 @@ def r24_mcu_identity():
 
 
 class PureGuardsTests(unittest.TestCase):
+    def test_reuse_compiled_helper_requires_identical_verified_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            old,new=Path(temp)/'old',Path(temp)/'new'
+            entries={'klippy/chelper/a.c':b'void a(void){}',
+                     'klippy/chelper/__init__.py':b'# compiler inputs\n'}
+            metadata={'files':{n:dict(sha256=sha256(data).hexdigest(),mode=0o644) for n,data in entries.items()}}
+            for root in (old,new):
+                for path,data in entries.items():
+                    (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(data)
+                (root/installer.bootstrap.MANIFEST_NAME).write_text(json.dumps(metadata))
+            source=old/'klippy/chelper/c_helper.so';source.write_bytes(b'\x7fELFfixture never loaded')
+            receipt=installer.reuse_generated_helper(old,new)
+            target=new/'klippy/chelper/c_helper.so'
+            self.assertEqual(target.read_bytes(),source.read_bytes())
+            self.assertGreaterEqual(target.stat().st_mtime_ns,(new/'klippy/chelper/a.c').stat().st_mtime_ns)
+            self.assertEqual(receipt['sha256'],sha256(source.read_bytes()).hexdigest())
+            target.unlink();(new/'klippy/chelper/a.c').write_text('changed')
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                installer.reuse_generated_helper(old,new)
+            self.assertFalse(target.exists())
+            (new/'klippy/chelper/a.c').write_bytes(entries['klippy/chelper/a.c'])
+            altered=deepcopy(metadata);altered['files']['klippy/chelper/a.c']['sha256']='0'*64
+            (new/installer.bootstrap.MANIFEST_NAME).write_text(json.dumps(altered))
+            self.assertIsNone(installer.reuse_generated_helper(old,new))
+            self.assertFalse(target.exists())
+
     def test_systemd_arguments_preserve_spaces_quotes_expansions_and_empty_args(self):
         data = installer.unit_text([
             '/home/klipper/python env/bin/python', '-B', '/host%R/klippy.py',
@@ -293,7 +319,12 @@ class TransactionTests(unittest.TestCase):
             'procedure_baseline_blob':installer.accepted_home.BASELINE_BLOB}, {
             'ui_transport': {'active_work': False},
             'procedure_ui_release': installer.LEVELING_UI_RELEASE,
+            'communication_guard_release':installer.COMMUNICATION_RELEASE,
             'operator_menu_root':'launcher','operator_menu_roots':['Klipper','Zortrax Inventure']}
+        self.information=dict(information_release=installer.INFORMATION_RELEASE,
+            communication_guard_release=installer.COMMUNICATION_RELEASE,
+            host_module=str(self.host/'klippy/extras/inventure_information.py'),factory_counter_sync='CURRENT')
+        self.command_help={'INVENTURE_INFO':'Read Inventure factory identity and printing time'}
         self.serial, self.baud = '/dev/ttyS5', 750000
         self.macros = {'INVENTURE_DIAGNOSTICS', 'INVENTURE_HOME_ALL', 'PAUSE'}
         self.fail_locale_once = self.fail_web = self.fail_after_web = False
@@ -336,13 +367,16 @@ class TransactionTests(unittest.TestCase):
                 'webhooks': {'state': self.state, 'state_message': self.message},
                 'configfile': {'config': dict(
                     [('gcode_macro '+name, {}) for name in self.macros]
-                    + [('mcu', {'serial': self.serial, 'baud': str(self.baud)})])},
+                    + [('mcu', {'serial': self.serial, 'baud': str(self.baud)}),('inventure_information',{})])},
                 'inventure_mcu': self.board,
                 'inventure_native_z': self.native_z, 'inventure_oled': self.oled,
+                'inventure_information':self.information,
                 'mcu': self.mcu, 'print_stats': {'state': 'complete'},
                 'idle_timeout': {'state': 'Ready'}, 'extruder': {'target': 0},
             }
             return {'status': deepcopy({name: values[name] for name in query})}
+        if path == '/printer/gcode/help':
+            return deepcopy(self.command_help)
         if path == '/server/database/item':
             key = data['key'] if data else query['key'][0]
             if data:
@@ -439,6 +473,33 @@ class TransactionTests(unittest.TestCase):
             self.assertEqual(observation['mismatches'], {})
             self.assertEqual(observation['observed']['process_id'], 81)
 
+    def test_r25_live_ready_requires_info_command_and_completed_startup_check(self):
+        self.mcu=r24_mcu_identity()
+        self.native_z.update(homing_safety_release=installer.operator_home.RELEASE,
+            procedure_restore_release=installer.operator_home.RELEASE,
+            procedure_baseline_blob=installer.operator_home.BASELINE_BLOB,
+            home_procedure_profile=installer.operator_home.PROFILE)
+        with installer.bootstrap.procedure_profile(installer.operator_home.PROFILE):
+            installer.wait_ready(self.host,self.config,seconds=0)
+            for status in (self.oled, self.information):
+                status['communication_guard_release']='old'
+                with self.assertRaisesRegex(RuntimeError,'communication guard'):
+                    installer.wait_ready(self.host,self.config,seconds=0)
+                status['communication_guard_release']=installer.COMMUNICATION_RELEASE
+            self.information['information_release']='old'
+            with self.assertRaisesRegex(RuntimeError,'Information service'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.information['information_release']=installer.INFORMATION_RELEASE
+            self.command_help={}
+            with self.assertRaisesRegex(RuntimeError,'register INVENTURE_INFO'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.command_help={'INVENTURE_INFO':'read'}
+            self.information['factory_counter_sync']='DISABLED'
+            with self.assertRaisesRegex(ValueError,'first Inventure Information startup check'):
+                installer.wait_ready(self.host,self.config,seconds=0)
+            self.information['factory_counter_sync']='MCU_INFO_UPDATE_REQUIRED'
+            installer.wait_ready(self.host,self.config,seconds=0)
+
     def test_complete_r24_apply_authenticates_backup_stages_and_activates_the_real_runtime(self):
         """Run the public installer, not just its individual stage/activate helpers.
 
@@ -453,6 +514,11 @@ class TransactionTests(unittest.TestCase):
         bootstrap._write_files(self.host,files)
         marker=self.host/bootstrap.MANIFEST_NAME
         marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+        # Real failed/rolled-back upgrades can leave a 3.13 overlay cache even
+        # when this authenticated RC1 manifest has no corresponding source.
+        cache=self.host/'klippy/extras/__pycache__/inventure_home_ui.cpython-313.pyc'
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_bytes(b'previous interpreter cache; not executable without source')
         gcodes=self.root/'gcodes';gcodes.mkdir()
         source=self.root/'field-source'
         shutil.copytree(ROOT/'tests/fixtures/field_config_20261125',source)
@@ -461,10 +527,16 @@ class TransactionTests(unittest.TestCase):
         initial=stage_config(self.host,self.root/'initial-config',source/'printer.cfg',
                              serial=self.serial,baud=self.baud,gcodes_path=gcodes)
         shutil.copytree(Path(initial['config_path']).parent,self.config.parent,dirs_exist_ok=True)
+        compiled=subprocess.run([sys.executable,str(ROOT/'ci/validate_bootstrap_config.py'),
+            '--klipper',str(self.host),'--config',str(self.config)],capture_output=True,text=True)
+        self.assertEqual(compiled.returncode,0,compiled.stdout+compiled.stderr)
+        helper_before=(self.host/'klippy/chelper/c_helper.so').read_bytes()
         self.before_config=self.config.read_bytes()
         active,_=installer.layout.active_klipper(module,self.config,{})
         self.macros={s.removeprefix('gcode_macro ') for s in active.sections() if s.startswith('gcode_macro ')}
         before_active={s:dict(active.items(s)) for s in active.sections()}
+        unrelated=self.config.parent/'old-config-archive.zip'
+        unrelated.write_bytes(b'unrelated historical archive; leave in place')
         backup=self.root/'inventure-installations/20261124T142803.217006Z'
         (backup/'before').mkdir(parents=True)
         saved=backup/'before/0'
@@ -502,16 +574,29 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(result['procedure_restore_release'],installer.operator_home.RELEASE)
         self.assertEqual(result['accepted_home_backup']['saved_file'],str(saved))
         report=Path(result['report_directory'])
+        self.assertFalse((report/'before-config').exists())
+        self.assertEqual(unrelated.read_bytes(), b'unrelated historical archive; leave in place')
+        receipt=json.loads((report/'backup.json').read_text())
+        self.assertNotIn(str(unrelated), receipt['files'])
+        for path,saved_path in receipt['files'].items():
+            if saved_path is not None:
+                self.assertTrue(Path(saved_path).is_file(), path)
+        self.assertEqual(cache.read_bytes(), b'previous interpreter cache; not executable without source')
         plan=json.loads((report/'plan.json').read_text())
+        self.assertEqual(plan['runtime']['generated_helper_reuse']['sha256'],sha256(helper_before).hexdigest())
+        self.assertEqual((report/'validated-runtime/klippy/chelper/c_helper.so').read_bytes(),helper_before)
         self.assertEqual(plan['config']['source_snapshot'][str(saved)],sha256(saved.read_bytes()).hexdigest())
         self.assertTrue((report/'offline-validation.log').is_file())
         self.assertTrue((report/'systemd-validation/verification.log').is_file())
         self.assertEqual(self.service_calls.count(('start','klipper')),1)
         self.assertFalse(result['mcu_flashed'])
         self.assertFalse(result['automatic_motion_or_heating'])
-        self.assertFalse(any('gcode' in endpoint for endpoint,_ in self.http_calls))
+        self.assertFalse(any('gcode' in endpoint and endpoint!='/printer/gcode/help'
+                             for endpoint,_ in self.http_calls))
         after_active,_=installer.layout.active_klipper(module,self.config,{})
-        self.assertEqual({s:dict(after_active.items(s)) for s in after_active.sections()},before_active)
+        effective={s:dict(after_active.items(s)) for s in after_active.sections()}
+        self.assertEqual(effective.pop('inventure_information'),{})
+        self.assertEqual(effective,before_active)
         with bootstrap.procedure_profile('operator-home-r24'):
             self.assertEqual(bootstrap.verify_host(self.host)['status'],'VERIFIED_HOST')
         # The preceding RC2/RC3 runtime remains an authenticated upgrade input.
@@ -523,7 +608,10 @@ class TransactionTests(unittest.TestCase):
                              ('inventure_operator_home.py','inventure_menu_service.py','inventure_oled_graphics.py',
                               'inventure_oem_menu.py','inventure_menu_core.py','inventure_oled.py',
                               'inventure_home_ui.py','inventure_home_sprites.json',
-                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
+                              'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+                              'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+                              'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                              'inventure_communication_guard.py')})
 
     @unittest.skipUnless(shutil.which('systemd-analyze'), 'Requires the real systemd unit parser')
     def test_invalid_service_unit_is_rejected_by_real_parser_before_any_service_stop(self):

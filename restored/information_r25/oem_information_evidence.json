@@ -1,0 +1,20 @@
+{
+  "application_sha256": "9b980ba04531fac4425b77a23969076d24d8f25629fc2a501ac05d262c142268",
+  "application_base": "0x08010000",
+  "otp_reader_entry": "0x0801C944",
+  "otp_reader_base": "0x0801C90C",
+  "otp_reader_hex": "0f2809d81f2907d800f18070a0f588604001405cc0b27047002070470e2000f10053a3f506431b780bb1c0b2704710f1ff30f4d26420704710b50446fff7eeff0130c2b20e2a0ad80023d9b21046fff7d7ffe0540133052bf7d1012010bd0020fce7",
+  "printer_info_callback": "0x080161F0",
+  "serial_format_address": "0x0802FF4E",
+  "serial_format": "%s Z%02X%02X%02X%02X",
+  "hardware_prefix_range": [
+    "0xE0",
+    "0xEF"
+  ],
+  "nvm_print_minutes_slot": 0,
+  "nvm_bank_bases": [
+    "0x08008000",
+    "0x0800C000"
+  ],
+  "nvm_bank_bytes": 16384
+}

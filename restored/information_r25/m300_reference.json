@@ -1,0 +1,18 @@
+{
+  "repository": "MarcinKowalik-AGH/Zortrax-m300-Klipper",
+  "branch": "orange-pi",
+  "commit": "1f9d77432cbbdc9ae69298b6e4815b4bd819e963",
+  "sha256": {
+    "m300_settings.py": "ef08467006de02093edee0625ca3b4bcbbdcc1f884ce2f3f433da4e21e0655ab",
+    "m300_counter_sync.py": "400b1bc939cbc2986fe1356268e1b4be56d4080e0e7e85a98d12ba495daf6f56",
+    "m300_runtime.py": "30dbfa26af2c579e5635088e00ec546a6047c92c1a11629273315a8702940da3",
+    "m300_nvm.py": "157ffb1052481eb66aefa2026d96a4edbf532c1ac5ad43a639d974f74304c04d",
+    "m300_hardware.py": "f9d6ee298942dc57bea456cb604d5d8555abc6ce6415b2fcd99705f833229deb"
+  },
+  "printer_information_fields": [
+    "Model:",
+    "Hardware version:",
+    "Serial number:",
+    "Total printing time:"
+  ]
+}

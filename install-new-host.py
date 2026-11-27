@@ -9,6 +9,7 @@ It never flashes firmware or issues movement, heating, or reset commands.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 import importlib.util
@@ -37,6 +38,8 @@ from inventure_configuration_audit_restore import RELEASE as LEVELING_UI_RELEASE
 import inventure_accepted_home_restore as accepted_home
 import inventure_oem_home_restore as oem_home
 import inventure_operator_home_restore as operator_home
+from inventure_information_restore import RELEASE as INFORMATION_RELEASE
+from inventure_information_restore import COMMUNICATION_RELEASE
 
 spec = importlib.util.spec_from_file_location('inventure_existing_installer', ROOT/'install-orange-pi.py')
 updater = importlib.util.module_from_spec(spec)
@@ -51,7 +54,7 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R24.6'
+INSTALLER_RELEASE = 'R25.4'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -82,7 +85,9 @@ def verify_snapshot(snapshot):
 def require_mcu(mcu):
     constants = mcu.get('mcu_constants', {})
     release = constants.get('INVENTURE_MCU_RELEASE')
-    if release == 'RC8-CONTROL-R7-HOME-R24-OLED':
+    if release in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED'):
+        if release == 'RC8-CONTROL-R7-HOME-R25-INFO-OLED' and any(str(constants.get(key)) != '1' for key in ('INVENTURE_FACTORY_INFO_ABI','INVENTURE_FACTORY_COUNTER_ABI')):
+            raise ValueError('R25 MCU lacks its factory information/counter capability')
         if str(constants.get('INVENTURE_NATIVE_HELD_SERVICE_ABI')) != '1':
             raise ValueError('R24 MCU lacks the held-service handoff capability')
         compatible=dict(mcu,mcu_constants=dict(constants,INVENTURE_MCU_RELEASE=MCU_DISPLAY_RELEASE))
@@ -324,7 +329,7 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                     return dict(info, firmware_restart_required=True)
                 raise RuntimeError('New Klipper configuration failed: '+message)
             if state == 'ready':
-                values = api('/printer/objects/query?inventure_mcu&configfile&mcu&inventure_oled&inventure_native_z')['status']
+                values = api('/printer/objects/query?inventure_mcu&configfile&mcu&inventure_oled&inventure_native_z&inventure_information')['status']
                 board = values.get('inventure_mcu', {})
                 if board.get('host_revision') != bootstrap.HOST_REVISION:
                     raise RuntimeError('Ready process has the wrong Inventure host revision')
@@ -348,6 +353,20 @@ def wait_ready(host, config, seconds=90, observation_path=None):
                 panel=values.get('inventure_oled', {})
                 if panel.get('operator_menu_root') != 'launcher' or panel.get('operator_menu_roots') != ['Klipper','Zortrax Inventure']:
                     raise RuntimeError('Ready Klipper did not activate the requested Klipper / Zortrax Inventure menu')
+                if home_reference is operator_home:
+                    information=values.get('inventure_information',{})
+                    if (panel.get('communication_guard_release') != COMMUNICATION_RELEASE
+                            or information.get('communication_guard_release') != COMMUNICATION_RELEASE):
+                        raise RuntimeError('Ready Klipper did not load the matching communication guard')
+                    if (information.get('information_release')!=INFORMATION_RELEASE
+                            or Path(information.get('host_module','')).resolve()!=host/'klippy/extras/inventure_information.py'
+                            or 'inventure_information' not in values.get('configfile',{}).get('config',{})):
+                        raise RuntimeError('Ready Klipper did not load the matching Inventure Information service')
+                    if information.get('factory_counter_sync') in (None,'DISABLED','CHECKING'):
+                        raise ConnectionError('Waiting for the first Inventure Information startup check')
+                    help_data=api('/printer/gcode/help')
+                    if 'INVENTURE_INFO' not in help_data.get('help',help_data):
+                        raise RuntimeError('Ready Klipper did not register INVENTURE_INFO')
                 require_mcu(values.get('mcu', {}))
                 return dict(info, firmware_restart_required=False, objects=values)
             reason = message or state
@@ -406,6 +425,25 @@ def restore_web(root, previous):
 
 def json_write(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str)+'\n')
+
+
+@contextmanager
+def timed_stage(directory, name):
+    started=time.monotonic()
+    try:
+        yield
+    finally:
+        elapsed=round(time.monotonic()-started,3)
+        print('Stage '+name+': %.3f s' % elapsed,flush=True)
+        # Diagnostic timing must not change a successful activation or mask
+        # its original failure if the report medium itself becomes full.
+        try:
+            path=directory/'installation-timings.json'
+            data=json.loads(path.read_text()) if path.exists() else {}
+            data[name]=elapsed
+            json_write(path,data)
+        except (OSError,ValueError):
+            pass
 
 
 class InstallTransaction:
@@ -557,6 +595,38 @@ def activate(transaction, host, config, web_source, macros, *, serial=None, baud
         raise RuntimeError(str(exc)+detail+'. Backup: '+str(transaction.directory)) from exc
 
 
+def reuse_generated_helper(host, validated):
+    """Reuse this host's compiled helper only for identical verified C inputs.
+
+    This affects the isolated parser check, never the running installation.
+    The caller authenticates both runtime manifests before calling here.
+    """
+    source=host/'klippy/chelper/c_helper.so'
+    target=validated/'klippy/chelper/c_helper.so'
+    if not source.exists() or host==validated or target.exists():
+        return None
+    old=json.loads(regular_bytes(host/bootstrap.MANIFEST_NAME))['files']
+    new=json.loads(regular_bytes(validated/bootstrap.MANIFEST_NAME))['files']
+    def inputs(files):
+        return {p:r for p,r in files.items()
+                if Path(p).suffix in ('.c','.h') or p=='klippy/chelper/__init__.py'}
+    before,after=inputs(old),inputs(new)
+    if not before or before!=after:
+        return None
+    for path,record in before.items():
+        if any(sha256(regular_bytes(root/path)).hexdigest()!=record['sha256'] for root in (host,validated)):
+            raise ValueError('C helper source changed while preparing validation: '+path)
+    data=regular_bytes(source)
+    if not data.startswith(b'\x7fELF'):
+        return None
+    target.write_bytes(data);target.chmod(0o644)
+    # New staging mtimes alone would otherwise force recompilation of the
+    # identical C sources on every Python-only update on the Orange Pi.
+    stamp=max(time.time_ns(),max((validated/p).stat().st_mtime_ns for p in before))
+    os.utime(target,ns=(stamp,stamp))
+    return dict(source=str(source),sha256=sha256(data).hexdigest(),verified_source_files=len(before))
+
+
 def stage_runtime(host, directory):
     """Validate the complete renderer without changing a running runtime.
 
@@ -569,7 +639,11 @@ def stage_runtime(host, directory):
         if before.get('runtime_restoration_required'):
             update = bootstrap.prepare_runtime_update(host)
             validation_host = bootstrap.prepare_host(directory/'validated-runtime')
+            helper = reuse_generated_helper(host, validation_host)
             provenance = bootstrap.verify_host(validation_host)
+            provenance['generated_helper_reuse'] = helper
+            if helper:
+                print('Reusing this host\'s C helper for identical verified sources; no rebuild needed.',flush=True)
             return validation_host, provenance, update['files'], before
         return host, before, {}, before
     prepared = bootstrap.prepare_host(host)
@@ -582,16 +656,19 @@ def require_identical_configuration(host, original, staged):
     before, _ = layout.active_klipper(module, original, {})
     after, _ = layout.active_klipper(module, staged, {})
     previous, proposed = layout.config_values(before), layout.config_values(after)
-    # One explicitly reviewed UI entry is new in the menu audit. Every
-    # pre-existing setting and macro must still compare exactly.
+    # Allow only previously absent, exact canonical Info/UI additions.
+    # Existing options, macro overrides, tuning and calibration stay identical.
     import configparser
     controls = configparser.RawConfigParser()
-    controls.read(ROOT/'config/INVENTURE_DASHBOARD.cfg')
-    addition = 'gcode_macro INVENTURE_NOZZLE_ALIGNMENT'
-    expected = layout.config_values(controls).get(addition)
-    if addition not in previous and expected is not None and proposed.get(addition) == expected:
-        proposed = dict(proposed)
-        proposed.pop(addition)
+    controls.read([ROOT/'config/INVENTURE_DASHBOARD.cfg', ROOT/'config/INVENTURE_INFORMATION.cfg'])
+    allowed = ('gcode_macro INVENTURE_NOZZLE_ALIGNMENT',
+               'gcode_macro INVENTURE_PRINTER_INFORMATION',
+               'gcode_macro INVENTURE_FIRMWARE_VERSION', 'inventure_information')
+    canonical = layout.config_values(controls)
+    proposed = dict(proposed)
+    for addition in allowed:
+        if addition not in previous and addition in canonical and proposed.get(addition) == canonical[addition]:
+            proposed.pop(addition)
     if previous != proposed:
         raise ValueError('Accepted Home restoration refuses any effective printer configuration change')
 
@@ -623,7 +700,7 @@ def _run(args):
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
     repair = bool(getattr(args, 'repair_home_procedures', False))
-    if repair and (recovery or mcu_identity.get('mcu_release') != 'RC8-CONTROL-R7-HOME-R24-OLED'):
+    if repair and (recovery or mcu_identity.get('mcu_release') not in ('RC8-CONTROL-R7-HOME-R24-OLED','RC8-CONTROL-R7-HOME-R25-INFO-OLED')):
         raise ValueError('Install and verify the matching R24 MCU before activating --repair-home-procedures; active host unchanged')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     home_reference = operator_home if repair else oem_home if restore_oem else accepted_home
@@ -639,13 +716,17 @@ def _run(args):
     directory.mkdir(parents=True, mode=0o700)
     print('Preparing verified runtime and configuration. Report directory: '+str(directory), flush=True)
     host = args.destination.expanduser().absolute()
-    validation_host, provenance, runtime_updates, runtime_before = stage_runtime(host, directory)
+    print('Verifying the installed runtime and preparing an isolated update.', flush=True)
+    with timed_stage(directory,'runtime_preparation'):
+        validation_host, provenance, runtime_updates, runtime_before = stage_runtime(host, directory)
     config = live['config']
     gcodes = config.parent.parent/'gcodes'
     if not gcodes.is_dir():
         raise ValueError('Expected the existing G-code directory: '+str(gcodes))
-    plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
-                        gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
+    print('Staging active configuration includes and printer state.', flush=True)
+    with timed_stage(directory,'configuration_preparation'):
+        plan = stage_config(validation_host, directory/'config', config, serial=args.serial, baud=args.baud,
+                            gcodes_path=gcodes, restore_field_profile=args.restore_field_profile)
     staged = Path(plan['config_path'])
     if restore_home:
         require_identical_configuration(validation_host, config, staged)
@@ -658,9 +739,11 @@ def _run(args):
                 raise ValueError('Startup repair refuses automatic delayed G-code: '+section)
     if staged.name != config.name:
         raise ValueError('Recovery requires the active main config to be named printer.cfg')
-    validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
-                                 '--klipper', str(validation_host), '--config', str(staged)],
-                                check=False, text=True, capture_output=True, timeout=120)
+    print('Validating Klipper configuration offline; no MCU commands are sent.', flush=True)
+    with timed_stage(directory,'offline_validation'):
+        validation = subprocess.run([live['argv'][0], str(ROOT/'ci/validate_bootstrap_config.py'),
+                                     '--klipper', str(validation_host), '--config', str(staged)],
+                                    check=False, text=True, capture_output=True, timeout=120)
     (directory/'offline-validation.log').write_text(validation.stdout+validation.stderr)
     if validation.returncode:
         raise ValueError('Offline Klipper validation failed: '+validation.stdout.strip()
@@ -686,7 +769,8 @@ def _run(args):
 
     subprocess.run(['sudo', '-v'], check=True, timeout=120)
     web_root = fluidd_web.web_root(args.fluidd_root)
-    web_source = fluidd_web.release_bundle(directory, args.fluidd_zip)
+    with timed_stage(directory,'fluidd_package'):
+        web_source = fluidd_web.release_bundle(directory, args.fluidd_zip)
     updates = dict(runtime_updates)
     for relative in plan['files']:
         target = config.parent/relative
@@ -702,9 +786,11 @@ def _run(args):
     if set(moon_updates).intersection(updates):
         raise ValueError('Klipper and Moonraker unexpectedly share a modified file')
     updates.update(moon_updates)
-    # The selective rollback below owns only touched files. Keep a full private
-    # copy as well, including operator JSON and inactive configuration files.
-    shutil.copytree(config.parent, directory/'before-config', symlinks=True)
+    # InstallTransaction retains every changed file, the service override and
+    # Fluidd settings. Do not copy the whole config folder as a second backup:
+    # it can contain large historical ZIPs and unrelated inactive files which
+    # this transaction never writes. Existing backups remain untouched.
+    print('Backing up changed files and service settings only.', flush=True)
     transaction = InstallTransaction(directory, updates, unit, bool(moon_updates), web_root,
                                      before_start=lambda: bootstrap.verify_host(host))
     verify_snapshot(plan['source_snapshot'])
@@ -718,8 +804,9 @@ def _run(args):
     else:
         mcu_identity = require_mcu(idle_mcu())
     print('Activating R38.6; original files and service override are backed up.', flush=True)
-    final, groups = activate(transaction, host, config, web_source, plan['macros'],
-                            serial=args.serial, baud=args.baud, recover_startup=recovery)
+    with timed_stage(directory,'activation_and_live_checks'):
+        final, groups = activate(transaction, host, config, web_source, plan['macros'],
+                                serial=args.serial, baud=args.baud, recover_startup=recovery)
     if recovery:
         mcu_identity = final.pop('recovered_mcu')
         requirement = None
@@ -786,8 +873,8 @@ def main():
                   'then run FIRMWARE_RESTART once in Fluidd and wait for Ready.')
         elif args.apply:
             if args.repair_home_procedures:
-                print('R24 Home procedures installed and Ready/source/profile verified. '
-                      'Read INVENTURE_VERSION and INVENTURE_HOME_Z_STATUS in Fluidd.')
+                print('R25 Info host installed and Ready/source/profile verified; R24 Home engines preserved. '
+                      'Read INVENTURE_VERSION and INVENTURE_INFO in Fluidd.')
             else:
                 print('Complete R38.6 host with the dual-thermal OLED installed and verified. '
                       'In Fluidd run INVENTURE_VERSION and INVENTURE_OLED_STATUS.')

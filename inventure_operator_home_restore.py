@@ -27,7 +27,7 @@ def replace(data,before,after):
 
 def restored_operator_home(repo,files,*,revision='current'):
     repo=Path(repo)
-    if revision not in ('current','rc1','rc2','rc4','rc5','rc6'):
+    if revision not in ('current','rc1','rc2','rc4','rc5','rc6','rc7'):
         raise ValueError('Unknown operator Home revision: '+revision)
     native='klippy/extras/inventure_native_z.py'
     driver='klippy/extras/inventure_mcu.py'
@@ -73,9 +73,9 @@ def restored_operator_home(repo,files,*,revision='current'):
     data=replace(data,anchor,insertion+anchor)
     updates[driver]=(data.encode(),0o644)
     helper=repo/'restored/operator_home_r24'
-    if revision not in ('current','rc5','rc6'):helper=helper/revision
+    if revision not in ('current','rc5','rc6','rc7'):helper=helper/revision
     code=(helper/'inventure_operator_home.py').read_bytes()
-    expected={'rc1':RC1_OPERATOR_SHA256,'rc2':RC2_OPERATOR_SHA256,'rc4':RC4_OPERATOR_SHA256,'rc5':OPERATOR_SHA256,'rc6':OPERATOR_SHA256,'current':OPERATOR_SHA256}[revision]
+    expected={'rc1':RC1_OPERATOR_SHA256,'rc2':RC2_OPERATOR_SHA256,'rc4':RC4_OPERATOR_SHA256,'rc5':OPERATOR_SHA256,'rc6':OPERATOR_SHA256,'rc7':OPERATOR_SHA256,'current':OPERATOR_SHA256}[revision]
     if sha256(code).hexdigest()!=expected:
         raise ValueError('The reviewed R24 operator Home source changed')
     updates[extension]=(code,0o644)
@@ -88,7 +88,7 @@ def restored_operator_home(repo,files,*,revision='current'):
                     if isinstance(c,ast.ClassDef) for n in c.body if isinstance(n,ast.FunctionDef)
                     and n.name not in allowed}
         if methods(old)!=methods(new):raise ValueError('R24 changed an accepted engine outside operator preparation')
-    if revision in ('current','rc6'):
+    if revision in ('current','rc6','rc7'):
         menu='klippy/extras/inventure_menu_service.py'
         updates[menu]=(files[menu][0]+b'''\n# Presentation only; the accepted Home owner and motion files stay unchanged.
 from .inventure_home_ui import HomeMenuUI
@@ -140,7 +140,7 @@ class InventureOLED(HomeOLEDUI, InventureOLED):
             updates['klippy/extras/'+filename]=(code,0o644)
     for name,(data,_) in updates.items():
         if name.endswith('.py'):compile(data,name,'exec')
-    return updates,dict(release={'rc1':RC1_RELEASE,'rc2':RC2_RELEASE,'rc4':RC4_RELEASE,'rc5':RELEASE,'rc6':RELEASE,'current':RELEASE}[revision],profile=PROFILE,baseline_blob=BASELINE_BLOB,
+    return updates,dict(release={'rc1':RC1_RELEASE,'rc2':RC2_RELEASE,'rc4':RC4_RELEASE,'rc5':RELEASE,'rc6':RELEASE,'rc7':RELEASE,'current':RELEASE}[revision],profile=PROFILE,baseline_blob=BASELINE_BLOB,
         required_mcu='RC8-CONTROL-R7-HOME-R24-OLED',required_held_service_abi=1,
         accepted_z_and_factory_engine_ast_unchanged=True,
         files={name:sha256(data).hexdigest() for name,(data,_) in updates.items()},hardware_tested=False)

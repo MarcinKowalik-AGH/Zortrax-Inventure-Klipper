@@ -15,6 +15,7 @@ import io
 import json
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 import stat
 import shutil
 import subprocess
@@ -150,7 +151,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_scheduler=None, restore_safety_policy=None, restore_operator_service=None,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
           restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
-          operator_home_revision='current'):
+          operator_home_revision='current', information_revision='current'):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -349,7 +350,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
         for target, (data, mode) in updates.items():
             metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
         metadata.setdefault('runtime_restorations', {})['operator_home_r24'] = provenance
-        if operator_home_revision == 'current':
+        if operator_home_revision in ('current', 'rc7'):
             path = repo/'inventure_menu_audit_restore.py'
             presentation = _module('inventure_bootstrap_menu_audit', path, _regular_bytes(path))
             updates, provenance = presentation.restored_menu_audit(repo, files)
@@ -357,6 +358,14 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
             for target, (data, mode) in updates.items():
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
             metadata['runtime_restorations']['menu_audit_r24'] = provenance
+        if operator_home_revision == 'current':
+            path = repo/'inventure_information_restore.py'
+            info = _module('inventure_bootstrap_information', path, _regular_bytes(path))
+            updates, provenance = info.restore(repo, files, revision=information_revision)
+            files.update(updates)
+            for target, (data, mode) in updates.items():
+                metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=mode)
+            metadata['runtime_restorations']['information_r25'] = provenance
     return source, files, metadata
 
 
@@ -387,7 +396,8 @@ def _core_check(target, source, temporary, *, native_restored=False, single_owne
         verification_target = temporary/"core-compat-host"
         extras = verification_target/"klippy/extras"
         extras.parent.mkdir(parents=True)
-        shutil.copytree(target/"klippy/extras", extras)
+        shutil.copytree(target/"klippy/extras", extras,
+                        ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copy2(target/"klippy/serialhdl.py",
                      verification_target/"klippy/serialhdl.py")
         for name in (("inventure_native_z.py","inventure_z_home.py","inventure_mcu.py")
@@ -411,8 +421,15 @@ def _generated_file(name, expected):
     path = PurePosixPath(name)
     if name == "klippy/chelper/c_helper.so":
         return True
-    if path.parent.name == "__pycache__" and path.suffix == ".pyc":
-        return str(path.parent.parent/(path.name.split(".", 1)[0] + ".py")) in expected
+    if (path.parent.name == "__pycache__"
+            and re.fullmatch(r"[A-Za-z_]\w*\.cpython-\d+(?:\.opt-[12])?\.pyc", path.name, re.ASCII)):
+        # A rolled-back/newer module can leave a PEP 3147 cache after its .py
+        # was removed. CPython never imports that orphan from __pycache__.
+        # Accept caches only inside an authenticated Python source directory;
+        # source files, extension modules, symlinks and other extras stay checked.
+        return any(PurePosixPath(source).suffix == ".py"
+                   and PurePosixPath(source).parent == path.parent.parent
+                   for source in expected)
     return False
 
 
@@ -532,24 +549,26 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
 
 def _predecessor_plans(repo):
     """Every authenticated prefix through the published R23.5 runtime."""
+    # Try the recent public operator runtimes first. Rebuilding every older
+    # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
+    # Matching and verifying the complete authenticated manifest is unchanged.
+    if _procedure_profile.get() == 'operator-home-r24':
+        yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc3')
+        yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc1')
+        for revision in ('rc7', 'rc6', 'rc5', 'rc4', 'rc2', 'rc1'):
+            yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision=revision)
+    if _procedure_profile.get() in ('current', 'operator-home-r24'):
+        yield _plan(repo, procedure_profile='oem-home-r38.6')
+    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
+    if _procedure_profile.get() != 'current':
+        yield _plan(repo, procedure_profile='current')
     names = ('restore_oled', 'restore_native_z', 'restore_motion_owner',
              'restore_service_excursion', 'restore_scheduler', 'restore_safety_policy',
              'restore_operator_service', 'restore_leveling_ui', 'restore_leveling_stages',
              'restore_operator_menu', 'restore_configuration_audit')
-    for enabled in range(len(names)+1):
+    for enabled in range(len(names), -1, -1):
         yield _plan(repo, restore_accepted_home=False, procedure_profile='current',
                     **{name: index < enabled for index, name in enumerate(names)})
-    if _procedure_profile.get() != 'current':
-        yield _plan(repo, procedure_profile='current')
-    yield _plan(repo, procedure_profile='oem-home-r38.6', oem_service_entry=False)
-    if _procedure_profile.get() in ('current', 'operator-home-r24'):
-        yield _plan(repo, procedure_profile='oem-home-r38.6')
-    if _procedure_profile.get() == 'operator-home-r24':
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc1')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc2')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc4')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc5')
-        yield _plan(repo, procedure_profile='operator-home-r24', operator_home_revision='rc6')
 
 
 def verify_legacy_host(destination, repo=ROOT) -> dict:
@@ -601,7 +620,10 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     if _procedure_profile.get() == 'operator-home-r24':
         allowed.update('klippy/extras/'+name for name in
                        ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
-                        'inventure_menu_presentation.py','inventure_oem_menu_sprites.json'))
+                        'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+                                    'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                                    'inventure_communication_guard.py'))
     _require(bool(changed) and changed <= allowed,
              "Unexpected runtime files in R18 restoration")
     updates = {}
@@ -611,7 +633,10 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
             _require(_procedure_profile.get() == 'operator-home-r24'
                      and name in {'klippy/extras/'+n for n in
                                   ('inventure_operator_home.py','inventure_home_ui.py','inventure_home_sprites.json',
-                                   'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')}
+                                   'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+                                    'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+                                    'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py',
+                                    'inventure_communication_guard.py')}
                      and not destination_file.exists() and not destination_file.is_symlink(),
                      "Unexpected new runtime module: " + name)
             before = None

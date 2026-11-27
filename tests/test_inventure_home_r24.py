@@ -16,9 +16,29 @@ ROOT=Path(__file__).resolve().parents[1]
 UI_FILES={'klippy/extras/'+name for name in
           ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py',
            'inventure_menu_core.py','inventure_oled.py','inventure_home_ui.py','inventure_home_sprites.json',
-           'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')}
+           'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+           'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')}
 
 class OperatorHomeR24Tests(unittest.TestCase):
+    def test_information_rc1_rc2_upgrade_changes_only_info_and_firmware_rows(self):
+        from test_install_new_host import installer
+        with tempfile.TemporaryDirectory() as temporary, bootstrap.procedure_profile('operator-home-r24'):
+            host=Path(temporary)/'host'
+            _,old,metadata=bootstrap._plan(ROOT,information_revision='rc1')
+            self.assertEqual(sha256(bootstrap._metadata_bytes(metadata)).hexdigest(),
+                'dde8443ba43a11fbd9d40ce5dd857a1da840aa0123ac97b8a2aa855a8d722ad5')
+            bootstrap._write_files(host,old)
+            marker=host/bootstrap.MANIFEST_NAME
+            marker.write_bytes(bootstrap._metadata_bytes(metadata));marker.chmod(0o644)
+            update=bootstrap.prepare_runtime_update(host)
+            self.assertEqual(set(update['files']),{marker,host/'klippy/extras/inventure_information.py',
+                host/'klippy/extras/inventure_information_ui.py',host/'klippy/extras/inventure_oled.py',
+                host/'klippy/extras/inventure_communication_guard.py'})
+            for path,(before,after) in update['files'].items():
+                installer.updater.atomic_config_write(path,after,create=before is None)
+            self.assertEqual(bootstrap.verify_host(host)['status'],'VERIFIED_HOST')
+
     def test_installed_fluidd_and_oled_independent_axes_then_z(self):
         with tempfile.TemporaryDirectory(prefix='r24-operator-home-test-') as temp:
             output=Path(temp)/'verified'
@@ -44,7 +64,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
                 self.assertFalse(row['initial_review'])
                 self.assertTrue(row['oled_progress_rendered'])
                 self.assertTrue(row['m300_axis_animation'])
-                self.assertTrue(row['oled_delivered_during_thermal_hold'])
+                self.assertFalse(row['oled_delivered_during_thermal_hold'])
+                self.assertTrue(row['oled_pixels_paused_during_home'])
+                self.assertTrue(row['oled_cached_home_progress'])
                 self.assertEqual(row['home_ui_release'],'RC8-HOME-MENU-R24.4')
             self.assertEqual((output/'R24_HOME_OLED.png').read_bytes()[:8],b'\x89PNG\r\n\x1a\n')
             after_xy=[row for row in report['cases'] if row['sequence']==['X','Y','Z'] and row['request']=='Z']
@@ -61,6 +83,17 @@ class OperatorHomeR24Tests(unittest.TestCase):
             self.assertTrue(all(row['xy_seek']==['Y','X'] for row in missing))
             self.assertTrue(report['configuration_unchanged'])
             self.assertFalse(report['hardware_tested'])
+            info=subprocess.run([sys.executable,str(ROOT/'ci/check_inventure_information_r25.py'),
+                                 '--klipper',str(output/'runtime'),'--config',str(output/'config/printer.cfg'),
+                                 '--destination',str(output/'info')],capture_output=True,text=True,timeout=30)
+            self.assertEqual(info.returncode,0,info.stdout+info.stderr)
+            information=json.loads((output/'info/R25_INFORMATION.json').read_text())
+            self.assertEqual(information['status'],'PASS_INSTALLED_R25_INFORMATION')
+            self.assertTrue(information['oled_fluidd_same'])
+            self.assertEqual(information['startup']['status'],'PASS_GENERIC_HEATER_STARTUP')
+            self.assertTrue(information['startup']['original_exception_reproduced'])
+            self.assertEqual(information['startup']['active_target_and_pwm_refusals'],8)
+            self.assertFalse(information['serial_opened'])
             self.assertEqual({row['machine'] for row in report['cases']},{'A','B'})
             for axis in 'XY':
                 measured={row['measured_release_steps'][axis] for row in report['cases']
@@ -78,8 +111,15 @@ class OperatorHomeR24Tests(unittest.TestCase):
             _,new,_=bootstrap._plan(ROOT,procedure_profile='operator-home-r24')
             changed=(set(UI_FILES) if revision!='rc6' else {'klippy/extras/'+name for name in
                      ('inventure_menu_service.py','inventure_oled_graphics.py','inventure_oem_menu.py','inventure_oled.py',
-                      'inventure_menu_presentation.py','inventure_oem_menu_sprites.json')})
-            if revision not in ('rc5','rc6'):changed|={'klippy/extras/inventure_operator_home.py'}
+                      'inventure_menu_presentation.py','inventure_oem_menu_sprites.json',
+           'inventure_information.py','inventure_information_ui.py','inventure_info_store.py',
+           'inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')})
+            changed.add('klippy/extras/inventure_menu_core.py')
+            if revision == 'rc7':
+                changed={'klippy/extras/inventure_menu_service.py','klippy/extras/inventure_menu_core.py','klippy/extras/inventure_oled.py'}
+            changed|={'klippy/extras/'+name for name in ('inventure_information.py','inventure_information_ui.py',
+                         'inventure_info_store.py','inventure_runtime.py','inventure_counter_sync.py','inventure_information_errors.py','inventure_communication_guard.py')}
+            if revision not in ('rc5','rc6','rc7'):changed|={'klippy/extras/inventure_operator_home.py'}
             self.assertEqual({name for name in old.keys()|new.keys() if old.get(name)!=new.get(name)},changed)
             # In particular, every byte of native Z, its generator and the
             # T0/factory driver is identical to the preceding release.
@@ -119,6 +159,9 @@ class OperatorHomeR24Tests(unittest.TestCase):
 
     def test_rc5_upgrade_changes_only_ui_and_manifest_and_rolls_back_exactly(self):
         self.check_prior_upgrade('rc5','3e5eb8242f65d5a341397b04f486642ca8f342651a143d55943ce4ccbc142dc6')
+
+    def test_rc7_upgrade_adds_only_information_sidecar_and_rolls_back_exactly(self):
+        self.check_prior_upgrade('rc7','25a2219212e19c3b01d26e5888784b423185759c981b64d7b6e3da3fc009cb5e')
 
     def test_rc6_upgrade_changes_only_menu_presentation_and_exact_rollback(self):
         self.check_prior_upgrade('rc6','84c89b09e907979e0fbdacdab7e5e8cdd35f29b646c2e5d8d0da28c540edeaa3')

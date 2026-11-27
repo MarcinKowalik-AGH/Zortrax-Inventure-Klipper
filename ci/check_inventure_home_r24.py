@@ -210,6 +210,36 @@ def inspect(klipper,config,preview=None):
                             panel._fast_tx.pop(token,None)
                             delivered.append((kind,token))
                         panel.commands[kind]=types.SimpleNamespace(send=send_pixels)
+                    def service_display(frames):
+                        # The same installed adapter now protects Home from
+                        # physical pixels. Cached Fluidd artwork still renders.
+                        held_before=panel.thermal_test_hold
+                        panel.thermal_test_hold=True
+                        try:
+                            display_clock[0]=max(display_clock[0],panel.reactor.monotonic())
+                            if panel._home_pixels_paused():
+                                sent_before=len(delivered);ram_before=bytes(lcd.ram)
+                                panel.render_at=0.
+                                for _ in range(3):
+                                    now=display_clock[0];due=panel._tick(now)
+                                    require(due>=now+.1,'Paused Home OLED created a busy timer')
+                                    require(panel.thermal_test_hold,'Home cleared the owner display hold')
+                                    display_clock[0]=now+.5
+                                require(len(delivered)==sent_before and bytes(lcd.ram)==ram_before,
+                                        'Home pixels escaped the communication guard')
+                            else:
+                                for _ in range(2000):
+                                    now=display_clock[0];due=panel._tick(now)
+                                    require(panel.thermal_test_hold,'Menu cleared the thermal hold flag')
+                                    if (panel.stream.previous==panel.stream.latest==panel._render_wire
+                                            and bytes(lcd.ram)==panel._render_wire):break
+                                    display_clock[0]=max(now+.0001,min(now+.01,due))
+                                else:raise AssertionError('Non-Home OLED did not deliver its image')
+                                require(panel.stream.active_work,'Menu bypassed its work UART budget')
+                            require(panel._render_wire in frames,'Cached OLED rendered the wrong running owner')
+                            return now
+                        finally:
+                            panel.thermal_test_hold=held_before
                     def record_phase(message):
                         original_phase(message)
                         if not ui.busy:return
@@ -217,26 +247,7 @@ def inspect(klipper,config,preview=None):
                             view=rig.menu.view_status()
                             frames=[graphics.menu_wire(view,index=i) for i in range(4)]
                             require(len(set(frames))==4,'Home has no four-frame axis animation')
-                            # Exercise the actual OLED timer during the thermal
-                            # hold, including its original bounded transport.
-                            # Only the MCU wire/SSD1322 RAM and ACKs are modelled.
-                            held_before=panel.thermal_test_hold
-                            panel.thermal_test_hold=True
-                            try:
-                                display_clock[0]=max(display_clock[0],panel.reactor.monotonic())
-                                for _ in range(2000):
-                                    now=display_clock[0]
-                                    due=panel._tick(now)
-                                    require(panel.thermal_test_hold,'Home cleared the thermal display-hold flag')
-                                    if (panel.stream.previous==panel.stream.latest
-                                            and panel.stream.previous==panel._render_wire
-                                            and bytes(lcd.ram)==panel._render_wire):break
-                                    display_clock[0]=max(now+.0001,min(now+.01,due))
-                                else:raise AssertionError('Home OLED pixels stayed frozen during thermal hold')
-                            finally:
-                                panel.thermal_test_hold=held_before
-                            require(panel._render_wire in frames,'OLED rendered the wrong Home phase')
-                            require(panel.stream.active_work,'Home bypassed the existing work UART budget')
+                            now=service_display(frames)
                             rendered.append(dict(axes=ui.axes,message=message,icon=view['icon']))
                             if message.startswith('Homing ') or message=='Refining Z reference':
                                 screens.setdefault(ui.axes,dict(message=message,frames=frames))
@@ -414,7 +425,8 @@ def inspect(klipper,config,preview=None):
                             rows.append(dict(origin=origin,machine=machine,initial='NATIVE_HOT' if hot else 'OFF',sequence=list(sequence),
                                 initial_review=initial_review,
                                 home_ui_release=rig.menu.get_status(0.)['home_ui_release'],
-                                oled_progress_rendered=True,m300_axis_animation=True,oled_delivered_during_thermal_hold=True,
+                                oled_progress_rendered=True,m300_axis_animation=True,oled_delivered_during_thermal_hold=False,
+                                oled_pixels_paused_during_home=True,oled_cached_home_progress=True,
                                 request=name,xy_seek=seeks,xy_release=seeks,xy_backoff=backoffs,
                                 measured_release_steps={axis:r['release_steps'] for axis,r in native.xy_references.items()},
                                 release_origin_dynamic=True,physical_z_pad_unchanged=True,
@@ -429,20 +441,7 @@ def inspect(klipper,config,preview=None):
                                     symbol=graphics._symbol(view['icon'])
                                     count=len(symbol['frames']) if symbol else 1
                                     frames=[graphics.menu_wire(view,index=i) for i in range(count)]
-                                    held_before=panel.thermal_test_hold
-                                    panel.thermal_test_hold=True
-                                    try:
-                                        display_clock[0]=max(display_clock[0],panel.reactor.monotonic())
-                                        for _ in range(2000):
-                                            now=display_clock[0];due=panel._tick(now)
-                                            require(panel.thermal_test_hold,'Menu cleared the thermal hold flag')
-                                            if (panel.stream.previous==panel.stream.latest==panel._render_wire
-                                                    and bytes(lcd.ram)==panel._render_wire):break
-                                            display_clock[0]=max(now+.0001,min(now+.01,due))
-                                        else:raise AssertionError('Menu OLED froze during thermal hold')
-                                        require(panel._render_wire in frames,'OLED did not render its running owner')
-                                        require(panel.stream.active_work,'Menu bypassed the work UART budget')
-                                    finally:panel.thermal_test_hold=held_before
+                                    service_display(frames)
                                 ui._phase=original_phase
                                 try:shared_menu=inspect_shared_menu(rig,panel,package,render_running)
                                 finally:ui._phase=record_phase

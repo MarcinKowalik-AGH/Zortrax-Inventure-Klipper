@@ -437,6 +437,9 @@ def add_fluidd_controls(target, config, updates, *, leveling=False, jam=False, f
                                          +'] without rename_existing')
             sources[config] = append_config_section(sources[config], body.encode('utf-8'))
 
+        from inventure_bootstrap import current_procedure_profile
+        if dashboard and current_procedure_profile() == 'operator-home-r24':
+            add_native_section('inventure_information', (ROOT/'config/INVENTURE_INFORMATION.cfg').read_text(), set())
         add_native_section('pause_resume', '[pause_resume]',
                            {'PAUSE', 'RESUME', 'CLEAR_PAUSE', 'CANCEL_PRINT'})
         if dashboard and not active.has_section('display'):
