@@ -382,7 +382,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
                 path = repo/'inventure_xy_step_restore.py'
                 restoration = _module('inventure_bootstrap_xy_step', path, _regular_bytes(path))
                 target = restoration.TARGET
-                revision = 'r29' if xy_timers == 'r29' else 'r28'
+                revision = 'r28' if xy_timers is True else xy_timers
                 data, provenance = restoration.restore(repo, files[target][0], revision=revision)
                 files[target] = (data, 0o644)
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
@@ -599,6 +599,8 @@ def _predecessor_plans(repo, recorded_xy_timers=False):
 
 def _recorded_xy_step_timers(metadata):
     restorations = metadata.get('runtime_restorations', {})
+    if 'xy_step_r30' in restorations:
+        return 'r30'
     return 'r29' if 'xy_step_r29' in restorations else 'xy_step_r28' in restorations
 
 

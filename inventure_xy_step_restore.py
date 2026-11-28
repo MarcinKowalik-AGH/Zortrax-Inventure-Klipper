@@ -1,4 +1,4 @@
-"""Restore the CoreXY pulse-rate bound for the paired R28 host."""
+"""Restore the CoreXY pulse-rate bound for the paired STEP host."""
 from hashlib import sha256
 
 TARGET = 'klippy/kinematics/corexy.py'
@@ -17,9 +17,12 @@ def restore(repo, original, *, revision='r28'):
     text = text.replace(check, '        self._inventure_xy_step.check_move(move)\n' + check, 1)
     body = (repo/'restored/xy_step_r28/inventure_xy_step.py').read_text()
     release = RELEASE
-    if revision == 'r29':
+    if revision in ('r29', 'r30'):
         body += '\n\n' + (repo/'restored/xy_step_r29/inventure_xy_profile.py').read_text()
         release = 'RC8-XYSTEP-R29'
+        if revision == 'r30':
+            body += '\n\n' + (repo/'restored/xy_step_r30/inventure_xy_profile.py').read_text()
+            release = 'RC8-XYSTEP-R30'
     elif revision != 'r28':
         raise ValueError('Unknown Inventure CoreXY STEP revision')
     data = (text + '\n\n' + body).encode()
