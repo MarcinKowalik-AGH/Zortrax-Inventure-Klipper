@@ -7,7 +7,7 @@ from apply_inventure_xy_step_r29 import RELEASE as PREVIOUS, overlay as parent_o
 RELEASE = 'RC8-CONTROL-R7-HOME-R30-XY-STEP-224'
 
 
-def overlay(destination):
+def overlay(destination, *, native_z_uart=False):
     source = parent_overlay(destination)
     for path in source.iterdir():
         if path.suffix in ('.c', '.inc', '.h', '.py'):
@@ -100,4 +100,42 @@ _Static_assert(INVENTURE_XY_SETUP <= INVENTURE_XY_MIN_PERIOD - INVENTURE_XY_FAST
     text = replace(script.read_text(), "'inventure_stepper_timer.inc',",
                    "'inventure_stepper_timer.inc', 'inventure_xy_step_fast.inc',")
     script.write_text(text)
+    if native_z_uart:
+        install_native_z_uart(source)
     return source
+
+
+def install_native_z_uart(source):
+    """Let USART6 preempt the native Z sensor checks, as in the R27 sampler."""
+    path = source/'inventure_z_home.inc'
+    text = path.read_text()
+    signature = (
+        'static uint8_t zh_native_guard_ok(uint32_t now, uint32_t owner,'
+        ' int16_t min_c, int16_t max_c)'
+    )
+    original = 'static uint8_t zh_native_guard_ok(uint32_t now,uint32_t owner,int16_t min_c,int16_t max_c)'
+    text = replace(text, original, signature.replace(
+        'uint8_t zh_native_guard_ok', 'uint8_t noinline zh_native_guard_body'))
+    anchor = 'static void zh_guard(uint32_t now) {'
+    path.write_text(replace(text, anchor, signature + '''
+{
+    // A caller inside the R27 sampler is already UART-preemptible.
+    if (!__get_PRIMASK())
+        return zh_native_guard_body(now, owner, min_c, max_c);
+
+    // Admit priority-0 USART6 only. The guard reads sensors and maintains
+    // native_hot_mask; the UART ISR does not dispatch commands or touch it.
+    // Restore both masks before evaluating stop actions or changing STEP.
+    uint32_t priority = __get_BASEPRI();
+    __set_BASEPRI_MAX(1u << (8-__NVIC_PRIO_BITS));
+    __ISB();
+    irq_enable();
+    uint8_t ok = zh_native_guard_body(now, owner, min_c, max_c);
+    irq_disable();
+    __set_BASEPRI(priority);
+    __ISB();
+    return ok;
+}
+DECL_CONSTANT("INVENTURE_NATIVE_Z_UART_WINDOW_ABI", 1);
+
+''' + anchor))

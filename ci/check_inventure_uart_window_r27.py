@@ -37,10 +37,11 @@ class Image:
             uc.emu_start(self.symbols['inventure_sampler_uart_init'][0]|1,STOP,count=1000)
         return uc
 
-def inspect(image,hot,tach,phase,initial_base=0,mode=1):
+def inspect(image,hot,tach,phase,initial_base=0,mode=1,fixture=None,instruction_cycles=1):
     uc=image.cpu();symbols=image.symbols
     state=dict(cycles=0,arrivals=0,overruns=0,received=[],pending=None,interrupt=False,
-        event=None,context=None,skip=False,open_cycles=0,open_without_ceiling=0,aborted=False)
+        event=None,context=None,skip=False,open_cycles=0,open_without_ceiling=0,aborted=False,
+        blocked_run=0,max_blocked_run=0,observed_overruns=0)
     def word(a,v):uc.mem_write(a,struct.pack('<I',v&0xffffffff))
     def put(name,val):
         a,n=symbols[name];uc.mem_write(a,int(val).to_bytes(n,'little'))
@@ -52,6 +53,9 @@ def inspect(image,hot,tach,phase,initial_base=0,mode=1):
     uc.mem_write(symbols['latest_adc'][0],struct.pack('<8H',330 if hot else 185,185,*[adc]*6))
     if tach:word(0x40021010,(1<<9)|(1<<11)|(1<<13)|(1<<14))
     arg=0x2001e000;word(arg+8,NOW)
+    callback = 'sample_event'
+    if fixture is not None:
+        callback = fixture(uc, symbols, put, word)
     uc.reg_write(UC_ARM_REG_SP,0x2001f800);uc.reg_write(UC_ARM_REG_LR,STOP|1)
     uc.reg_write(UC_ARM_REG_R0,arg);uc.reg_write(UC_ARM_REG_PRIMASK,1);uc.reg_write(UC_ARM_REG_BASEPRI,initial_base)
     uc.mem_write(IDLE,b'\x00\xbf\xfd\xe7') # NOP / branch back, outside the sampler
@@ -76,15 +80,24 @@ def inspect(image,hot,tach,phase,initial_base=0,mode=1):
             state['open_cycles']+=1
             if u.reg_read(UC_ARM_REG_BASEPRI)!=16:state['open_without_ceiling']+=1
         instruction=struct.unpack('<H',u.mem_read(address,2))[0]
-        state['cycles']+=int(instruction&0xff00!=0xbf00)
+        if not root_done and not state['interrupt']:
+            if u.reg_read(UC_ARM_REG_PRIMASK):
+                state['blocked_run']+=int(instruction&0xff00!=0xbf00)
+                state['max_blocked_run']=max(state['max_blocked_run'],state['blocked_run'])
+            else:
+                state['blocked_run']=0
+        state['cycles']+=instruction_cycles*int(instruction&0xff00!=0xbf00)
         word(0xe0001004,NOW+state['cycles'])
         if root_done and state['cycles']>=5000 and state['pending'] is None:
             u.emu_stop()
     def read(u,access,address,size,value,_):
+        if state['interrupt'] and address==UART:
+            status=struct.unpack('<I',uc.mem_read(UART,4))[0]
+            state['observed_overruns']+=int(bool(status&8))
         if state['interrupt'] and address==UART+4 and state['pending'] is not None:
             state['received'].append(state['pending']);state['pending']=None;word(UART,0)
-    hooks=[uc.hook_add(UC_HOOK_CODE,code),uc.hook_add(UC_HOOK_MEM_READ,read,begin=UART+4,end=UART+7)]
-    pc=symbols['sample_event'][0]|1
+    hooks=[uc.hook_add(UC_HOOK_CODE,code),uc.hook_add(UC_HOOK_MEM_READ,read,begin=UART,end=UART+7)]
+    pc=symbols[callback][0]|1
     guard_cycles=None
     for _ in range(20):
         state['event']=None
@@ -106,14 +119,17 @@ def inspect(image,hot,tach,phase,initial_base=0,mode=1):
     logic={name:bytes(uc.mem_read(*symbols[name])).hex() for name in
         ('control_mode','control_latched','native_hot_mask','guard_div','heartbeat_live')}
     logic['next_sampler_clock']=struct.unpack('<I',uc.mem_read(arg+8,4))[0]
+    if fixture is not None:
+        logic['zh'] = bytes(uc.mem_read(*symbols['zh'])).hex()
     rx_size=int.from_bytes(uc.mem_read(*symbols['receive_pos']),'little')
     actual_bytes=list(uc.mem_read(symbols['receive_buf'][0],rx_size))
     actual_overruns=int.from_bytes(uc.mem_read(*symbols['uart_overrun']),'little')
     assert actual_bytes==state['received'],(actual_bytes,state['received'])
-    assert actual_overruns==state['overruns'],(actual_overruns,state['overruns'])
+    assert actual_overruns==state['observed_overruns'],(actual_overruns,state['observed_overruns'])
     result=dict(hot=hot,tach=tach,phase=phase,mode=mode,initial_base=initial_base,guard_cycles=guard_cycles,
         arrivals=state['arrivals'],overruns=state['overruns'],received=state['received'],
         firmware_received=actual_bytes,firmware_overrun_counter=actual_overruns,
+        max_uart_blocked_instructions=state['max_blocked_run'],
         preemptible_instructions=state['open_cycles'],unprotected_timer_instructions=state['open_without_ceiling'],logic=logic)
     for handle in hooks:uc.hook_del(handle)
     del uc;gc.collect()
