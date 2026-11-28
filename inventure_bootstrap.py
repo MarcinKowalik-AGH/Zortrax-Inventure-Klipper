@@ -26,6 +26,7 @@ from zipfile import BadZipFile, ZipFile
 ROOT = Path(__file__).resolve().parent
 _procedure_profile = ContextVar('inventure_procedure_profile', default='current')
 _xy_step_timers = ContextVar('inventure_xy_step_timers', default=False)
+_cassette_windows = ContextVar('inventure_cassette_windows', default=False)
 
 
 @contextmanager
@@ -50,6 +51,15 @@ def xy_step_timers(enabled):
         yield
     finally:
         _xy_step_timers.reset(token)
+
+
+@contextmanager
+def cassette_windows(enabled):
+    token = _cassette_windows.set(enabled)
+    try:
+        yield
+    finally:
+        _cassette_windows.reset(token)
 
 SOURCE_COMMIT = "ee9cd2f3dc2c1f71d930b0b6825ed08233b72a2f"
 SOURCE_TAG = "inventure-homing-r38.6"
@@ -162,7 +172,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
           restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
           operator_home_revision='current', information_revision='current',
-          use_xy_step_timers=None):
+          use_xy_step_timers=None, use_cassette_windows=None):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -387,6 +397,15 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
                 files[target] = (data, 0o644)
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
                 metadata['runtime_restorations']['xy_step_' + revision] = provenance
+            use_windows = _cassette_windows.get() if use_cassette_windows is None else use_cassette_windows
+            if use_windows and information_revision == 'current':
+                path = repo/'inventure_cassette_windows_restore.py'
+                restoration = _module('inventure_bootstrap_cassette_windows', path, _regular_bytes(path))
+                target = restoration.TARGET
+                data, provenance = restoration.restore(repo, files[target][0])
+                files[target] = (data, 0o644)
+                metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
+                metadata['runtime_restorations']['cassette_windows_r31'] = provenance
     return source, files, metadata
 
 
@@ -568,15 +587,15 @@ def verify_host(destination, repo=ROOT, *, allow_legacy=False) -> dict:
     return _verify_runtime(target, source, metadata, restoration_required=False)
 
 
-def _predecessor_plans(repo, recorded_xy_timers=False):
+def _predecessor_plans(repo, recorded_xy_timers=False, recorded_cassette_windows=False):
     """Every authenticated prefix through the published R23.5 runtime."""
     # Try the recent public operator runtimes first. Rebuilding every older
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
-        if _xy_step_timers.get() != recorded_xy_timers:
+        if (_xy_step_timers.get(), _cassette_windows.get()) != (recorded_xy_timers, recorded_cassette_windows):
             yield _plan(repo, procedure_profile='operator-home-r24',
-                        use_xy_step_timers=recorded_xy_timers)
+                        use_xy_step_timers=recorded_xy_timers, use_cassette_windows=recorded_cassette_windows)
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='r26')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc4')
         yield _plan(repo, procedure_profile='operator-home-r24', information_revision='rc3')
@@ -604,6 +623,10 @@ def _recorded_xy_step_timers(metadata):
     return 'r29' if 'xy_step_r29' in restorations else 'xy_step_r28' in restorations
 
 
+def _recorded_cassette_windows(metadata):
+    return 'cassette_windows_r31' in metadata.get('runtime_restorations', {})
+
+
 def verify_legacy_host(destination, repo=ROOT) -> dict:
     """Recognize only the two authenticated predecessor runtime layouts.
 
@@ -614,7 +637,7 @@ def verify_legacy_host(destination, repo=ROOT) -> dict:
     repo = Path(repo).expanduser().resolve(strict=True)
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     recorded_xy_timers = _recorded_xy_step_timers(recorded)
-    for source, _, metadata in _predecessor_plans(repo, recorded_xy_timers):
+    for source, _, metadata in _predecessor_plans(repo, recorded_xy_timers, _recorded_cassette_windows(recorded)):
         if recorded == metadata:
             return _verify_runtime(target, source, metadata, restoration_required=True)
     raise ValueError("Installed host metadata differs from every verified R38.6 predecessor")
@@ -632,7 +655,7 @@ def prepare_runtime_update(destination, repo=ROOT) -> dict:
     recorded = json.loads(_regular_bytes(target/MANIFEST_NAME))
     previous = None
     recorded_xy_timers = _recorded_xy_step_timers(recorded)
-    for source, files, metadata in _predecessor_plans(repo, recorded_xy_timers):
+    for source, files, metadata in _predecessor_plans(repo, recorded_xy_timers, _recorded_cassette_windows(recorded)):
         if recorded == metadata:
             _verify_runtime(target, source, metadata, restoration_required=True)
             previous = files, metadata
