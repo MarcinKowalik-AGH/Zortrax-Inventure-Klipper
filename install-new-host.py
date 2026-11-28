@@ -54,12 +54,15 @@ MCU_SAFETY_POLICY_RELEASE = 'RC8-CONTROL-R7-HOMING-R22'
 MCU_DISPLAY_RELEASE = 'RC8-CONTROL-R7-HOMING-R23-OLED'
 MCU_XY_STEP_RELEASE = 'RC8-CONTROL-R7-HOME-R28-XY-TIMERS'
 MCU_OEM_XY_STEP_RELEASE = 'RC8-CONTROL-R7-HOME-R29-XY-OEM'
+MCU_XY_STEP_R30_RELEASE = 'RC8-CONTROL-R7-HOME-R30-XY-STEP-224'
+XY_STEP_HOST_PROFILES = {MCU_XY_STEP_RELEASE: True, MCU_OEM_XY_STEP_RELEASE: 'r29',
+                         MCU_XY_STEP_R30_RELEASE: 'r30'}
 HOME_RELEASES = ('RC8-CONTROL-R7-HOME-R24-OLED', 'RC8-CONTROL-R7-HOME-R25-INFO-OLED',
                  'RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED', 'RC8-CONTROL-R7-HOME-R27-UART-OLED',
-                 MCU_XY_STEP_RELEASE, MCU_OEM_XY_STEP_RELEASE)
+                 *XY_STEP_HOST_PROFILES)
 DROPIN = Path('/etc/systemd/system/klipper.service.d/50-inventure-release.conf')
 UNIT_MARKER = '# Managed by Inventure install-new-host.py\n'
-INSTALLER_RELEASE = 'R29'
+INSTALLER_RELEASE = 'R30'
 SHUTDOWN_LATCH = "Can not update MCU 'mcu' config as it is shutdown"
 DB_KEYS = ('macros', 'uiSettings.general.locale')
 
@@ -102,6 +105,13 @@ def require_mcu(mcu):
                 ('INVENTURE_XY_STEP_HIGH_TICKS', '294'))
         ):
             raise ValueError('R29 MCU lacks its matched 2.45 us CoreXY STEP timer capability')
+        if release == MCU_XY_STEP_R30_RELEASE and any(
+            str(constants.get(key)) != value for key, value in (
+                ('INVENTURE_XY_STEP_TIMER_ABI', '3'), ('INVENTURE_XY_STEP_MIN_TICKS', '448'),
+                ('INVENTURE_XY_STEP_HIGH_TICKS', '294'), ('INVENTURE_XY_STEP_LOW_FLOOR_TICKS', '90'),
+                ('CLOCK_FREQ', '120000000'))
+        ):
+            raise ValueError('R30 MCU lacks its matched 224-tick CoreXY STEP timer capability')
         if release in HOME_RELEASES[3:] and any(str(constants.get(key))!='1' for key in ('INVENTURE_UART_TIMER_WINDOW_ABI','INVENTURE_OLED_COEXISTENCE_ABI')):
             raise ValueError('R27 MCU lacks its sampler/UART priority-window capability')
         if release == 'RC8-CONTROL-R7-HOME-R26-TRANSPORT-OLED' and str(constants.get('INVENTURE_OLED_COEXISTENCE_ABI')) != '1':
@@ -726,16 +736,17 @@ def _run(args):
     if args.apply and requirement and not recovery:
         raise ValueError(requirement)
     xy_timers = bool(getattr(args, 'with_xy_step_timers', False))
-    if xy_timers and mcu_identity.get('mcu_release') not in (MCU_XY_STEP_RELEASE, MCU_OEM_XY_STEP_RELEASE):
-        raise ValueError('--with-xy-step-timers requires a matched R28 or R29 MCU')
-    with bootstrap.xy_step_timers('r29' if xy_timers and mcu_identity.get('mcu_release') == MCU_OEM_XY_STEP_RELEASE else xy_timers):
+    xy_profile = XY_STEP_HOST_PROFILES.get(mcu_identity.get('mcu_release')) if xy_timers else False
+    if xy_timers and xy_profile is None:
+        raise ValueError('--with-xy-step-timers requires a matched R28–R30 MCU')
+    with bootstrap.xy_step_timers(xy_profile):
         return _install(args, live, mcu_identity, requirement, recovery)
 
 
 def _install(args, live, mcu_identity, requirement, recovery):
     repair = bool(getattr(args, 'repair_home_procedures', False))
     if repair and (recovery or mcu_identity.get('mcu_release') not in HOME_RELEASES):
-        raise ValueError('Install and verify the matching R24–R29 MCU before activating the shared Home/transport profile')
+        raise ValueError('Install and verify the matching R24–R30 MCU before activating the shared Home/transport profile')
     restore_oem = bool(getattr(args, 'restore_oem_home', False))
     home_reference = operator_home if repair else oem_home if restore_oem else accepted_home
     restore_home = bool(getattr(args, 'restore_accepted_home', False) or restore_oem or repair)
@@ -894,7 +905,7 @@ def main():
     parser.add_argument('--repair-home-procedures', '--repair-transport', action='store_true',
                         help='Update transport/Info/UI while preserving the accepted R24 X/Y and frozen T0/Z sequence')
     parser.add_argument('--with-xy-step-timers', action='store_true',
-                        help='Use paired CoreXY STEP timers from R28 or R29 with the accepted Home profile')
+                        help='Use paired CoreXY STEP timers from R28–R30 with the accepted Home profile')
     parser.add_argument('--serial', required=True, help='Actual MCU UART, e.g. /dev/ttyS5')
     parser.add_argument('--baud', required=True, type=int, help='Actual MCU UART baud, e.g. 750000')
     parser.add_argument('--destination', type=Path, default=Path.home()/'klipper-inventure-r38.6')

@@ -9,6 +9,8 @@ TIM6, TIM13, TIM14 = 0x40001000, 0x40001c00, 0x40002000
 
 
 class R29Machine(Machine):
+    dma_delays = (8, 58)
+
     def __init__(self, clock=50000):
         self.timer_phases = dict.fromkeys((TIM3, TIM6, TIM13, TIM14), 0)
         self.requests = 0
@@ -106,7 +108,7 @@ class R29Machine(Machine):
                 elif timer == TIM6 and self.read(TIM6+0x0c) & (1 << 8) and self.read(STREAM1) & 1:
                     # Alternate early/late arbitration while SPI2 retains its
                     # own DMA1 stream. These delays are modeled, not measured.
-                    self.bus.append(self.t + (8 if self.requests % 2 == 0 else 58))
+                    self.bus.append(self.t + self.dma_delays[self.requests % 2])
                     self.requests += 1
                 elif timer == TIM3 and event == 'compare':
                     self.write(TIM2+0x24, self.read(TIM2+0x24)+1)

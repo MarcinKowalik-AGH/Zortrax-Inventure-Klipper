@@ -62,13 +62,18 @@ def inspect(klipper,config,preview=None,transport_r26=False):
         actual_kin=actual_toolhead.get_kinematics()
         xy_route=getattr(actual_kin,'_inventure_xy_step',None)
         oem_xy=None
+        fast_xy=None
         if getattr(xy_route,'OEM_XY_ACCELERATION',None)==1500.:
             saved_mcu=xy_route._mcu
             configured=[]
+            travel_velocity=getattr(xy_route,'TRAVEL_TEST_VELOCITY',200.)
+            constants=dict(INVENTURE_XY_STEP_TIMER_ABI=2,INVENTURE_XY_STEP_MIN_TICKS=660,
+                           INVENTURE_XY_STEP_HIGH_TICKS=294,CLOCK_FREQ=120000000)
+            if travel_velocity==296.:
+                constants.update(INVENTURE_XY_STEP_TIMER_ABI=3,INVENTURE_XY_STEP_MIN_TICKS=448,
+                                 INVENTURE_XY_STEP_LOW_FLOOR_TICKS=90)
             xy_route._mcu=types.SimpleNamespace(
-                get_constants=lambda:dict(INVENTURE_XY_STEP_TIMER_ABI=2,
-                    INVENTURE_XY_STEP_MIN_TICKS=660,INVENTURE_XY_STEP_HIGH_TICKS=294,
-                    CLOCK_FREQ=120000000),
+                get_constants=lambda:constants,
                 add_config_cmd=configured.append,is_fileoutput=lambda:False,
                 lookup_query_command=lambda *_:types.SimpleNamespace(send=lambda:dict(verified=3,enabled=1)))
             old_velocity,old_accel=actual_toolhead.get_max_velocity()
@@ -76,21 +81,26 @@ def inspect(klipper,config,preview=None,transport_r26=False):
             try:
                 xy_route._configure()
                 xy_route._connect()
-                require(configured==['inventure_xy_step_config'],'The paired OEM STEP setup was not queued')
-                actual_toolhead.set_max_velocities(200.,1500.,None,None)
+                require(configured==['inventure_xy_step_config'],'The paired STEP setup was not queued')
+                require((old_velocity,old_accel)==(30.,200.),'Startup travel limits changed')
+                gcode.run_script_from_command(f'SET_VELOCITY_LIMIT VELOCITY={travel_velocity} ACCEL=1500')
                 actual_kin.limits=[rail.get_range() for rail in actual_kin.rails]
                 plan={}
                 for name,point in (('axis',(115.,25.,10.,0.)),
                                    ('diagonal_a',(115.,115.,10.,0.)),
                                    ('diagonal_b',(115.,25.,10.,0.))):
                     start=(25.,115.,10.,0.) if name=='diagonal_b' else (25.,25.,10.,0.)
-                    move=toolhead.Move(actual_toolhead,start,point,200.)
+                    move=toolhead.Move(actual_toolhead,start,point,travel_velocity)
                     actual_kin.check_move(move)
                     plan[name]=move.max_cruise_v2**0.5
-                    require(move.accel==1500.,'OEM XY acceleration did not reach the planner')
-                require(plan['axis']==200. and all(abs(plan[key]-200./2.**0.5)<1.e-9
-                    for key in ('diagonal_a','diagonal_b')),'OEM CoreXY rate did not reach Klipper')
-                oem_xy=plan
+                    require(move.accel==1500.,'XY acceleration did not reach the planner')
+                motor_ceiling=200. if travel_velocity==200. else 120000000./448/640
+                require(plan['axis']==travel_velocity and all(abs(plan[key]-motor_ceiling/2.**0.5)<1.e-9
+                    for key in ('diagonal_a','diagonal_b')),'CoreXY rate did not reach Klipper')
+                if travel_velocity==200.:
+                    oem_xy=plan
+                else:
+                    fast_xy=plan
             finally:
                 xy_route._mcu=saved_mcu
                 actual_toolhead.set_max_velocities(old_velocity,old_accel,None,None)
@@ -491,6 +501,7 @@ def inspect(klipper,config,preview=None,transport_r26=False):
                     refusal_count=len(refusals),refusals=refusals,
                     transport_mode='cooperative_dma' if transport_r26 else 'legacy_quiet',
                     oem_xy_planner_mm_s=oem_xy,
+                    fast_xy_planner_mm_s=fast_xy,
                     serial_opened=False,firmware_flashed=False,hardware_tested=False)
     finally:
         executor=printer.lookup_object('aio_executor',None)
@@ -528,7 +539,7 @@ def check(destination,transport_r26=False,xy_step_timers=False):
     report['configuration_unchanged']=True
     report['xy_step_host_loaded']=bool(xy_step_timers)
     if xy_step_timers:
-        report['xy_step_host_revision']='r29' if xy_step_timers == 'r29' else 'r28'
+        report['xy_step_host_revision']='r28' if xy_step_timers is True else xy_step_timers
     (destination/'R24_HOME_CYCLES.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 
@@ -539,10 +550,10 @@ if __name__=='__main__':
     parser.add_argument('--config',type=Path)
     parser.add_argument('--oled-preview',type=Path)
     parser.add_argument('--transport-r26',action='store_true')
-    parser.add_argument('--xy-step-timers',nargs='?',const='r28',choices=('r28','r29'),
+    parser.add_argument('--xy-step-timers',nargs='?',const='r28',choices=('r28','r29','r30'),
                         help='Stage the selected paired CoreXY host for the Home regression')
     args=parser.parse_args()
-    xy_timers='r29' if args.xy_step_timers=='r29' else bool(args.xy_step_timers)
+    xy_timers=args.xy_step_timers or False
     if args.klipper and args.config:report=inspect(args.klipper.absolute(),args.config.absolute(),args.oled_preview,transport_r26=args.transport_r26)
     elif args.destination:
         with redirect_stdout(io.StringIO()):report=check(args.destination.absolute(),transport_r26=args.transport_r26,xy_step_timers=xy_timers)
