@@ -162,7 +162,7 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
           restore_leveling_ui=None, restore_leveling_stages=None, restore_operator_menu=None, restore_configuration_audit=None,
           restore_accepted_home=None, procedure_profile=None, oem_service_entry=True,
           operator_home_revision='current', information_revision='current',
-          use_xy_step_timers=None):
+          use_xy_step_timers=None, r30_quiet_z=True):
     if restore_motion_owner is None:
         restore_motion_owner = restore_oled and restore_native_z
     if restore_service_excursion is None:
@@ -387,7 +387,55 @@ def _plan(repo, *, restore_oled=True, restore_native_z=True,
                 files[target] = (data, 0o644)
                 metadata['files'][target] = dict(sha256=sha256(data).hexdigest(), mode=0o644)
                 metadata['runtime_restorations']['xy_step_' + revision] = provenance
+                if revision == 'r30' and r30_quiet_z:
+                    target = 'klippy/extras/inventure_communication_guard.py'
+                    data, mode = files[target]
+                    data = _r30_quiet_z_guard(data)
+                    files[target] = (data, mode)
+                    digest = sha256(data).hexdigest()
+                    metadata['files'][target] = dict(sha256=digest, mode=mode)
+                    metadata['runtime_restorations']['r30_quiet_z'] = dict(
+                        release='RC8-R30-Z-UART-R1', files={target: digest})
     return source, files, metadata
+
+
+def _r30_quiet_z_guard(data):
+    """Reserve UART during the native Z measurement and resume OLED on exit."""
+    source = data.decode()
+    before = "    def _home_pixels_paused(self):\n"
+    after = """    def _native_z_pixels_paused(self):
+        native = self.printer.lookup_object('inventure_native_z', None)
+        return bool(getattr(native, 'running', False))
+
+    def _home_pixels_paused(self):
+        if self._native_z_pixels_paused():
+            return True
+"""
+    _require(source.count(before) == 1, 'Unexpected R30 OLED pixel gate')
+    source = source.replace(before, after, 1)
+    before = "    def _tick(self, now):\n        if not self._home_pixels_paused():\n"
+    after = """    def _tick(self, now):
+        quiet = self._native_z_pixels_paused()
+        if getattr(self, '_r30_z_quiet', False) and not quiet:
+            self.render_at = 0.
+            self._work_at = 0.
+            self._user_refresh_pending = True
+        self._r30_z_quiet = quiet
+        if not self._home_pixels_paused():
+"""
+    _require(source.count(before) == 1, 'Unexpected R30 OLED tick')
+    source = source.replace(before, after, 1)
+    before = "        keys=('communication_guard_release','oled_transport_mode','transport_health',"
+    after = "        keys=('communication_guard_release','native_z_pixels_paused','oled_transport_mode','transport_health',"
+    _require(source.count(before) == 1, 'Unexpected R30 transport status fields')
+    source = source.replace(before, after, 1)
+    before = "        result.update(communication_guard_release=RELEASE,\n"
+    after = ("        result.update(communication_guard_release=RELEASE,\n"
+             "            native_z_pixels_paused=self._native_z_pixels_paused(),\n")
+    _require(source.count(before) == 1, 'Unexpected R30 OLED status fields')
+    source = source.replace(before, after, 1)
+    compile(source, 'inventure_communication_guard.py', 'exec')
+    return source.encode()
 
 
 def _write_files(root, files):
@@ -574,6 +622,9 @@ def _predecessor_plans(repo, recorded_xy_timers=False):
     # prefix before recognizing RC6/RC7 is expensive on an Orange Pi SD card.
     # Matching and verifying the complete authenticated manifest is unchanged.
     if _procedure_profile.get() == 'operator-home-r24':
+        if recorded_xy_timers == 'r30':
+            yield _plan(repo, procedure_profile='operator-home-r24',
+                        use_xy_step_timers='r30', r30_quiet_z=False)
         if _xy_step_timers.get() != recorded_xy_timers:
             yield _plan(repo, procedure_profile='operator-home-r24',
                         use_xy_step_timers=recorded_xy_timers)
